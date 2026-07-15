@@ -4,6 +4,13 @@
 Use ``--local-smoke`` against a running local Showdown server before using the public
 ladder. Public credentials come from ``VGC_SHOWDOWN_USERNAME`` /
 ``VGC_SHOWDOWN_PASSWORD`` or the gitignored ``.showdown-credentials.json`` file.
+
+Smoke sessions default their replay/trace artifacts and outcome log to the
+``-local-smoke`` paths (``runs/ladder-local-smoke/`` and
+``runs/ladder-local-smoke.jsonl``) instead of the public-ladder defaults, so running
+``--local-smoke`` never silently appends to (or overwrites replays under) the real
+``runs/ladder.jsonl``/``runs/ladder/`` record -- pass ``--log``/``--artifacts-dir``
+explicitly to override either mode's default.
 """
 
 from __future__ import annotations
@@ -41,6 +48,12 @@ PASSWORD_ENV = "VGC_SHOWDOWN_PASSWORD"
 DEFAULT_CREDENTIALS_FILE = REPO_ROOT / ".showdown-credentials.json"
 DEFAULT_ARTIFACTS_DIR = RUNS_DIR / "ladder"
 DEFAULT_LOG_PATH = RUNS_DIR / "ladder.jsonl"
+# --local-smoke defaults -- kept separate from the public-ladder defaults above so a
+# smoke run against the local server can never silently append to (or write replays
+# alongside) the real public-ladder record just because the caller forgot to override
+# --log/--artifacts-dir.
+DEFAULT_LOCAL_SMOKE_ARTIFACTS_DIR = RUNS_DIR / "ladder-local-smoke"
+DEFAULT_LOCAL_SMOKE_LOG_PATH = RUNS_DIR / "ladder-local-smoke.jsonl"
 
 
 @dataclass(frozen=True)
@@ -68,7 +81,12 @@ def load_credentials(path: Path | None = None) -> Credentials:
     payload = json.loads(resolved.read_text())
     username = payload.get("username")
     password = payload.get("password")
-    if not isinstance(username, str) or not username or not isinstance(password, str) or not password:
+    if (
+        not isinstance(username, str)
+        or not username
+        or not isinstance(password, str)
+        or not password
+    ):
         raise ValueError(f"{resolved} must contain non-empty username and password strings")
     return Credentials(username=username, password=password)
 
@@ -147,6 +165,28 @@ def _session_id() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
+def resolve_output_paths(
+    local_smoke: bool, log: Path | None, artifacts_dir: Path | None
+) -> tuple[Path, Path]:
+    """Resolve the effective ``(artifacts_dir, log_path)`` pair from parsed CLI args.
+
+    An explicit ``--log``/``--artifacts-dir`` value always wins, in either mode. When the
+    caller didn't override them, the default depends on ``local_smoke``:
+    ``--local-smoke`` sessions fall back to the ``-local-smoke`` paths (never the public
+    ladder's), while live sessions fall back to the original public-ladder defaults. Pure
+    and argparse-free so it's directly unit-testable (see tests/test_ladder.py).
+    """
+    if local_smoke:
+        default_artifacts_dir = DEFAULT_LOCAL_SMOKE_ARTIFACTS_DIR
+        default_log = DEFAULT_LOCAL_SMOKE_LOG_PATH
+    else:
+        default_artifacts_dir = DEFAULT_ARTIFACTS_DIR
+        default_log = DEFAULT_LOG_PATH
+    resolved_artifacts_dir = artifacts_dir if artifacts_dir is not None else default_artifacts_dir
+    resolved_log = log if log is not None else default_log
+    return resolved_artifacts_dir, resolved_log
+
+
 async def run_local_smoke(
     *,
     n_games: int,
@@ -222,9 +262,7 @@ async def run_live_session(
             previous_finished = player.n_finished_battles
             previous_records = len(player.completed_records)
             try:
-                await asyncio.wait_for(
-                    player.ladder(1), timeout=game_timeout_seconds
-                )
+                await asyncio.wait_for(player.ladder(1), timeout=game_timeout_seconds)
                 await player.flush_finished_battles(delay_seconds=1.0)
                 if player.n_finished_battles <= previous_finished:
                     raise RuntimeError("ladder call returned without a completed battle")
@@ -252,8 +290,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=1, help="number of games")
     parser.add_argument("--team", type=Path, default=TEAMS_DIR / "meta1.packed.txt")
-    parser.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS_DIR)
-    parser.add_argument("--log", type=Path, default=DEFAULT_LOG_PATH)
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=None,
+        help=(
+            "directory for replays/traces (default: "
+            f"{DEFAULT_ARTIFACTS_DIR} normally, {DEFAULT_LOCAL_SMOKE_ARTIFACTS_DIR} "
+            "under --local-smoke)"
+        ),
+    )
+    parser.add_argument(
+        "--log",
+        type=Path,
+        default=None,
+        help=(
+            "append-only outcome JSONL path (default: "
+            f"{DEFAULT_LOG_PATH} normally, {DEFAULT_LOCAL_SMOKE_LOG_PATH} "
+            "under --local-smoke)"
+        ),
+    )
     parser.add_argument("--credentials-file", type=Path, default=DEFAULT_CREDENTIALS_FILE)
     parser.add_argument("--game-timeout", type=float, default=300.0)
     parser.add_argument("--max-retries", type=int, default=2)
@@ -270,6 +326,7 @@ def main() -> int:
     args = parse_args()
     if args.n < 1:
         raise ValueError("--n must be at least 1")
+    artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
     team = args.team.read_text().strip()
     if args.local_smoke:
         records = asyncio.run(
@@ -277,8 +334,8 @@ def main() -> int:
                 n_games=args.n,
                 team=team,
                 opponent=args.opponent,
-                artifacts_dir=args.artifacts_dir,
-                log_path=args.log,
+                artifacts_dir=artifacts_dir,
+                log_path=log_path,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -289,16 +346,16 @@ def main() -> int:
                 n_games=args.n,
                 team=team,
                 credentials=credentials,
-                artifacts_dir=args.artifacts_dir,
-                log_path=args.log,
+                artifacts_dir=artifacts_dir,
+                log_path=log_path,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )
         )
     wins = sum(record.get("won") is True for record in records)
     print(f"completed {len(records)} games: {wins} wins, {len(records) - wins} non-wins")
-    print(f"artifacts: {args.artifacts_dir}")
-    print(f"session log: {args.log}")
+    print(f"artifacts: {artifacts_dir}")
+    print(f"session log: {log_path}")
     return 0
 
 

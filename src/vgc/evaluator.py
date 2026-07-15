@@ -35,6 +35,24 @@ PolicyConfig field.
   is what keeps the evaluator from reflexively double-Protecting when neither slot is
   actually threatened -- both penalties make an unthreatened Protect score below almost
   any attacking alternative, without a special-cased "not both" rule).
+- **Opponent Protect/switch anticipation**: Open Team Sheets reveal the opponent's full
+  movesets, so a `_SELF_PROTECT_MOVES` member in a slot's known kit makes Protect a real
+  possibility instead of a guess -- `_opp_protect_probability` estimates it from a base
+  rate plus how close our best single attack onto that slot comes to a KO (capped, and
+  collapsed when `protect_counter` shows they already Protected last turn), and
+  `_opp_switch_probability` estimates a pivot-out chance when that slot is under heavy
+  pressure but its own output is weak. In `_score_attack_order`, only the KO-dependent
+  bonuses (guaranteed/likely/outspeed) and the Fake Out flinch bonus are dampened by
+  Protect probability -- raw expected damage is deliberately left undiscounted, since a
+  blocked hit also costs the OPPONENT their turn and is roughly tempo-neutral, whereas a
+  denied KO is a real EV loss (discounting the whole contribution instead broke the
+  calibration of every other weight -- screens, switches, own Protect -- and regressed
+  win rate in gate testing). Switch probability dampens only the KO-dependent bonuses too
+  (our damage still lands on whatever replaces them). Separately, `_cross_slot_adjustments`
+  penalizes STACKING two single-target attacks into the same Protect-capable slot: if it
+  Protects, both attacks blank, so the smaller (redundant) one's expected value -- which
+  could have gone at the other opposing slot instead -- is forfeited with probability
+  `protect_prob` (`protect_stack_penalty_weight`).
 - **Status/utility**: Trick Room, Fake Out (folded into the normal attack-scoring path
   since it IS a damaging move, not a status move), Sleep Powder, Helping Hand (scored at
   the joint-order level since its value depends on the PARTNER slot's chosen move),
@@ -125,6 +143,45 @@ def likely_ko(result: DamageResult, target_hp: int) -> bool:
     return target_hp > 0 and result.expected_damage >= target_hp
 
 
+def _opp_protect_probability(
+    has_self_protect_move: bool, pressure_percent: float, protect_counter: int, config: PolicyConfig
+) -> float:
+    """Estimated probability an opponent slot Protects this turn.
+
+    0.0 unless Open Team Sheets confirm the slot holds a `_SELF_PROTECT_MOVES` member --
+    otherwise a base rate (`opp_protect_base_prob`) scaled up by how close our best single
+    attack onto that slot comes to a KO (`pressure_percent`, capped at
+    `opp_protect_prob_cap`), then collapsed toward zero if `protect_counter` shows they
+    already Protected last turn (`opp_protect_repeat_factor`).
+    """
+    if not has_self_protect_move:
+        return 0.0
+    prob = min(
+        config.opp_protect_prob_cap,
+        config.opp_protect_base_prob
+        + config.opp_protect_pressure_scale * (pressure_percent / 100.0),
+    )
+    if protect_counter >= 1:
+        prob *= config.opp_protect_repeat_factor
+    return prob
+
+
+def _opp_switch_probability(
+    pressure_percent: float, opp_output_percent: float, config: PolicyConfig
+) -> float:
+    """Flat probability an opponent slot switches out this turn: it only applies when the
+    slot is under heavy incoming pressure (`pressure_percent >= opp_switch_pressure_floor`)
+    AND its own best expected output is weak (`opp_output_percent < opp_switch_output_ceiling`)
+    -- see `PolicyConfig`'s `opp_switch_*` comments for the reasoning behind each bound.
+    """
+    if (
+        pressure_percent >= config.opp_switch_pressure_floor
+        and opp_output_percent < config.opp_switch_output_ceiling
+    ):
+        return config.opp_switch_prob
+    return 0.0
+
+
 # --- move-id tables for the hand-coded status/utility heuristics ------------------------
 
 # Every move whose primary job is "block this turn's incoming hits" -- scored uniformly
@@ -145,6 +202,26 @@ _PROTECT_MOVES = frozenset(
         "quickguard",
         "matblock",
         "craftyshield",
+    }
+)
+
+# Protect-family moves that shield the move's USER from single-target attacks -- used to
+# ask whether an OPPONENT slot might Protect against OUR incoming single-target attack
+# this turn (see `_opp_protect_probability`). Deliberately narrower than `_PROTECT_MOVES`
+# above (which drives scoring OUR OWN Protect choice and rightly includes the side-wide
+# variants): Wide Guard/Quick Guard/Mat Block/Crafty Shield block spread moves for the
+# whole side, not a single-target attack onto this one slot, so they're out of scope for
+# the "will THIS slot dodge THIS hit" question this set answers.
+_SELF_PROTECT_MOVES = frozenset(
+    {
+        "protect",
+        "detect",
+        "spikyshield",
+        "banefulbunker",
+        "kingsshield",
+        "silktrap",
+        "obstruct",
+        "burningbulwark",
     }
 )
 
@@ -169,7 +246,11 @@ _INTIMIDATE_IMMUNE_ABILITIES = frozenset(
     }
 )
 
-_SCREEN_MOVE_TO_SIDE_CONDITION = {"reflect": "reflect", "lightscreen": "lightscreen", "auroraveil": "auroraveil"}
+_SCREEN_MOVE_TO_SIDE_CONDITION = {
+    "reflect": "reflect",
+    "lightscreen": "lightscreen",
+    "auroraveil": "auroraveil",
+}
 
 _SPREAD_TARGETS_HITTING_ALLY = frozenset({"allAdjacent"})
 _SPREAD_TARGETS_FOES_ONLY = frozenset({"allAdjacentFoes"})
@@ -242,7 +323,11 @@ def mega_species_id(base_species_id: str, item_id: str | None) -> str | None:
     for forme_name in species.get("otherFormes") or ():
         forme_id = to_id(forme_name)
         forme_data = load_species().get(forme_id)
-        if forme_data and forme_data.get("isMega") and to_id(forme_data.get("requiredItem")) == item_id:
+        if (
+            forme_data
+            and forme_data.get("isMega")
+            and to_id(forme_data.get("requiredItem")) == item_id
+        ):
             return forme_id
     return None
 
@@ -277,7 +362,9 @@ class ScoredOrder:
     breakdown: dict[str, object] = field(default_factory=dict)
 
 
-def score_joint_orders(battle: DoubleBattle, config: PolicyConfig | None = None) -> list[ScoredOrder]:
+def score_joint_orders(
+    battle: DoubleBattle, config: PolicyConfig | None = None
+) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn, best first.
 
     Returns `[]` if `vgc.actions.enumerate_joint_orders` has nothing legal (mirrors that
@@ -315,7 +402,10 @@ def _record_trace(scored: list[ScoredOrder], config: PolicyConfig) -> None:
     top_k = max(1, config.trace_top_k)
     record_note(
         "top_candidates",
-        [{"order": describe_order(entry.order), "score": round(entry.score, 3)} for entry in scored[:top_k]],
+        [
+            {"order": describe_order(entry.order), "score": round(entry.score, 3)}
+            for entry in scored[:top_k]
+        ],
     )
     record_note("chosen_breakdown", scored[0].breakdown)
     if len(scored) > 1:
@@ -352,8 +442,20 @@ class _Context:
     # Best estimated outgoing damage % (from either of our actives) onto each OPPONENT
     # slot -- a rough "how scary is this opposing mon overall" figure for Fake Out.
     opp_threat_score: list[float]
+    # Estimated probability each OPPONENT slot Protects this turn (0.0 unless Open Team
+    # Sheets confirm a `_SELF_PROTECT_MOVES` member in its known kit) -- see
+    # `_opp_protect_probability`; dampens the ENTIRE per-target contribution in
+    # `_score_attack_order` since Protect blocks damage, KO bonuses, and Fake Out alike.
+    opp_protect_prob: list[float]
+    # Estimated probability each OPPONENT slot switches out this turn under heavy
+    # pressure with weak own output -- see `_opp_switch_probability`; dampens only the
+    # KO-dependent bonuses in `_score_attack_order` (our damage still lands on whatever
+    # replaces them).
+    opp_switch_prob: list[float]
 
-    def field_state(self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET) -> FieldState:
+    def field_state(
+        self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
+    ) -> FieldState:
         screens = self.our_side_screens if defender_is_ours else self.opp_side_screens
         return FieldState(
             weather=self.weather if weather is _UNSET else weather,
@@ -365,10 +467,14 @@ class _Context:
         )
 
     def our_alive(self) -> list[int]:
-        return [i for i in (0, 1) if self.our_pokemon[i] is not None and not self.our_pokemon[i].fainted]
+        return [
+            i for i in (0, 1) if self.our_pokemon[i] is not None and not self.our_pokemon[i].fainted
+        ]
 
     def opp_alive(self) -> list[int]:
-        return [i for i in (0, 1) if self.opp_pokemon[i] is not None and not self.opp_pokemon[i].fainted]
+        return [
+            i for i in (0, 1) if self.opp_pokemon[i] is not None and not self.opp_pokemon[i].fainted
+        ]
 
 
 def _weather_str(battle: DoubleBattle) -> str | None:
@@ -388,7 +494,9 @@ def _terrain_str(battle: DoubleBattle) -> str | None:
 
 
 def _screens_from(side_conditions) -> frozenset[str]:
-    return frozenset(_SIDE_CONDITION_TO_SCREEN[sc] for sc in side_conditions if sc in _SIDE_CONDITION_TO_SCREEN)
+    return frozenset(
+        _SIDE_CONDITION_TO_SCREEN[sc] for sc in side_conditions if sc in _SIDE_CONDITION_TO_SCREEN
+    )
 
 
 def _our_pokemon_state(pokemon: Pokemon) -> PokemonState:
@@ -418,8 +526,12 @@ def _our_pokemon_state(pokemon: Pokemon) -> PokemonState:
     if sp_spread is None or nature is None:
         from vgc.stats import default_opponent_nature, default_opponent_spread
 
-        state.sp_spread = state.sp_spread if state.sp_spread is not None else default_opponent_spread(species_id)
-        state.nature = state.nature if state.nature is not None else default_opponent_nature(species_id)
+        state.sp_spread = (
+            state.sp_spread if state.sp_spread is not None else default_opponent_spread(species_id)
+        )
+        state.nature = (
+            state.nature if state.nature is not None else default_opponent_nature(species_id)
+        )
     state.current_hp = pokemon.current_hp
     return state
 
@@ -471,7 +583,8 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_pokemon.append(None)
 
     our_states = [
-        _our_pokemon_state(mon) if mon is not None and not mon.fainted else None for mon in our_pokemon
+        _our_pokemon_state(mon) if mon is not None and not mon.fainted else None
+        for mon in our_pokemon
     ]
     opp_states = [
         opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
@@ -496,7 +609,21 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
     ]
 
     field_vs_us = FieldState(
-        weather=weather, terrain=terrain, screens=our_side_screens, trick_room=trick_room, is_doubles=True
+        weather=weather,
+        terrain=terrain,
+        screens=our_side_screens,
+        trick_room=trick_room,
+        is_doubles=True,
+    )
+    # Mirrors field_vs_us but from the opponent's side of the field (their own screens) --
+    # used below to estimate OUR best pressure onto each opponent slot for Protect/switch
+    # anticipation.
+    field_vs_opp = FieldState(
+        weather=weather,
+        terrain=terrain,
+        screens=opp_side_screens,
+        trick_room=trick_room,
+        is_doubles=True,
     )
 
     threat_on_us = [_ThreatInfo(), _ThreatInfo()]
@@ -511,10 +638,47 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             if opp_state is None or opp_mon is None:
                 continue
             move_ids = list(opp_mon.moves.keys()) if opp_mon.moves else []
-            pct, move_id, priority = _best_attacking_move(opp_state, move_ids, our_state, field_vs_us)
+            pct, move_id, priority = _best_attacking_move(
+                opp_state, move_ids, our_state, field_vs_us
+            )
             if pct > threat_on_us[our_idx].percent:
                 threat_on_us[our_idx] = _ThreatInfo(percent=pct, move_id=move_id, priority=priority)
             opp_threat_score[opp_idx] = max(opp_threat_score[opp_idx], pct)
+
+    # Our best expected % onto each opponent slot (the mirror image of threat_on_us) --
+    # drives both Protect pressure and switch-incentive pressure below.
+    pressure_on_opp = [0.0, 0.0]
+    for opp_idx in (0, 1):
+        opp_state = opp_states[opp_idx]
+        if opp_state is None:
+            continue
+        for our_idx in (0, 1):
+            our_state = our_states[our_idx]
+            our_mon = our_pokemon[our_idx]
+            if our_state is None or our_mon is None:
+                continue
+            our_move_ids = list(our_mon.moves.keys()) if our_mon.moves else []
+            pct, _, _ = _best_attacking_move(our_state, our_move_ids, opp_state, field_vs_opp)
+            pressure_on_opp[opp_idx] = max(pressure_on_opp[opp_idx], pct)
+
+    opp_protect_prob = [0.0, 0.0]
+    opp_switch_prob = [0.0, 0.0]
+    for opp_idx in (0, 1):
+        opp_state = opp_states[opp_idx]
+        opp_mon = opp_pokemon[opp_idx]
+        if opp_state is None or opp_mon is None:
+            continue
+        known_move_ids = {
+            to_id(move_id) for move_id in (opp_mon.moves.keys() if opp_mon.moves else [])
+        }
+        has_self_protect_move = bool(known_move_ids & _SELF_PROTECT_MOVES)
+        protect_counter = getattr(opp_mon, "protect_counter", 0)
+        opp_protect_prob[opp_idx] = _opp_protect_probability(
+            has_self_protect_move, pressure_on_opp[opp_idx], protect_counter, config
+        )
+        opp_switch_prob[opp_idx] = _opp_switch_probability(
+            pressure_on_opp[opp_idx], opp_threat_score[opp_idx], config
+        )
 
     return _Context(
         battle=battle,
@@ -531,14 +695,23 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_speed=opp_speed,
         threat_on_us=threat_on_us,
         opp_threat_score=opp_threat_score,
+        opp_protect_prob=opp_protect_prob,
+        opp_switch_prob=opp_switch_prob,
     )
 
 
 # --- per-slot scoring ---------------------------------------------------------------------
 
 
-def _score_single(single: SingleBattleOrder | None, actor_slot: int, ctx: _Context, config: PolicyConfig) -> dict:
-    info: dict[str, object] = {"kind": "pass", "score": 0.0, "move_id": None, "raw_damage_score": 0.0}
+def _score_single(
+    single: SingleBattleOrder | None, actor_slot: int, ctx: _Context, config: PolicyConfig
+) -> dict:
+    info: dict[str, object] = {
+        "kind": "pass",
+        "score": 0.0,
+        "move_id": None,
+        "raw_damage_score": 0.0,
+    }
     if single is None:
         return info
     target = single.order
@@ -555,7 +728,9 @@ def _score_single(single: SingleBattleOrder | None, actor_slot: int, ctx: _Conte
             info["score"] = score
             info.update(extra)
             return info
-        score, raw_damage_score, extra = _score_attack_order(target, move_data, single, actor_slot, ctx, config)
+        score, raw_damage_score, extra = _score_attack_order(
+            target, move_data, single, actor_slot, ctx, config
+        )
         info["score"] = score
         info["raw_damage_score"] = raw_damage_score
         info.update(extra)
@@ -609,7 +784,12 @@ def _resolve_targets(
 
 
 def _score_attack_order(
-    move: Move, move_data: dict, single: SingleBattleOrder, actor_slot: int, ctx: _Context, config: PolicyConfig
+    move: Move,
+    move_data: dict,
+    single: SingleBattleOrder,
+    actor_slot: int,
+    ctx: _Context,
+    config: PolicyConfig,
 ) -> tuple[float, float, dict]:
     move_id = to_id(move.id)
     attacker_state = _attacker_state_for(single, actor_slot, ctx)
@@ -636,7 +816,11 @@ def _score_attack_order(
     current_hp_percent_by_target: dict[int, float] = {}
     guaranteed_ko_slots: list[int] = []
     survival_guard_slots: list[int] = []
-    field_vs_opp = ctx.field_state(defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order)
+    protect_prob_by_target: dict[int, float] = {}
+    switch_prob_by_target: dict[int, float] = {}
+    field_vs_opp = ctx.field_state(
+        defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
+    )
     for idx in opp_targets:
         defender_state = ctx.opp_states[idx]
         if defender_state is None:
@@ -646,37 +830,68 @@ def _score_attack_order(
         current_hp_percent_by_target[idx] = (
             100.0 * defender_state.hp_or_max() / defender_state.max_hp()
         )
-        contribution = result.expected_percent * config.damage_percent_weight
-        raw_damage_score += contribution
+        base_damage = result.expected_percent * config.damage_percent_weight
+        raw_damage_score += base_damage
 
         target_hp = defender_state.hp_or_max()
         is_guaranteed = guaranteed_ko(result, target_hp)
         is_likely = likely_ko(result, target_hp)
+        ko_bonus = 0.0
         if is_guaranteed:
             guaranteed_ko_slots.append(idx)
-            contribution += config.guaranteed_ko_bonus
+            ko_bonus += config.guaranteed_ko_bonus
         elif is_likely:
-            contribution += config.likely_ko_bonus
+            ko_bonus += config.likely_ko_bonus
 
+        damage_term = base_damage
         threat = ctx.threat_on_us[actor_slot]
         we_move_first = True
         if threat.move_id is not None:
             opp_moves_first = resolves_before(
-                threat.priority, ctx.opp_speed[idx], actor_priority, ctx.our_speed[actor_slot], ctx.trick_room
+                threat.priority,
+                ctx.opp_speed[idx],
+                actor_priority,
+                ctx.our_speed[actor_slot],
+                ctx.trick_room,
             )
             if opp_moves_first and threat.percent >= 100.0:
-                contribution *= config.threatened_output_discount
+                damage_term *= config.threatened_output_discount
+                ko_bonus *= config.threatened_output_discount
             we_move_first = resolves_before(
-                actor_priority, ctx.our_speed[actor_slot], threat.priority, ctx.opp_speed[idx], ctx.trick_room
+                actor_priority,
+                ctx.our_speed[actor_slot],
+                threat.priority,
+                ctx.opp_speed[idx],
+                ctx.trick_room,
             )
         if we_move_first and (is_guaranteed or is_likely):
-            contribution += config.outspeed_ko_bonus
+            ko_bonus += config.outspeed_ko_bonus
+
+        # An opponent pivoting out under heavy pressure with weak own output still eats
+        # our damage on the replacement, but any KO-dependent bonus evaporates -- only the
+        # KO-related share of this target's contribution is dampened by switch odds.
+        ko_bonus *= 1.0 - ctx.opp_switch_prob[idx]
+        # Protect denies the KO itself, which IS a real EV loss -- removing a threat from
+        # the field is not "neutral" just because they also burned a turn to Protect. Raw
+        # chip damage is different: a blocked hit costs the OPPONENT their turn too, so
+        # that EV loss is roughly tempo-neutral and is deliberately left UNDISCOUNTED
+        # (damage_term below never sees opp_protect_prob) -- multiplying the whole
+        # per-target contribution by (1 - protect_prob) previously cut guaranteed-KO plays
+        # so hard it broke the calibration of every other weight (screens, switches, own
+        # Protect) and regressed the bot's win rate against SimpleHeuristicsPlayer.
+        ko_bonus *= 1.0 - ctx.opp_protect_prob[idx]
+        contribution = damage_term + ko_bonus
 
         if move_id == "fakeout" and getattr(actor_mon, "first_turn", False):
             opp_mon = ctx.opp_pokemon[idx]
             opp_ability = to_id(opp_mon.ability) if opp_mon and opp_mon.ability else None
             if opp_ability not in _FLINCH_IMMUNE_ABILITIES:
-                contribution += config.fake_out_weight * (1.0 + ctx.opp_threat_score[idx] / 100.0)
+                fake_out_bonus = config.fake_out_weight * (1.0 + ctx.opp_threat_score[idx] / 100.0)
+                # Protect blocks the flinch too -- no hit lands at all if they Protect.
+                contribution += fake_out_bonus * (1.0 - ctx.opp_protect_prob[idx])
+
+        protect_prob_by_target[idx] = ctx.opp_protect_prob[idx]
+        switch_prob_by_target[idx] = ctx.opp_switch_prob[idx]
 
         score += contribution
 
@@ -686,13 +901,19 @@ def _score_attack_order(
         ):
             survival_guard_slots.append(idx)
 
-    field_vs_us = ctx.field_state(defender_is_ours=True, num_targets=num_hit, weather=weather_for_this_order)
+    field_vs_us = ctx.field_state(
+        defender_is_ours=True, num_targets=num_hit, weather=weather_for_this_order
+    )
     for idx in ally_targets:
         ally_state = ctx.our_states[idx]
         if ally_state is None:
             continue
         result = damage_range(attacker_state, ally_state, move_id, field_vs_us)
-        score -= result.expected_percent * config.damage_percent_weight * config.ally_damage_penalty_weight
+        score -= (
+            result.expected_percent
+            * config.damage_percent_weight
+            * config.ally_damage_penalty_weight
+        )
 
     if config.mega_evolve_asap and getattr(single, "mega", False):
         score += 1e-3  # tie-breaker nudge only -- mega stats already drive the real gain
@@ -702,17 +923,28 @@ def _score_attack_order(
         if move_data.get("target") in _SINGLE_TARGETS and len(opp_targets) == 1
         else None
     )
-    return score, raw_damage_score, {
-        "single_target_slot": single_target_slot,
-        "expected_percent_by_target": expected_percent_by_target,
-        "current_hp_percent_by_target": current_hp_percent_by_target,
-        "guaranteed_ko_slots": guaranteed_ko_slots,
-        "survival_guard_slots": survival_guard_slots,
-    }
+    return (
+        score,
+        raw_damage_score,
+        {
+            "single_target_slot": single_target_slot,
+            "expected_percent_by_target": expected_percent_by_target,
+            "current_hp_percent_by_target": current_hp_percent_by_target,
+            "guaranteed_ko_slots": guaranteed_ko_slots,
+            "survival_guard_slots": survival_guard_slots,
+            "protect_prob_by_target": protect_prob_by_target,
+            "switch_prob_by_target": switch_prob_by_target,
+        },
+    )
 
 
 def _score_status_move(
-    move_id: str, move_data: dict, single: SingleBattleOrder, actor_slot: int, ctx: _Context, config: PolicyConfig
+    move_id: str,
+    move_data: dict,
+    single: SingleBattleOrder,
+    actor_slot: int,
+    ctx: _Context,
+    config: PolicyConfig,
 ) -> tuple[float, dict]:
     if move_id in _PROTECT_MOVES:
         return _score_protect(actor_slot, ctx, config)
@@ -748,7 +980,10 @@ def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]
     our_alive, opp_alive = ctx.our_alive(), ctx.opp_alive()
     our_avg = mean([ctx.our_speed[i] for i in our_alive]) if our_alive else 0.0
     opp_avg = mean([ctx.opp_speed[i] for i in opp_alive]) if opp_alive else 0.0
-    return (opp_avg - our_avg) * config.trick_room_setup_weight, {"our_avg_speed": our_avg, "opp_avg_speed": opp_avg}
+    return (opp_avg - our_avg) * config.trick_room_setup_weight, {
+        "our_avg_speed": our_avg,
+        "opp_avg_speed": opp_avg,
+    }
 
 
 def _score_sleep_powder(
@@ -798,7 +1033,9 @@ def _intimidate_immune(pokemon: Pokemon | None) -> bool:
     return ability in _INTIMIDATE_IMMUNE_ABILITIES
 
 
-def _score_switch(incoming: Pokemon, actor_slot: int, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
+def _score_switch(
+    incoming: Pokemon, actor_slot: int, ctx: _Context, config: PolicyConfig
+) -> tuple[float, dict]:
     incoming_state = _our_pokemon_state(incoming)
     incoming_move_ids = list(incoming.moves.keys()) if incoming.moves else []
     opp_alive = ctx.opp_alive()
@@ -813,7 +1050,9 @@ def _score_switch(incoming: Pokemon, actor_slot: int, ctx: _Context, config: Pol
         opp_mon = ctx.opp_pokemon[idx]
         if opp_state is None or opp_mon is None:
             continue
-        pct_out, _, _ = _best_attacking_move(incoming_state, incoming_move_ids, opp_state, field_vs_opp)
+        pct_out, _, _ = _best_attacking_move(
+            incoming_state, incoming_move_ids, opp_state, field_vs_opp
+        )
         our_best = max(our_best, pct_out)
         opp_move_ids = list(opp_mon.moves.keys()) if opp_mon.moves else []
         pct_in, _, _ = _best_attacking_move(opp_state, opp_move_ids, incoming_state, field_vs_us)
@@ -824,7 +1063,11 @@ def _score_switch(incoming: Pokemon, actor_slot: int, ctx: _Context, config: Pol
     if incoming.ability and to_id(incoming.ability) == "intimidate":
         eligible = [idx for idx in opp_alive if not _intimidate_immune(ctx.opp_pokemon[idx])]
         score += len(eligible) * config.intimidate_switch_bonus
-    return score, {"matchup": matchup, "our_best_percent": our_best, "their_best_percent": their_best}
+    return score, {
+        "matchup": matchup,
+        "our_best_percent": our_best,
+        "their_best_percent": their_best,
+    }
 
 
 def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyConfig) -> float:
@@ -843,15 +1086,29 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
         has_survival_guard = target in first_info.get(
             "survival_guard_slots", ()
         ) or target in second_info.get("survival_guard_slots", ())
+        first_expected = float(first_info.get("expected_percent_by_target", {}).get(target, 0.0))
+        second_expected = float(second_info.get("expected_percent_by_target", {}).get(target, 0.0))
+
+        # Stacking penalty: if the shared target Protects, BOTH single-target attacks
+        # blank this turn -- the smaller of the two was the redundant one, and it could
+        # have gone at the OTHER opposing slot instead, so that expected value is
+        # forfeited with probability protect_prob. This is additive with (not a
+        # replacement for) the guaranteed-KO/focus-fire sub-cases below, since it's a
+        # distinct cost (a wasted move slot) from either of those.
+        protect_prob = float(
+            first_info.get("protect_prob_by_target", {}).get(
+                target, second_info.get("protect_prob_by_target", {}).get(target, 0.0)
+            )
+        )
+        bonus -= (
+            protect_prob
+            * min(first_expected, second_expected)
+            * config.protect_stack_penalty_weight
+        )
+
         if (first_guarantees or second_guarantees) and not has_survival_guard:
             bonus -= config.redundant_ko_target_penalty
         elif not first_guarantees and not second_guarantees:
-            first_expected = float(
-                first_info.get("expected_percent_by_target", {}).get(target, 0.0)
-            )
-            second_expected = float(
-                second_info.get("expected_percent_by_target", {}).get(target, 0.0)
-            )
             target_hp = float(
                 first_info.get("current_hp_percent_by_target", {}).get(
                     target,

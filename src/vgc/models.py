@@ -68,6 +68,13 @@ class PolicyConfig:
     # removes the shared target. This preserves deliberate focus fire while separating
     # it from the redundant-overkill case above.
     focus_fire_ko_bonus: float = 35.0
+    # Per-percent weight on the redundant stacked attack's expected damage into a
+    # Protect-capable shared target (see `_cross_slot_adjustments`): if that slot
+    # Protects, both single-target attacks blank, so the smaller attack's expected value
+    # -- which could have gone at the OTHER opposing slot instead -- is forfeited with
+    # probability `opp_protect_prob`. 1.0 = treat it as a full EV forfeit at that
+    # probability, not a partial one.
+    protect_stack_penalty_weight: float = 1.0
 
     # -- Speed/turn order -----------------------------------------------------------------
     # When a target is faster than the attacker (post Trick Room inversion) and its best
@@ -94,6 +101,38 @@ class PolicyConfig:
     # Threat percent (of this Pokemon's max HP) below which protect_low_threat_penalty
     # applies.
     protect_low_threat_floor: float = 15.0
+
+    # -- Defense/utility: opponent Protect anticipation -----------------------------------
+    # Baseline chance an opponent slot Protects this turn when it has an unused
+    # self-protecting move in its known kit (Open Team Sheets make possession a fact, not
+    # a guess) -- even an unpressured Protect happens some of the time as a scouting/tempo
+    # play, so this floor is never zero.
+    opp_protect_base_prob: float = 0.15
+    # Additional Protect probability layered on top of the base rate as our best single
+    # attack's expected damage onto that slot approaches 100% of its max HP -- scaled
+    # linearly by pressure_pct/100, so a lethal-looking attack makes Protect much more
+    # likely than a chip-damage one.
+    opp_protect_pressure_scale: float = 0.3
+    # Hard cap on the combined Protect probability -- Protect should never be treated as
+    # more likely than a coin flip against us; higher would make the evaluator overreact
+    # and abandon otherwise-correct attacks out of excessive caution.
+    opp_protect_prob_cap: float = 0.5
+    # Multiplier that collapses the Protect probability when the opponent's
+    # `protect_counter` shows they already Protected last turn -- consecutive Protects
+    # have a sharply reduced real success chance in the actual engine, so back-to-back
+    # Protect is rare and shouldn't be modeled as equally likely.
+    opp_protect_repeat_factor: float = 0.15
+    # Flat probability an opponent slot switches out instead of attacking when it is under
+    # heavy incoming pressure but its own offensive output is weak (see the floor/ceiling
+    # pair below) -- a cornered, low-value attacker pivoting out is a common ladder play.
+    opp_switch_prob: float = 0.2
+    # Minimum "our best expected % onto that slot" required before switch incentive
+    # applies -- below this the slot isn't actually threatened enough to justify bailing.
+    opp_switch_pressure_floor: float = 60.0
+    # That opponent slot's own best expected % onto either of our actives must be BELOW
+    # this for switch incentive to apply -- a slot still hitting hard has a reason to stay
+    # in even while under pressure.
+    opp_switch_output_ceiling: float = 30.0
 
     # -- Status/utility: Trick Room -------------------------------------------------------
     # Points per (opponent_avg_speed - our_avg_speed) when Trick Room is NOT currently up
