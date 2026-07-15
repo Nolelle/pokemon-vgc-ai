@@ -11,12 +11,21 @@ fall back to a legal random move and log the exception (mirrors pokemon-tcg-ai's
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from poke_env.battle.abstract_battle import AbstractBattle
 from poke_env.battle.double_battle import DoubleBattle
-from poke_env.player.battle_order import BattleOrder
+from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
-from vgc.decision_trace import finish_trace, record_fallback, record_note, start_trace
+from vgc.actions import describe_order
+from vgc.decision_trace import (
+    current_trace,
+    finish_trace,
+    record_fallback,
+    record_note,
+    start_trace,
+)
 from vgc.evaluator import score_joint_orders
 from vgc.models import PolicyConfig
 from vgc.team_preview import build_team_order
@@ -36,11 +45,81 @@ class VgcPlayer(Player):
 
     def __init__(self, config: PolicyConfig | None = None, **player_kwargs) -> None:
         self.config = config or PolicyConfig()
+        # poke-env 0.15 can receive an opponent's OTS rejection before its team-preview
+        # request. Remember that room until the request arrives so the battle does not
+        # wait forever for a `showteam` message that Showdown will never send.
+        self._pending_ots_rejections: set[str] = set()
+        self._resolved_ots_rejections: set[str] = set()
+        self.decision_trace_history: list[dict[str, object]] = []
         player_kwargs.setdefault("battle_format", self.config.format_id)
         player_kwargs.setdefault(
             "accept_open_team_sheet", self.config.accept_open_team_sheet
         )
         super().__init__(**player_kwargs)
+
+    async def _handle_battle_message(self, split_messages) -> None:
+        """Work around poke-env 0.15's Open Team Sheets accept/reject race.
+
+        Upstream defers team-preview choice while an OTS-accepting player waits for the
+        opponent's ``showteam`` message. If the rejection text arrives before the
+        ``request`` message has set ``battle.teampreview``, upstream misses the rejection
+        and later waits forever. Showdown may alternatively return an ``error`` saying
+        the opponent already rejected. In either order, remember the rejection and send
+        our team-preview choice once the request has actually been parsed.
+        """
+
+        room_marker = split_messages[0][0] if split_messages and split_messages[0] else ""
+        battle_tag = room_marker[1:] if room_marker.startswith(">") else room_marker
+        rejection_was_pending = battle_tag in self._pending_ots_rejections
+        rejection_positions: list[int] = []
+        request_positions: list[int] = []
+        saw_rejection_error = False
+
+        for index, message in enumerate(split_messages[1:], start=1):
+            joined = "|".join(message).lower()
+            if "rejected open team sheets." in joined:
+                rejection_positions.append(index)
+                if len(message) > 1 and message[1] == "error":
+                    saw_rejection_error = True
+            if len(message) > 1 and message[1] == "request":
+                request_positions.append(index)
+
+        if rejection_positions and battle_tag not in self._resolved_ots_rejections:
+            self._pending_ots_rejections.add(battle_tag)
+
+        await super()._handle_battle_message(split_messages)
+
+        if not self.accept_open_team_sheet or battle_tag in self._resolved_ots_rejections:
+            return
+
+        battle = self._battles.get(battle_tag)
+        saw_plain_rejection = bool(rejection_positions) and not saw_rejection_error
+        if saw_plain_rejection and battle is not None and battle.teampreview and not request_positions:
+            # Upstream's plain-text branch handled this ordering itself.
+            self._pending_ots_rejections.discard(battle_tag)
+            self._resolved_ots_rejections.add(battle_tag)
+            return
+        if battle_tag not in self._pending_ots_rejections:
+            return
+
+        # If rejection followed a request in this same batch, upstream already resumed
+        # team preview from its plain-text rejection branch. Recover only when the
+        # rejection was known earlier, preceded the request, or arrived as an error (an
+        # error is only logged by upstream and never resumes the request).
+        rejection_preceded_request = bool(
+            request_positions
+            and rejection_positions
+            and min(rejection_positions) < max(request_positions)
+        )
+        should_recover = (
+            saw_rejection_error
+            or (bool(request_positions) and rejection_was_pending)
+            or rejection_preceded_request
+        )
+        if should_recover and battle is not None and battle.teampreview:
+            self._pending_ots_rejections.discard(battle_tag)
+            self._resolved_ots_rejections.add(battle_tag)
+            await self._handle_battle_request(battle)
 
     # --- overridable hooks --------------------------------------------------------
 
@@ -73,8 +152,10 @@ class VgcPlayer(Player):
 
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
         trace_token = start_trace()
+        chosen_order: BattleOrder | None = None
         try:
-            return self.decide(battle)
+            chosen_order = self.decide(battle)
+            return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
             record_fallback(f"decide() raised {exc!r}")
             if self.config.log_decisions:
@@ -82,16 +163,43 @@ class VgcPlayer(Player):
                     "decide() raised; falling back to random move (turn=%s)",
                     getattr(battle, "turn", None),
                 )
-            return self.choose_random_move(battle)
+            chosen_order = self.choose_random_move(battle)
+            return chosen_order
         finally:
-            finish_trace(trace_token)
+            trace = current_trace()
+            if trace is not None:
+                trace.turn = getattr(battle, "turn", None)
+                if isinstance(chosen_order, DoubleBattleOrder):
+                    trace.chosen_order = describe_order(chosen_order)
+                elif chosen_order is not None:
+                    trace.chosen_order = str(chosen_order)
+            finished_trace = finish_trace(trace_token)
+            if finished_trace is not None:
+                self.decision_trace_history.append(
+                    {"battle_tag": battle.battle_tag, **asdict(finished_trace)}
+                )
 
     def teampreview(self, battle: AbstractBattle) -> str:
+        trace_token = start_trace()
+        chosen_order: str | None = None
         try:
-            return self.decide_teampreview(battle)
+            chosen_order = self.decide_teampreview(battle)
+            return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
+            record_fallback(f"decide_teampreview() raised {exc!r}")
             if self.config.log_decisions:
                 self.logger.exception(
                     "decide_teampreview() raised; falling back to /team 1234: %r", exc
                 )
-            return "/team 1234"
+            chosen_order = "/team 1234"
+            return chosen_order
+        finally:
+            trace = current_trace()
+            if trace is not None:
+                trace.turn = 0
+                trace.chosen_order = chosen_order
+            finished_trace = finish_trace(trace_token)
+            if finished_trace is not None:
+                self.decision_trace_history.append(
+                    {"battle_tag": battle.battle_tag, **asdict(finished_trace)}
+                )

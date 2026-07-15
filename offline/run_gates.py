@@ -35,7 +35,7 @@ def gate_from_result(result: dict[str, object], threshold: float) -> dict[str, o
     rate = wins / games if games else 0.0
     low, high = wilson_interval(wins, games)
     passed = low > threshold
-    return {
+    gate = {
         "name": f"{result['p1']}_vs_{result['p2']}",
         "passed": passed,
         "games": games,
@@ -44,6 +44,9 @@ def gate_from_result(result: dict[str, object], threshold: float) -> dict[str, o
         "wilson": [low, high],
         "threshold": f"wilson_low > {threshold}",
     }
+    if "open_team_sheets" in result:
+        gate["open_team_sheets"] = result["open_team_sheets"]
+    return gate
 
 
 def run_gate(
@@ -53,8 +56,19 @@ def run_gate(
     team: str,
     threshold: float,
     battle_format: str = FORMAT_ID,
+    *,
+    accept_open_team_sheet: bool = True,
 ) -> dict[str, object]:
-    result = asyncio.run(run_matches(candidate, incumbent, n, team, battle_format))
+    result = asyncio.run(
+        run_matches(
+            candidate,
+            incumbent,
+            n,
+            team,
+            battle_format,
+            accept_open_team_sheet=accept_open_team_sheet,
+        )
+    )
     return gate_from_result(result, threshold)
 
 
@@ -65,6 +79,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n", type=int, default=100)
     parser.add_argument("--team", type=Path, default=TEAMS_DIR / "dev.packed.txt")
     parser.add_argument("--format", default=FORMAT_ID)
+    parser.add_argument(
+        "--open-team-sheets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="make both players accept OTS (default); use --no-open-team-sheets for both to reject",
+    )
     parser.add_argument("--threshold", type=float, default=0.55)
     parser.add_argument(
         "--results", type=Path, default=None, help="reuse an existing run_matches.py result JSON"
@@ -84,7 +104,15 @@ def main() -> int:
             print("--candidate and --incumbent are required unless --results is given", file=sys.stderr)
             return 2
         team = args.team.read_text().strip()
-        gate = run_gate(args.candidate, args.incumbent, args.n, team, args.threshold, args.format)
+        gate = run_gate(
+            args.candidate,
+            args.incumbent,
+            args.n,
+            team,
+            args.threshold,
+            args.format,
+            accept_open_team_sheet=args.open_team_sheets,
+        )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(gate, indent=2, sort_keys=True))

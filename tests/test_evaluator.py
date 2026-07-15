@@ -24,6 +24,7 @@ from vgc.evaluator import (
     guaranteed_ko,
     likely_ko,
     mega_species_id,
+    mega_evolved_state,
     resolves_before,
 )
 from vgc.models import PolicyConfig
@@ -133,6 +134,22 @@ def test_mega_species_id_none_for_wrong_item_or_no_item() -> None:
 
 def test_mega_species_id_none_for_species_with_no_mega() -> None:
     assert mega_species_id("klefki", "leftovers") is None
+
+
+def test_mega_evolved_state_uses_mega_stats_and_ability() -> None:
+    state = PokemonState(
+        species_id="charizard",
+        item="charizarditey",
+        ability="blaze",
+        sp_spread={"spa": 32, "spe": 24, "hp": 10},
+        nature="modest",
+    )
+
+    mega = mega_evolved_state(state)
+
+    assert mega.species_id == "charizardmegay"
+    assert mega.ability == "drought"
+    assert mega.stats()["spa"] > state.stats()["spa"]
 
 
 # --- _resolve_targets: allAdjacent (hits ally) vs allAdjacentFoes (foes only) --------

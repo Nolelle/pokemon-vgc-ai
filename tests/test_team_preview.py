@@ -8,8 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from vgc.damage import PokemonState
 from vgc.models import PolicyConfig
-from vgc.team_preview import build_team_order
+from vgc.team_preview import _preview_speed, build_team_order
 
 
 @dataclass
@@ -95,3 +96,18 @@ def test_falls_back_gracefully_with_no_opponent_preview() -> None:
     battle = _FakeBattle(_our_team(), [])
     order = build_team_order(battle, PolicyConfig())
     assert order == "/team 1234"
+
+
+def test_sun_mega_is_recognized_as_a_lead_mode() -> None:
+    battle = _FakeBattle(_our_team(), _our_team())
+
+    order = build_team_order(battle, PolicyConfig())
+
+    leads = {int(digit) for digit in order.removeprefix("/team ")[:2]}
+    assert 1 in leads  # Charizard-Y's Mega stats and Drought are no longer ignored.
+
+
+def test_chlorophyll_speed_is_doubled_in_preview_sun() -> None:
+    venusaur = PokemonState(species_id="venusaur", ability="chlorophyll")
+
+    assert _preview_speed(venusaur, "sun") == 2 * _preview_speed(venusaur, None)

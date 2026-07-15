@@ -9,6 +9,7 @@ pyproject.toml -- `-m "not integration"`). Run explicitly with:
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import time
 
@@ -19,37 +20,26 @@ from vgc.agent import VgcPlayer
 from vgc.baselines import make_player
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO, TEAMS_DIR
 from vgc.models import PolicyConfig
+from vgc.node import find_node, node_environment
+from ladder.run_ladder import run_local_smoke
 
 pytestmark = pytest.mark.integration
 
 SERVER_READY_TIMEOUT_SECONDS = 30
-
-
-def _find_node() -> str:
-    import shutil
-    from pathlib import Path
-
-    node = shutil.which("node")
-    if node:
-        return node
-    fallback = Path.home() / ".nvm/versions/node/v22.22.0/bin/node"
-    if fallback.exists():
-        return str(fallback)
-    raise FileNotFoundError("node not found on PATH and no nvm fallback exists")
-
 
 @pytest.fixture(scope="module")
 def local_server():
     """Start `pokemon-showdown start --no-security` for the duration of this module,
     then kill it. Waits for the "listening on" log line before yielding.
     """
-    node = _find_node()
+    node = find_node()
     process = subprocess.Popen(
         [node, "pokemon-showdown", "start", "--no-security"],
         cwd=str(SHOWDOWN_REPO),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        env=node_environment(node),
     )
     try:
         deadline = time.monotonic() + SERVER_READY_TIMEOUT_SECONDS
@@ -83,7 +73,7 @@ def test_random_vs_random_battles_complete(local_server, dev_team) -> None:
         p1 = make_player("random", dev_team, FORMAT_ID)
         p2 = make_player("random", dev_team, FORMAT_ID)
         try:
-            await p1.battle_against(p2, n_battles=5)
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=5), timeout=30)
         finally:
             await p1.ps_client.stop_listening()
             await p2.ps_client.stop_listening()
@@ -123,7 +113,7 @@ def test_joint_order_enumeration_during_real_battle(local_server, dev_team) -> N
         )
         p2 = make_player("random", dev_team, FORMAT_ID)
         try:
-            await p1.battle_against(p2, n_battles=2)
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=2), timeout=30)
         finally:
             await p1.ps_client.stop_listening()
             await p2.ps_client.stop_listening()
@@ -148,7 +138,7 @@ def test_vgc_vs_random_battles_complete(local_server, dev_team) -> None:
         p1 = make_player("vgc", dev_team, FORMAT_ID)
         p2 = make_player("random", dev_team, FORMAT_ID)
         try:
-            await p1.battle_against(p2, n_battles=3)
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=3), timeout=45)
         finally:
             await p1.ps_client.stop_listening()
             await p2.ps_client.stop_listening()
@@ -158,3 +148,46 @@ def test_vgc_vs_random_battles_complete(local_server, dev_team) -> None:
 
     assert finished == 3
     assert p1_wins + p2_wins <= finished
+
+
+def test_ots_accept_reject_race_completes(local_server, dev_team) -> None:
+    """An accepting VgcPlayer must not hang when a stock opponent rejects OTS first."""
+
+    async def _run() -> int:
+        accepting = make_player("vgc", dev_team, FORMAT_ID)
+        rejecting = make_player("random", dev_team, FORMAT_ID)
+        assert accepting.accept_open_team_sheet is True
+        assert rejecting.accept_open_team_sheet is False
+        try:
+            await asyncio.wait_for(
+                accepting.battle_against(rejecting, n_battles=1), timeout=20
+            )
+        finally:
+            await accepting.ps_client.stop_listening()
+            await rejecting.ps_client.stop_listening()
+        return accepting.n_finished_battles
+
+    assert asyncio.run(_run()) == 1
+
+
+def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) -> None:
+    artifacts = tmp_path / "ladder"
+    log_path = tmp_path / "ladder.jsonl"
+
+    records = asyncio.run(
+        run_local_smoke(
+            n_games=2,
+            team=dev_team,
+            opponent="random",
+            artifacts_dir=artifacts,
+            log_path=log_path,
+            timeout_seconds=30,
+        )
+    )
+
+    assert len(records) == 2
+    assert len(log_path.read_text().splitlines()) == 2
+    assert len(list((artifacts / "replays").glob("*.html"))) == 2
+    trace_files = list((artifacts / "traces").glob("*.json"))
+    assert len(trace_files) == 2
+    assert all(json.loads(path.read_text()) for path in trace_files)

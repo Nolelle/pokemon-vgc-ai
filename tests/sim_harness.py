@@ -20,27 +20,14 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
-from pathlib import Path
 
 from vgc.config import REPO_ROOT, SHOWDOWN_REPO
+from vgc.node import find_node
 
 SIM_PROBE = REPO_ROOT / "tools" / "sim_probe.mjs"
 
 FULL_IVS = {"hp": 31, "atk": 31, "def": 31, "spa": 31, "spd": 31, "spe": 31}
-
-
-def find_node() -> str:
-    node = shutil.which("node")
-    if node:
-        return node
-    # node is not always on PATH in fresh shells on this machine (see CLAUDE.md).
-    fallback = Path.home() / ".nvm/versions/node/v22.22.0/bin/node"
-    if fallback.exists():
-        return str(fallback)
-    raise FileNotFoundError("node not found on PATH and no nvm fallback exists")
-
 
 def pokeset(
     species: str,

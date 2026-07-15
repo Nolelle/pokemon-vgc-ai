@@ -219,6 +219,26 @@ def mega_species_id(base_species_id: str, item_id: str | None) -> str | None:
     return None
 
 
+def mega_evolved_state(state: PokemonState) -> PokemonState:
+    """Return the Mega form implied by ``state.item``, or ``state`` if none exists."""
+
+    mega_id = mega_species_id(state.species_id, state.item)
+    if mega_id is None:
+        return state
+    mega_species = load_species().get(mega_id) or {}
+    mega_ability = to_id((mega_species.get("abilities") or {}).get("0"))
+    return PokemonState(
+        species_id=mega_id,
+        sp_spread=state.sp_spread,
+        nature=state.nature,
+        boosts=dict(state.boosts),
+        status=state.status,
+        item=state.item,
+        ability=mega_ability,
+        current_hp=state.current_hp,
+    )
+
+
 # --- ScoredOrder / top-level entry point -------------------------------------------------
 
 
@@ -269,6 +289,9 @@ def _record_trace(scored: list[ScoredOrder], config: PolicyConfig) -> None:
         "top_candidates",
         [{"order": describe_order(entry.order), "score": round(entry.score, 3)} for entry in scored[:top_k]],
     )
+    record_note("chosen_breakdown", scored[0].breakdown)
+    if len(scored) > 1:
+        record_note("score_margin", round(scored[0].score - scored[1].score, 3))
 
 
 # --- battle context: one snapshot per score_joint_orders() call -------------------------
@@ -500,20 +523,7 @@ def _score_single(single: SingleBattleOrder | None, actor_slot: int, ctx: _Conte
 def _attacker_state_for(single: SingleBattleOrder, actor_slot: int, ctx: _Context) -> PokemonState:
     base_state = ctx.our_states[actor_slot]
     if getattr(single, "mega", False):
-        mega_id = mega_species_id(base_state.species_id, base_state.item)
-        if mega_id:
-            mega_species = load_species().get(mega_id) or {}
-            mega_ability = to_id((mega_species.get("abilities") or {}).get("0"))
-            return PokemonState(
-                species_id=mega_id,
-                sp_spread=base_state.sp_spread,
-                nature=base_state.nature,
-                boosts=dict(base_state.boosts),
-                status=base_state.status,
-                item=base_state.item,
-                ability=mega_ability,
-                current_hp=base_state.current_hp,
-            )
+        return mega_evolved_state(base_state)
     return base_state
 
 

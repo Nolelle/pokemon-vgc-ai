@@ -10,7 +10,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,20 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from vgc.config import DATA_DIR, SHOWDOWN_REPO  # noqa: E402
+from vgc.node import find_node  # noqa: E402
 
 EXPORT_SCRIPT = Path(__file__).resolve().parent / "export_champions_data.mjs"
-
-
-def find_node() -> str:
-    node = shutil.which("node")
-    if node:
-        return node
-    # node is not always on PATH in fresh shells on this machine (see CLAUDE.md).
-    fallback = Path.home() / ".nvm/versions/node/v22.22.0/bin/node"
-    if fallback.exists():
-        return str(fallback)
-    raise FileNotFoundError("node not found on PATH and no nvm fallback exists")
-
 
 def main() -> int:
     if not SHOWDOWN_REPO.exists():

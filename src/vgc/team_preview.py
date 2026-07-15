@@ -18,16 +18,16 @@ the exact weights):
     (immunities, resists), so a bounded difference is used instead; it captures the same
     "who wins this exchange" signal without that failure mode.
   - **Speed**: mean effective Speed of the two LEADS (the two mons that actually matter
-    for turn 1) minus the opponent's previewed 6's mean Speed.
+    for turn 1) minus the opponent's previewed 6's mean Speed. Lead-set weather includes
+    Chlorophyll/Swift Swim/Sand Rush/Slush Rush multipliers.
   - **Trick Room coherence**: 0 unless the pick includes a mon with Trick Room in its
     kit, in which case it rewards ALSO bringing genuinely slow attackers alongside the
     setter (mean opponent Speed minus the mean Speed of the picked non-setter mons) --
     a TR pick with fast attackers alongside the setter doesn't get this bonus, since that
     isn't really "TR mode" so much as "brought Trick Room as tech".
 
-The `our(6) x opponent(<=6)` matchup matrix is computed exactly once regardless of how
-many of the 90 candidates get evaluated (each candidate only needs a lookup, not a fresh
-damage_range call) -- see `_build_matchup_matrix`.
+The `our(6) x opponent(<=6)` matchup matrix is computed once per possible lead weather,
+then reused across all 90 candidates -- see `_build_matchup_matrix`.
 """
 
 from __future__ import annotations
@@ -39,13 +39,32 @@ from poke_env.battle.abstract_battle import AbstractBattle
 
 from vgc.damage import FieldState, to_id
 from vgc.decision_trace import record_note
-from vgc.evaluator import _best_attacking_move, _our_pokemon_state, effective_speed
+from vgc.evaluator import (
+    _best_attacking_move,
+    _our_pokemon_state,
+    effective_speed,
+    mega_evolved_state,
+)
 from vgc.models import PolicyConfig
 from vgc.sets import load_usage_spreads, opponent_state
 
 _LEADS_COUNT = 2
 _PICK_COUNT = 4
 _TEAM_SIZE = 6
+
+_WEATHER_BY_ABILITY = {
+    "drought": "sun",
+    "drizzle": "rain",
+    "sandstream": "sand",
+    "snowwarning": "snow",
+}
+_SPEED_ABILITY_BY_WEATHER = {
+    "sun": "chlorophyll",
+    "rain": "swiftswim",
+    "sand": "sandrush",
+    "snow": "slushrush",
+}
+_PREVIEW_WEATHERS = (None, "sun", "rain", "sand", "snow")
 
 
 def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None) -> str:
@@ -63,8 +82,11 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         return "/team " + "".join(str(i) for i in order)
 
     usage = load_usage_spreads()
-    our_states = [_our_pokemon_state(mon) for mon in our_team]
-    opp_states = [opponent_state(mon, usage=usage) for mon in opp_team]
+    # A held Mega stone is public information and this evaluator has no strategic reason
+    # to save a Mega for later, so preview the form that will actually battle. This also
+    # exposes weather-setting Mega abilities such as Drought to the lead scorer.
+    our_states = [mega_evolved_state(_our_pokemon_state(mon)) for mon in our_team]
+    opp_states = [mega_evolved_state(opponent_state(mon, usage=usage)) for mon in opp_team]
     our_move_id_lists = [
         [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else [] for mon in our_team
     ]
@@ -72,13 +94,19 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else [] for mon in opp_team
     ]
 
-    our_speed = [effective_speed(state) for state in our_states]
     opp_speed = [effective_speed(state) for state in opp_states]
     opp_avg_speed = mean(opp_speed) if opp_speed else 0.0
 
-    our_onto_them, them_onto_us = _build_matchup_matrix(
-        our_states, our_move_id_lists, opp_states, opp_move_id_lists
-    )
+    matchup_by_weather = {
+        weather: _build_matchup_matrix(
+            our_states,
+            our_move_id_lists,
+            opp_states,
+            opp_move_id_lists,
+            weather=weather,
+        )
+        for weather in _PREVIEW_WEATHERS
+    }
 
     best_score = float("-inf")
     best_order: tuple[int, ...] = tuple(range(_PICK_COUNT))
@@ -90,10 +118,9 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
             score, breakdown = _score_choice(
                 order=order,
                 picked=pick,
+                our_states=our_states,
                 our_move_id_lists=our_move_id_lists,
-                our_onto_them=our_onto_them,
-                them_onto_us=them_onto_us,
-                our_speed=our_speed,
+                matchup_by_weather=matchup_by_weather,
                 opp_avg_speed=opp_avg_speed,
                 n_opp=len(opp_states),
                 config=config,
@@ -115,8 +142,10 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
     return order_string
 
 
-def _build_matchup_matrix(our_states, our_move_id_lists, opp_states, opp_move_id_lists):
-    field = FieldState(is_doubles=True)
+def _build_matchup_matrix(
+    our_states, our_move_id_lists, opp_states, opp_move_id_lists, *, weather=None
+):
+    field = FieldState(is_doubles=True, weather=weather)
     n_our = len(our_states)
     n_opp = len(opp_states)
     our_onto_them = [[0.0] * n_opp for _ in range(n_our)]
@@ -132,17 +161,42 @@ def _build_matchup_matrix(our_states, our_move_id_lists, opp_states, opp_move_id
     return our_onto_them, them_onto_us
 
 
+def _lead_weather(leads, our_states) -> str | None:
+    for index in leads:
+        weather = _WEATHER_BY_ABILITY.get(our_states[index].ability)
+        if weather is not None:
+            return weather
+    return None
+
+
+def _preview_speed(state, weather: str | None) -> float:
+    speed = effective_speed(state)
+    if _SPEED_ABILITY_BY_WEATHER.get(weather) == state.ability:
+        speed *= 2.0
+    return speed
+
+
 def _score_choice(
-    *, order, picked, our_move_id_lists, our_onto_them, them_onto_us, our_speed, opp_avg_speed, n_opp, config
+    *,
+    order,
+    picked,
+    our_states,
+    our_move_id_lists,
+    matchup_by_weather,
+    opp_avg_speed,
+    n_opp,
+    config,
 ) -> tuple[float, dict[str, object]]:
     leads = order[:_LEADS_COUNT]
+    weather = _lead_weather(leads, our_states)
+    our_onto_them, them_onto_us = matchup_by_weather[weather]
 
     exchange_terms = [
         our_onto_them[i][j] - them_onto_us[i][j] for i in picked for j in range(n_opp)
     ]
     exchange_score = mean(exchange_terms) if exchange_terms else 0.0
 
-    lead_speed = mean(our_speed[i] for i in leads)
+    lead_speed = mean(_preview_speed(our_states[i], weather) for i in leads)
     speed_score = lead_speed - opp_avg_speed
 
     has_tr_setter = any("trickroom" in our_move_id_lists[i] for i in picked)
@@ -150,7 +204,7 @@ def _score_choice(
     if has_tr_setter:
         non_setters = [i for i in picked if "trickroom" not in our_move_id_lists[i]]
         if non_setters:
-            attacker_speed = mean(our_speed[i] for i in non_setters)
+            attacker_speed = mean(_preview_speed(our_states[i], weather) for i in non_setters)
             tr_score = opp_avg_speed - attacker_speed
 
     total = (
@@ -163,4 +217,5 @@ def _score_choice(
         "speed_score": round(speed_score, 3),
         "tr_score": round(tr_score, 3),
         "has_tr_setter": has_tr_setter,
+        "lead_weather": weather,
     }

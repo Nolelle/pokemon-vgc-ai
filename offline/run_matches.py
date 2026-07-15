@@ -11,9 +11,12 @@ import argparse
 import asyncio
 import json
 import math
+import secrets
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+from poke_env.ps_client.account_configuration import AccountConfiguration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -37,10 +40,33 @@ def wilson_interval(wins: int, games: int, z: float = 1.96) -> tuple[float, floa
 
 
 async def run_matches(
-    p1_name: str, p2_name: str, n: int, team: str, battle_format: str = FORMAT_ID
+    p1_name: str,
+    p2_name: str,
+    n: int,
+    team: str,
+    battle_format: str = FORMAT_ID,
+    *,
+    accept_open_team_sheet: bool = True,
 ) -> dict[str, object]:
-    p1 = make_player(p1_name, team, battle_format)
-    p2 = make_player(p2_name, team, battle_format)
+    # Keep both sides on the same OTS setting. Besides making comparisons fair, this
+    # avoids accidentally benchmarking an accept/reject protocol race instead of the
+    # two policies. VgcPlayer itself still handles a real opponent rejecting on ladder.
+    token = secrets.token_hex(3)
+    common_kwargs = {"accept_open_team_sheet": accept_open_team_sheet}
+    p1 = make_player(
+        p1_name,
+        team,
+        battle_format,
+        account_configuration=AccountConfiguration(f"{p1_name[:8]}-{token}a", None),
+        **common_kwargs,
+    )
+    p2 = make_player(
+        p2_name,
+        team,
+        battle_format,
+        account_configuration=AccountConfiguration(f"{p2_name[:8]}-{token}b", None),
+        **common_kwargs,
+    )
     try:
         await p1.battle_against(p2, n_battles=n)
     finally:
@@ -56,10 +82,11 @@ async def run_matches(
     p1_low, p1_high = wilson_interval(p1_wins, games)
     p2_low, p2_high = wilson_interval(p2_wins, games)
 
-    return {
+    result: dict[str, object] = {
         "p1": p1_name,
         "p2": p2_name,
         "format": battle_format,
+        "open_team_sheets": "accept" if accept_open_team_sheet else "reject",
         "games": games,
         "p1_wins": p1_wins,
         "p2_wins": p2_wins,
@@ -70,6 +97,17 @@ async def run_matches(
         "p2_wilson": [p2_low, p2_high],
         "timestamp": datetime.now(UTC).isoformat(),
     }
+    for label, player in (("p1", p1), ("p2", p2)):
+        traces = getattr(player, "decision_trace_history", None)
+        if traces:
+            result[f"{label}_diagnostics"] = {
+                "battles": {
+                    tag: {"won": battle.won, "turns": battle.turn}
+                    for tag, battle in player.battles.items()
+                },
+                "decisions": traces,
+            }
+    return result
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +122,12 @@ def parse_args() -> argparse.Namespace:
         help="path to a packed or paste-format Showdown team file",
     )
     parser.add_argument("--format", default=FORMAT_ID)
+    parser.add_argument(
+        "--open-team-sheets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="make both players accept OTS (default); use --no-open-team-sheets for both to reject",
+    )
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -92,7 +136,16 @@ def main() -> int:
     args = parse_args()
     team = args.team.read_text().strip()
 
-    result = asyncio.run(run_matches(args.p1, args.p2, args.n, team, args.format))
+    result = asyncio.run(
+        run_matches(
+            args.p1,
+            args.p2,
+            args.n,
+            team,
+            args.format,
+            accept_open_team_sheet=args.open_team_sheets,
+        )
+    )
 
     print(
         f"{result['p1']} vs {result['p2']}: "

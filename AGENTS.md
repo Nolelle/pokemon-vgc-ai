@@ -135,6 +135,32 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   Natural Gift, Present, etc.) still isn't computable from `PokemonState`/`FieldState`
   alone and still short-circuits with `breakdown["move_supported"] = False`.
 
+## OTS reliability, final Phase 2b gates, and ladder runner
+
+- `VgcPlayer._handle_battle_message` contains a narrow poke-env 0.15 compatibility shim
+  for the Open Team Sheets accept/reject race: if rejection arrives before the team-
+  preview request, the bot remembers it and resumes exactly once when the request is
+  parsed. `tests/integration/test_local_battles.py::test_ots_accept_reject_race_completes`
+  is the regression test.
+- Offline evaluation makes both players' OTS choice explicit (`--open-team-sheets` by
+  default, or `--no-open-team-sheets` for both to reject) and uses unique guest accounts
+  so concurrent/stale local sessions do not collide.
+- Team preview evaluates revealed Mega stones as their actual Mega forms and models
+  lead-set weather plus Chlorophyll/Swift Swim/Sand Rush/Slush Rush. This fixed the
+  meta1 preview's earlier failure to bring Charizard-Y; it now selects the intended sun
+  mode rather than always excluding the team's main attacker.
+- Final clean gates on 2026-07-15, meta1 mirror and both players accepting OTS:
+  `runs/eval/final_vgc_vs_random_gate.json` = 99/100, Wilson low 0.946 (>0.90);
+  `runs/eval/final_vgc_vs_heuristic_gate.json` = 225/300, 75.0%, Wilson low 0.698
+  (>0.65). `runs/` is gitignored, so rerun before claiming these are current.
+- `ladder/run_ladder.py` is the Phase 3 session runner. It saves HTML replays, per-battle
+  decision traces, and append-only `runs/ladder.jsonl` outcomes; runs one public ladder
+  game at a time; and recreates the client after a timeout/network failure. Credentials
+  come from `VGC_SHOWDOWN_USERNAME` + `VGC_SHOWDOWN_PASSWORD` or the gitignored
+  `.showdown-credentials.json`. Always run `--local-smoke` first.
+- `vgc.node.find_node` selects Node 22 even when an older Node is first on PATH. Override
+  discovery with `VGC_NODE` if necessary.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -176,6 +202,12 @@ cat teams/dev.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026
 # breakdown -- set before any script that drives a real/local battle:
 VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 1 \
     --team teams/meta1.packed.txt
+
+# Exercise replay/trace/outcome logging against the local server before public ladder:
+.venv/bin/python ladder/run_ladder.py --local-smoke --n 2
+
+# Public ladder (credentials are read from env or .showdown-credentials.json):
+.venv/bin/python ladder/run_ladder.py --n 1
 
 # Log an experiment note
 .venv/bin/python offline/log_experiment.py --name "..." --summary "..."

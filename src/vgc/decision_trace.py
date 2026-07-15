@@ -21,7 +21,12 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 
 TRACE_ENV_VAR = "VGC_TRACE"
-TRACE_ENABLED = bool(os.environ.get(TRACE_ENV_VAR))
+
+
+def trace_enabled() -> bool:
+    """Read the flag dynamically so session runners can enable tracing at runtime."""
+
+    return bool(os.environ.get(TRACE_ENV_VAR))
 
 
 @dataclass
@@ -45,7 +50,7 @@ def start_trace() -> Token | None:
     No-op (returns None) when `VGC_TRACE` is unset, so callers still must handle a None
     token -- `finish_trace(None)` is a safe no-op too.
     """
-    if not TRACE_ENABLED:
+    if not trace_enabled():
         return None
     return _trace_var.set(DecisionTrace())
 
