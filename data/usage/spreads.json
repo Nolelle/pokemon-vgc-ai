@@ -1,0 +1,10452 @@
+{
+  "abomasnow": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.15220359719562424
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 29,
+        "hp": 32,
+        "spa": 0,
+        "spd": 5,
+        "spe": 0
+      },
+      "weight": 0.13086732645374055
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 18,
+        "hp": 20,
+        "spa": 2,
+        "spd": 26,
+        "spe": 0
+      },
+      "weight": 0.09930022895697617
+    }
+  ],
+  "abomasnowmega": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.27337053849748705
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.18957881746112756
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.15267461917612768
+    }
+  ],
+  "absol": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.5780975277800396
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12762296121167527
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10022931382107239
+    }
+  ],
+  "aegislash": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1845049101195413
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08345174883712694
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.0777214508437324
+    }
+  ],
+  "aerodactyl": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.7484750605087869
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.061341700182444295
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 20,
+        "def": 10,
+        "hp": 4,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03488985314769254
+    }
+  ],
+  "aerodactylmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.26794707480935637
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 12,
+        "def": 0,
+        "hp": 22,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10003935549224094
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 17,
+        "def": 0,
+        "hp": 15,
+        "spa": 0,
+        "spd": 5,
+        "spe": 29
+      },
+      "weight": 0.04041306421235888
+    }
+  ],
+  "aggronmega": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.1246967537157543
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 5,
+        "hp": 32,
+        "spa": 0,
+        "spd": 29,
+        "spe": 0
+      },
+      "weight": 0.12341372901216388
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.09269955280955955
+    }
+  ],
+  "alakazam": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4058923972609816
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 1,
+        "spa": 1,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12865340923022028
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.11587334233882979
+    }
+  ],
+  "alakazammega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.405962607243156
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 31,
+        "spa": 3,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1658927860666078
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15676115322953146
+    }
+  ],
+  "alcremie": [
+    {
+      "nature": "hardy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.7814809697077395
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.02800031244550299
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 16,
+        "hp": 32,
+        "spa": 0,
+        "spd": 18,
+        "spe": 0
+      },
+      "weight": 0.026038644955934175
+    }
+  ],
+  "altaria": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 21,
+        "hp": 25,
+        "spa": 0,
+        "spd": 0,
+        "spe": 20
+      },
+      "weight": 0.1447258329051609
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 30,
+        "hp": 32,
+        "spa": 0,
+        "spd": 4,
+        "spe": 0
+      },
+      "weight": 0.11573766602021426
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09394784740524337
+    }
+  ],
+  "altariamega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.08679702217416146
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 9,
+        "hp": 17,
+        "spa": 18,
+        "spd": 15,
+        "spe": 7
+      },
+      "weight": 0.07430961547736599
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07015303791613595
+    }
+  ],
+  "ampharosmega": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.3493434852998557
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.28607391691527717
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 25,
+        "spd": 9,
+        "spe": 0
+      },
+      "weight": 0.09619502215136559
+    }
+  ],
+  "annihilape": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.22706415675347685
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06626160760845541
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05931545888187328
+    }
+  ],
+  "appletun": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.2673191144534425
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.13962479289980612
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.1262487073066534
+    }
+  ],
+  "araquanid": [
+    {
+      "nature": "hardy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.31273406948077814
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.16564054636128653
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.086688911238237
+    }
+  ],
+  "arbok": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.28387958316768286
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.2084938709026513
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 11,
+        "hp": 32,
+        "spa": 0,
+        "spd": 23,
+        "spe": 0
+      },
+      "weight": 0.17294158040908927
+    }
+  ],
+  "arcanine": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 20,
+        "def": 1,
+        "hp": 21,
+        "spa": 0,
+        "spd": 1,
+        "spe": 23
+      },
+      "weight": 0.2555890696603554
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 21,
+        "hp": 32,
+        "spa": 0,
+        "spd": 13,
+        "spe": 0
+      },
+      "weight": 0.09878316377979197
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.05705406059765894
+    }
+  ],
+  "arcaninehisui": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2910574557728957
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.20677161129983657
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08592520224919566
+    }
+  ],
+  "archaludon": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 1,
+        "spd": 29,
+        "spe": 4
+      },
+      "weight": 0.06663261310109161
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 5,
+        "spd": 25,
+        "spe": 3
+      },
+      "weight": 0.05900340996889381
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05683085369472921
+    }
+  ],
+  "ariados": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 32,
+        "spa": 0,
+        "spd": 14,
+        "spe": 0
+      },
+      "weight": 0.2837701712443656
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 24,
+        "hp": 31,
+        "spa": 0,
+        "spd": 11,
+        "spe": 0
+      },
+      "weight": 0.11935181970517751
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 14,
+        "hp": 32,
+        "spa": 0,
+        "spd": 20,
+        "spe": 0
+      },
+      "weight": 0.07479823448842199
+    }
+  ],
+  "armarouge": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 28,
+        "spa": 32,
+        "spd": 0,
+        "spe": 6
+      },
+      "weight": 0.15639308872927574
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 31,
+        "spa": 32,
+        "spd": 3,
+        "spe": 0
+      },
+      "weight": 0.0658798909448529
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.06335574434957147
+    }
+  ],
+  "aromatisse": [
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.19962917933261182
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 28,
+        "hp": 15,
+        "spa": 0,
+        "spd": 23,
+        "spe": 0
+      },
+      "weight": 0.1503161511579787
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 32,
+        "spa": 0,
+        "spd": 14,
+        "spe": 0
+      },
+      "weight": 0.10758752497247556
+    }
+  ],
+  "audino": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 32,
+        "spa": 0,
+        "spd": 22,
+        "spe": 0
+      },
+      "weight": 0.2830259777798255
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11651319756328668
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 24,
+        "hp": 32,
+        "spa": 0,
+        "spd": 10,
+        "spe": 0
+      },
+      "weight": 0.09272002121512782
+    }
+  ],
+  "audinomega": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 24,
+        "hp": 32,
+        "spa": 0,
+        "spd": 10,
+        "spe": 0
+      },
+      "weight": 0.23488058858523495
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.10865810727948112
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.10273244579506466
+    }
+  ],
+  "aurorus": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 21,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.3976486607409331
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06834651398572608
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.061064959410480686
+    }
+  ],
+  "avalugghisui": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 1,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.33894424009740776
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.18610383875379316
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 32,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.1554851607460662
+    }
+  ],
+  "azumarill": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 25,
+        "spa": 0,
+        "spd": 5,
+        "spe": 4
+      },
+      "weight": 0.19593394969861808
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 3,
+        "hp": 31,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.11744285852822829
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 31,
+        "spa": 0,
+        "spd": 3,
+        "spe": 0
+      },
+      "weight": 0.08770034491355315
+    }
+  ],
+  "banettemega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 0,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.09610285564808763
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09192313207942138
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 5,
+        "def": 22,
+        "hp": 32,
+        "spa": 0,
+        "spd": 7,
+        "spe": 0
+      },
+      "weight": 0.07846570437231348
+    }
+  ],
+  "barbaracle": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.5031804660417303
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 32,
+        "def": 18,
+        "hp": 0,
+        "spa": 0,
+        "spd": 16,
+        "spe": 0
+      },
+      "weight": 0.11264674483410601
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10210218514516457
+    }
+  ],
+  "barbaraclemega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.233297000313904
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.18534820450738754
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 11,
+        "spa": 0,
+        "spd": 1,
+        "spe": 21
+      },
+      "weight": 0.06158839502075016
+    }
+  ],
+  "basculegion": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17167154471982451
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14312835812168243
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06435025161870128
+    }
+  ],
+  "basculegionf": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 17,
+        "hp": 2,
+        "spa": 15,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12577391655310324
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11171089383623341
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 16,
+        "hp": 2,
+        "spa": 26,
+        "spd": 3,
+        "spe": 19
+      },
+      "weight": 0.11018531555258122
+    }
+  ],
+  "bastiodon": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.27573636298376014
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.1273876717534704
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11954060078804087
+    }
+  ],
+  "beartic": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.230546684546898
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.20256478350642218
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.1315691939891683
+    }
+  ],
+  "beedrillmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.2151794160062449
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1589460163780068
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08861743278669926
+    }
+  ],
+  "bellibolt": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.0925740818718796
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.08401123355054195
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 31,
+        "spa": 3,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.04443549703163099
+    }
+  ],
+  "blastoise": [
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 29,
+        "hp": 32,
+        "spa": 0,
+        "spd": 5,
+        "spe": 0
+      },
+      "weight": 0.43855364779350897
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 31,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.09500758804793417
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.044789857822916584
+    }
+  ],
+  "blastoisemega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3251967261953756
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09280478094228718
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.08000597695575094
+    }
+  ],
+  "blaziken": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.21283328056178655
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13750377062074276
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 13,
+        "spd": 0,
+        "spe": 21
+      },
+      "weight": 0.12073412898707228
+    }
+  ],
+  "blazikenmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5797321039229967
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04847426842277317
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.034094055019943066
+    }
+  ],
+  "cameruptmega": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.32807946847640695
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.2710012201038857
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.12066073559587547
+    }
+  ],
+  "ceruledge": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 25,
+        "def": 10,
+        "hp": 31,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.3571342872540642
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07934852847150156
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 14,
+        "hp": 19,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.042474333896368476
+    }
+  ],
+  "chandelure": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12819192617120576
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09182883159290467
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 10,
+        "hp": 32,
+        "spa": 15,
+        "spd": 9,
+        "spe": 0
+      },
+      "weight": 0.08634198742494127
+    }
+  ],
+  "chandeluremega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.10281058871655237
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07875735606956052
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07379990625636038
+    }
+  ],
+  "charizard": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2281435605487487
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 10,
+        "spa": 32,
+        "spd": 0,
+        "spe": 24
+      },
+      "weight": 0.226543971128818
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2185628145632786
+    }
+  ],
+  "charizardmegax": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1601618633800593
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 15,
+        "def": 4,
+        "hp": 16,
+        "spa": 0,
+        "spd": 0,
+        "spe": 31
+      },
+      "weight": 0.10868078909299725
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 27,
+        "spa": 0,
+        "spd": 0,
+        "spe": 7
+      },
+      "weight": 0.09349186866888057
+    }
+  ],
+  "charizardmegay": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10907387404316096
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0628994932615847
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 30,
+        "hp": 30,
+        "spa": 1,
+        "spd": 0,
+        "spe": 5
+      },
+      "weight": 0.03573358838118234
+    }
+  ],
+  "chesnaught": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.3581654227639807
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 26,
+        "spe": 0
+      },
+      "weight": 0.09056404639983251
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 28,
+        "hp": 29,
+        "spa": 0,
+        "spd": 9,
+        "spe": 0
+      },
+      "weight": 0.087461206024073
+    }
+  ],
+  "chesnaughtmega": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.22604600562355182
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07941985694072304
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 2,
+        "def": 30,
+        "hp": 20,
+        "spa": 0,
+        "spd": 14,
+        "spe": 0
+      },
+      "weight": 0.06375471985264754
+    }
+  ],
+  "chimechomega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 26,
+        "hp": 32,
+        "spa": 8,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.3888059420909514
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09977525606576333
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 10,
+        "hp": 31,
+        "spa": 25,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.06628978419367165
+    }
+  ],
+  "clawitzer": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1835844014065691
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.16262539651468497
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.12696525209943857
+    }
+  ],
+  "clefable": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09039234224095238
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06597734351175256
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 17,
+        "hp": 32,
+        "spa": 0,
+        "spd": 12,
+        "spe": 5
+      },
+      "weight": 0.06231431032883063
+    }
+  ],
+  "clefablemega": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 17,
+        "hp": 32,
+        "spa": 0,
+        "spd": 12,
+        "spe": 5
+      },
+      "weight": 0.11322798465685954
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 32,
+        "spa": 22,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.0918268472996982
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.05193809029274989
+    }
+  ],
+  "cofagrigus": [
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.09962971359680982
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.08854007509314858
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 15,
+        "hp": 32,
+        "spa": 0,
+        "spd": 19,
+        "spe": 0
+      },
+      "weight": 0.07395716464669336
+    }
+  ],
+  "conkeldurr": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.19660815840757273
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.15062090273918027
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.1153784558934221
+    }
+  ],
+  "corviknight": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.08965941668842607
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 2,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07145371432215882
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 13,
+        "def": 7,
+        "hp": 32,
+        "spa": 0,
+        "spd": 5,
+        "spe": 9
+      },
+      "weight": 0.0380365810419875
+    }
+  ],
+  "crabominable": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 18,
+        "hp": 0,
+        "spa": 0,
+        "spd": 16,
+        "spe": 0
+      },
+      "weight": 0.6898928622551583
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.2002051953174497
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.043722409688083094
+    }
+  ],
+  "crabominablemega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.5432863954331814
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.12113750340099416
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06985118660831377
+    }
+  ],
+  "decidueye": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 10,
+        "def": 20,
+        "hp": 32,
+        "spa": 0,
+        "spd": 4,
+        "spe": 0
+      },
+      "weight": 0.3167798689318116
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.2455249784656114
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.08373536669430161
+    }
+  ],
+  "decidueyehisui": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.31291034840174925
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.08257681708300266
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 30,
+        "spa": 0,
+        "spd": 0,
+        "spe": 4
+      },
+      "weight": 0.056892111985010575
+    }
+  ],
+  "delphoxmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.0993348380671342
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 4,
+        "hp": 11,
+        "spa": 19,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08968668487498263
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 17,
+        "hp": 15,
+        "spa": 15,
+        "spd": 0,
+        "spe": 19
+      },
+      "weight": 0.08675374368952786
+    }
+  ],
+  "diggersby": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 20,
+        "spa": 0,
+        "spd": 0,
+        "spe": 14
+      },
+      "weight": 0.20934832065744335
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.15891217599771015
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 3,
+        "hp": 3,
+        "spa": 0,
+        "spd": 3,
+        "spe": 25
+      },
+      "weight": 0.15779218402836126
+    }
+  ],
+  "ditto": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16351674242074316
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1609531790007271
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.1473664123242769
+    }
+  ],
+  "dragalge": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.26782843773571596
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.21045254125692767
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 5,
+        "hp": 29,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.13587142925742932
+    }
+  ],
+  "dragalgemega": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.1321073832683074
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09601812094952489
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09336747662710905
+    }
+  ],
+  "dragapult": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4713569697427432
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15181048001825542
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05278001531459921
+    }
+  ],
+  "dragonite": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.21614992349171191
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06103383258724706
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 9,
+        "spa": 0,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.04699679244561896
+    }
+  ],
+  "dragonitemega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2132587400693947
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10136387911997301
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06981146749138493
+    }
+  ],
+  "drampa": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.33956220822205996
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1669530482709082
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09616304986094805
+    }
+  ],
+  "drampamega": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.3318319507089157
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.2963893345704661
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11266075651964505
+    }
+  ],
+  "eelektross": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 14,
+        "spa": 32,
+        "spd": 0,
+        "spe": 20
+      },
+      "weight": 0.1492775424760933
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09274185214649189
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 31,
+        "spa": 32,
+        "spd": 3,
+        "spe": 0
+      },
+      "weight": 0.0912788597059042
+    }
+  ],
+  "eelektrossmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.07268670749390527
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 4,
+        "hp": 7,
+        "spa": 32,
+        "spd": 0,
+        "spe": 23
+      },
+      "weight": 0.060874150107734504
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.05435503454344848
+    }
+  ],
+  "emboarmega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.21886717371494388
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 14,
+        "def": 25,
+        "hp": 25,
+        "spa": 0,
+        "spd": 0,
+        "spe": 1
+      },
+      "weight": 0.1256740372220598
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 12,
+        "def": 5,
+        "hp": 30,
+        "spa": 0,
+        "spd": 11,
+        "spe": 8
+      },
+      "weight": 0.11805219158223619
+    }
+  ],
+  "emolga": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 22,
+        "spa": 12,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1269879433564523
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12658075511274794
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.11976183526129493
+    }
+  ],
+  "empoleon": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 21,
+        "spa": 16,
+        "spd": 12,
+        "spe": 5
+      },
+      "weight": 0.14381158312706488
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.12482677296426241
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 5,
+        "hp": 30,
+        "spa": 19,
+        "spd": 5,
+        "spe": 7
+      },
+      "weight": 0.08593637587306532
+    }
+  ],
+  "espathra": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 9,
+        "hp": 32,
+        "spa": 0,
+        "spd": 6,
+        "spe": 19
+      },
+      "weight": 0.2291776741395443
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06975768986399557
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.042860152575394855
+    }
+  ],
+  "espeon": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 25,
+        "hp": 32,
+        "spa": 0,
+        "spd": 9,
+        "spe": 0
+      },
+      "weight": 0.5282555992397159
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2533226831431616
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06591994690550565
+    }
+  ],
+  "excadrill": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5316136639258708
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14192453015056075
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0590585048960824
+    }
+  ],
+  "excadrillmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.38010775758872417
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12723067339481775
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 26,
+        "def": 0,
+        "hp": 7,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.09047687205149688
+    }
+  ],
+  "falinksmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.22629105146135675
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 15,
+        "def": 0,
+        "hp": 10,
+        "spa": 0,
+        "spd": 27,
+        "spe": 14
+      },
+      "weight": 0.06593713511848222
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 21,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 11
+      },
+      "weight": 0.06423477353261658
+    }
+  ],
+  "farigiraf": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 26,
+        "hp": 25,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.034356664200348615
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 17,
+        "spa": 10,
+        "spd": 20,
+        "spe": 0
+      },
+      "weight": 0.03263611018244442
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.028515686167538513
+    }
+  ],
+  "feraligatr": [
+    {
+      "nature": "hardy",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 31,
+        "spa": 0,
+        "spd": 0,
+        "spe": 3
+      },
+      "weight": 0.17100431882976014
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 25,
+        "def": 1,
+        "hp": 13,
+        "spa": 0,
+        "spd": 1,
+        "spe": 26
+      },
+      "weight": 0.14113874371880789
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12359860870493568
+    }
+  ],
+  "feraligatrmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 10,
+        "def": 0,
+        "hp": 21,
+        "spa": 0,
+        "spd": 3,
+        "spe": 32
+      },
+      "weight": 0.1992471837681002
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07397786282536019
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.0676112993109963
+    }
+  ],
+  "flapple": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.6262273261489275
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.16494672061413837
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.04547351225178204
+    }
+  ],
+  "flareon": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 20,
+        "def": 14,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.8163182948850074
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06420141912584018
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.037863110106282245
+    }
+  ],
+  "floetteeternal": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.35491902503041617
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19006703558609095
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 10,
+        "hp": 0,
+        "spa": 24,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.086777996089383
+    }
+  ],
+  "floettemega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15982665876397056
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14084102900762827
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 27,
+        "hp": 7,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03138883039282627
+    }
+  ],
+  "florges": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 28,
+        "hp": 24,
+        "spa": 14,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.19168091104172844
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 32,
+        "spa": 12,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.18355659012238865
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16134543399718346
+    }
+  ],
+  "froslass": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2944904710519713
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.22188814402157034
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14598003319956188
+    }
+  ],
+  "froslassmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.29363954223927313
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07342434623636342
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03352323205732882
+    }
+  ],
+  "gallade": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.2088493675041768
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15035498223222074
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11689097907981451
+    }
+  ],
+  "gallademega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.23544627229919662
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 15,
+        "def": 0,
+        "hp": 26,
+        "spa": 0,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.08533191806619732
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 20,
+        "def": 0,
+        "hp": 14,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08084875021520546
+    }
+  ],
+  "garchomp": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.37265672030310804
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0704699095185795
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 28,
+        "def": 0,
+        "hp": 6,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05728483788043526
+    }
+  ],
+  "garchompmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.20429754969865882
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 20,
+        "def": 0,
+        "hp": 10,
+        "spa": 0,
+        "spd": 4,
+        "spe": 32
+      },
+      "weight": 0.08770593214270095
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08440285563102017
+    }
+  ],
+  "gardevoir": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.42040514812278934
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1908567218470945
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.02426349742695092
+    }
+  ],
+  "gardevoirmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09390518559461572
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 22,
+        "hp": 32,
+        "spa": 6,
+        "spd": 1,
+        "spe": 5
+      },
+      "weight": 0.07086802792310203
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0590204091273128
+    }
+  ],
+  "garganacl": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 4,
+        "hp": 30,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.2770244335274548
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 12,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 22,
+        "spe": 0
+      },
+      "weight": 0.11149642309353995
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06198256190964253
+    }
+  ],
+  "gengar": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5183093784660846
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11889743128056984
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.09905851984610252
+    }
+  ],
+  "gengarmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15492072533415266
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 30,
+        "spa": 1,
+        "spd": 28,
+        "spe": 6
+      },
+      "weight": 0.08900793682436994
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03515331567286787
+    }
+  ],
+  "gholdengo": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1869392552652417
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17075245372063017
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 10,
+        "spd": 3,
+        "spe": 19
+      },
+      "weight": 0.03509474573467297
+    }
+  ],
+  "glaceon": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 31,
+        "spa": 32,
+        "spd": 3,
+        "spe": 0
+      },
+      "weight": 0.20892446289967384
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.0923130635792614
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.08468508994743698
+    }
+  ],
+  "glaliemega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.35272051832188356
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.292652230880099
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19274723692231632
+    }
+  ],
+  "glimmora": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.3718437264068515
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.15101988215144324
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14029264544059775
+    }
+  ],
+  "glimmoramega": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 21,
+        "hp": 27,
+        "spa": 0,
+        "spd": 18,
+        "spe": 0
+      },
+      "weight": 0.3099581162934806
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14179010836871533
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.1222002117849472
+    }
+  ],
+  "gliscor": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 14,
+        "spa": 0,
+        "spd": 0,
+        "spe": 20
+      },
+      "weight": 0.3585123956626791
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.13551201211474784
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06871945735599423
+    }
+  ],
+  "golurk": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.28813816279631355
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.15057548081574643
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 26,
+        "def": 11,
+        "hp": 9,
+        "spa": 0,
+        "spd": 0,
+        "spe": 20
+      },
+      "weight": 0.1380413604861896
+    }
+  ],
+  "golurkmega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.340397468029266
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.21890691625154787
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.13053204546769312
+    }
+  ],
+  "goodra": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.34226719279449186
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 16,
+        "hp": 30,
+        "spa": 0,
+        "spd": 10,
+        "spe": 10
+      },
+      "weight": 0.19179933057814244
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07281727709507173
+    }
+  ],
+  "goodrahisui": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 1,
+        "def": 31,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 1
+      },
+      "weight": 0.11646086943932585
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.08403565088844848
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.06684970165281481
+    }
+  ],
+  "gourgeistsuper": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 8,
+        "hp": 32,
+        "spa": 0,
+        "spd": 26,
+        "spe": 0
+      },
+      "weight": 0.7834947914178255
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 3,
+        "def": 32,
+        "hp": 31,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.04017961645008531
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 2,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.03561265678238788
+    }
+  ],
+  "greninja": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3541554715088435
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 16,
+        "def": 0,
+        "hp": 0,
+        "spa": 23,
+        "spd": 0,
+        "spe": 27
+      },
+      "weight": 0.15439932852236843
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13411380922610544
+    }
+  ],
+  "greninjamega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3832191217112911
+    },
+    {
+      "nature": "naive",
+      "sp": {
+        "atk": 8,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 26
+      },
+      "weight": 0.08495669657925609
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0778906501928755
+    }
+  ],
+  "grimmsnarl": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.0841580799298568
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06720372351175108
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 32,
+        "spa": 0,
+        "spd": 14,
+        "spe": 0
+      },
+      "weight": 0.05952920527147556
+    }
+  ],
+  "gyarados": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09524282782385286
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0662388115857466
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 29,
+        "hp": 32,
+        "spa": 0,
+        "spd": 4,
+        "spe": 1
+      },
+      "weight": 0.0503590700177023
+    }
+  ],
+  "gyaradosmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 25,
+        "def": 0,
+        "hp": 11,
+        "spa": 0,
+        "spd": 0,
+        "spe": 30
+      },
+      "weight": 0.097659502073503
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08264747805008346
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06458731210940272
+    }
+  ],
+  "hatterene": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.33717650128626814
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.20534297271949378
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 7,
+        "hp": 27,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.06770931635927924
+    }
+  ],
+  "hawlucha": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 0,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.26081346387192217
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.18577633792698037
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.16223995746875866
+    }
+  ],
+  "hawluchamega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.2142279371167721
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 14,
+        "def": 0,
+        "hp": 25,
+        "spa": 0,
+        "spd": 7,
+        "spe": 20
+      },
+      "weight": 0.18745083732588816
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17984107996319412
+    }
+  ],
+  "heliolisk": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5313020904784485
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19397448529798164
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.042823317230510013
+    }
+  ],
+  "heracrossmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.2989704753196886
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11091569831800682
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.0903920932701087
+    }
+  ],
+  "hippowdon": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 2,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.13355654861561536
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.12797619985733732
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.08315181491483259
+    }
+  ],
+  "houndoom": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5477480657817144
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 9,
+        "spa": 32,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.1584739975422281
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11787169306254101
+    }
+  ],
+  "houndoommega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.406928970036434
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.331061596065552
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.16006294940503338
+    }
+  ],
+  "houndstone": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.20665699814849559
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 9,
+        "def": 9,
+        "hp": 28,
+        "spa": 0,
+        "spd": 0,
+        "spe": 20
+      },
+      "weight": 0.11529945569964709
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07254083329336328
+    }
+  ],
+  "hydrapple": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.25986703122669474
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 10,
+        "hp": 32,
+        "spa": 0,
+        "spd": 24,
+        "spe": 0
+      },
+      "weight": 0.11988042414436914
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.11913172564417589
+    }
+  ],
+  "hydreigon": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.40525005633104094
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17247517715543642
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 8,
+        "spa": 25,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05016203941009968
+    }
+  ],
+  "incineroar": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 14,
+        "hp": 32,
+        "spa": 0,
+        "spd": 20,
+        "spe": 0
+      },
+      "weight": 0.04464010717809977
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.040309721326581706
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 24,
+        "hp": 32,
+        "spa": 0,
+        "spd": 8,
+        "spe": 2
+      },
+      "weight": 0.03580997560530904
+    }
+  ],
+  "infernape": [
+    {
+      "nature": "naive",
+      "sp": {
+        "atk": 23,
+        "def": 0,
+        "hp": 0,
+        "spa": 11,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2387982964000033
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1591107470213948
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13790366239914123
+    }
+  ],
+  "jolteon": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4133738770864394
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 1,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14213860775002535
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12774749708307617
+    }
+  ],
+  "kangaskhan": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.20657320635998833
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.10418468879346804
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.08324220968755693
+    }
+  ],
+  "kangaskhanmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.18140476278223708
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09811088869900776
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09134339033102284
+    }
+  ],
+  "kingambit": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.21520692975768016
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 1
+      },
+      "weight": 0.07764531229327407
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.06996717916312517
+    }
+  ],
+  "kleavor": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4580618314152589
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 3,
+        "spa": 0,
+        "spd": 0,
+        "spe": 31
+      },
+      "weight": 0.167313950640704
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12537207570372022
+    }
+  ],
+  "klefki": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.14734435814774058
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 18,
+        "hp": 30,
+        "spa": 0,
+        "spd": 18,
+        "spe": 0
+      },
+      "weight": 0.08221907804446472
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06862416028999907
+    }
+  ],
+  "kommoo": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19404875515081974
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09855133827170888
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.049055415532022466
+    }
+  ],
+  "krookodile": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3055712234703758
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14777444302193132
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0639775334442655
+    }
+  ],
+  "leafeon": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3522252674239024
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.17023683994727953
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12919952730100306
+    }
+  ],
+  "liepard": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3227651009851913
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 5,
+        "spa": 0,
+        "spd": 0,
+        "spe": 29
+      },
+      "weight": 0.06980131315831009
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04585775454667917
+    }
+  ],
+  "lopunnymega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3787922546913421
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 31,
+        "def": 0,
+        "hp": 3,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2053662586872294
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 25,
+        "def": 2,
+        "hp": 7,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1104534184671413
+    }
+  ],
+  "lucario": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.28995728638847573
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13268326353244297
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.095400787807819
+    }
+  ],
+  "lucariomega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19427509730029402
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1261808543816186
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11564651860739054
+    }
+  ],
+  "luxray": [
+    {
+      "nature": "rash",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2005075083172645
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15421636194975233
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14995493192854836
+    }
+  ],
+  "lycanroc": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4906095492290327
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.12748844215488395
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.09856260991348055
+    }
+  ],
+  "lycanrocdusk": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.28692609907874783
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.1816695761467391
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1775375427018681
+    }
+  ],
+  "lycanrocmidnight": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 29,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 3
+      },
+      "weight": 0.7690501824618791
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.0812457292265456
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0436527330089298
+    }
+  ],
+  "machamp": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.24650333647774622
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.2052631890081893
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 9,
+        "def": 13,
+        "hp": 32,
+        "spa": 0,
+        "spd": 12,
+        "spe": 0
+      },
+      "weight": 0.11917231569110377
+    }
+  ],
+  "malamar": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 2,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 30,
+        "spe": 0
+      },
+      "weight": 0.10688814007415466
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.0890736959073913
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.047319134444451995
+    }
+  ],
+  "malamarmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.10494301787949765
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.04598754854684097
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.034675944261402324
+    }
+  ],
+  "mamoswine": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.26662839760365215
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.25628700974719965
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 0,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.08695681570902465
+    }
+  ],
+  "manectric": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3814389912863367
+    },
+    {
+      "nature": "hardy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1539010784420768
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09082814684697353
+    }
+  ],
+  "manectricmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.345105719783362
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 30,
+        "spa": 4,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14950610186734725
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 3,
+        "hp": 30,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.07586481952929408
+    }
+  ],
+  "maushold": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2595776305914944
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09938021945978394
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08046805878538124
+    }
+  ],
+  "mawilemega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.3888682727014491
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16764703864777075
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.05638502614615982
+    }
+  ],
+  "medicham": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.40276648806940735
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1927937189146224
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.18072089485968204
+    }
+  ],
+  "medichammega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.3160961745536672
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 20,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 4,
+        "spe": 9
+      },
+      "weight": 0.2213387237828133
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13433890483311806
+    }
+  ],
+  "meganiummega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1050261459732312
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.08696470017093065
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06623338915370901
+    }
+  ],
+  "meowscarada": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.36758537321556195
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.22125980033604542
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13062015491343837
+    }
+  ],
+  "meowstic": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.1361759336409272
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0746848080368711
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07325383590636286
+    }
+  ],
+  "meowsticfmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.7842557778869378
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04124225204697253
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 27,
+        "spd": 5,
+        "spe": 32
+      },
+      "weight": 0.024081271951957917
+    }
+  ],
+  "meowsticmmega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 15,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.23861461827954064
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 10,
+        "spa": 0,
+        "spd": 27,
+        "spe": 29
+      },
+      "weight": 0.13032143305251936
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10811940500969623
+    }
+  ],
+  "metagross": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1855702001172247
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10143210947214167
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07058314782124701
+    }
+  ],
+  "metagrossmega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2813547403480816
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 27,
+        "def": 0,
+        "hp": 14,
+        "spa": 0,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.06688268042803584
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.045516986152462566
+    }
+  ],
+  "milotic": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 27,
+        "hp": 32,
+        "spa": 0,
+        "spd": 5,
+        "spe": 2
+      },
+      "weight": 0.180691765087797
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.06166787525680314
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.03850624454647137
+    }
+  ],
+  "mimikyu": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.15115873710052932
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10957930379984851
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.0730527030355875
+    }
+  ],
+  "morpeko": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.7462666047348739
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1082536596338561
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03373679570365583
+    }
+  ],
+  "mrrime": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09095809910992879
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07513226456884342
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 24,
+        "spa": 10,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07457956151814117
+    }
+  ],
+  "mudsdale": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.3490419710194636
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07486372378319268
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 26,
+        "spa": 0,
+        "spd": 8,
+        "spe": 0
+      },
+      "weight": 0.06304946332930604
+    }
+  ],
+  "musharna": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 9,
+        "spa": 0,
+        "spd": 25,
+        "spe": 0
+      },
+      "weight": 0.08660059287213681
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 21,
+        "spa": 13,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.08341417436340996
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07006687091028196
+    }
+  ],
+  "ninetales": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5106472882042792
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17949542258376275
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.06048131645689407
+    }
+  ],
+  "ninetalesalola": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.222325659216344
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.18146749524961306
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 1,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07702229185667923
+    }
+  ],
+  "noivern": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4434715696682342
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.16642849713791943
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 20,
+        "spa": 14,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04933748433073435
+    }
+  ],
+  "oranguru": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.12202322531370767
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.07116042805233459
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.06439996180974762
+    }
+  ],
+  "orthworm": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 31,
+        "spa": 0,
+        "spd": 25,
+        "spe": 10
+      },
+      "weight": 0.16407643801128538
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 5,
+        "hp": 32,
+        "spa": 0,
+        "spd": 29,
+        "spe": 0
+      },
+      "weight": 0.12249228165164319
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.054924177529772945
+    }
+  ],
+  "overqwil": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09030705038986679
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 9,
+        "spa": 0,
+        "spd": 1,
+        "spe": 23
+      },
+      "weight": 0.08694394428893185
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.08422005103226056
+    }
+  ],
+  "palafin": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15090040800902643
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 30,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 4
+      },
+      "weight": 0.10094173640022815
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09504941788940448
+    }
+  ],
+  "pangoro": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 26,
+        "def": 0,
+        "hp": 29,
+        "spa": 0,
+        "spd": 0,
+        "spe": 11
+      },
+      "weight": 0.37007959199316354
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.23302652600637055
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1374049912031915
+    }
+  ],
+  "passimian": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.6449163988477199
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11159343920120314
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06620369178140834
+    }
+  ],
+  "pelipper": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.18695332995105582
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11593587287078064
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 5,
+        "spd": 17,
+        "spe": 11
+      },
+      "weight": 0.05677023980761458
+    }
+  ],
+  "pidgeotmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.49500551261606246
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 1,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2745388826709607
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10482530994468861
+    }
+  ],
+  "pikachu": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3983081727232697
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11751172526779197
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.11611958622498636
+    }
+  ],
+  "pinsirmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.25035799224440763
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17198128225089815
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.13128241050760844
+    }
+  ],
+  "politoed": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 23,
+        "hp": 31,
+        "spa": 0,
+        "spd": 12,
+        "spe": 0
+      },
+      "weight": 0.08934370959690574
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 25,
+        "hp": 32,
+        "spa": 0,
+        "spd": 6,
+        "spe": 3
+      },
+      "weight": 0.05668817250327476
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 23,
+        "spa": 30,
+        "spd": 0,
+        "spe": 1
+      },
+      "weight": 0.045602287453046016
+    }
+  ],
+  "polteageist": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 6,
+        "spd": 0,
+        "spe": 28
+      },
+      "weight": 0.3646196173775093
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 23,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 11
+      },
+      "weight": 0.31375279427393454
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15315047167636542
+    }
+  ],
+  "primarina": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16445940787767788
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.08149297304634144
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.06384073604709521
+    }
+  ],
+  "pyroarmega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.511708536948496
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 7,
+        "spa": 32,
+        "spd": 0,
+        "spe": 27
+      },
+      "weight": 0.0987399547430581
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07023644270049376
+    }
+  ],
+  "quaquaval": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.20345040562296016
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.11729591391026321
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08538981299903596
+    }
+  ],
+  "qwilfish": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.23249158047549576
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 11,
+        "hp": 32,
+        "spa": 0,
+        "spd": 23,
+        "spe": 0
+      },
+      "weight": 0.1831879616948636
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.16508121159519462
+    }
+  ],
+  "raichu": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.19084809839520414
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09005067470985416
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08260279578305697
+    }
+  ],
+  "raichualola": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4524106520664736
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.31244859918997114
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.08256613169646711
+    }
+  ],
+  "raichumegax": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2888745154184701
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15132347357902473
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.034678752356253
+    }
+  ],
+  "raichumegay": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.26759919849690206
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 13,
+        "hp": 30,
+        "spa": 0,
+        "spd": 0,
+        "spe": 23
+      },
+      "weight": 0.1021716545244154
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07436865717521064
+    }
+  ],
+  "rampardos": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.2481700434376346
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.1913881686551391
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.10891575862622113
+    }
+  ],
+  "reuniclus": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.17485548765405745
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.15046614518803056
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 10,
+        "hp": 32,
+        "spa": 24,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.0723877105739991
+    }
+  ],
+  "rhyperior": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.26383549721790883
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1906091603715073
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 30,
+        "def": 2,
+        "hp": 29,
+        "spa": 0,
+        "spd": 5,
+        "spe": 0
+      },
+      "weight": 0.13238268593044955
+    }
+  ],
+  "roserade": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.7539018908007085
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07945338037297035
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.050708174970314254
+    }
+  ],
+  "rotom": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.6292565112477327
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 13,
+        "hp": 19,
+        "spa": 15,
+        "spd": 0,
+        "spe": 19
+      },
+      "weight": 0.18803456944566513
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.08682058254557379
+    }
+  ],
+  "rotomfan": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.281834792205069
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15730015025606925
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15665299782974962
+    }
+  ],
+  "rotomfrost": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4819233839929231
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10453285112029491
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 17,
+        "spa": 32,
+        "spd": 0,
+        "spe": 17
+      },
+      "weight": 0.07739561259144283
+    }
+  ],
+  "rotomheat": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5088337821466378
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.038098935537720584
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 32,
+        "spa": 22,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.029209753351959425
+    }
+  ],
+  "rotommow": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.30406073461861516
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 23,
+        "hp": 32,
+        "spa": 2,
+        "spd": 1,
+        "spe": 8
+      },
+      "weight": 0.054496719074259854
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05143100404713773
+    }
+  ],
+  "rotomwash": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.13695497441041224
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04742255613531855
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.03154034052579862
+    }
+  ],
+  "runerigus": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16777907673528059
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.11336084928608353
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.09307402059241436
+    }
+  ],
+  "sableye": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 9,
+        "hp": 32,
+        "spa": 0,
+        "spd": 25,
+        "spe": 0
+      },
+      "weight": 0.140692545011648
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.11975430665105109
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 9,
+        "hp": 32,
+        "spa": 0,
+        "spd": 25,
+        "spe": 0
+      },
+      "weight": 0.06073253690636682
+    }
+  ],
+  "sableyemega": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 16,
+        "hp": 32,
+        "spa": 0,
+        "spd": 18,
+        "spe": 0
+      },
+      "weight": 0.2454688709222557
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.2136463445133697
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.07716795173945323
+    }
+  ],
+  "salazzle": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.47159300862104087
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.21544282842356718
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.05486887033605696
+    }
+  ],
+  "samurotthisui": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2323662772372672
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1413890618433003
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 24,
+        "spa": 0,
+        "spd": 2,
+        "spe": 8
+      },
+      "weight": 0.11869083131926991
+    }
+  ],
+  "sandaconda": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.36203697715022315
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 2,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.11173209354418333
+    },
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 2,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06521199985518458
+    }
+  ],
+  "sceptile": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.30540044984739545
+    },
+    {
+      "nature": "rash",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1281626504978584
+    },
+    {
+      "nature": "naive",
+      "sp": {
+        "atk": 10,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 24
+      },
+      "weight": 0.10302380902334199
+    }
+  ],
+  "sceptilemega": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.540859169481748
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11775953045176288
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 3,
+        "spa": 32,
+        "spd": 0,
+        "spe": 31
+      },
+      "weight": 0.03856155364495172
+    }
+  ],
+  "scizor": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.42265634655874007
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.09136985930677681
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 6,
+        "hp": 18,
+        "spa": 0,
+        "spd": 6,
+        "spe": 4
+      },
+      "weight": 0.05087511215459437
+    }
+  ],
+  "scizormega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.3604421467938768
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.09131738782556093
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.054121357738434864
+    }
+  ],
+  "scolipede": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4594759117644672
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 8,
+        "def": 0,
+        "hp": 5,
+        "spa": 0,
+        "spd": 32,
+        "spe": 21
+      },
+      "weight": 0.11338733500489057
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 20,
+        "def": 9,
+        "hp": 24,
+        "spa": 0,
+        "spd": 9,
+        "spe": 4
+      },
+      "weight": 0.08427099354853868
+    }
+  ],
+  "scolipedemega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07373167169377347
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06718873809250744
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.046991243541007865
+    }
+  ],
+  "scovillain": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2860054679635117
+    },
+    {
+      "nature": "lonely",
+      "sp": {
+        "atk": 22,
+        "def": 0,
+        "hp": 5,
+        "spa": 14,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.14156435875845313
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 2,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.07555975972094703
+    }
+  ],
+  "scovillainmega": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.12731521383778555
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 15,
+        "hp": 32,
+        "spa": 0,
+        "spd": 19,
+        "spe": 0
+      },
+      "weight": 0.06438422814002656
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.06045883901510729
+    }
+  ],
+  "scrafty": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11752182076027229
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 29,
+        "spa": 0,
+        "spd": 5,
+        "spe": 0
+      },
+      "weight": 0.10035727547477984
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.0861751991970112
+    }
+  ],
+  "scraftymega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1791661990934347
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1286677924966462
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.05920891177319974
+    }
+  ],
+  "serperior": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 5,
+        "hp": 32,
+        "spa": 1,
+        "spd": 2,
+        "spe": 26
+      },
+      "weight": 0.15563836450023713
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15238059343469543
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11049377822070824
+    }
+  ],
+  "sharpedo": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3381865820083249
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3210492912710757
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.27518797645509513
+    }
+  ],
+  "sharpedomega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4932467761503685
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 1,
+        "def": 19,
+        "hp": 22,
+        "spa": 0,
+        "spd": 0,
+        "spe": 24
+      },
+      "weight": 0.24342368128343808
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.16368087584192795
+    }
+  ],
+  "simipour": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.38242086535173897
+    },
+    {
+      "nature": "hasty",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.16634770609542585
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08986268536558506
+    }
+  ],
+  "sinistcha": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 14,
+        "hp": 32,
+        "spa": 0,
+        "spd": 20,
+        "spe": 0
+      },
+      "weight": 0.11193717114378995
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 4,
+        "hp": 32,
+        "spa": 0,
+        "spd": 30,
+        "spe": 0
+      },
+      "weight": 0.0681533470609895
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.0497305109696661
+    }
+  ],
+  "skarmory": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 2,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.7532334327149511
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.039894021808239526
+    },
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 18,
+        "def": 16,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.03315151716823265
+    }
+  ],
+  "skarmorymega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.41651060149645025
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 9,
+        "spa": 0,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.17895406038942924
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 17,
+        "def": 0,
+        "hp": 24,
+        "spa": 0,
+        "spd": 0,
+        "spe": 25
+      },
+      "weight": 0.08110581591578296
+    }
+  ],
+  "skeledirge": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 13,
+        "spa": 23,
+        "spd": 4,
+        "spe": 26
+      },
+      "weight": 0.10857340165116511
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.08264116588309342
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 29,
+        "spa": 16,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.06258876361733899
+    }
+  ],
+  "slowbro": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16335555533629068
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 19,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.11277271692105773
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.11088114364267682
+    }
+  ],
+  "slowbrogalar": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 30,
+        "spa": 11,
+        "spd": 25,
+        "spe": 0
+      },
+      "weight": 0.14890980576276536
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.14334962341896634
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 20,
+        "def": 8,
+        "hp": 21,
+        "spa": 0,
+        "spd": 17,
+        "spe": 0
+      },
+      "weight": 0.08760677093255717
+    }
+  ],
+  "slowbromega": [
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 31,
+        "spe": 1
+      },
+      "weight": 0.19744141652096225
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.1754230833300987
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.055621978749666554
+    }
+  ],
+  "slowking": [
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.12937176181382673
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11516475979812077
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.08506448899096644
+    }
+  ],
+  "slowkinggalar": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16683688106791536
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.11530549596783707
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07020551823349232
+    }
+  ],
+  "slurpuff": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 6,
+        "hp": 32,
+        "spa": 0,
+        "spd": 28,
+        "spe": 0
+      },
+      "weight": 0.9201612314520795
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.029378897719257207
+    },
+    {
+      "nature": "calm",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 5,
+        "spe": 10
+      },
+      "weight": 0.022612690856154007
+    }
+  ],
+  "sneasler": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.37961712717002344
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.20232589533091686
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04791460990282552
+    }
+  ],
+  "snorlax": [
+    {
+      "nature": "impish",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 29,
+        "spa": 0,
+        "spd": 5,
+        "spe": 0
+      },
+      "weight": 0.12767243942851925
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 30,
+        "hp": 21,
+        "spa": 0,
+        "spd": 15,
+        "spe": 0
+      },
+      "weight": 0.11896117792921287
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.08970954369907216
+    }
+  ],
+  "spiritomb": [
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 11,
+        "hp": 32,
+        "spa": 0,
+        "spd": 23,
+        "spe": 0
+      },
+      "weight": 0.1580317714409408
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.14720956496968915
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.10788971335840823
+    }
+  ],
+  "staraptor": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.683946542195387
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.052077777795819714
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.029326385020320325
+    }
+  ],
+  "staraptormega": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1823682555027874
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.06006853679163041
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.04843114475178105
+    }
+  ],
+  "starmie": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.8485526371157989
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.03969797133194262
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.021425285561760852
+    }
+  ],
+  "starmiemega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.30690591941586093
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2656630585248142
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07795503400488182
+    }
+  ],
+  "steelix": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.28185067941296377
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 22,
+        "def": 12,
+        "hp": 0,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.2772495108682063
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 9,
+        "spa": 0,
+        "spd": 25,
+        "spe": 0
+      },
+      "weight": 0.18752634865543963
+    }
+  ],
+  "steelixmega": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.397461088835747
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09265189443326961
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.07471382428150791
+    }
+  ],
+  "swampert": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.13003490418941183
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 3,
+        "hp": 30,
+        "spa": 25,
+        "spd": 8,
+        "spe": 0
+      },
+      "weight": 0.07697439531678538
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.06715179775094927
+    }
+  ],
+  "swampertmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.22207626652050336
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 12,
+        "spa": 0,
+        "spd": 0,
+        "spe": 22
+      },
+      "weight": 0.08863800034491509
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 30,
+        "def": 0,
+        "hp": 18,
+        "spa": 0,
+        "spd": 0,
+        "spe": 18
+      },
+      "weight": 0.07189373200337604
+    }
+  ],
+  "sylveon": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 22,
+        "hp": 9,
+        "spa": 20,
+        "spd": 0,
+        "spe": 15
+      },
+      "weight": 0.0701890159371167
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 22,
+        "hp": 9,
+        "spa": 30,
+        "spd": 0,
+        "spe": 5
+      },
+      "weight": 0.06830307241577467
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.035350222425808944
+    }
+  ],
+  "talonflame": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.39286580215242045
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10080334139313807
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 2,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.033229409730474876
+    }
+  ],
+  "tauros": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 31,
+        "def": 1,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.37508764209827616
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.23635879348622024
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1876141505820559
+    }
+  ],
+  "taurospaldeaaqua": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.287649947313508
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.12879861476025659
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 4,
+        "hp": 7,
+        "spa": 0,
+        "spd": 2,
+        "spe": 21
+      },
+      "weight": 0.10607261250654117
+    }
+  ],
+  "taurospaldeablaze": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.28982154820486583
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.2271423646298677
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.1414749465114687
+    }
+  ],
+  "tinkaton": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 8,
+        "def": 7,
+        "hp": 23,
+        "spa": 0,
+        "spd": 0,
+        "spe": 28
+      },
+      "weight": 0.17069477951232087
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12029443291694457
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.07977001313415173
+    }
+  ],
+  "torkoal": [
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 32,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.5116980638934286
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.09819042663824015
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 32,
+        "spa": 32,
+        "spd": 1,
+        "spe": 0
+      },
+      "weight": 0.08390916390107016
+    }
+  ],
+  "torterra": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 31,
+        "def": 0,
+        "hp": 3,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11822428179621625
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.11692033383952694
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 1,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10296582324054641
+    }
+  ],
+  "toucannon": [
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.25810045578580815
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 30,
+        "def": 4,
+        "hp": 0,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.14605824933342457
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.12755430297690334
+    }
+  ],
+  "toxapex": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 18,
+        "hp": 32,
+        "spa": 0,
+        "spd": 16,
+        "spe": 0
+      },
+      "weight": 0.1605356271710973
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 20,
+        "hp": 32,
+        "spa": 0,
+        "spd": 14,
+        "spe": 0
+      },
+      "weight": 0.12283997316849883
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 15,
+        "hp": 32,
+        "spa": 0,
+        "spd": 19,
+        "spe": 0
+      },
+      "weight": 0.10793916542258483
+    }
+  ],
+  "toxicroak": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 2
+      },
+      "weight": 0.3095929939827851
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 1,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.11147872573914622
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.08913299032266893
+    }
+  ],
+  "trevenant": [
+    {
+      "nature": "careful",
+      "sp": {
+        "atk": 3,
+        "def": 0,
+        "hp": 31,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.12322446311421961
+    },
+    {
+      "nature": "hardy",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11273286879803107
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 3,
+        "def": 0,
+        "hp": 31,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.09183008319610872
+    }
+  ],
+  "tsareena": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15338253897325735
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.12352978512136581
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.0570160163161051
+    }
+  ],
+  "typhlosion": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5297239092136515
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.32778171595694205
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 2,
+        "spe": 32
+      },
+      "weight": 0.09323959969788652
+    }
+  ],
+  "typhlosionhisui": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5857204693689916
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.19063973228769393
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0562578349794427
+    }
+  ],
+  "tyranitar": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.1305054509937067
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.11665045451203346
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.10281714263581582
+    }
+  ],
+  "tyranitarmega": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.16031210965639267
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07536616666036156
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06701011457028734
+    }
+  ],
+  "tyrantrum": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4191723644063406
+    },
+    {
+      "nature": "brave",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.12671917352004003
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 5,
+        "def": 0,
+        "hp": 32,
+        "spa": 0,
+        "spd": 8,
+        "spe": 21
+      },
+      "weight": 0.0864423281546856
+    }
+  ],
+  "umbreon": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 17,
+        "hp": 32,
+        "spa": 0,
+        "spd": 10,
+        "spe": 7
+      },
+      "weight": 0.27177642024098214
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.21257772249312448
+    },
+    {
+      "nature": "sassy",
+      "sp": {
+        "atk": 0,
+        "def": 25,
+        "hp": 31,
+        "spa": 0,
+        "spd": 10,
+        "spe": 0
+      },
+      "weight": 0.08725132345831738
+    }
+  ],
+  "vanilluxe": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.26076313211564217
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 5,
+        "spa": 32,
+        "spd": 0,
+        "spe": 29
+      },
+      "weight": 0.19696307750104664
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 1,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.09653846299228773
+    }
+  ],
+  "vaporeon": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 1,
+        "spe": 1
+      },
+      "weight": 0.5388145218698024
+    },
+    {
+      "nature": "quiet",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 14,
+        "spa": 20,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.07042984606009292
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 2,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.048927690132944665
+    }
+  ],
+  "venusaur": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.46191721232561245
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.17269598788711008
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 12,
+        "hp": 4,
+        "spa": 32,
+        "spd": 0,
+        "spe": 18
+      },
+      "weight": 0.1003946084149087
+    }
+  ],
+  "venusaurmega": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 7,
+        "hp": 32,
+        "spa": 18,
+        "spd": 0,
+        "spe": 9
+      },
+      "weight": 0.1075110920182959
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 11,
+        "hp": 14,
+        "spa": 32,
+        "spd": 0,
+        "spe": 9
+      },
+      "weight": 0.043069855676669655
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 19,
+        "hp": 32,
+        "spa": 0,
+        "spd": 12,
+        "spe": 3
+      },
+      "weight": 0.04292111921556234
+    }
+  ],
+  "victreebelmega": [
+    {
+      "nature": "rash",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 32,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.1615442680312446
+    },
+    {
+      "nature": "naive",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.15441832714310383
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 29,
+        "spa": 32,
+        "spd": 0,
+        "spe": 5
+      },
+      "weight": 0.11822665149676818
+    }
+  ],
+  "vileplume": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5057439566982658
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.0902841104117995
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 1,
+        "hp": 1,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.06146962556268145
+    }
+  ],
+  "vivillon": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.43270433746155107
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 24,
+        "hp": 0,
+        "spa": 5,
+        "spd": 5,
+        "spe": 32
+      },
+      "weight": 0.11338201028247759
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0655514684136923
+    }
+  ],
+  "volcarona": [
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 0,
+        "spd": 2,
+        "spe": 0
+      },
+      "weight": 0.10363959418840114
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.048471290071926174
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0396620435537276
+    }
+  ],
+  "weavile": [
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 0,
+        "hp": 2,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.6230656120290876
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 2,
+        "hp": 0,
+        "spa": 0,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07176134737651782
+    },
+    {
+      "nature": "jolly",
+      "sp": {
+        "atk": 32,
+        "def": 1,
+        "hp": 0,
+        "spa": 0,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.04163379295457383
+    }
+  ],
+  "whimsicott": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5176472129594192
+    },
+    {
+      "nature": "bold",
+      "sp": {
+        "atk": 0,
+        "def": 32,
+        "hp": 32,
+        "spa": 2,
+        "spd": 0,
+        "spe": 0
+      },
+      "weight": 0.044951530754484485
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.0425474531719691
+    }
+  ],
+  "wyrdeer": [
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 1,
+        "def": 8,
+        "hp": 29,
+        "spa": 0,
+        "spd": 21,
+        "spe": 7
+      },
+      "weight": 0.1447702341757115
+    },
+    {
+      "nature": "adamant",
+      "sp": {
+        "atk": 0,
+        "def": 2,
+        "hp": 32,
+        "spa": 0,
+        "spd": 32,
+        "spe": 0
+      },
+      "weight": 0.11557833024981536
+    },
+    {
+      "nature": "relaxed",
+      "sp": {
+        "atk": 0,
+        "def": 28,
+        "hp": 32,
+        "spa": 0,
+        "spd": 6,
+        "spe": 0
+      },
+      "weight": 0.06248953341777931
+    }
+  ],
+  "zoroark": [
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.4586343234793264
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.3425469970164627
+    },
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.07548165595867182
+    }
+  ],
+  "zoroarkhisui": [
+    {
+      "nature": "timid",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.5328814411305288
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 2,
+        "spa": 32,
+        "spd": 0,
+        "spe": 32
+      },
+      "weight": 0.14912613299307348
+    },
+    {
+      "nature": "modest",
+      "sp": {
+        "atk": 0,
+        "def": 0,
+        "hp": 1,
+        "spa": 32,
+        "spd": 1,
+        "spe": 32
+      },
+      "weight": 0.050473009924158235
+    }
+  ]
+}
