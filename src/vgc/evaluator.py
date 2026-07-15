@@ -180,6 +180,9 @@ _WEATHER_TO_STR = {
     Weather.DESOLATELAND: "sun",
     Weather.RAINDANCE: "rain",
     Weather.PRIMORDIALSEA: "rain",
+    Weather.SANDSTORM: "sand",
+    Weather.HAIL: "snow",
+    Weather.SNOWSCAPE: "snow",
 }
 _TERRAIN_TO_STR = {
     Field.ELECTRIC_TERRAIN: "electric",
@@ -200,6 +203,30 @@ _SIDE_CONDITION_TO_SCREEN = {
 # the mega's own turn) scored against the NEW weather, not the stale pre-mega one -- see
 # `_score_attack_order`'s `weather_for_this_order` computation.
 _ABILITY_WEATHER = {"drought": "sun", "drizzle": "rain"}
+_WEATHER_SPEED_ABILITY = {
+    "sun": "chlorophyll",
+    "rain": "swiftswim",
+    "sand": "sandrush",
+    "snow": "slushrush",
+}
+
+
+def field_effective_speed(
+    state: PokemonState, *, weather: str | None = None, tailwind: bool = False
+) -> float:
+    """Effective in-battle Speed including field multipliers.
+
+    ``effective_speed`` handles modifiers carried by the Pokemon itself (boost stages,
+    Choice Scarf, paralysis). This wrapper adds the active weather ability and the
+    Pokemon's side of Tailwind, which are properties of the current field instead.
+    """
+
+    speed = effective_speed(state)
+    if _WEATHER_SPEED_ABILITY.get(weather) == state.ability:
+        speed *= 2.0
+    if tailwind:
+        speed *= 2.0
+    return speed
 
 
 def mega_species_id(base_species_id: str, item_id: str | None) -> str | None:
@@ -453,8 +480,20 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         for mon in opp_pokemon
     ]
 
-    our_speed = [effective_speed(state) if state is not None else 0.0 for state in our_states]
-    opp_speed = [effective_speed(state) if state is not None else 0.0 for state in opp_states]
+    our_tailwind = SideCondition.TAILWIND in battle.side_conditions
+    opp_tailwind = SideCondition.TAILWIND in battle.opponent_side_conditions
+    our_speed = [
+        field_effective_speed(state, weather=weather, tailwind=our_tailwind)
+        if state is not None
+        else 0.0
+        for state in our_states
+    ]
+    opp_speed = [
+        field_effective_speed(state, weather=weather, tailwind=opp_tailwind)
+        if state is not None
+        else 0.0
+        for state in opp_states
+    ]
 
     field_vs_us = FieldState(
         weather=weather, terrain=terrain, screens=our_side_screens, trick_room=trick_room, is_doubles=True
@@ -593,12 +632,20 @@ def _score_attack_order(
 
     score = 0.0
     raw_damage_score = 0.0
+    expected_percent_by_target: dict[int, float] = {}
+    current_hp_percent_by_target: dict[int, float] = {}
+    guaranteed_ko_slots: list[int] = []
+    survival_guard_slots: list[int] = []
     field_vs_opp = ctx.field_state(defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order)
     for idx in opp_targets:
         defender_state = ctx.opp_states[idx]
         if defender_state is None:
             continue
         result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        expected_percent_by_target[idx] = result.expected_percent
+        current_hp_percent_by_target[idx] = (
+            100.0 * defender_state.hp_or_max() / defender_state.max_hp()
+        )
         contribution = result.expected_percent * config.damage_percent_weight
         raw_damage_score += contribution
 
@@ -606,6 +653,7 @@ def _score_attack_order(
         is_guaranteed = guaranteed_ko(result, target_hp)
         is_likely = likely_ko(result, target_hp)
         if is_guaranteed:
+            guaranteed_ko_slots.append(idx)
             contribution += config.guaranteed_ko_bonus
         elif is_likely:
             contribution += config.likely_ko_bonus
@@ -632,6 +680,12 @@ def _score_attack_order(
 
         score += contribution
 
+        at_full_hp = defender_state.hp_or_max() >= defender_state.max_hp()
+        if at_full_hp and (
+            defender_state.item == "focussash" or defender_state.ability == "sturdy"
+        ):
+            survival_guard_slots.append(idx)
+
     field_vs_us = ctx.field_state(defender_is_ours=True, num_targets=num_hit, weather=weather_for_this_order)
     for idx in ally_targets:
         ally_state = ctx.our_states[idx]
@@ -643,7 +697,18 @@ def _score_attack_order(
     if config.mega_evolve_asap and getattr(single, "mega", False):
         score += 1e-3  # tie-breaker nudge only -- mega stats already drive the real gain
 
-    return score, raw_damage_score, {}
+    single_target_slot = (
+        opp_targets[0]
+        if move_data.get("target") in _SINGLE_TARGETS and len(opp_targets) == 1
+        else None
+    )
+    return score, raw_damage_score, {
+        "single_target_slot": single_target_slot,
+        "expected_percent_by_target": expected_percent_by_target,
+        "current_hp_percent_by_target": current_hp_percent_by_target,
+        "guaranteed_ko_slots": guaranteed_ko_slots,
+        "survival_guard_slots": survival_guard_slots,
+    }
 
 
 def _score_status_move(
@@ -768,4 +833,32 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
         bonus += float(second_info["raw_damage_score"]) * config.helping_hand_weight
     if second_info.get("move_id") == "helpinghand" and first_info.get("raw_damage_score"):
         bonus += float(first_info["raw_damage_score"]) * config.helping_hand_weight
+
+    first_target = first_info.get("single_target_slot")
+    second_target = second_info.get("single_target_slot")
+    if first_target is not None and first_target == second_target:
+        target = int(first_target)
+        first_guarantees = target in first_info.get("guaranteed_ko_slots", ())
+        second_guarantees = target in second_info.get("guaranteed_ko_slots", ())
+        has_survival_guard = target in first_info.get(
+            "survival_guard_slots", ()
+        ) or target in second_info.get("survival_guard_slots", ())
+        if (first_guarantees or second_guarantees) and not has_survival_guard:
+            bonus -= config.redundant_ko_target_penalty
+        elif not first_guarantees and not second_guarantees:
+            first_expected = float(
+                first_info.get("expected_percent_by_target", {}).get(target, 0.0)
+            )
+            second_expected = float(
+                second_info.get("expected_percent_by_target", {}).get(target, 0.0)
+            )
+            target_hp = float(
+                first_info.get("current_hp_percent_by_target", {}).get(
+                    target,
+                    second_info.get("current_hp_percent_by_target", {}).get(target, 100.0),
+                )
+            )
+            if first_expected < target_hp and second_expected < target_hp:
+                if first_expected + second_expected >= target_hp:
+                    bonus += config.focus_fire_ko_bonus
     return bonus

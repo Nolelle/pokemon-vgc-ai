@@ -60,6 +60,14 @@ class PolicyConfig:
     # subtracted from that order's score -- hurting your own team is worse than simply
     # forgoing that damage, not merely "free" the way it is against a fainted/immune ally.
     ally_damage_penalty_weight: float = 1.5
+    # Joint-order penalty when both slots choose the same single target even though one
+    # move's minimum damage already removes it. Without this, the second move can become
+    # wasted or auto-retarget into an immunity after the first knockout resolves.
+    redundant_ko_target_penalty: float = 45.0
+    # Joint-order bonus when neither attack KOs alone but their combined expected damage
+    # removes the shared target. This preserves deliberate focus fire while separating
+    # it from the redundant-overkill case above.
+    focus_fire_ko_bonus: float = 35.0
 
     # -- Speed/turn order -----------------------------------------------------------------
     # When a target is faster than the attacker (post Trick Room inversion) and its best

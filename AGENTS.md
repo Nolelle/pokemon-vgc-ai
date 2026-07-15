@@ -155,10 +155,19 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   lead-set weather plus Chlorophyll/Swift Swim/Sand Rush/Slush Rush. This fixed the
   meta1 preview's earlier failure to bring Charizard-Y; it now selects the intended sun
   mode rather than always excluding the team's main attacker.
-- Final clean gates on 2026-07-15, meta1 mirror and both players accepting OTS:
-  `runs/eval/final_vgc_vs_random_gate.json` = 99/100, Wilson low 0.946 (>0.90);
-  `runs/eval/final_vgc_vs_heuristic_gate.json` = 225/300, 75.0%, Wilson low 0.698
-  (>0.65). `runs/` is gitignored, so rerun before claiming these are current.
+- Latest clean gates on 2026-07-15, meta1 mirror and both players accepting OTS, after
+  adding field-aware Tailwind/weather Speed and joint-target coordination:
+  `runs/eval/post_ladder_speed_targeting_vs_random.json` = 99/100, Wilson low 0.946
+  (>0.90); `runs/eval/post_ladder_speed_targeting_vs_heuristic.json` = 234/300, 78.0%,
+  Wilson low 0.730 (>0.65). `runs/` is gitignored, so rerun before claiming these are
+  current.
+- The first 10-game public smoke session on `laplacestheorems` finished 6-4 at 1135 Elo
+  with zero fallbacks, crashes, or timer losses. Replay review found two concrete v1
+  problems: turn order omitted active Tailwind and Chlorophyll/Swift Swim/Sand Rush/
+  Slush Rush multipliers, and the two slots could redundantly target a foe one move
+  already guaranteed to KO. `field_effective_speed` and `_cross_slot_adjustments` now
+  cover those cases; useful combined-damage focus fire is still rewarded, and full-HP
+  Focus Sash/Sturdy targets are exempt from the redundant-overkill penalty.
 - `ladder/run_ladder.py` is the Phase 3 session runner. It saves HTML replays, per-battle
   decision traces, and append-only `runs/ladder.jsonl` outcomes; runs one public ladder
   game at a time; and recreates the client after a timeout/network failure. Credentials

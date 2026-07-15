@@ -17,10 +17,12 @@ from vgc.data import load_moves
 from vgc.evaluator import (
     _Context,
     _ThreatInfo,
+    _cross_slot_adjustments,
     _resolve_targets,
     _score_attack_order,
     _score_protect,
     effective_speed,
+    field_effective_speed,
     guaranteed_ko,
     likely_ko,
     mega_species_id,
@@ -61,6 +63,23 @@ def test_effective_speed_positive_boost_stage_increases_speed() -> None:
     plain = _garchomp()
     boosted = _garchomp(boosts={"spe": 2})
     assert effective_speed(boosted) > effective_speed(plain)
+
+
+def test_field_effective_speed_applies_matching_weather_ability() -> None:
+    excadrill = PokemonState("excadrill", ability="sandrush", nature="jolly")
+
+    assert field_effective_speed(excadrill, weather="sand") == pytest.approx(
+        effective_speed(excadrill) * 2.0
+    )
+    assert field_effective_speed(excadrill, weather="sun") == effective_speed(excadrill)
+
+
+def test_field_effective_speed_applies_tailwind_and_weather_together() -> None:
+    venusaur = PokemonState("venusaur", ability="chlorophyll", nature="modest")
+
+    assert field_effective_speed(venusaur, weather="sun", tailwind=True) == pytest.approx(
+        effective_speed(venusaur) * 4.0
+    )
 
 
 # --- resolves_before (priority brackets + Trick Room inversion) ---------------------
@@ -278,6 +297,51 @@ def test_single_target_move_has_no_ally_penalty() -> None:
     # Pure single-target damage score: no ally involved at all, so score == raw damage
     # contribution (no KO bonus expected against a bulky Klefki with a neutral hit).
     assert score == pytest.approx(raw, rel=1e-6)
+
+
+# --- joint targeting: reward useful focus fire, penalize redundant overkill --------
+
+
+def _target_info(
+    *, expected: float, hp: float = 100.0, guaranteed: bool = False, guarded: bool = False
+) -> dict:
+    return {
+        "move_id": "tackle",
+        "raw_damage_score": expected,
+        "single_target_slot": 0,
+        "expected_percent_by_target": {0: expected},
+        "current_hp_percent_by_target": {0: hp},
+        "guaranteed_ko_slots": [0] if guaranteed else [],
+        "survival_guard_slots": [0] if guarded else [],
+    }
+
+
+def test_cross_slot_penalizes_second_attack_after_guaranteed_ko() -> None:
+    config = PolicyConfig()
+    first = _target_info(expected=120.0, guaranteed=True)
+    second = _target_info(expected=40.0)
+
+    adjustment = _cross_slot_adjustments(first, second, config)
+
+    assert adjustment == -config.redundant_ko_target_penalty
+
+
+def test_cross_slot_preserves_double_target_into_full_hp_focus_sash() -> None:
+    config = PolicyConfig()
+    first = _target_info(expected=120.0, guaranteed=True, guarded=True)
+    second = _target_info(expected=40.0, guarded=True)
+
+    assert _cross_slot_adjustments(first, second, config) == 0.0
+
+
+def test_cross_slot_rewards_combined_ko_that_neither_move_gets_alone() -> None:
+    config = PolicyConfig()
+    first = _target_info(expected=60.0)
+    second = _target_info(expected=45.0)
+
+    adjustment = _cross_slot_adjustments(first, second, config)
+
+    assert adjustment == config.focus_fire_ko_bonus
 
 
 # --- _score_protect: threat-scaled value, repeat-use and low-threat penalties -------
