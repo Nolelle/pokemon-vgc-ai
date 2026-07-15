@@ -25,6 +25,7 @@ from vgc.decision_trace import (
     record_fallback,
     record_note,
     start_trace,
+    trace_enabled,
 )
 from vgc.evaluator import score_joint_orders
 from vgc.models import PolicyConfig
@@ -202,4 +203,18 @@ class VgcPlayer(Player):
             if finished_trace is not None:
                 self.decision_trace_history.append(
                     {"battle_tag": battle.battle_tag, **asdict(finished_trace)}
+                )
+            elif trace_enabled():
+                # Defensive ladder instrumentation: team preview can be requested from
+                # poke-env's OTS recovery path before a ContextVar trace survives the
+                # callback boundary. Preserve the chosen order even in that case.
+                self.decision_trace_history.append(
+                    {
+                        "battle_tag": battle.battle_tag,
+                        "turn": 0,
+                        "chosen_order": chosen_order,
+                        "fallback_used": False,
+                        "fallback_reason": None,
+                        "notes": {},
+                    }
                 )

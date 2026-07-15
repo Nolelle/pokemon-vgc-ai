@@ -90,6 +90,7 @@ class LadderPlayer(VgcPlayer):
         self.log_path = log_path
         self.session_id = session_id
         self.completed_records: list[dict[str, object]] = []
+        self._pending_finished_battles: dict[str, AbstractBattle] = {}
         self.replay_dir.mkdir(parents=True, exist_ok=True)
         self.trace_dir.mkdir(parents=True, exist_ok=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +99,20 @@ class LadderPlayer(VgcPlayer):
         super().__init__(**player_kwargs)
 
     def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+        # Showdown can send rating updates immediately after the win/tie line that
+        # triggers this synchronous callback. Defer the JSONL write until the session
+        # coroutine has briefly yielded, so battle.rating has time to populate.
+        self._pending_finished_battles[battle.battle_tag] = battle
+
+    async def flush_finished_battles(self, delay_seconds: float = 0.0) -> None:
+        if delay_seconds > 0 and self._pending_finished_battles:
+            await asyncio.sleep(delay_seconds)
+        pending = list(self._pending_finished_battles.values())
+        self._pending_finished_battles.clear()
+        for battle in pending:
+            self._write_battle_record(battle)
+
+    def _write_battle_record(self, battle: AbstractBattle) -> None:
         traces = [
             trace
             for trace in self.decision_trace_history
@@ -165,6 +180,7 @@ async def run_local_smoke(
         await asyncio.wait_for(
             player.battle_against(anchor, n_battles=n_games), timeout=timeout_seconds
         )
+        await player.flush_finished_battles(delay_seconds=0.1)
     finally:
         await player.ps_client.stop_listening()
         await anchor.ps_client.stop_listening()
@@ -209,11 +225,13 @@ async def run_live_session(
                 await asyncio.wait_for(
                     player.ladder(1), timeout=game_timeout_seconds
                 )
+                await player.flush_finished_battles(delay_seconds=1.0)
                 if player.n_finished_battles <= previous_finished:
                     raise RuntimeError("ladder call returned without a completed battle")
                 records.extend(player.completed_records[previous_records:])
                 consecutive_failures = 0
             except Exception:  # noqa: BLE001 - reconnect boundary for network failures
+                await player.flush_finished_battles()
                 consecutive_failures += 1
                 player.logger.exception(
                     "Ladder game failed; reconnecting (%d/%d)",
