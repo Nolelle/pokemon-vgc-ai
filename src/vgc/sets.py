@@ -108,7 +108,9 @@ _normalize_status = normalize_status
 
 
 def opponent_state(
-    pokemon: ObservedPokemon, usage: dict[str, list[dict[str, Any]]] | None = None
+    pokemon: ObservedPokemon,
+    usage: dict[str, list[dict[str, Any]]] | None = None,
+    nature_override: str | None = None,
 ) -> PokemonState:
     """Build a `PokemonState` for an opponent Pokemon observed through poke-env.
 
@@ -118,6 +120,9 @@ def opponent_state(
     :param usage: pre-loaded `load_usage_spreads()` result to reuse across many calls
         (avoids re-reading the file per Pokemon); `None` loads the default path (cheap
         after the first call -- `load_usage_spreads` is `lru_cache`d).
+    :param nature_override: a higher-confidence hidden nature from an exactly recognized
+        curated team. The live Open Team Sheet still supplies item/ability/moves; this
+        only fills information the sheet does not reveal.
     """
     if usage is None:
         usage = load_usage_spreads()
@@ -129,6 +134,8 @@ def opponent_state(
     else:
         sp_spread = default_opponent_spread(species_id)
         nature = default_opponent_nature(species_id)
+    if nature_override is not None:
+        nature = nature_override
 
     boosts = {
         stat: value

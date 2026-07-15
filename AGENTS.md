@@ -116,6 +116,12 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   (`data/usage/gen9championsvgc2026regmb-*.json`, not auto-scraped -- redownload
   manually and rerun the tool when you want fresher usage data). Per id-normalized
   species, keeps the top 3 Stat Point spreads by usage share.
+- `data/meta/popular_teams_H8v7TEZcbXo.json` is curated team-level knowledge from
+  JoeUX9's 2026-07-15 popular-teams video: 10 exact six-species archetypes / 60 sets,
+  corrected where the speaker explicitly corrected the graphic. `vgc.meta` recognizes
+  only an exact lineup and supplies its stated hidden nature to `opponent_state`; live
+  Open Team Sheet moves/items/abilities always take precedence, and Stat Points still
+  come from usage data because the video did not provide them.
 - **`VGC_TRACE=1`** (see `vgc/decision_trace.py`) makes `score_joint_orders` and
   `build_team_order` record their top-K candidates/scores (`PolicyConfig.trace_top_k`)
   and the team-preview choice's score breakdown onto the current `DecisionTrace`,

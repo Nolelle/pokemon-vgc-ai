@@ -1,0 +1,166 @@
+{
+  "source": {
+    "title": "The Most Popular Teams In Pokemon Champions Explained",
+    "url": "https://www.youtube.com/watch?v=H8v7TEZcbXo",
+    "creator": "JoeUX9",
+    "published": "2026-07-15"
+  },
+  "format_id": "gen9championsvgc2026regmb",
+  "scope": "Items, abilities, natures, moves, team roles, and lead patterns stated or displayed in the video. Stat Point spreads were not provided. Live Open Team Sheet facts always take precedence.",
+  "corrections": [
+    "AeroZard Sylveon uses Pixilate, as corrected aloud; the graphic showed Cute Charm.",
+    "Charizard Y Toxapex uses Regenerator, as corrected aloud; the graphic showed Merciless."
+  ],
+  "teams": [
+    {
+      "id": "aerozard",
+      "name": "AeroZard",
+      "chapter_start_seconds": 19,
+      "plan": "Fast Tailwind pressure with Aerodactyl, or a slower Trick Room route through Farigiraf. Charizard plus Garchomp is another immediate offense lead.",
+      "common_leads": [["aerodactyl", "kingambit"], ["charizard", "garchomp"], ["charizard", "farigiraf"]],
+      "sets": [
+        {"species_id": "aerodactyl", "battle_form_id": "aerodactylmega", "item_id": "aerodactylite", "ability_id": "toughclaws", "nature_id": "jolly", "move_ids": ["rockslide", "dualwingbeat", "icefang", "tailwind"], "role": "fast Tailwind setter; Ice Fang pressures Garchomp"},
+        {"species_id": "charizard", "battle_form_id": "charizardmegay", "item_id": "charizarditey", "ability_id": "drought", "nature_id": "modest", "move_ids": ["heatwave", "weatherball", "solarbeam", "protect"], "role": "sun spread attacker"},
+        {"species_id": "farigiraf", "item_id": "sitrusberry", "ability_id": "armortail", "nature_id": "bold", "move_ids": ["twinbeam", "thunderbolt", "trickroom", "protect"], "role": "Trick Room mode and anti-priority support"},
+        {"species_id": "kingambit", "item_id": "focussash", "ability_id": "defiant", "nature_id": "adamant", "move_ids": ["ironhead", "kowtowcleave", "suckerpunch", "lowkick"], "role": "fast maximum-pressure attacker; no Protect"},
+        {"species_id": "garchomp", "item_id": "lifeorb", "ability_id": "roughskin", "nature_id": "jolly", "move_ids": ["dragonclaw", "stompingtantrum", "earthquake", "protect"], "role": "ground attacker with single-target Toxapex pressure"},
+        {"species_id": "sylveon", "item_id": "fairyfeather", "ability_id": "pixilate", "nature_id": "modest", "move_ids": ["hypervoice", "hyperbeam", "quickattack", "protect"], "role": "slow Fairy damage for either speed mode"}
+      ]
+    },
+    {
+      "id": "charizard_y_toxapex",
+      "name": "Charizard Y Toxapex",
+      "chapter_start_seconds": 178,
+      "plan": "Balance team that mixes Charizard/Venusaur sun offense with Toxapex trapping. Helping Hand lets Life Orb Venusaur reach the Garchomp knockout threshold.",
+      "common_leads": [["charizard", "venusaur"], ["incineroar", "toxapex"], ["garchomp", "incineroar"], ["annihilape", "toxapex"]],
+      "sets": [
+        {"species_id": "charizard", "battle_form_id": "charizardmegay", "item_id": "charizarditey", "ability_id": "drought", "nature_id": "modest", "move_ids": ["heatwave", "weatherball", "helpinghand", "protect"], "role": "sun attacker and Venusaur damage amplifier"},
+        {"species_id": "annihilape", "item_id": "focussash", "ability_id": "defiant", "nature_id": "jolly", "move_ids": ["closecombat", "phantomforce", "rocktomb", "protect"], "role": "balance breaker; Phantom Force pressures Protect"},
+        {"species_id": "toxapex", "item_id": "leftovers", "ability_id": "regenerator", "nature_id": "bold", "move_ids": ["toxic", "infestation", "wideguard", "banefulbunker"], "role": "trap, poison, and stall support"},
+        {"species_id": "venusaur", "item_id": "lifeorb", "ability_id": "chlorophyll", "nature_id": "modest", "move_ids": ["solarbeam", "sludgebomb", "earthpower", "protect"], "role": "offensive sun sweeper"},
+        {"species_id": "garchomp", "item_id": "choicescarf", "ability_id": "roughskin", "nature_id": "adamant", "move_ids": ["rockslide", "stompingtantrum", "dragonclaw", "earthquake"], "role": "fast pressure and cleanup"},
+        {"species_id": "incineroar", "item_id": "sitrusberry", "ability_id": "intimidate", "nature_id": "careful", "move_ids": ["flareblitz", "partingshot", "throatchop", "fakeout"], "role": "Fake Out, Intimidate, and pivot support"}
+      ]
+    },
+    {
+      "id": "big_six",
+      "name": "Big Six",
+      "chapter_start_seconds": 319,
+      "plan": "Straightforward Tailwind offense. Charizard, Garchomp, Floette, and Basculegion supply damage while Whimsicott controls Speed and Kingambit punishes Intimidate.",
+      "common_leads": [],
+      "sets": [
+        {"species_id": "charizard", "battle_form_id": "charizardmegay", "item_id": "charizarditey", "ability_id": "drought", "nature_id": "modest", "move_ids": ["heatwave", "weatherball", "solarbeam", "protect"], "role": "sun spread attacker"},
+        {"species_id": "floetteeternal", "battle_form_id": "floettemega", "item_id": "floettite", "ability_id": "fairyaura", "nature_id": "modest", "move_ids": ["moonblast", "dazzlinggleam", "lightofruin", "protect"], "role": "high-output Fairy attacker"},
+        {"species_id": "kingambit", "item_id": "blackglasses", "ability_id": "defiant", "nature_id": "adamant", "move_ids": ["ironhead", "kowtowcleave", "suckerpunch", "protect"], "role": "Defiant attacker; item and Low Kick slot commonly vary"},
+        {"species_id": "basculegion", "item_id": "mysticwater", "ability_id": "adaptability", "nature_id": "adamant", "move_ids": ["wavecrash", "lastrespects", "aquajet", "protect"], "role": "strong Water attacker and late-game cleaner"},
+        {"species_id": "garchomp", "item_id": "lifeorb", "ability_id": "roughskin", "nature_id": "jolly", "move_ids": ["rockslide", "dragonclaw", "earthquake", "protect"], "role": "Life Orb attacker; Rock Slide targets Charizard"},
+        {"species_id": "whimsicott", "item_id": "focussash", "ability_id": "prankster", "nature_id": "timid", "move_ids": ["moonblast", "encore", "tailwind", "protect"], "role": "Tailwind and Encore speed control"}
+      ]
+    },
+    {
+      "id": "double_weather",
+      "name": "Double Weather",
+      "chapter_start_seconds": 422,
+      "plan": "Forces very different answers to Charizard/Venusaur sun and Pelipper/Archaludon rain. Grimmsnarl can establish screens beside either mode.",
+      "common_leads": [["charizard", "venusaur"], ["archaludon", "pelipper"], ["charizard", "grimmsnarl"]],
+      "sets": [
+        {"species_id": "charizard", "battle_form_id": "charizardmegay", "item_id": "charizarditey", "ability_id": "drought", "nature_id": "modest", "move_ids": ["heatwave", "weatherball", "solarbeam", "protect"], "role": "sun mode and Grass-type breaker"},
+        {"species_id": "grimmsnarl", "item_id": "lightclay", "ability_id": "prankster", "nature_id": "careful", "move_ids": ["spiritbreak", "partingshot", "lightscreen", "reflect"], "role": "dual screens and pivot support"},
+        {"species_id": "archaludon", "item_id": "leftovers", "ability_id": "stamina", "nature_id": "calm", "move_ids": ["dragonpulse", "flashcannon", "electroshot", "protect"], "role": "durable rain attacker"},
+        {"species_id": "pelipper", "item_id": "sitrusberry", "ability_id": "drizzle", "nature_id": "modest", "move_ids": ["hurricane", "weatherball", "wideguard", "tailwind"], "role": "rain, Tailwind, and Wide Guard support"},
+        {"species_id": "venusaur", "item_id": "focussash", "ability_id": "chlorophyll", "nature_id": "modest", "move_ids": ["leafstorm", "sludgebomb", "sleeppowder", "protect"], "role": "fast sun pressure and sleep threat"},
+        {"species_id": "basculegion", "item_id": "choicescarf", "ability_id": "adaptability", "nature_id": "jolly", "move_ids": ["wavecrash", "lastrespects", "aquajet", "flipturn"], "role": "fast rain attacker and late-game cleaner"}
+      ]
+    },
+    {
+      "id": "rain_screens",
+      "name": "Rain Screens",
+      "chapter_start_seconds": 536,
+      "plan": "Bulky rain offense protected by Grimmsnarl screens. Sinistcha redirects, heals partners, and offers a Trick Room reversal option.",
+      "common_leads": [],
+      "sets": [
+        {"species_id": "pelipper", "item_id": "sitrusberry", "ability_id": "drizzle", "nature_id": "modest", "move_ids": ["hurricane", "weatherball", "tailwind", "protect"], "role": "rain and Tailwind setter"},
+        {"species_id": "swampert", "battle_form_id": "swampertmega", "item_id": "swampertite", "ability_id": "swiftswim", "nature_id": "adamant", "move_ids": ["wavecrash", "highhorsepower", "icepunch", "protect"], "role": "Swift Swim physical attacker"},
+        {"species_id": "grimmsnarl", "item_id": "lightclay", "ability_id": "prankster", "nature_id": "sassy", "move_ids": ["spiritbreak", "partingshot", "lightscreen", "reflect"], "role": "dual screens and pivot support"},
+        {"species_id": "archaludon", "item_id": "leftovers", "ability_id": "stamina", "nature_id": "calm", "move_ids": ["dragonpulse", "flashcannon", "electroshot", "protect"], "role": "durable rain attacker"},
+        {"species_id": "basculegion", "item_id": "choicescarf", "ability_id": "adaptability", "nature_id": "jolly", "move_ids": ["wavecrash", "lastrespects", "aquajet", "flipturn"], "role": "fast cleanup"},
+        {"species_id": "sinistcha", "item_id": "kasibberry", "ability_id": "hospitality", "nature_id": "bold", "move_ids": ["matchagotcha", "ragepowder", "trickroom", "protect"], "role": "redirection, healing, and Trick Room reversal"}
+      ]
+    },
+    {
+      "id": "triple_setup_balance",
+      "name": "Triple Setup Balance",
+      "chapter_start_seconds": 606,
+      "plan": "Uses two Fake Out users and Sinistcha redirection to set up Blastoise, Delphox, or Kingambit. Blastoise supplies an alternate mode into teams that pressure Delphox.",
+      "common_leads": [],
+      "sets": [
+        {"species_id": "blastoise", "battle_form_id": "blastoisemega", "item_id": "blastoisinite", "ability_id": "megalauncher", "nature_id": "modest", "move_ids": ["waterspout", "darkpulse", "shellsmash", "protect"], "role": "Shell Smash setup and Water Spout sweeper"},
+        {"species_id": "delphox", "battle_form_id": "delphoxmega", "item_id": "delphoxite", "ability_id": "levitate", "nature_id": "modest", "move_ids": ["heatwave", "psychic", "nastyplot", "protect"], "role": "Nasty Plot setup sweeper"},
+        {"species_id": "kingambit", "item_id": "blackglasses", "ability_id": "defiant", "nature_id": "adamant", "move_ids": ["kowtowcleave", "suckerpunch", "swordsdance", "protect"], "role": "Swords Dance setup, especially into Big Six"},
+        {"species_id": "sneasler", "item_id": "focussash", "ability_id": "poisontouch", "nature_id": "jolly", "move_ids": ["poisonjab", "closecombat", "quickguard", "fakeout"], "role": "Fake Out and Quick Guard setup support"},
+        {"species_id": "incineroar", "item_id": "sitrusberry", "ability_id": "intimidate", "nature_id": "careful", "move_ids": ["flareblitz", "partingshot", "helpinghand", "fakeout"], "role": "Fake Out, Intimidate, pivot, and Helping Hand"},
+        {"species_id": "sinistcha", "item_id": "occaberry", "ability_id": "hospitality", "nature_id": "bold", "move_ids": ["matchagotcha", "ragepowder", "lifedew", "protect"], "role": "redirection and healing support"}
+      ]
+    },
+    {
+      "id": "mega_froslass_lycanroc",
+      "name": "Mega Froslass Lycanroc",
+      "chapter_start_seconds": 710,
+      "plan": "Anti-Charizard and anti-Big-Six composition. Froslass supplies snow and Aurora Veil, while Scovillain can redirect for Swords Dance Kingambit.",
+      "common_leads": [["scovillain", "kingambit"]],
+      "sets": [
+        {"species_id": "scovillain", "battle_form_id": "scovillainmega", "item_id": "scovillainite", "ability_id": "spicyspray", "nature_id": "bold", "move_ids": ["overheat", "leechseed", "ragepowder", "protect"], "role": "alternate Mega and Rage Powder support"},
+        {"species_id": "froslass", "battle_form_id": "froslassmega", "item_id": "froslassite", "ability_id": "snowwarning", "nature_id": "modest", "move_ids": ["blizzard", "shadowball", "auroraveil", "protect"], "role": "snow, Aurora Veil, and special damage"},
+        {"species_id": "kingambit", "item_id": "lifeorb", "ability_id": "defiant", "nature_id": "adamant", "move_ids": ["kowtowcleave", "swordsdance", "suckerpunch", "protect"], "role": "setup attacker with boosted Sucker Punch"},
+        {"species_id": "sneasler", "item_id": "whiteherb", "ability_id": "unburden", "nature_id": "jolly", "move_ids": ["gunkshot", "closecombat", "fakeout", "protect"], "role": "bulky Fake Out attacker"},
+        {"species_id": "basculegion", "item_id": "sitrusberry", "ability_id": "adaptability", "nature_id": "adamant", "move_ids": ["wavecrash", "lastrespects", "aquajet", "protect"], "role": "late-game cleaner behind Veil"},
+        {"species_id": "lycanrocdusk", "item_id": "focussash", "ability_id": "toughclaws", "nature_id": "adamant", "move_ids": ["rockslide", "closecombat", "accelerock", "protect"], "role": "Charizard and Kingambit pressure"}
+      ]
+    },
+    {
+      "id": "mega_blaziken_anti_meta",
+      "name": "Mega Blaziken Anti Meta",
+      "chapter_start_seconds": 783,
+      "plan": "Aggressive anti-meta team with two Mega routes. Blaziken and Venusaur cover different matchups; Lycanroc and Ninetales strengthen the Charizard and Garchomp matchups.",
+      "common_leads": [["blaziken", "kingambit"], ["ninetalesalola", "venusaur"], ["lycanrocdusk", "venusaur"]],
+      "sets": [
+        {"species_id": "blaziken", "battle_form_id": "blazikenmega", "item_id": "blazikenite", "ability_id": "speedboost", "nature_id": "adamant", "move_ids": ["closecombat", "flareblitz", "stoneedge", "detect"], "role": "fast Mega attacker; Rock coverage targets Charizard"},
+        {"species_id": "venusaur", "battle_form_id": "venusaurmega", "item_id": "venusaurite", "ability_id": "chlorophyll", "nature_id": "modest", "move_ids": ["gigadrain", "sludgebomb", "earthpower", "protect"], "role": "alternate Mega and special attacker"},
+        {"species_id": "ninetalesalola", "item_id": "nevermeltice", "ability_id": "snowwarning", "nature_id": "timid", "move_ids": ["blizzard", "freezedry", "encore", "protect"], "role": "Garchomp pressure and Encore control"},
+        {"species_id": "lycanrocdusk", "item_id": "focussash", "ability_id": "toughclaws", "nature_id": "adamant", "move_ids": ["accelerock", "rockslide", "closecombat", "protect"], "role": "Charizard pressure and priority"},
+        {"species_id": "kingambit", "item_id": "lifeorb", "ability_id": "defiant", "nature_id": "adamant", "move_ids": ["kowtowcleave", "suckerpunch", "ironhead", "protect"], "role": "high-damage trading partner"},
+        {"species_id": "basculegion", "item_id": "choicescarf", "ability_id": "adaptability", "nature_id": "jolly", "move_ids": ["wavecrash", "lastrespects", "flipturn", "aquajet"], "role": "late-game cleanup after fast trades"}
+      ]
+    },
+    {
+      "id": "sand_staraptor",
+      "name": "Sand Staraptor",
+      "chapter_start_seconds": 869,
+      "plan": "Sand offense built around Tyranitar and Excadrill. Staraptor adds Tailwind and Fighting pressure; Milotic deters Intimidate and Haze checks setup teams.",
+      "common_leads": [],
+      "sets": [
+        {"species_id": "tyranitar", "battle_form_id": "tyranitarmega", "item_id": "tyranitarite", "ability_id": "sandstream", "nature_id": "jolly", "move_ids": ["knockoff", "rockslide", "highhorsepower", "protect"], "role": "sand setter and physical attacker"},
+        {"species_id": "excadrill", "item_id": "focussash", "ability_id": "sandrush", "nature_id": "adamant", "move_ids": ["earthquake", "ironhead", "rockslide", "protect"], "role": "Sand Rush sweeper"},
+        {"species_id": "milotic", "item_id": "sitrusberry", "ability_id": "competitive", "nature_id": "calm", "move_ids": ["scald", "icywind", "haze", "protect"], "role": "Intimidate deterrent, speed control, and setup reset"},
+        {"species_id": "sinistcha", "item_id": "colburberry", "ability_id": "hospitality", "nature_id": "bold", "move_ids": ["matchagotcha", "shadowball", "protect", "ragepowder"], "role": "redirection and healing support"},
+        {"species_id": "staraptor", "battle_form_id": "staraptormega", "item_id": "staraptite", "ability_id": "intimidate", "nature_id": "jolly", "move_ids": ["closecombat", "bravebird", "tailwind", "protect"], "role": "Tailwind, Intimidate, and Fighting pressure"},
+        {"species_id": "gholdengo", "item_id": "lifeorb", "ability_id": "goodasgold", "nature_id": "modest", "move_ids": ["makeitrain", "shadowball", "nastyplot", "protect"], "role": "Nasty Plot special setup attacker"}
+      ]
+    },
+    {
+      "id": "gardevoir_maushold",
+      "name": "Gardevoir Maushold",
+      "chapter_start_seconds": 943,
+      "plan": "Maushold redirects for Gardevoir or Kingambit and uses Feint to punish Protect. Talonflame supplies Tailwind, while Scarf Basculegion cleans late.",
+      "common_leads": [],
+      "sets": [
+        {"species_id": "gardevoir", "battle_form_id": "gardevoirmega", "item_id": "gardevoirite", "ability_id": "trace", "nature_id": "modest", "move_ids": ["hypervoice", "psychic", "thunderbolt", "protect"], "role": "Mega spread attacker"},
+        {"species_id": "basculegion", "item_id": "choicescarf", "ability_id": "adaptability", "nature_id": "jolly", "move_ids": ["wavecrash", "lastrespects", "flipturn", "aquajet"], "role": "fast late-game cleanup"},
+        {"species_id": "talonflame", "item_id": "sharpbeak", "ability_id": "galewings", "nature_id": "jolly", "move_ids": ["dualwingbeat", "flareblitz", "tailwind", "protect"], "role": "Tailwind and anti-Whimsicott pressure"},
+        {"species_id": "maushold", "item_id": "focussash", "ability_id": "friendguard", "nature_id": "jolly", "move_ids": ["superfang", "feint", "followme", "protect"], "role": "redirection, Friend Guard, and anti-Protect support"},
+        {"species_id": "kingambit", "item_id": "expertbelt", "ability_id": "defiant", "nature_id": "jolly", "move_ids": ["kowtowcleave", "suckerpunch", "ironhead", "lowkick"], "role": "fast coverage attacker"},
+        {"species_id": "kommoo", "item_id": "lifeorb", "ability_id": "soundproof", "nature_id": "modest", "move_ids": ["clangingscales", "dracometeor", "aurasphere", "protect"], "role": "alternative special attacker"}
+      ]
+    }
+  ]
+}

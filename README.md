@@ -29,6 +29,22 @@ Start the sibling Showdown server, then run the two acceptance gates:
 Both players explicitly accept Open Team Sheets by default. Use
 `--no-open-team-sheets` to make both reject for a controlled comparison.
 
+## Curated metagame teams
+
+`data/meta/popular_teams_H8v7TEZcbXo.json` contains the ten teams shown in JoeUX9's
+"The Most Popular Teams In Pokemon Champions Explained": 60 complete sets plus the
+stated roles and common leads. At team preview, `vgc.meta` recognizes only an exact
+six-species match. The evaluator then uses the video's hidden nature for its Speed and
+damage estimates and records the archetype in `VGC_TRACE` output.
+
+Live Open Team Sheet information always wins for moves, items, and abilities. The video
+did not provide Stat Point spreads, so those still come from `data/usage/spreads.json`.
+Validate the curated ids against the Champions export with:
+
+```bash
+.venv/bin/python -c 'from vgc.meta import validate_meta_teams; assert not validate_meta_teams()'
+```
+
 ## Ladder sessions
 
 First exercise the replay, trace, and JSONL logging pipeline locally:

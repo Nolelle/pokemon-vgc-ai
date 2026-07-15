@@ -45,6 +45,7 @@ from vgc.evaluator import (
     effective_speed,
     mega_evolved_state,
 )
+from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.sets import load_usage_spreads, opponent_state
 
@@ -82,11 +83,17 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         return "/team " + "".join(str(i) for i in order)
 
     usage = load_usage_spreads()
+    meta_team = recognize_meta_team(opp_team)
     # A held Mega stone is public information and this evaluator has no strategic reason
     # to save a Mega for later, so preview the form that will actually battle. This also
     # exposes weather-setting Mega abilities such as Drought to the lead scorer.
     our_states = [mega_evolved_state(_our_pokemon_state(mon)) for mon in our_team]
-    opp_states = [mega_evolved_state(opponent_state(mon, usage=usage)) for mon in opp_team]
+    opp_states = [
+        mega_evolved_state(
+            opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+        )
+        for mon in opp_team
+    ]
     our_move_id_lists = [
         [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else [] for mon in our_team
     ]
@@ -139,6 +146,15 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
     record_note(
         "team_preview_choice", {"order": order_string, "score": round(best_score, 3), **best_breakdown}
     )
+    if meta_team is not None:
+        record_note(
+            "opponent_meta_team",
+            {
+                "id": meta_team["id"],
+                "name": meta_team["name"],
+                "common_leads": meta_team["common_leads"],
+            },
+        )
     return order_string
 
 

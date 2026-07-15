@@ -59,6 +59,16 @@ def test_usage_data_picks_highest_weight_entry() -> None:
     assert state.nature == "jolly"
 
 
+def test_curated_nature_override_wins_over_usage_guess() -> None:
+    usage = {"garchomp": [{"sp": {"atk": 32}, "nature": "adamant", "weight": 1}]}
+    fake = _FakePokemon(species="garchomp")
+
+    state = opponent_state(fake, usage=usage, nature_override="jolly")
+
+    assert state.sp_spread == {"atk": 32}
+    assert state.nature == "jolly"
+
+
 def test_boosts_filtered_to_damage_relevant_stats() -> None:
     fake = _FakePokemon(species="garchomp", boosts={"atk": 2, "accuracy": 1, "evasion": -1, "def": 0})
     state = opponent_state(fake, usage={})

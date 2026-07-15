@@ -68,6 +68,7 @@ from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
+from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.sets import load_usage_spreads, normalize_item, normalize_status, opponent_state
 from vgc.stats import STAT_IDS
@@ -421,6 +422,13 @@ def _best_attacking_move(
 
 def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
     usage = load_usage_spreads()
+    preview_team = list(getattr(battle, "teampreview_opponent_team", None) or [])
+    if len(preview_team) != 6:
+        opponent_team = getattr(battle, "opponent_team", {}) or {}
+        preview_team = list(opponent_team.values())
+    meta_team = recognize_meta_team(preview_team)
+    if meta_team is not None:
+        record_note("opponent_meta_team", {"id": meta_team["id"], "name": meta_team["name"]})
 
     trick_room = Field.TRICK_ROOM in battle.fields
     weather = _weather_str(battle)
@@ -439,7 +447,10 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         _our_pokemon_state(mon) if mon is not None and not mon.fainted else None for mon in our_pokemon
     ]
     opp_states = [
-        opponent_state(mon, usage=usage) if mon is not None and not mon.fainted else None for mon in opp_pokemon
+        opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+        if mon is not None and not mon.fainted
+        else None
+        for mon in opp_pokemon
     ]
 
     our_speed = [effective_speed(state) if state is not None else 0.0 for state in our_states]
