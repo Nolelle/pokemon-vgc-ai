@@ -1,4 +1,5 @@
 runs/
+data/replays/
 .venv/
 __pycache__/
 *.egg-info
