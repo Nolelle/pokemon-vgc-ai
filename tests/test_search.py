@@ -46,10 +46,17 @@ def _klefki(**kwargs) -> PokemonState:
 
 
 def _mon(
-    fainted: bool = False, moves: dict | None = None, protect_counter: int = 0
+    fainted: bool = False,
+    moves: dict | None = None,
+    protect_counter: int = 0,
+    species: str = "missingno",
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        fainted=fainted, moves=moves or {}, ability=None, protect_counter=protect_counter
+        fainted=fainted,
+        moves=moves or {},
+        ability=None,
+        protect_counter=protect_counter,
+        species=species,
     )
 
 
@@ -63,6 +70,7 @@ def _build_ctx(
     weather: str | None = None,
     our_side_screens: frozenset = frozenset(),
     opp_side_screens: frozenset = frozenset(),
+    priors: dict | None = None,
 ) -> _Context:
     return _Context(
         battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
@@ -81,6 +89,7 @@ def _build_ctx(
         opp_threat_score=[0.0, 0.0],
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
+        priors=priors if priors is not None else {},
     )
 
 

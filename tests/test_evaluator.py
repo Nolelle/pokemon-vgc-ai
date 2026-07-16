@@ -201,6 +201,7 @@ def _two_slot_ctx(our_alive=(True, True), opp_alive=(True, True)) -> _Context:
         opp_threat_score=[0.0, 0.0],
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
+        priors={},
     )
 
 
@@ -258,6 +259,7 @@ def _attack_ctx(*, ally_state: PokemonState | None, opp_state: PokemonState) -> 
         opp_threat_score=[0.0, 0.0],
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
+        priors={},
     )
 
 

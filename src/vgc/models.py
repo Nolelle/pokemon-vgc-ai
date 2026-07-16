@@ -265,6 +265,28 @@ class PolicyConfig:
     # paying its compute cost -- useful as an isolation test, not a recommended setting.
     search_position_weight: float = 1.0
 
+    # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
+    # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
+    # (see tools/build_set_priors.py) -- Open Team Sheets essentially never triggers on
+    # the real public ladder (vgc.replay_parse's module docstring: ~0.2% of downloaded
+    # replays reveal a full sheet, since this format's "Open Team Sheets" ruleset needs
+    # BOTH players to opt in and almost no human ladder opponent does), so most opposing
+    # movesets the threat/Protect model sees in a real game are otherwise 0-4 known moves
+    # out of the real 4, starving `_opp_protect_probability`/`_best_attacking_move` of the
+    # information they need. Gate-neutral by construction: offline gates run mutual OTS
+    # accept (every move is already revealed there), so filling has nothing left to fill
+    # and this knob is a no-op in that setting -- its real effect only shows up against
+    # real ladder opponents.
+    use_set_priors: bool = True
+    # Minimum tracked appearances (set_priors.json's per-species "appearances" count)
+    # before that species' move-frequency prior is trusted enough to fill unrevealed
+    # moves -- below this the sample is too thin to distinguish a real trend from noise.
+    set_prior_min_games: int = 5
+    # Total moves per Pokemon after filling. Revealed moves are ALWAYS kept even if
+    # somehow more than this many are already revealed (this only caps how many PRIOR
+    # moves get layered on top, never truncates real information from Open Team Sheets).
+    set_prior_max_moves: int = 4
+
     # --- Team preview (vgc.team_preview.build_team_order) -------------------------------
     # Weight on the pairwise expected-damage-exchange ratio term (our estimated output
     # onto their previewed 6 vs theirs onto us) when scoring a 4-of-6 pick + lead order.

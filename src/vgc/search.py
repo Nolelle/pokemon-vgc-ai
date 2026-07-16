@@ -23,8 +23,11 @@ before it).
    joint responses: per opponent slot, the top `search_opp_moves_per_slot` known
    damaging moves by expected damage (one candidate per (move, our-target-slot) pair for
    single-target moves, one candidate for spread moves) PLUS a Protect candidate
-   whenever the slot's Open-Team-Sheet-known kit contains a `_SELF_PROTECT_MOVES` member
-   and it hasn't already Protected last turn -- cross-producted across the two slots and
+   whenever the slot's known kit contains a `_SELF_PROTECT_MOVES` member and it hasn't
+   already Protected last turn -- "known" via `vgc.sets.opponent_move_ids` (Open Team
+   Sheets when available, PLUS a replay-corpus-frequency fill for whatever's still
+   unrevealed, since OTS essentially never triggers on the real ladder -- see
+   `vgc.evaluator`'s module docstring) -- cross-producted across the two slots and
    pruned to `search_opp_candidates` by a cheap enumeration-time score.
 4. `resolve_exchange(our_order, opp_response, ctx, config)` simulates ONE turn: our
    switches/mega resolve first (like the real engine), then every remaining move/Protect
@@ -106,6 +109,7 @@ from vgc.evaluator import (
     score_joint_orders,
 )
 from vgc.models import PolicyConfig
+from vgc.sets import opponent_move_ids
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -194,7 +198,7 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     if opp_mon is None or opp_state is None or opp_idx not in ctx.opp_alive():
         return [_OppSlotAction(kind="none")]
 
-    move_ids = list(opp_mon.moves.keys()) if opp_mon.moves else []
+    move_ids = opponent_move_ids(opp_mon, priors=ctx.priors, config=config)
     our_alive = ctx.our_alive()
     field_vs_us_single = ctx.field_state(defender_is_ours=True, num_targets=1)
     field_vs_us_spread = ctx.field_state(defender_is_ours=True, num_targets=max(1, len(our_alive)))
@@ -245,8 +249,8 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     top_k = max(0, config.search_opp_moves_per_slot)
     candidates = [action for _, action in scored[:top_k]]
 
-    known_move_ids_norm = {to_id(m) for m in move_ids}
-    protect_move_id = next(iter(sorted(known_move_ids_norm & _SELF_PROTECT_MOVES)), None)
+    # move_ids is already to_id-normalized (opponent_move_ids' own contract).
+    protect_move_id = next(iter(sorted(set(move_ids) & _SELF_PROTECT_MOVES)), None)
     protect_counter = getattr(opp_mon, "protect_counter", 0)
     if protect_move_id is not None and protect_counter == 0:
         protect_value = _our_pressure_on_opp_slot(ctx, opp_idx) * config.protect_threat_weight

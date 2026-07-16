@@ -35,10 +35,15 @@ PolicyConfig field.
   is what keeps the evaluator from reflexively double-Protecting when neither slot is
   actually threatened -- both penalties make an unthreatened Protect score below almost
   any attacking alternative, without a special-cased "not both" rule).
-- **Opponent Protect/switch anticipation**: Open Team Sheets reveal the opponent's full
-  movesets, so a `_SELF_PROTECT_MOVES` member in a slot's known kit makes Protect a real
-  possibility instead of a guess -- `_opp_protect_probability` estimates it from a base
-  rate plus how close our best single attack onto that slot comes to a KO (capped, and
+- **Opponent Protect/switch anticipation**: a `_SELF_PROTECT_MOVES` member in a slot's
+  known kit makes Protect a real possibility instead of a guess -- "known" means Open
+  Team Sheets when they're available, PLUS (since OTS essentially never triggers on the
+  real public ladder -- see `vgc.replay_parse`'s module docstring) `vgc.sets.
+  opponent_move_ids`'s replay-corpus-frequency fill for whatever's still unrevealed
+  (`build_context` loads `vgc.sets.load_set_priors()` once per turn into `_Context.
+  priors`, same pattern as `load_usage_spreads`). `_opp_protect_probability` estimates
+  Protect's chance from a base rate plus how close our best single attack onto that slot
+  comes to a KO (capped, and
   collapsed when `protect_counter` shows they already Protected last turn), and
   `_opp_switch_probability` estimates a pivot-out chance when that slot is under heavy
   pressure but its own output is weak. In `_score_attack_order`, only the KO-dependent
@@ -88,7 +93,14 @@ from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
-from vgc.sets import load_usage_spreads, normalize_item, normalize_status, opponent_state
+from vgc.sets import (
+    load_set_priors,
+    load_usage_spreads,
+    normalize_item,
+    normalize_status,
+    opponent_move_ids,
+    opponent_state,
+)
 from vgc.stats import STAT_IDS
 
 # --- pure building blocks (unit tested directly against hand-built PokemonStates) ------
@@ -442,9 +454,10 @@ class _Context:
     # Best estimated outgoing damage % (from either of our actives) onto each OPPONENT
     # slot -- a rough "how scary is this opposing mon overall" figure for Fake Out.
     opp_threat_score: list[float]
-    # Estimated probability each OPPONENT slot Protects this turn (0.0 unless Open Team
-    # Sheets confirm a `_SELF_PROTECT_MOVES` member in its known kit) -- see
-    # `_opp_protect_probability`; dampens the ENTIRE per-target contribution in
+    # Estimated probability each OPPONENT slot Protects this turn (0.0 unless a
+    # `_SELF_PROTECT_MOVES` member is in its known kit -- "known" via Open Team Sheets
+    # OR `vgc.sets.opponent_move_ids`'s replay-corpus prior fill, see `priors` below) --
+    # see `_opp_protect_probability`; dampens the ENTIRE per-target contribution in
     # `_score_attack_order` since Protect blocks damage, KO bonuses, and Fake Out alike.
     opp_protect_prob: list[float]
     # Estimated probability each OPPONENT slot switches out this turn under heavy
@@ -452,6 +465,11 @@ class _Context:
     # KO-dependent bonuses in `_score_attack_order` (our damage still lands on whatever
     # replaces them).
     opp_switch_prob: list[float]
+    # Loaded once per turn (`vgc.sets.load_set_priors()`, `{}` if set_priors.json is
+    # missing) and threaded through `_Context` so `vgc.search._opp_slot_candidates` can
+    # call `opponent_move_ids` with the SAME loaded dict instead of re-reading the file
+    # -- mirrors how `opponent_state`'s own `usage=` parameter is threaded through.
+    priors: dict[str, object]
 
     def field_state(
         self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
@@ -561,6 +579,7 @@ def _best_attacking_move(
 
 def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
     usage = load_usage_spreads()
+    priors = load_set_priors()
     preview_team = list(getattr(battle, "teampreview_opponent_team", None) or [])
     if len(preview_team) != 6:
         opponent_team = getattr(battle, "opponent_team", {}) or {}
@@ -637,7 +656,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             opp_mon = opp_pokemon[opp_idx]
             if opp_state is None or opp_mon is None:
                 continue
-            move_ids = list(opp_mon.moves.keys()) if opp_mon.moves else []
+            move_ids = opponent_move_ids(opp_mon, priors=priors, config=config)
             pct, move_id, priority = _best_attacking_move(
                 opp_state, move_ids, our_state, field_vs_us
             )
@@ -668,9 +687,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_mon = opp_pokemon[opp_idx]
         if opp_state is None or opp_mon is None:
             continue
-        known_move_ids = {
-            to_id(move_id) for move_id in (opp_mon.moves.keys() if opp_mon.moves else [])
-        }
+        known_move_ids = set(opponent_move_ids(opp_mon, priors=priors, config=config))
         has_self_protect_move = bool(known_move_ids & _SELF_PROTECT_MOVES)
         protect_counter = getattr(opp_mon, "protect_counter", 0)
         opp_protect_prob[opp_idx] = _opp_protect_probability(
@@ -697,6 +714,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_threat_score=opp_threat_score,
         opp_protect_prob=opp_protect_prob,
         opp_switch_prob=opp_switch_prob,
+        priors=priors,
     )
 
 

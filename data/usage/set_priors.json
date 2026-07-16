@@ -1,0 +1,4143 @@
+{
+  "meta": {
+    "corpus_size": 2939,
+    "generated_from_replays": 2939,
+    "min_rating": 1000,
+    "min_rating_found": 1100
+  },
+  "species": {
+    "abomasnow": {
+      "abilities": {},
+      "appearances": 11,
+      "items": {
+        "abomasite": 4
+      },
+      "moves": {
+        "auroraveil": 2,
+        "blizzard": 3,
+        "energyball": 1,
+        "gigadrain": 2,
+        "icehammer": 2,
+        "protect": 1
+      }
+    },
+    "absol": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {
+        "absolite": 1
+      },
+      "moves": {
+        "closecombat": 1,
+        "knockoff": 1,
+        "playrough": 1,
+        "suckerpunch": 1
+      }
+    },
+    "aegislash": {
+      "abilities": {},
+      "appearances": 25,
+      "items": {},
+      "moves": {
+        "airslash": 1,
+        "destinybond": 1,
+        "flashcannon": 2,
+        "ironhead": 5,
+        "kingsshield": 8,
+        "poltergeist": 4,
+        "sacredsword": 3,
+        "shadowball": 5,
+        "shadowsneak": 7,
+        "wideguard": 6
+      }
+    },
+    "aerodactyl": {
+      "abilities": {
+        "pressure": 2,
+        "unnerve": 57
+      },
+      "appearances": 251,
+      "items": {
+        "aerodactylite": 100
+      },
+      "moves": {
+        "dualwingbeat": 67,
+        "earthquake": 1,
+        "icefang": 22,
+        "ironhead": 1,
+        "protect": 38,
+        "rockblast": 1,
+        "rockslide": 169,
+        "sandstorm": 1,
+        "tailwind": 144,
+        "taunt": 2,
+        "wideguard": 38
+      }
+    },
+    "aggron": {
+      "abilities": {},
+      "appearances": 20,
+      "items": {
+        "aggronite": 19
+      },
+      "moves": {
+        "bodypress": 9,
+        "curse": 1,
+        "heavyslam": 11,
+        "hypervoice": 2,
+        "irondefense": 11,
+        "ironhead": 1,
+        "nastyplot": 1,
+        "protect": 11,
+        "stoneedge": 1
+      }
+    },
+    "alakazam": {
+      "abilities": {
+        "blaze": 1,
+        "defiant": 1,
+        "pixilate": 1,
+        "prankster": 1,
+        "stamina": 1
+      },
+      "appearances": 12,
+      "items": {
+        "alakazite": 5
+      },
+      "moves": {
+        "dazzlinggleam": 1,
+        "expandingforce": 7,
+        "focusblast": 2,
+        "nastyplot": 1,
+        "protect": 3,
+        "psychic": 1,
+        "speedswap": 2,
+        "trickroom": 1
+      }
+    },
+    "alcremie": {
+      "abilities": {},
+      "appearances": 10,
+      "items": {},
+      "moves": {
+        "aromaticmist": 2,
+        "dazzlinggleam": 4,
+        "decorate": 7,
+        "lightscreen": 2,
+        "mysticalfire": 1,
+        "protect": 4,
+        "recover": 3
+      }
+    },
+    "alcremierainbowswirl": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "dazzlinggleam": 1,
+        "decorate": 2,
+        "helpinghand": 1
+      }
+    },
+    "altaria": {
+      "abilities": {
+        "cloudnine": 19
+      },
+      "appearances": 24,
+      "items": {
+        "altarianite": 5
+      },
+      "moves": {
+        "acrobatics": 1,
+        "bodyslam": 1,
+        "bravebird": 5,
+        "cottonguard": 1,
+        "dragonclaw": 1,
+        "dragondance": 1,
+        "featherdance": 1,
+        "fireblast": 1,
+        "flamethrower": 1,
+        "helpinghand": 3,
+        "hurricane": 1,
+        "hypervoice": 3,
+        "moonblast": 1,
+        "perishsong": 2,
+        "protect": 8,
+        "roar": 2,
+        "roost": 2,
+        "tailwind": 9,
+        "willowisp": 5
+      }
+    },
+    "ampharos": {
+      "abilities": {
+        "moldbreaker": 7
+      },
+      "appearances": 7,
+      "items": {
+        "ampharosite": 7
+      },
+      "moves": {
+        "cottonguard": 1,
+        "dragonpulse": 3,
+        "paraboliccharge": 6,
+        "protect": 2,
+        "thunder": 2,
+        "thunderbolt": 1
+      }
+    },
+    "annihilape": {
+      "abilities": {
+        "defiant": 5
+      },
+      "appearances": 98,
+      "items": {},
+      "moves": {
+        "bulkup": 13,
+        "closecombat": 15,
+        "coaching": 6,
+        "drainpunch": 10,
+        "icepunch": 1,
+        "phantomforce": 13,
+        "poisonjab": 4,
+        "protect": 23,
+        "ragefist": 45,
+        "rockslide": 5,
+        "rocktomb": 4,
+        "shadowclaw": 3,
+        "stormthrow": 1,
+        "substitute": 1,
+        "taunt": 3,
+        "thunderpunch": 1
+      }
+    },
+    "appletun": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "dracometeor": 1,
+        "dragonpulse": 1,
+        "protect": 1
+      }
+    },
+    "araquanid": {
+      "abilities": {
+        "insomnia": 1
+      },
+      "appearances": 34,
+      "items": {},
+      "moves": {
+        "crunch": 1,
+        "entrainment": 3,
+        "hydropump": 1,
+        "icywind": 1,
+        "leechlife": 3,
+        "liquidation": 24,
+        "mirrorcoat": 4,
+        "poisonjab": 1,
+        "protect": 6,
+        "reflect": 1,
+        "soak": 1,
+        "stickyweb": 1,
+        "surf": 2,
+        "waterfall": 2,
+        "wideguard": 14
+      }
+    },
+    "arbok": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "glare": 1,
+        "poisonjab": 1,
+        "suckerpunch": 1,
+        "toxic": 1
+      }
+    },
+    "arcanine": {
+      "abilities": {
+        "intimidate": 1
+      },
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "extremespeed": 1,
+        "heatwave": 1,
+        "protect": 2,
+        "wildcharge": 1
+      }
+    },
+    "arcaninehisui": {
+      "abilities": {
+        "intimidate": 7
+      },
+      "appearances": 27,
+      "items": {},
+      "moves": {
+        "extremespeed": 12,
+        "flamethrower": 1,
+        "flareblitz": 12,
+        "headsmash": 7,
+        "powergem": 1,
+        "protect": 9,
+        "rockslide": 12
+      }
+    },
+    "archaludon": {
+      "abilities": {
+        "moldbreaker": 1,
+        "stamina": 430,
+        "sturdy": 4
+      },
+      "appearances": 603,
+      "items": {
+        "choicescarf": 4,
+        "leftovers": 3
+      },
+      "moves": {
+        "aurasphere": 11,
+        "dracometeor": 15,
+        "dragonpulse": 211,
+        "electroshot": 386,
+        "flashcannon": 241,
+        "icywind": 1,
+        "protect": 236,
+        "rocktomb": 2,
+        "snarl": 4,
+        "steelbeam": 2,
+        "thunderbolt": 2
+      }
+    },
+    "ariados": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "protect": 1,
+        "ragepowder": 2
+      }
+    },
+    "armarouge": {
+      "abilities": {
+        "weakarmor": 1
+      },
+      "appearances": 22,
+      "items": {},
+      "moves": {
+        "armorcannon": 10,
+        "endure": 1,
+        "expandingforce": 2,
+        "heatwave": 3,
+        "overheat": 2,
+        "protect": 4,
+        "psychic": 3,
+        "psyshock": 2,
+        "storedpower": 1,
+        "trickroom": 8,
+        "wideguard": 4
+      }
+    },
+    "aromatisse": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "allyswitch": 1,
+        "dazzlinggleam": 1,
+        "encore": 1,
+        "helpinghand": 1,
+        "ironhead": 1,
+        "moonblast": 2,
+        "playrough": 1,
+        "trickroom": 3
+      }
+    },
+    "audino": {
+      "abilities": {},
+      "appearances": 19,
+      "items": {
+        "audinite": 3
+      },
+      "moves": {
+        "allyswitch": 4,
+        "dazzlinggleam": 2,
+        "encore": 2,
+        "healingwish": 1,
+        "healpulse": 2,
+        "helpinghand": 1,
+        "lifedew": 2,
+        "playrough": 1,
+        "protect": 3,
+        "simplebeam": 8,
+        "thunderwave": 2,
+        "trickroom": 8,
+        "waterspout": 1,
+        "weatherball": 1,
+        "yawn": 3
+      }
+    },
+    "aurorus": {
+      "abilities": {},
+      "appearances": 12,
+      "items": {},
+      "moves": {
+        "ancientpower": 3,
+        "auroraveil": 1,
+        "blizzard": 9,
+        "discharge": 1,
+        "freezedry": 3,
+        "protect": 3
+      }
+    },
+    "avalugghisui": {
+      "abilities": {
+        "sturdy": 1
+      },
+      "appearances": 10,
+      "items": {},
+      "moves": {
+        "heavyslam": 1,
+        "hypervoice": 1,
+        "icespinner": 1,
+        "mountaingale": 2,
+        "protect": 2,
+        "rockslide": 6,
+        "stompingtantrum": 1,
+        "stoneedge": 1,
+        "wideguard": 2
+      }
+    },
+    "azumarill": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "aquajet": 5,
+        "bellydrum": 6,
+        "bulldoze": 1,
+        "faketears": 1,
+        "playrough": 1,
+        "protect": 3
+      }
+    },
+    "banette": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {
+        "banettite": 3
+      },
+      "moves": {
+        "disable": 2,
+        "encore": 1,
+        "protect": 2,
+        "suckerpunch": 1,
+        "swagger": 1
+      }
+    },
+    "barbaracle": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {
+        "barbaracite": 1
+      },
+      "moves": {
+        "rockslide": 1,
+        "shellsmash": 1
+      }
+    },
+    "basculegion": {
+      "abilities": {
+        "intimidate": 1
+      },
+      "appearances": 2210,
+      "items": {
+        "choicescarf": 8,
+        "mysticwater": 1
+      },
+      "moves": {
+        "aquajet": 271,
+        "flipturn": 251,
+        "hypervoice": 1,
+        "icefang": 1,
+        "lastrespects": 1258,
+        "liquidation": 13,
+        "phantomforce": 2,
+        "protect": 108,
+        "soak": 6,
+        "struggle": 5,
+        "substitute": 1,
+        "wavecrash": 401
+      }
+    },
+    "basculegionf": {
+      "abilities": {},
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "hydropump": 2,
+        "icebeam": 1,
+        "muddywater": 2,
+        "protect": 1,
+        "shadowball": 4
+      }
+    },
+    "beedrill": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {
+        "beedrillite": 5
+      },
+      "moves": {
+        "crosspoison": 1,
+        "drillrun": 1,
+        "poisonjab": 1,
+        "protect": 4,
+        "round": 1,
+        "uturn": 2
+      }
+    },
+    "bellibolt": {
+      "abilities": {},
+      "appearances": 17,
+      "items": {
+        "scopelens": 1
+      },
+      "moves": {
+        "paraboliccharge": 11,
+        "protect": 5,
+        "slackoff": 1,
+        "soak": 5,
+        "thunderbolt": 5,
+        "toxic": 5
+      }
+    },
+    "blastoise": {
+      "abilities": {
+        "insomnia": 1
+      },
+      "appearances": 113,
+      "items": {
+        "audinite": 1,
+        "blastoisinite": 85
+      },
+      "moves": {
+        "aurasphere": 10,
+        "blizzard": 2,
+        "bulldoze": 1,
+        "darkpulse": 37,
+        "dragonpulse": 3,
+        "fakeout": 18,
+        "flipturn": 1,
+        "helpinghand": 1,
+        "icebeam": 5,
+        "protect": 41,
+        "shellsmash": 51,
+        "surf": 1,
+        "thunder": 1,
+        "waterpulse": 1,
+        "waterspout": 76
+      }
+    },
+    "blaziken": {
+      "abilities": {
+        "speedboost": 88
+      },
+      "appearances": 107,
+      "items": {
+        "blazikenite": 70
+      },
+      "moves": {
+        "aurasphere": 2,
+        "batonpass": 1,
+        "bulkup": 1,
+        "closecombat": 23,
+        "detect": 33,
+        "flamethrower": 1,
+        "flareblitz": 43,
+        "heatwave": 4,
+        "highjumpkick": 1,
+        "knockoff": 5,
+        "poisonjab": 1,
+        "protect": 29,
+        "rockslide": 36,
+        "rocktomb": 1,
+        "solarbeam": 2,
+        "stoneedge": 2,
+        "swordsdance": 9,
+        "thunderpunch": 1
+      }
+    },
+    "camerupt": {
+      "abilities": {},
+      "appearances": 46,
+      "items": {
+        "cameruptite": 35
+      },
+      "moves": {
+        "ancientpower": 11,
+        "aquajet": 1,
+        "earthpower": 20,
+        "eruption": 10,
+        "flamethrower": 1,
+        "heatwave": 24,
+        "protect": 14,
+        "solarbeam": 2,
+        "trickroom": 1
+      }
+    },
+    "castform": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "blizzard": 1,
+        "weatherball": 1
+      }
+    },
+    "ceruledge": {
+      "abilities": {},
+      "appearances": 117,
+      "items": {},
+      "moves": {
+        "bitterblade": 77,
+        "bulkup": 42,
+        "poltergeist": 5,
+        "protect": 30,
+        "shadowsneak": 82,
+        "swordsdance": 8
+      }
+    },
+    "chandelure": {
+      "abilities": {},
+      "appearances": 60,
+      "items": {
+        "chandelurite": 17,
+        "focussash": 1
+      },
+      "moves": {
+        "burningjealousy": 1,
+        "energyball": 3,
+        "flamethrower": 7,
+        "heatwave": 32,
+        "protect": 19,
+        "psychic": 2,
+        "shadowball": 23,
+        "trickroom": 10
+      }
+    },
+    "charizard": {
+      "abilities": {},
+      "appearances": 2011,
+      "items": {
+        "charizarditex": 17,
+        "charizarditey": 1558
+      },
+      "moves": {
+        "airslash": 8,
+        "ancientpower": 10,
+        "bellydrum": 6,
+        "breakingswipe": 2,
+        "dragonclaw": 9,
+        "dragondance": 6,
+        "dragonpulse": 1,
+        "dragonrush": 1,
+        "firepunch": 2,
+        "flamecharge": 1,
+        "flamethrower": 1,
+        "flareblitz": 5,
+        "focusblast": 1,
+        "heatwave": 1546,
+        "helpinghand": 10,
+        "hurricane": 2,
+        "overheat": 2,
+        "protect": 394,
+        "rockslide": 3,
+        "scorchingsands": 2,
+        "solarbeam": 196,
+        "struggle": 3,
+        "swordsdance": 1,
+        "temperflare": 2,
+        "weatherball": 454
+      }
+    },
+    "chesnaught": {
+      "abilities": {},
+      "appearances": 9,
+      "items": {
+        "chesnaughtite": 5
+      },
+      "moves": {
+        "bellydrum": 1,
+        "bodypress": 2,
+        "brickbreak": 1,
+        "bulkup": 1,
+        "irondefense": 1,
+        "quickguard": 1,
+        "rockslide": 1,
+        "scaryface": 1,
+        "seedbomb": 1,
+        "spikyshield": 2,
+        "synthesis": 1,
+        "trailblaze": 1,
+        "wideguard": 3
+      }
+    },
+    "chimecho": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {
+        "chimechite": 4
+      },
+      "moves": {
+        "dazzlinggleam": 2,
+        "flashcannon": 2,
+        "protect": 1,
+        "psychic": 2,
+        "psychup": 1,
+        "recover": 1,
+        "storedpower": 1,
+        "trickroom": 1
+      }
+    },
+    "clawitzer": {
+      "abilities": {},
+      "appearances": 8,
+      "items": {},
+      "moves": {
+        "aurasphere": 1,
+        "darkpulse": 4,
+        "icebeam": 2,
+        "protect": 3,
+        "waterpulse": 4
+      }
+    },
+    "clefable": {
+      "abilities": {},
+      "appearances": 28,
+      "items": {
+        "clefablite": 6,
+        "leftovers": 1
+      },
+      "moves": {
+        "airslash": 1,
+        "cosmicpower": 3,
+        "dazzlinggleam": 1,
+        "drainingkiss": 1,
+        "followme": 16,
+        "gravity": 3,
+        "healpulse": 3,
+        "helpinghand": 3,
+        "lifedew": 2,
+        "moonblast": 8,
+        "moonlight": 2,
+        "protect": 2,
+        "psychup": 1,
+        "storedpower": 1
+      }
+    },
+    "cofagrigus": {
+      "abilities": {},
+      "appearances": 8,
+      "items": {},
+      "moves": {
+        "allyswitch": 1,
+        "bodypress": 1,
+        "curse": 1,
+        "disable": 1,
+        "faketears": 2,
+        "hex": 1,
+        "mortalspin": 1,
+        "shadowball": 3,
+        "spikes": 1,
+        "trickroom": 7,
+        "willowisp": 3
+      }
+    },
+    "conkeldurr": {
+      "abilities": {},
+      "appearances": 14,
+      "items": {},
+      "moves": {
+        "closecombat": 1,
+        "detect": 1,
+        "drainpunch": 6,
+        "icepunch": 2,
+        "machpunch": 1,
+        "protect": 3,
+        "rockslide": 6,
+        "wideguard": 5
+      }
+    },
+    "corviknight": {
+      "abilities": {
+        "mirrorarmor": 10,
+        "unnerve": 2
+      },
+      "appearances": 47,
+      "items": {
+        "leftovers": 2
+      },
+      "moves": {
+        "bodypress": 7,
+        "bravebird": 21,
+        "bulkup": 7,
+        "irondefense": 7,
+        "ironhead": 11,
+        "powertrip": 1,
+        "protect": 5,
+        "roost": 8,
+        "tailwind": 16,
+        "taunt": 2
+      }
+    },
+    "crabominable": {
+      "abilities": {},
+      "appearances": 21,
+      "items": {
+        "crabominite": 16
+      },
+      "moves": {
+        "closecombat": 1,
+        "crabhammer": 3,
+        "drainpunch": 5,
+        "icehammer": 11,
+        "knockoff": 1,
+        "machpunch": 2,
+        "protect": 8,
+        "thunderpunch": 6
+      }
+    },
+    "decidueye": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "curse": 1,
+        "energyball": 1,
+        "protect": 1,
+        "spiritshackle": 1,
+        "tailwind": 1
+      }
+    },
+    "decidueyehisui": {
+      "abilities": {},
+      "appearances": 17,
+      "items": {},
+      "moves": {
+        "bravebird": 1,
+        "closecombat": 7,
+        "leafblade": 5,
+        "protect": 4,
+        "shadowsneak": 1,
+        "suckerpunch": 2,
+        "tailwind": 2,
+        "triplearrows": 5,
+        "upperhand": 1
+      }
+    },
+    "delphox": {
+      "abilities": {},
+      "appearances": 160,
+      "items": {
+        "delphoxite": 123
+      },
+      "moves": {
+        "calmmind": 4,
+        "dazzlinggleam": 1,
+        "encore": 1,
+        "expandingforce": 1,
+        "flamethrower": 2,
+        "heatwave": 96,
+        "hex": 1,
+        "nastyplot": 53,
+        "protect": 67,
+        "psychic": 69,
+        "psychup": 2,
+        "psyshock": 22,
+        "solarbeam": 1,
+        "storedpower": 1,
+        "suckerpunch": 1
+      }
+    },
+    "diggersby": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "bodyslam": 4,
+        "earthquake": 3,
+        "highhorsepower": 1,
+        "protect": 1
+      }
+    },
+    "ditto": {
+      "abilities": {
+        "intimidate": 1,
+        "stamina": 1
+      },
+      "appearances": 18,
+      "items": {
+        "quickclaw": 1
+      },
+      "moves": {
+        "ancientpower": 1,
+        "aquajet": 1,
+        "bodypress": 1,
+        "closecombat": 1,
+        "direclaw": 1,
+        "dracometeor": 1,
+        "earthquake": 1,
+        "electroshot": 1,
+        "fakeout": 2,
+        "flashcannon": 1,
+        "flipturn": 1,
+        "heatwave": 2,
+        "lastrespects": 2,
+        "lifedew": 1,
+        "matchagotcha": 2,
+        "protect": 1,
+        "solarbeam": 1,
+        "transform": 2,
+        "wavecrash": 2
+      }
+    },
+    "dragalge": {
+      "abilities": {},
+      "appearances": 49,
+      "items": {
+        "dragalgite": 36
+      },
+      "moves": {
+        "acidarmor": 1,
+        "dracometeor": 14,
+        "dragonpulse": 4,
+        "flipturn": 10,
+        "focusblast": 1,
+        "protect": 14,
+        "scald": 1,
+        "sludgebomb": 31,
+        "sludgewave": 6,
+        "thunderbolt": 4,
+        "toxic": 5,
+        "venoshock": 1
+      }
+    },
+    "dragapult": {
+      "abilities": {},
+      "appearances": 45,
+      "items": {
+        "lifeorb": 3
+      },
+      "moves": {
+        "beatup": 4,
+        "breakingswipe": 1,
+        "disable": 1,
+        "dracometeor": 10,
+        "dragoncheer": 1,
+        "dragondance": 2,
+        "dragondarts": 10,
+        "fireblast": 1,
+        "flamethrower": 1,
+        "phantomforce": 9,
+        "protect": 11,
+        "psychicfangs": 2,
+        "round": 3,
+        "shadowball": 9,
+        "thunderbolt": 1,
+        "thunderwave": 5,
+        "uturn": 1,
+        "willowisp": 5
+      }
+    },
+    "dragonite": {
+      "abilities": {},
+      "appearances": 105,
+      "items": {
+        "dragoninite": 45
+      },
+      "moves": {
+        "airslash": 4,
+        "breakingswipe": 1,
+        "dracometeor": 7,
+        "dragoncheer": 1,
+        "dragonclaw": 9,
+        "dragonpulse": 14,
+        "earthquake": 4,
+        "extremespeed": 36,
+        "flamethrower": 3,
+        "fly": 1,
+        "focusblast": 1,
+        "haze": 2,
+        "heatwave": 10,
+        "hurricane": 17,
+        "icebeam": 2,
+        "icepunch": 2,
+        "icespinner": 1,
+        "lowkick": 3,
+        "outrage": 2,
+        "protect": 33,
+        "rockslide": 6,
+        "scaleshot": 3,
+        "tailwind": 24,
+        "thunder": 3,
+        "thunderbolt": 7,
+        "thunderpunch": 3,
+        "thunderwave": 1
+      }
+    },
+    "drampa": {
+      "abilities": {
+        "berserk": 4,
+        "cloudnine": 20
+      },
+      "appearances": 34,
+      "items": {
+        "drampanite": 11
+      },
+      "moves": {
+        "dracometeor": 3,
+        "dragonpulse": 8,
+        "earthpower": 7,
+        "glare": 2,
+        "grassknot": 1,
+        "hurricane": 1,
+        "hypervoice": 11,
+        "icebeam": 1,
+        "protect": 11,
+        "round": 2,
+        "shadowball": 1,
+        "thunder": 1,
+        "thunderbolt": 5
+      }
+    },
+    "eelektross": {
+      "abilities": {
+        "eelevate": 21
+      },
+      "appearances": 41,
+      "items": {
+        "eelektrossite": 33
+      },
+      "moves": {
+        "brickbreak": 1,
+        "coil": 5,
+        "discharge": 8,
+        "dragonpulse": 1,
+        "drainpunch": 2,
+        "flamethrower": 13,
+        "gigadrain": 4,
+        "knockoff": 1,
+        "protect": 7,
+        "supercellslam": 2,
+        "thunder": 2,
+        "thunderbolt": 15,
+        "thunderpunch": 2,
+        "voltswitch": 1
+      }
+    },
+    "emboar": {
+      "abilities": {
+        "moldbreaker": 1
+      },
+      "appearances": 1,
+      "items": {
+        "emboarite": 1
+      },
+      "moves": {
+        "bulkup": 1,
+        "flareblitz": 1
+      }
+    },
+    "empoleon": {
+      "abilities": {
+        "competitive": 1
+      },
+      "appearances": 15,
+      "items": {},
+      "moves": {
+        "bittermalice": 1,
+        "flashcannon": 6,
+        "grassknot": 1,
+        "hydropump": 9,
+        "icywind": 2,
+        "protect": 6,
+        "surf": 1,
+        "vacuumwave": 3
+      }
+    },
+    "espathra": {
+      "abilities": {
+        "speedboost": 22
+      },
+      "appearances": 26,
+      "items": {},
+      "moves": {
+        "batonpass": 11,
+        "calmmind": 10,
+        "dazzlinggleam": 3,
+        "expandingforce": 1,
+        "featherdance": 1,
+        "flashcannon": 1,
+        "luminacrash": 9,
+        "protect": 14,
+        "psychicterrain": 1,
+        "psychup": 1,
+        "reflect": 1,
+        "skillswap": 1,
+        "substitute": 2
+      }
+    },
+    "espeon": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "expandingforce": 1,
+        "psychic": 2,
+        "psychicterrain": 2
+      }
+    },
+    "excadrill": {
+      "abilities": {
+        "moldbreaker": 5,
+        "piercingdrill": 2
+      },
+      "appearances": 155,
+      "items": {
+        "excadrite": 5
+      },
+      "moves": {
+        "drillrun": 1,
+        "earthquake": 41,
+        "highhorsepower": 52,
+        "ironhead": 71,
+        "protect": 55,
+        "rockslide": 45,
+        "shadowball": 1,
+        "stompingtantrum": 1,
+        "swordsdance": 4
+      }
+    },
+    "falinks": {
+      "abilities": {},
+      "appearances": 11,
+      "items": {
+        "falinksite": 8
+      },
+      "moves": {
+        "closecombat": 2,
+        "firstimpression": 2,
+        "ironhead": 1,
+        "noretreat": 6,
+        "protect": 7,
+        "rockslide": 2,
+        "struggle": 1,
+        "superpower": 1,
+        "throatchop": 1
+      }
+    },
+    "farigiraf": {
+      "abilities": {},
+      "appearances": 502,
+      "items": {
+        "choicescarf": 1,
+        "colburberry": 2
+      },
+      "moves": {
+        "allyswitch": 8,
+        "aquajet": 8,
+        "beatup": 1,
+        "bulletpunch": 1,
+        "calmmind": 2,
+        "dazzlinggleam": 5,
+        "dualwingbeat": 1,
+        "earthpower": 1,
+        "encore": 2,
+        "energyball": 3,
+        "expandingforce": 1,
+        "extremespeed": 1,
+        "fakeout": 2,
+        "faketears": 1,
+        "foulplay": 1,
+        "grassknot": 7,
+        "heatwave": 1,
+        "helpinghand": 98,
+        "hyperbeam": 2,
+        "hypervoice": 59,
+        "imprison": 13,
+        "lastrespects": 1,
+        "lightscreen": 4,
+        "lowkick": 2,
+        "mirrorcoat": 1,
+        "nastyplot": 5,
+        "partingshot": 5,
+        "protect": 63,
+        "psychic": 116,
+        "psychicfangs": 8,
+        "psychicnoise": 25,
+        "psychicterrain": 5,
+        "psyshock": 6,
+        "quickattack": 6,
+        "raindance": 6,
+        "roar": 3,
+        "round": 2,
+        "scaryface": 1,
+        "shadowball": 1,
+        "skillswap": 2,
+        "suckerpunch": 3,
+        "sunnyday": 6,
+        "thunderbolt": 147,
+        "trickroom": 296,
+        "twinbeam": 69,
+        "waterfall": 1
+      }
+    },
+    "feraligatr": {
+      "abilities": {},
+      "appearances": 22,
+      "items": {
+        "feraligite": 5
+      },
+      "moves": {
+        "aquajet": 9,
+        "crunch": 1,
+        "doubleedge": 4,
+        "dragondance": 2,
+        "icepunch": 3,
+        "liquidation": 4,
+        "protect": 5,
+        "rockslide": 8,
+        "waterfall": 1
+      }
+    },
+    "flapple": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "gravapple": 1
+      }
+    },
+    "flareon": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "charm": 1,
+        "flareblitz": 5,
+        "protect": 3,
+        "yawn": 1
+      }
+    },
+    "floette": {
+      "abilities": {
+        "fairyaura": 22
+      },
+      "appearances": 22,
+      "items": {},
+      "moves": {
+        "calmmind": 3,
+        "dazzlinggleam": 5,
+        "drainingkiss": 3,
+        "lightofruin": 4,
+        "moonblast": 5,
+        "protect": 8
+      }
+    },
+    "floetteeternal": {
+      "abilities": {
+        "fairyaura": 203
+      },
+      "appearances": 301,
+      "items": {
+        "floettite": 203
+      },
+      "moves": {
+        "alluringvoice": 1,
+        "calmmind": 34,
+        "dazzlinggleam": 135,
+        "drainingkiss": 11,
+        "energyball": 1,
+        "lightofruin": 84,
+        "moonblast": 90,
+        "protect": 85
+      }
+    },
+    "florges": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {
+        "leftovers": 1
+      },
+      "moves": {
+        "calmmind": 1,
+        "drainingkiss": 1,
+        "gigadrain": 1,
+        "moonblast": 2,
+        "protect": 1
+      }
+    },
+    "florgesblue": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "calmmind": 1,
+        "dazzlinggleam": 1,
+        "protect": 1
+      }
+    },
+    "forretress": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "raindance": 1,
+        "voltswitch": 1
+      }
+    },
+    "froslass": {
+      "abilities": {},
+      "appearances": 80,
+      "items": {
+        "froslassite": 54
+      },
+      "moves": {
+        "auroraveil": 16,
+        "blizzard": 46,
+        "haze": 1,
+        "icywind": 1,
+        "nastyplot": 8,
+        "protect": 36,
+        "raindance": 1,
+        "shadowball": 26,
+        "thunderbolt": 1,
+        "weatherball": 1
+      }
+    },
+    "furfrou": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "helpinghand": 1,
+        "psychicfangs": 1,
+        "roar": 1
+      }
+    },
+    "gallade": {
+      "abilities": {
+        "justified": 1
+      },
+      "appearances": 66,
+      "items": {
+        "galladite": 8
+      },
+      "moves": {
+        "aquacutter": 1,
+        "bulkup": 1,
+        "closecombat": 1,
+        "coaching": 1,
+        "destinybond": 1,
+        "drainpunch": 1,
+        "icepunch": 1,
+        "knockoff": 1,
+        "leafblade": 9,
+        "nightslash": 2,
+        "protect": 11,
+        "psychocut": 23,
+        "rockslide": 7,
+        "sacredsword": 22,
+        "shadowsneak": 1,
+        "trickroom": 6,
+        "upperhand": 1,
+        "wideguard": 8
+      }
+    },
+    "garchomp": {
+      "abilities": {},
+      "appearances": 1132,
+      "items": {
+        "choicescarf": 1,
+        "garchompite": 9,
+        "ironball": 1,
+        "lifeorb": 7,
+        "roseliberry": 2,
+        "sitrusberry": 1,
+        "softsand": 2,
+        "whiteherb": 1
+      },
+      "moves": {
+        "breakingswipe": 1,
+        "crunch": 3,
+        "dragonclaw": 257,
+        "dragontail": 2,
+        "earthquake": 296,
+        "helpinghand": 1,
+        "ironhead": 5,
+        "lastrespects": 1,
+        "liquidation": 3,
+        "outrage": 2,
+        "poisonjab": 54,
+        "protect": 198,
+        "rockslide": 404,
+        "rocktomb": 43,
+        "scaleshot": 6,
+        "stompingtantrum": 210,
+        "swordsdance": 6,
+        "trick": 1
+      }
+    },
+    "gardevoir": {
+      "abilities": {
+        "adaptability": 4,
+        "defiant": 1,
+        "drought": 2,
+        "fairyaura": 1,
+        "intimidate": 2,
+        "levitate": 1,
+        "mirrorarmor": 1,
+        "pixilate": 1,
+        "snowwarning": 1,
+        "unburden": 2
+      },
+      "appearances": 87,
+      "items": {
+        "gardevoirite": 53
+      },
+      "moves": {
+        "aurasphere": 4,
+        "calmmind": 3,
+        "dazzlinggleam": 1,
+        "drainingkiss": 1,
+        "energyball": 1,
+        "expandingforce": 1,
+        "healpulse": 1,
+        "hyperbeam": 2,
+        "hypervoice": 57,
+        "icywind": 1,
+        "moonblast": 1,
+        "mysticalfire": 1,
+        "protect": 21,
+        "psychic": 14,
+        "psychup": 1,
+        "psyshock": 3,
+        "raindance": 1,
+        "round": 3,
+        "shadowball": 2,
+        "thunderbolt": 9,
+        "trickroom": 4,
+        "vacuumwave": 1
+      }
+    },
+    "garganacl": {
+      "abilities": {},
+      "appearances": 15,
+      "items": {
+        "leftovers": 1
+      },
+      "moves": {
+        "bodypress": 2,
+        "earthquake": 1,
+        "explosion": 1,
+        "irondefense": 1,
+        "protect": 7,
+        "recover": 4,
+        "saltcure": 8,
+        "wideguard": 1
+      }
+    },
+    "gengar": {
+      "abilities": {},
+      "appearances": 84,
+      "items": {
+        "gengarite": 73
+      },
+      "moves": {
+        "disable": 18,
+        "focusblast": 1,
+        "hex": 3,
+        "hypnosis": 2,
+        "icywind": 1,
+        "perishsong": 37,
+        "protect": 62,
+        "psychic": 1,
+        "psychup": 1,
+        "shadowball": 38,
+        "skillswap": 1,
+        "sludgebomb": 29,
+        "substitute": 2,
+        "trick": 1,
+        "trickroom": 2,
+        "willowisp": 1
+      }
+    },
+    "gholdengo": {
+      "abilities": {},
+      "appearances": 407,
+      "items": {
+        "brightpowder": 2,
+        "focussash": 1,
+        "leftovers": 2,
+        "lifeorb": 1,
+        "roseliberry": 1
+      },
+      "moves": {
+        "dazzlinggleam": 1,
+        "focusblast": 2,
+        "makeitrain": 215,
+        "nastyplot": 36,
+        "powergem": 39,
+        "protect": 89,
+        "shadowball": 172,
+        "steelbeam": 1,
+        "thunder": 2,
+        "thunderbolt": 7,
+        "trick": 7
+      }
+    },
+    "glaceon": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "blizzard": 5,
+        "detect": 1,
+        "freezedry": 4,
+        "icywind": 1,
+        "mudslap": 1,
+        "protect": 2
+      }
+    },
+    "glalie": {
+      "abilities": {
+        "moody": 1
+      },
+      "appearances": 8,
+      "items": {
+        "glalitite": 1
+      },
+      "moves": {
+        "earthquake": 1,
+        "explosion": 3,
+        "freezedry": 1,
+        "lightscreen": 1,
+        "protect": 3,
+        "substitute": 1
+      }
+    },
+    "glimmora": {
+      "abilities": {},
+      "appearances": 82,
+      "items": {
+        "focussash": 1,
+        "glimmoranite": 23
+      },
+      "moves": {
+        "allyswitch": 1,
+        "earthpower": 16,
+        "energyball": 1,
+        "hex": 2,
+        "mortalspin": 9,
+        "powergem": 39,
+        "protect": 5,
+        "sludgebomb": 31,
+        "sludgewave": 3,
+        "spikyshield": 43,
+        "toxic": 3,
+        "trickroom": 1,
+        "venoshock": 3,
+        "willowisp": 1
+      }
+    },
+    "gliscor": {
+      "abilities": {},
+      "appearances": 14,
+      "items": {
+        "lumberry": 1
+      },
+      "moves": {
+        "dualwingbeat": 4,
+        "earthquake": 4,
+        "highhorsepower": 3,
+        "knockoff": 3,
+        "protect": 3,
+        "tailwind": 4,
+        "toxic": 1
+      }
+    },
+    "golurk": {
+      "abilities": {
+        "unseenfist": 1
+      },
+      "appearances": 28,
+      "items": {
+        "golurkite": 16
+      },
+      "moves": {
+        "drainpunch": 3,
+        "headlongrush": 8,
+        "icepunch": 8,
+        "knockoff": 3,
+        "poltergeist": 12,
+        "protect": 2
+      }
+    },
+    "goodra": {
+      "abilities": {
+        "gooey": 1
+      },
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "thunderbolt": 1
+      }
+    },
+    "goodrahisui": {
+      "abilities": {},
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "bodypress": 1,
+        "curse": 1,
+        "dracometeor": 1,
+        "feint": 1,
+        "flashcannon": 2,
+        "gyroball": 1,
+        "protect": 2,
+        "rockslide": 1,
+        "shelter": 2,
+        "thunder": 1,
+        "weatherball": 2
+      }
+    },
+    "gourgeistlarge": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {}
+    },
+    "greninja": {
+      "abilities": {},
+      "appearances": 28,
+      "items": {
+        "greninjite": 11
+      },
+      "moves": {
+        "blizzard": 2,
+        "darkpulse": 7,
+        "flipturn": 3,
+        "hydrocannon": 1,
+        "hydropump": 4,
+        "icebeam": 5,
+        "lowkick": 1,
+        "protect": 6,
+        "rockslide": 2,
+        "rocktomb": 1,
+        "sludgewave": 3,
+        "surf": 1,
+        "waterfall": 1,
+        "watershuriken": 4,
+        "weatherball": 2
+      }
+    },
+    "grimmsnarl": {
+      "abilities": {},
+      "appearances": 451,
+      "items": {
+        "choicescarf": 1,
+        "lightclay": 2
+      },
+      "moves": {
+        "fakeout": 66,
+        "faketears": 11,
+        "foulplay": 60,
+        "icepunch": 1,
+        "lightscreen": 231,
+        "mistyterrain": 1,
+        "partingshot": 217,
+        "playrough": 2,
+        "protect": 1,
+        "reflect": 146,
+        "scaryface": 17,
+        "spiritbreak": 133,
+        "suckerpunch": 14,
+        "superpower": 3,
+        "swagger": 2,
+        "taunt": 1
+      }
+    },
+    "gyarados": {
+      "abilities": {
+        "intimidate": 12,
+        "moldbreaker": 6
+      },
+      "appearances": 22,
+      "items": {
+        "gyaradosite": 6
+      },
+      "moves": {
+        "aquatail": 1,
+        "crunch": 6,
+        "dragondance": 10,
+        "earthquake": 1,
+        "icefang": 1,
+        "lashout": 1,
+        "powerwhip": 1,
+        "protect": 8,
+        "taunt": 3,
+        "thunderwave": 2,
+        "waterfall": 12
+      }
+    },
+    "hatterene": {
+      "abilities": {},
+      "appearances": 27,
+      "items": {},
+      "moves": {
+        "dazzlinggleam": 11,
+        "drainingkiss": 2,
+        "encore": 1,
+        "expandingforce": 2,
+        "gigadrain": 1,
+        "healpulse": 1,
+        "helpinghand": 2,
+        "magicpowder": 1,
+        "nuzzle": 1,
+        "partingshot": 2,
+        "protect": 3,
+        "psychic": 3,
+        "psychicnoise": 1,
+        "psyshock": 1,
+        "trickroom": 8
+      }
+    },
+    "hawlucha": {
+      "abilities": {
+        "magicbounce": 1,
+        "moldbreaker": 3
+      },
+      "appearances": 10,
+      "items": {
+        "hawluchanite": 5
+      },
+      "moves": {
+        "acrobatics": 1,
+        "bravebird": 1,
+        "closecombat": 1,
+        "detect": 1,
+        "entrainment": 6,
+        "highjumpkick": 2,
+        "protect": 2,
+        "rockslide": 1,
+        "uturn": 1
+      }
+    },
+    "heliolisk": {
+      "abilities": {},
+      "appearances": 17,
+      "items": {},
+      "moves": {
+        "allyswitch": 2,
+        "darkpulse": 1,
+        "discharge": 2,
+        "glare": 1,
+        "heatwave": 1,
+        "hypervoice": 3,
+        "protect": 4,
+        "risingvoltage": 2,
+        "shedtail": 1,
+        "thunderbolt": 4,
+        "voltswitch": 2
+      }
+    },
+    "heracross": {
+      "abilities": {},
+      "appearances": 10,
+      "items": {
+        "heracronite": 6
+      },
+      "moves": {
+        "bulletseed": 1,
+        "closecombat": 2,
+        "detect": 5,
+        "pinmissile": 4,
+        "rockblast": 4
+      }
+    },
+    "hippowdon": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "curse": 1,
+        "earthquake": 3,
+        "icefang": 2,
+        "yawn": 2
+      }
+    },
+    "houndoom": {
+      "abilities": {},
+      "appearances": 23,
+      "items": {
+        "houndoominite": 6
+      },
+      "moves": {
+        "darkpulse": 1,
+        "heatwave": 17,
+        "overheat": 1,
+        "protect": 12,
+        "snarl": 9,
+        "solarbeam": 1,
+        "suckerpunch": 8
+      }
+    },
+    "houndstone": {
+      "abilities": {
+        "mirrorarmor": 1
+      },
+      "appearances": 33,
+      "items": {},
+      "moves": {
+        "allyswitch": 5,
+        "bodypress": 1,
+        "disable": 1,
+        "dragonclaw": 1,
+        "helpinghand": 1,
+        "howl": 1,
+        "knockoff": 1,
+        "lastrespects": 22,
+        "playrough": 1,
+        "poltergeist": 2,
+        "protect": 11,
+        "psychicfangs": 1,
+        "roost": 1,
+        "snarl": 1,
+        "tailwind": 1,
+        "willowisp": 5
+      }
+    },
+    "hydrapple": {
+      "abilities": {
+        "supersweetsyrup": 1
+      },
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "earthpower": 2,
+        "energyball": 2,
+        "ficklebeam": 3,
+        "gigadrain": 1,
+        "leafstorm": 1,
+        "nastyplot": 1,
+        "protect": 3,
+        "yawn": 2
+      }
+    },
+    "hydreigon": {
+      "abilities": {},
+      "appearances": 84,
+      "items": {},
+      "moves": {
+        "darkpulse": 31,
+        "dracometeor": 17,
+        "earthpower": 7,
+        "fireblast": 1,
+        "flamethrower": 1,
+        "flashcannon": 1,
+        "heatwave": 3,
+        "icywind": 1,
+        "protect": 10,
+        "snarl": 19,
+        "surf": 1,
+        "tailwind": 2,
+        "uturn": 1
+      }
+    },
+    "incineroar": {
+      "abilities": {
+        "intimidate": 437
+      },
+      "appearances": 630,
+      "items": {
+        "choicescarf": 1,
+        "passhoberry": 1,
+        "whiteherb": 1
+      },
+      "moves": {
+        "assurance": 1,
+        "burningjealousy": 1,
+        "closecombat": 12,
+        "darkestlariat": 105,
+        "darkpulse": 1,
+        "fakeout": 454,
+        "fireblast": 1,
+        "firespin": 1,
+        "flareblitz": 270,
+        "heatwave": 1,
+        "helpinghand": 15,
+        "hypervoice": 1,
+        "overheat": 2,
+        "partingshot": 266,
+        "protect": 25,
+        "snarl": 6,
+        "struggle": 1,
+        "taunt": 2,
+        "throatchop": 98,
+        "thunderpunch": 1,
+        "willowisp": 10
+      }
+    },
+    "infernape": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "closecombat": 1,
+        "fakeout": 1,
+        "flareblitz": 1
+      }
+    },
+    "jolteon": {
+      "abilities": {},
+      "appearances": 23,
+      "items": {
+        "lifeorb": 1
+      },
+      "moves": {
+        "alluringvoice": 3,
+        "charm": 1,
+        "detect": 5,
+        "discharge": 8,
+        "electroweb": 1,
+        "faketears": 1,
+        "protect": 3,
+        "risingvoltage": 8,
+        "shadowball": 1,
+        "thunderbolt": 3,
+        "voltswitch": 2,
+        "weatherball": 4
+      }
+    },
+    "kangaskhan": {
+      "abilities": {},
+      "appearances": 93,
+      "items": {
+        "kangaskhanite": 34,
+        "silkscarf": 2
+      },
+      "moves": {
+        "brickbreak": 1,
+        "crunch": 2,
+        "doubleedge": 25,
+        "drainpunch": 5,
+        "fakeout": 81,
+        "hammerarm": 7,
+        "icepunch": 11,
+        "lastresort": 24,
+        "lowkick": 1,
+        "protect": 3,
+        "rockslide": 1,
+        "round": 1,
+        "suckerpunch": 12
+      }
+    },
+    "kingambit": {
+      "abilities": {
+        "defiant": 53
+      },
+      "appearances": 651,
+      "items": {
+        "blackglasses": 1,
+        "choicescarf": 1,
+        "chopleberry": 2
+      },
+      "moves": {
+        "assurance": 1,
+        "icywind": 1,
+        "ironhead": 163,
+        "kowtowcleave": 289,
+        "lowkick": 35,
+        "protect": 106,
+        "shadowball": 1,
+        "suckerpunch": 383,
+        "swordsdance": 33,
+        "willowisp": 1
+      }
+    },
+    "kleavor": {
+      "abilities": {},
+      "appearances": 28,
+      "items": {},
+      "moves": {
+        "closecombat": 2,
+        "protect": 3,
+        "raindance": 1,
+        "rockslide": 1,
+        "stoneaxe": 21,
+        "tailwind": 4,
+        "uturn": 4,
+        "xscissor": 5
+      }
+    },
+    "klefki": {
+      "abilities": {},
+      "appearances": 16,
+      "items": {},
+      "moves": {
+        "calmmind": 5,
+        "drainingkiss": 6,
+        "foulplay": 1,
+        "imprison": 2,
+        "lightscreen": 3,
+        "magnetrise": 1,
+        "protect": 1,
+        "psychup": 9,
+        "reflect": 3,
+        "sandstorm": 1,
+        "substitute": 6,
+        "thunderwave": 1,
+        "trickroom": 1
+      }
+    },
+    "kommoo": {
+      "abilities": {
+        "simple": 1
+      },
+      "appearances": 42,
+      "items": {},
+      "moves": {
+        "aurasphere": 15,
+        "bellydrum": 1,
+        "clangingscales": 25,
+        "clangoroussoul": 9,
+        "closecombat": 1,
+        "dracometeor": 6,
+        "dragonclaw": 2,
+        "flamethrower": 5,
+        "protect": 18,
+        "rockslide": 1
+      }
+    },
+    "krookodile": {
+      "abilities": {
+        "intimidate": 3,
+        "moxie": 1
+      },
+      "appearances": 9,
+      "items": {
+        "choicescarf": 1
+      },
+      "moves": {
+        "earthquake": 1,
+        "gunkshot": 1,
+        "highhorsepower": 2,
+        "knockoff": 3,
+        "powertrip": 1,
+        "protect": 1,
+        "rockslide": 2
+      }
+    },
+    "leafeon": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "knockoff": 4,
+        "leafblade": 2,
+        "protect": 1,
+        "solarblade": 3,
+        "sunnyday": 2,
+        "swordsdance": 1,
+        "yawn": 1
+      }
+    },
+    "liepard": {
+      "abilities": {},
+      "appearances": 22,
+      "items": {},
+      "moves": {
+        "copycat": 2,
+        "encore": 1,
+        "fakeout": 17,
+        "foulplay": 2,
+        "knockoff": 7,
+        "raindance": 1,
+        "sunnyday": 3,
+        "swagger": 1,
+        "taunt": 1,
+        "thunderwave": 3,
+        "trick": 1,
+        "yawn": 3
+      }
+    },
+    "lopunny": {
+      "abilities": {},
+      "appearances": 36,
+      "items": {
+        "lopunnite": 32
+      },
+      "moves": {
+        "afteryou": 2,
+        "batonpass": 3,
+        "closecombat": 17,
+        "cosmicpower": 3,
+        "cottonguard": 1,
+        "drainpunch": 1,
+        "encore": 2,
+        "fakeout": 29,
+        "gigaimpact": 1,
+        "megakick": 1,
+        "protect": 8,
+        "swordsdance": 1,
+        "thunderpunch": 2,
+        "tripleaxel": 5,
+        "uturn": 4
+      }
+    },
+    "lucario": {
+      "abilities": {
+        "justified": 1
+      },
+      "appearances": 27,
+      "items": {
+        "lucarionite": 14
+      },
+      "moves": {
+        "aurasphere": 1,
+        "bulletpunch": 3,
+        "closecombat": 4,
+        "crunch": 1,
+        "darkpulse": 2,
+        "detect": 4,
+        "drainpunch": 1,
+        "extremespeed": 1,
+        "flashcannon": 6,
+        "helpinghand": 1,
+        "icepunch": 2,
+        "meteormash": 3,
+        "nastyplot": 2,
+        "protect": 9,
+        "rockslide": 1,
+        "stoneedge": 1,
+        "swordsdance": 1,
+        "vacuumwave": 1
+      }
+    },
+    "luxray": {
+      "abilities": {
+        "intimidate": 2
+      },
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "scaryface": 1,
+        "voltswitch": 1,
+        "wildcharge": 1
+      }
+    },
+    "lycanroc": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "accelerock": 3,
+        "howl": 1,
+        "protect": 3,
+        "psychicfangs": 1,
+        "rockslide": 1
+      }
+    },
+    "lycanrocdusk": {
+      "abilities": {},
+      "appearances": 39,
+      "items": {},
+      "moves": {
+        "accelerock": 28,
+        "closecombat": 7,
+        "ironhead": 2,
+        "playrough": 1,
+        "protect": 7,
+        "psychicfangs": 1,
+        "rockslide": 16,
+        "suckerpunch": 6
+      }
+    },
+    "lycanrocmidnight": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "rockslide": 6,
+        "zenheadbutt": 1
+      }
+    },
+    "machamp": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "rockslide": 1,
+        "wideguard": 1
+      }
+    },
+    "malamar": {
+      "abilities": {
+        "intimidate": 1,
+        "stamina": 1
+      },
+      "appearances": 61,
+      "items": {
+        "malamarite": 24
+      },
+      "moves": {
+        "batonpass": 1,
+        "foulplay": 1,
+        "knockoff": 16,
+        "lashout": 1,
+        "memento": 1,
+        "protect": 15,
+        "psychocut": 8,
+        "psychup": 4,
+        "rest": 3,
+        "rockslide": 2,
+        "skillswap": 6,
+        "storedpower": 2,
+        "superpower": 36,
+        "throatchop": 4,
+        "topsyturvy": 1,
+        "trickroom": 24
+      }
+    },
+    "mamoswine": {
+      "abilities": {},
+      "appearances": 63,
+      "items": {
+        "focussash": 1,
+        "occaberry": 1
+      },
+      "moves": {
+        "earthquake": 14,
+        "freezedry": 1,
+        "highhorsepower": 16,
+        "iceshard": 28,
+        "iciclecrash": 20,
+        "iciclespear": 1,
+        "protect": 19,
+        "rockslide": 6,
+        "rocktomb": 1,
+        "stoneedge": 1
+      }
+    },
+    "manectric": {
+      "abilities": {
+        "intimidate": 3,
+        "lightningrod": 1
+      },
+      "appearances": 6,
+      "items": {
+        "manectite": 3
+      },
+      "moves": {
+        "discharge": 1,
+        "protect": 1,
+        "risingvoltage": 1,
+        "snarl": 3,
+        "substitute": 1,
+        "thunderbolt": 3,
+        "voltswitch": 2
+      }
+    },
+    "maushold": {
+      "abilities": {},
+      "appearances": 154,
+      "items": {
+        "choicescarf": 3
+      },
+      "moves": {
+        "beatup": 4,
+        "bite": 1,
+        "charm": 13,
+        "crunch": 2,
+        "encore": 6,
+        "feint": 8,
+        "followme": 74,
+        "helpinghand": 3,
+        "populationbomb": 36,
+        "protect": 40,
+        "superfang": 58,
+        "taunt": 4,
+        "thunderwave": 2,
+        "tidyup": 2
+      }
+    },
+    "mausholdfour": {
+      "abilities": {},
+      "appearances": 89,
+      "items": {},
+      "moves": {
+        "afteryou": 1,
+        "beatup": 5,
+        "charm": 1,
+        "crunch": 1,
+        "encore": 3,
+        "feint": 12,
+        "followme": 45,
+        "helpinghand": 1,
+        "lowkick": 2,
+        "populationbomb": 30,
+        "protect": 14,
+        "superfang": 24,
+        "taunt": 9,
+        "thunderwave": 1,
+        "uturn": 1
+      }
+    },
+    "mawile": {
+      "abilities": {
+        "intimidate": 42
+      },
+      "appearances": 115,
+      "items": {
+        "mawilite": 89
+      },
+      "moves": {
+        "bittermalice": 1,
+        "brickbreak": 1,
+        "crunch": 1,
+        "ironhead": 24,
+        "knockoff": 2,
+        "playrough": 67,
+        "protect": 28,
+        "rockslide": 22,
+        "suckerpunch": 50,
+        "swordsdance": 22
+      }
+    },
+    "medicham": {
+      "abilities": {},
+      "appearances": 11,
+      "items": {
+        "medichamite": 2
+      },
+      "moves": {
+        "closecombat": 1,
+        "fakeout": 5,
+        "feint": 1,
+        "firepunch": 1,
+        "icepunch": 1,
+        "protect": 2,
+        "rockslide": 1,
+        "skillswap": 1,
+        "trickroom": 1,
+        "zenheadbutt": 2
+      }
+    },
+    "meganium": {
+      "abilities": {},
+      "appearances": 23,
+      "items": {
+        "meganiumite": 16
+      },
+      "moves": {
+        "dazzlinggleam": 12,
+        "earthpower": 1,
+        "energyball": 1,
+        "protect": 9,
+        "solarbeam": 9,
+        "weatherball": 8
+      }
+    },
+    "meowscarada": {
+      "abilities": {},
+      "appearances": 51,
+      "items": {
+        "choicescarf": 1
+      },
+      "moves": {
+        "brickbreak": 1,
+        "energyball": 1,
+        "flowertrick": 28,
+        "knockoff": 6,
+        "lowkick": 1,
+        "powergem": 1,
+        "protect": 4,
+        "shadowclaw": 1,
+        "suckerpunch": 7,
+        "taunt": 1,
+        "throatchop": 1,
+        "thunderpunch": 1,
+        "tripleaxel": 13,
+        "uturn": 7
+      }
+    },
+    "meowstic": {
+      "abilities": {
+        "goodasgold": 1,
+        "intimidate": 5,
+        "prankster": 1
+      },
+      "appearances": 47,
+      "items": {
+        "meowsticite": 1
+      },
+      "moves": {
+        "charm": 4,
+        "energyball": 1,
+        "expandingforce": 4,
+        "fakeout": 23,
+        "faketears": 4,
+        "helpinghand": 2,
+        "lightscreen": 10,
+        "protect": 3,
+        "psychic": 2,
+        "psychicnoise": 1,
+        "psychicterrain": 14,
+        "psychup": 2,
+        "raindance": 2,
+        "reflect": 2,
+        "shadowball": 1,
+        "skillswap": 11,
+        "storedpower": 2,
+        "substitute": 1,
+        "thunderwave": 2,
+        "tickle": 1,
+        "trickroom": 2,
+        "yawn": 5
+      }
+    },
+    "meowsticf": {
+      "abilities": {
+        "pixilate": 1,
+        "roughskin": 1
+      },
+      "appearances": 3,
+      "items": {
+        "meowsticite": 2
+      },
+      "moves": {
+        "expandingforce": 1,
+        "extrasensory": 1,
+        "fakeout": 1,
+        "thunderbolt": 1
+      }
+    },
+    "metagross": {
+      "abilities": {},
+      "appearances": 134,
+      "items": {
+        "metagrossite": 86
+      },
+      "moves": {
+        "agility": 1,
+        "bodypress": 10,
+        "brickbreak": 1,
+        "bulletpunch": 20,
+        "explosion": 1,
+        "hammerarm": 1,
+        "hardpress": 1,
+        "icepunch": 6,
+        "irondefense": 1,
+        "ironhead": 46,
+        "meteormash": 14,
+        "protect": 61,
+        "psychicfangs": 50,
+        "psychocut": 1,
+        "rockslide": 4,
+        "rocktomb": 3,
+        "stompingtantrum": 5,
+        "thunderpunch": 1,
+        "trailblaze": 1,
+        "zenheadbutt": 1
+      }
+    },
+    "milotic": {
+      "abilities": {
+        "competitive": 12
+      },
+      "appearances": 140,
+      "items": {
+        "metronome": 1,
+        "wacanberry": 1
+      },
+      "moves": {
+        "alluringvoice": 2,
+        "blizzard": 4,
+        "chillingwater": 1,
+        "coil": 46,
+        "dragontail": 1,
+        "haze": 1,
+        "helpinghand": 3,
+        "hydropump": 2,
+        "hypnosis": 30,
+        "icebeam": 17,
+        "icywind": 29,
+        "lifedew": 13,
+        "muddywater": 49,
+        "protect": 39,
+        "recover": 13,
+        "scald": 41,
+        "surf": 1,
+        "weatherball": 1
+      }
+    },
+    "mimikyu": {
+      "abilities": {},
+      "appearances": 24,
+      "items": {
+        "brightpowder": 1,
+        "lifeorb": 1
+      },
+      "moves": {
+        "beatup": 1,
+        "curse": 1,
+        "phantomforce": 1,
+        "playrough": 10,
+        "protect": 3,
+        "shadowclaw": 1,
+        "shadowsneak": 8,
+        "swordsdance": 5,
+        "taunt": 2,
+        "thief": 1,
+        "thunderwave": 1,
+        "trickroom": 11,
+        "willowisp": 1,
+        "woodhammer": 3
+      }
+    },
+    "mimikyubusted": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "phantomforce": 1,
+        "playrough": 2,
+        "shadowsneak": 1
+      }
+    },
+    "morpeko": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "aurawheel": 3,
+        "endeavor": 1,
+        "fakeout": 1,
+        "knockoff": 1,
+        "partingshot": 1
+      }
+    },
+    "mrrime": {
+      "abilities": {
+        "fairyaura": 1
+      },
+      "appearances": 8,
+      "items": {},
+      "moves": {
+        "fakeout": 4,
+        "freezedry": 1,
+        "frostbreath": 2,
+        "icebeam": 1,
+        "protect": 1,
+        "roleplay": 1,
+        "sheercold": 1,
+        "skillswap": 2,
+        "trickroom": 2
+      }
+    },
+    "mudsdale": {
+      "abilities": {
+        "stamina": 1
+      },
+      "appearances": 12,
+      "items": {},
+      "moves": {
+        "bodypress": 1,
+        "curse": 2,
+        "earthquake": 3,
+        "heavyslam": 4,
+        "protect": 3,
+        "stompingtantrum": 1
+      }
+    },
+    "musharna": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "dazzlinggleam": 2,
+        "helpinghand": 1,
+        "psychic": 1,
+        "shadowball": 1,
+        "trickroom": 3
+      }
+    },
+    "ninetales": {
+      "abilities": {},
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "heatwave": 8,
+        "solarbeam": 1
+      }
+    },
+    "ninetalesalola": {
+      "abilities": {},
+      "appearances": 118,
+      "items": {},
+      "moves": {
+        "auroraveil": 27,
+        "blizzard": 58,
+        "disable": 2,
+        "encore": 9,
+        "freezedry": 31,
+        "helpinghand": 1,
+        "howl": 1,
+        "icywind": 3,
+        "moonblast": 2,
+        "protect": 25,
+        "raindance": 1,
+        "snowscape": 1,
+        "weatherball": 1
+      }
+    },
+    "noivern": {
+      "abilities": {},
+      "appearances": 10,
+      "items": {},
+      "moves": {
+        "airslash": 4,
+        "boomburst": 2,
+        "dracometeor": 5,
+        "dragoncheer": 1,
+        "protect": 2,
+        "round": 1,
+        "tailwind": 5
+      }
+    },
+    "oranguru": {
+      "abilities": {},
+      "appearances": 44,
+      "items": {},
+      "moves": {
+        "encore": 1,
+        "foulplay": 1,
+        "gravity": 1,
+        "instruct": 33,
+        "knockoff": 1,
+        "painsplit": 1,
+        "protect": 7,
+        "psychic": 7,
+        "psyshock": 4,
+        "trickroom": 34
+      }
+    },
+    "orthworm": {
+      "abilities": {},
+      "appearances": 28,
+      "items": {
+        "chopleberry": 1
+      },
+      "moves": {
+        "bodypress": 8,
+        "heavyslam": 8,
+        "helpinghand": 2,
+        "highhorsepower": 1,
+        "irondefense": 2,
+        "ironhead": 4,
+        "irontail": 1,
+        "metalburst": 4,
+        "protect": 2,
+        "rockslide": 5,
+        "shedtail": 8
+      }
+    },
+    "overqwil": {
+      "abilities": {
+        "intimidate": 5,
+        "simple": 5
+      },
+      "appearances": 41,
+      "items": {},
+      "moves": {
+        "barbbarrage": 13,
+        "crunch": 2,
+        "fellstinger": 2,
+        "gunkshot": 2,
+        "haze": 1,
+        "lashout": 1,
+        "minimize": 27,
+        "poisonjab": 7,
+        "protect": 14,
+        "stockpile": 18,
+        "swordsdance": 5,
+        "throatchop": 6,
+        "toxic": 1
+      }
+    },
+    "palafin": {
+      "abilities": {},
+      "appearances": 18,
+      "items": {},
+      "moves": {
+        "flipturn": 13,
+        "protect": 2
+      }
+    },
+    "palafinhero": {
+      "abilities": {},
+      "appearances": 12,
+      "items": {},
+      "moves": {
+        "aquajet": 1,
+        "closecombat": 2,
+        "flipturn": 2,
+        "jetpunch": 2,
+        "protect": 2,
+        "wavecrash": 5
+      }
+    },
+    "pangoro": {
+      "abilities": {},
+      "appearances": 17,
+      "items": {},
+      "moves": {
+        "bulletpunch": 5,
+        "closecombat": 1,
+        "darkestlariat": 1,
+        "detect": 2,
+        "knockoff": 4,
+        "poisonjab": 3,
+        "stormthrow": 6,
+        "thunderpunch": 1
+      }
+    },
+    "pelipper": {
+      "abilities": {
+        "waterbubble": 1
+      },
+      "appearances": 572,
+      "items": {
+        "choicescarf": 1,
+        "focussash": 1,
+        "lifeorb": 1
+      },
+      "moves": {
+        "helpinghand": 6,
+        "hurricane": 257,
+        "icebeam": 3,
+        "icywind": 4,
+        "muddywater": 13,
+        "protect": 35,
+        "raindance": 1,
+        "roost": 1,
+        "soak": 2,
+        "tailwind": 167,
+        "thunder": 1,
+        "uturn": 1,
+        "weatherball": 229,
+        "wideguard": 116
+      }
+    },
+    "pidgeot": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {
+        "pidgeotite": 4
+      },
+      "moves": {
+        "heatwave": 3,
+        "hurricane": 2,
+        "hyperbeam": 1,
+        "protect": 1,
+        "tailwind": 1
+      }
+    },
+    "pikachu": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "voltswitch": 1,
+        "volttackle": 1
+      }
+    },
+    "pinsir": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {
+        "pinsirite": 1
+      },
+      "moves": {
+        "closecombat": 1,
+        "feint": 1,
+        "stormthrow": 1,
+        "swordsdance": 1
+      }
+    },
+    "politoed": {
+      "abilities": {},
+      "appearances": 69,
+      "items": {
+        "sitrusberry": 1
+      },
+      "moves": {
+        "earthpower": 2,
+        "encore": 9,
+        "helpinghand": 2,
+        "hypnosis": 1,
+        "icebeam": 3,
+        "icywind": 15,
+        "muddywater": 8,
+        "perishsong": 11,
+        "protect": 29,
+        "raindance": 1,
+        "weatherball": 38,
+        "whirlpool": 1
+      }
+    },
+    "polteageist": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "gigadrain": 1,
+        "shadowball": 1,
+        "shellsmash": 2,
+        "storedpower": 1
+      }
+    },
+    "primarina": {
+      "abilities": {},
+      "appearances": 62,
+      "items": {
+        "mysticwater": 1
+      },
+      "moves": {
+        "allyswitch": 1,
+        "aquajet": 1,
+        "calmmind": 7,
+        "dazzlinggleam": 3,
+        "hypervoice": 34,
+        "icebeam": 1,
+        "icywind": 1,
+        "moonblast": 22,
+        "perishsong": 1,
+        "protect": 20,
+        "psychup": 1,
+        "round": 1,
+        "willowisp": 1
+      }
+    },
+    "pyroar": {
+      "abilities": {
+        "unnerve": 9
+      },
+      "appearances": 27,
+      "items": {
+        "pyroarite": 21
+      },
+      "moves": {
+        "flamethrower": 3,
+        "heatwave": 24,
+        "hypervoice": 2,
+        "overheat": 7,
+        "protect": 15,
+        "round": 1,
+        "solarbeam": 4,
+        "taunt": 1
+      }
+    },
+    "quaquaval": {
+      "abilities": {
+        "moxie": 1
+      },
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "protect": 1,
+        "wavecrash": 2
+      }
+    },
+    "qwilfish": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "waterfall": 1
+      }
+    },
+    "raichu": {
+      "abilities": {
+        "lightningrod": 7
+      },
+      "appearances": 275,
+      "items": {
+        "raichunitex": 35,
+        "raichunitey": 144
+      },
+      "moves": {
+        "alluringvoice": 1,
+        "dazzlinggleam": 8,
+        "discharge": 2,
+        "drainpunch": 1,
+        "electroweb": 2,
+        "encore": 6,
+        "endeavor": 5,
+        "fakeout": 118,
+        "feint": 2,
+        "focusblast": 42,
+        "grassknot": 3,
+        "helpinghand": 4,
+        "hypervoice": 1,
+        "irontail": 1,
+        "knockoff": 1,
+        "nastyplot": 1,
+        "nuzzle": 4,
+        "protect": 84,
+        "risingvoltage": 3,
+        "struggle": 1,
+        "surf": 2,
+        "thunder": 1,
+        "thunderbolt": 5,
+        "trailblaze": 1,
+        "upperhand": 1,
+        "voltswitch": 29,
+        "volttackle": 32,
+        "zapcannon": 136
+      }
+    },
+    "raichualola": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "fakeout": 1
+      }
+    },
+    "rampardos": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "crunch": 1,
+        "headsmash": 1,
+        "protect": 1,
+        "rockslide": 3,
+        "thunderpunch": 1
+      }
+    },
+    "reuniclus": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "energyball": 1,
+        "grassknot": 1,
+        "lightscreen": 1,
+        "psychic": 3,
+        "recover": 1,
+        "trickroom": 1
+      }
+    },
+    "rhyperior": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "drillrun": 1,
+        "earthquake": 3,
+        "icepunch": 1,
+        "protect": 4,
+        "rockslide": 3,
+        "supercellslam": 1
+      }
+    },
+    "rotomfrost": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "discharge": 1
+      }
+    },
+    "rotomheat": {
+      "abilities": {},
+      "appearances": 44,
+      "items": {
+        "chopleberry": 1,
+        "leftovers": 1,
+        "lightclay": 1
+      },
+      "moves": {
+        "discharge": 11,
+        "electroweb": 2,
+        "overheat": 14,
+        "protect": 1,
+        "thunderbolt": 17,
+        "trick": 3,
+        "voltswitch": 9,
+        "willowisp": 2
+      }
+    },
+    "rotommow": {
+      "abilities": {},
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "discharge": 2,
+        "electroweb": 1,
+        "leafstorm": 1,
+        "protect": 2,
+        "risingvoltage": 1,
+        "thunderbolt": 2,
+        "voltswitch": 3
+      }
+    },
+    "rotomwash": {
+      "abilities": {},
+      "appearances": 146,
+      "items": {
+        "choicescarf": 1,
+        "chopleberry": 1,
+        "leftovers": 1,
+        "shucaberry": 1
+      },
+      "moves": {
+        "darkpulse": 1,
+        "discharge": 11,
+        "eerieimpulse": 1,
+        "electroweb": 17,
+        "hex": 1,
+        "hydropump": 41,
+        "lightscreen": 8,
+        "nastyplot": 4,
+        "painsplit": 1,
+        "protect": 18,
+        "reflect": 1,
+        "thunderbolt": 42,
+        "thunderwave": 2,
+        "trick": 10,
+        "voltswitch": 48,
+        "willowisp": 21
+      }
+    },
+    "runerigus": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "bodypress": 3,
+        "trickroom": 4,
+        "willowisp": 1
+      }
+    },
+    "sableye": {
+      "abilities": {},
+      "appearances": 137,
+      "items": {
+        "sablenite": 6,
+        "sitrusberry": 1
+      },
+      "moves": {
+        "darkpulse": 1,
+        "detect": 1,
+        "disable": 13,
+        "encore": 18,
+        "fakeout": 35,
+        "foulplay": 17,
+        "gravity": 6,
+        "lightscreen": 43,
+        "meanlook": 1,
+        "painsplit": 1,
+        "psychup": 3,
+        "quash": 20,
+        "raindance": 54,
+        "recover": 1,
+        "reflect": 25,
+        "safeguard": 1,
+        "shadowball": 1,
+        "skillswap": 2,
+        "snarl": 1,
+        "sunnyday": 3,
+        "swagger": 3,
+        "taunt": 3,
+        "thunderwave": 2,
+        "willowisp": 12
+      }
+    },
+    "salazzle": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "fakeout": 1,
+        "protect": 1,
+        "toxic": 1
+      }
+    },
+    "samurotthisui": {
+      "abilities": {},
+      "appearances": 28,
+      "items": {
+        "choicescarf": 1
+      },
+      "moves": {
+        "aquacutter": 8,
+        "aquajet": 2,
+        "ceaselessedge": 4,
+        "detect": 3,
+        "flipturn": 1,
+        "hypervoice": 2,
+        "nightslash": 2,
+        "protect": 3,
+        "razorshell": 1,
+        "sacredsword": 6,
+        "sludgebomb": 1,
+        "suckerpunch": 8,
+        "throatchop": 1
+      }
+    },
+    "sandaconda": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "coil": 1,
+        "highhorsepower": 1,
+        "minimize": 2,
+        "protect": 1
+      }
+    },
+    "sceptile": {
+      "abilities": {
+        "lightningrod": 11
+      },
+      "appearances": 37,
+      "items": {
+        "sceptilite": 19
+      },
+      "moves": {
+        "detect": 9,
+        "dragonpulse": 18,
+        "earthpower": 12,
+        "energyball": 9,
+        "gigadrain": 2,
+        "leafstorm": 5,
+        "protect": 6,
+        "shedtail": 1
+      }
+    },
+    "scizor": {
+      "abilities": {},
+      "appearances": 51,
+      "items": {
+        "scizorite": 21
+      },
+      "moves": {
+        "brickbreak": 1,
+        "bugbite": 12,
+        "bulletpunch": 37,
+        "closecombat": 6,
+        "dualwingbeat": 3,
+        "knockoff": 1,
+        "protect": 17,
+        "swordsdance": 10,
+        "tailwind": 2,
+        "uturn": 3
+      }
+    },
+    "scolipede": {
+      "abilities": {
+        "speedboost": 27
+      },
+      "appearances": 33,
+      "items": {
+        "scolipite": 17
+      },
+      "moves": {
+        "batonpass": 3,
+        "gunkshot": 4,
+        "icywind": 1,
+        "irondefense": 1,
+        "leechlife": 8,
+        "poisonjab": 14,
+        "protect": 24,
+        "rockslide": 3,
+        "shadowball": 1,
+        "stompingtantrum": 1,
+        "swordsdance": 15
+      }
+    },
+    "scovillain": {
+      "abilities": {
+        "moody": 18
+      },
+      "appearances": 66,
+      "items": {
+        "scovillainite": 44
+      },
+      "moves": {
+        "energyball": 2,
+        "firespin": 2,
+        "flamethrower": 8,
+        "gigadrain": 6,
+        "lastrespects": 1,
+        "leechseed": 25,
+        "overheat": 15,
+        "protect": 33,
+        "ragepowder": 38,
+        "spicyextract": 1
+      }
+    },
+    "scrafty": {
+      "abilities": {
+        "intimidate": 70
+      },
+      "appearances": 79,
+      "items": {
+        "scraftinite": 51
+      },
+      "moves": {
+        "closecombat": 19,
+        "coaching": 2,
+        "crunch": 1,
+        "detect": 6,
+        "dragondance": 3,
+        "drainpunch": 16,
+        "fakeout": 48,
+        "grassknot": 1,
+        "headsmash": 1,
+        "highjumpkick": 1,
+        "icepunch": 2,
+        "ironhead": 8,
+        "knockoff": 29,
+        "protect": 5,
+        "rockslide": 4,
+        "throatchop": 3
+      }
+    },
+    "serperior": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "gigadrain": 1,
+        "glare": 1,
+        "leafstorm": 4
+      }
+    },
+    "sharpedo": {
+      "abilities": {
+        "speedboost": 8
+      },
+      "appearances": 9,
+      "items": {
+        "sharpedonite": 5
+      },
+      "moves": {
+        "crunch": 7,
+        "flipturn": 1,
+        "hydropump": 1,
+        "liquidation": 2,
+        "protect": 6
+      }
+    },
+    "simipour": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "fakeout": 1,
+        "flipturn": 1,
+        "liquidation": 1
+      }
+    },
+    "sinistcha": {
+      "abilities": {},
+      "appearances": 442,
+      "items": {
+        "cobaberry": 1,
+        "leftovers": 1
+      },
+      "moves": {
+        "calmmind": 1,
+        "curse": 1,
+        "hex": 1,
+        "lifedew": 80,
+        "matchagotcha": 228,
+        "protect": 103,
+        "psychup": 1,
+        "ragepowder": 166,
+        "scald": 2,
+        "shadowball": 13,
+        "strengthsap": 11,
+        "trickroom": 49
+      }
+    },
+    "sinistchamasterpiece": {
+      "abilities": {},
+      "appearances": 121,
+      "items": {
+        "sitrusberry": 1
+      },
+      "moves": {
+        "helpinghand": 1,
+        "hex": 2,
+        "knockoff": 1,
+        "lifedew": 15,
+        "matchagotcha": 53,
+        "protect": 17,
+        "ragepowder": 50,
+        "scald": 1,
+        "shadowball": 8,
+        "strengthsap": 4,
+        "trickroom": 24
+      }
+    },
+    "skarmory": {
+      "abilities": {},
+      "appearances": 13,
+      "items": {
+        "skarmorite": 12
+      },
+      "moves": {
+        "bodypress": 1,
+        "bravebird": 3,
+        "dualwingbeat": 2,
+        "ironhead": 5,
+        "protect": 4,
+        "rocktomb": 6,
+        "roost": 1,
+        "swordsdance": 2,
+        "tailwind": 2
+      }
+    },
+    "skeledirge": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "protect": 1,
+        "torchsong": 2
+      }
+    },
+    "slowbro": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {
+        "slowbronite": 3
+      },
+      "moves": {
+        "bodypress": 2,
+        "calmmind": 1,
+        "expandingforce": 1,
+        "protect": 1,
+        "psychic": 1,
+        "psychup": 1,
+        "slackoff": 2,
+        "storedpower": 1,
+        "trickroom": 1
+      }
+    },
+    "slowbrogalar": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "sludgewave": 1
+      }
+    },
+    "slowking": {
+      "abilities": {},
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "chillyreception": 1,
+        "lightscreen": 1,
+        "trickroom": 3,
+        "yawn": 1
+      }
+    },
+    "slowkinggalar": {
+      "abilities": {},
+      "appearances": 17,
+      "items": {},
+      "moves": {
+        "acidspray": 2,
+        "chillyreception": 8,
+        "flamethrower": 1,
+        "futuresight": 1,
+        "healpulse": 1,
+        "icebeam": 1,
+        "protect": 1,
+        "psychic": 3,
+        "sludgebomb": 4,
+        "snarl": 2,
+        "trickroom": 11
+      }
+    },
+    "sneasler": {
+      "abilities": {
+        "pressure": 1
+      },
+      "appearances": 423,
+      "items": {
+        "choicescarf": 1,
+        "focussash": 2,
+        "whiteherb": 3
+      },
+      "moves": {
+        "acidspray": 1,
+        "acrobatics": 2,
+        "closecombat": 113,
+        "coaching": 27,
+        "direclaw": 183,
+        "fakeout": 227,
+        "feint": 3,
+        "gunkshot": 7,
+        "nightslash": 1,
+        "poisonjab": 43,
+        "protect": 61,
+        "quickguard": 12,
+        "raindance": 3,
+        "rockslide": 16,
+        "rocktomb": 3,
+        "struggle": 1,
+        "taunt": 3,
+        "throatchop": 5
+      }
+    },
+    "snorlax": {
+      "abilities": {
+        "noguard": 3
+      },
+      "appearances": 14,
+      "items": {
+        "chestoberry": 1
+      },
+      "moves": {
+        "bellydrum": 1,
+        "bodypress": 1,
+        "bodyslam": 3,
+        "curse": 1,
+        "doubleedge": 2,
+        "earthquake": 1,
+        "fissure": 7,
+        "heavyslam": 1,
+        "icepunch": 1,
+        "protect": 2,
+        "recycle": 1,
+        "rest": 1,
+        "selfdestruct": 1,
+        "stockpile": 2,
+        "thunderpunch": 1,
+        "yawn": 3
+      }
+    },
+    "spiritomb": {
+      "abilities": {
+        "pressure": 1
+      },
+      "appearances": 6,
+      "items": {},
+      "moves": {
+        "allyswitch": 2,
+        "foulplay": 1,
+        "kowtowcleave": 1,
+        "powergem": 1,
+        "protect": 1,
+        "snarl": 1,
+        "toxic": 1,
+        "trickroom": 1,
+        "willowisp": 1
+      }
+    },
+    "staraptor": {
+      "abilities": {
+        "intimidate": 192,
+        "speedboost": 1
+      },
+      "appearances": 403,
+      "items": {
+        "staraptite": 265
+      },
+      "moves": {
+        "aerialace": 3,
+        "allyswitch": 1,
+        "blazekick": 2,
+        "bravebird": 145,
+        "brickbreak": 1,
+        "bulkup": 1,
+        "closecombat": 225,
+        "dualwingbeat": 74,
+        "endeavor": 1,
+        "finalgambit": 20,
+        "helpinghand": 1,
+        "protect": 143,
+        "quickattack": 1,
+        "roost": 53,
+        "steelwing": 1,
+        "tailwind": 26,
+        "thief": 1,
+        "trickroom": 1,
+        "uturn": 6,
+        "whirlwind": 1
+      }
+    },
+    "starmie": {
+      "abilities": {},
+      "appearances": 16,
+      "items": {
+        "starminite": 7
+      },
+      "moves": {
+        "aquajet": 3,
+        "bulkup": 4,
+        "icebeam": 1,
+        "lightscreen": 1,
+        "liquidation": 6,
+        "powergem": 3,
+        "protect": 3,
+        "psychic": 2,
+        "psychocut": 1,
+        "recover": 1,
+        "skillswap": 1,
+        "thunderbolt": 1
+      }
+    },
+    "steelix": {
+      "abilities": {},
+      "appearances": 10,
+      "items": {
+        "steelixite": 10
+      },
+      "moves": {
+        "bodypress": 3,
+        "curse": 2,
+        "earthquake": 2,
+        "gyroball": 3,
+        "headsmash": 2,
+        "heavyslam": 4,
+        "highhorsepower": 2,
+        "protect": 5,
+        "rockslide": 3,
+        "wideguard": 4
+      }
+    },
+    "stunfisk": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "earthpower": 1,
+        "sludgebomb": 2,
+        "thunderbolt": 1
+      }
+    },
+    "stunfiskgalar": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "fissure": 1,
+        "protect": 1,
+        "snaptrap": 1,
+        "yawn": 1
+      }
+    },
+    "swampert": {
+      "abilities": {
+        "sapsipper": 1
+      },
+      "appearances": 299,
+      "items": {
+        "swampertite": 211
+      },
+      "moves": {
+        "bulkup": 1,
+        "counter": 2,
+        "earthquake": 126,
+        "flipturn": 6,
+        "highhorsepower": 17,
+        "icepunch": 71,
+        "knockoff": 2,
+        "liquidation": 7,
+        "mirrorcoat": 1,
+        "poisonjab": 1,
+        "protect": 106,
+        "rockslide": 5,
+        "round": 1,
+        "stompingtantrum": 2,
+        "waterfall": 3,
+        "wavecrash": 146,
+        "wideguard": 5
+      }
+    },
+    "sylveon": {
+      "abilities": {
+        "insomnia": 1
+      },
+      "appearances": 1841,
+      "items": {
+        "lifeorb": 2
+      },
+      "moves": {
+        "calmmind": 9,
+        "detect": 38,
+        "helpinghand": 3,
+        "hyperbeam": 277,
+        "hypervoice": 1362,
+        "moonblast": 20,
+        "mysticalfire": 1,
+        "protect": 301,
+        "quickattack": 348,
+        "round": 7,
+        "struggle": 1,
+        "yawn": 6
+      }
+    },
+    "talonflame": {
+      "abilities": {},
+      "appearances": 136,
+      "items": {
+        "choicescarf": 1,
+        "mentalherb": 1,
+        "sharpbeak": 1
+      },
+      "moves": {
+        "acrobatics": 13,
+        "bravebird": 25,
+        "dualwingbeat": 45,
+        "featherdance": 5,
+        "flareblitz": 24,
+        "heatwave": 1,
+        "hurricane": 1,
+        "overheat": 4,
+        "protect": 19,
+        "quickguard": 8,
+        "tailwind": 89,
+        "taunt": 2,
+        "uturn": 1,
+        "willowisp": 5
+      }
+    },
+    "taurospaldeaaqua": {
+      "abilities": {
+        "intimidate": 1
+      },
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "aquajet": 2,
+        "earthquake": 1,
+        "protect": 1,
+        "ragingbull": 1,
+        "rockslide": 1
+      }
+    },
+    "taurospaldeablaze": {
+      "abilities": {
+        "intimidate": 1
+      },
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "closecombat": 1,
+        "flareblitz": 1,
+        "protect": 1,
+        "ragingbull": 1,
+        "rockslide": 2
+      }
+    },
+    "tinkaton": {
+      "abilities": {
+        "moldbreaker": 8,
+        "stamina": 1
+      },
+      "appearances": 25,
+      "items": {
+        "shucaberry": 1
+      },
+      "moves": {
+        "encore": 3,
+        "fakeout": 23,
+        "feint": 1,
+        "gigatonhammer": 13,
+        "icehammer": 4,
+        "knockoff": 3,
+        "playrough": 4,
+        "protect": 1,
+        "rockslide": 1,
+        "skillswap": 1,
+        "thunderwave": 1
+      }
+    },
+    "torkoal": {
+      "abilities": {},
+      "appearances": 171,
+      "items": {
+        "sitrusberry": 1
+      },
+      "moves": {
+        "ancientpower": 3,
+        "burningjealousy": 1,
+        "clearsmog": 1,
+        "earthpower": 16,
+        "eruption": 93,
+        "flamethrower": 2,
+        "heatwave": 33,
+        "helpinghand": 19,
+        "lavaplume": 3,
+        "overheat": 2,
+        "protect": 37,
+        "shellsmash": 1,
+        "solarbeam": 18,
+        "stoneedge": 1,
+        "sunnyday": 2,
+        "weatherball": 48,
+        "yawn": 7
+      }
+    },
+    "torterra": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {},
+      "moves": {
+        "energyball": 1,
+        "headlongrush": 1,
+        "protect": 1,
+        "shellsmash": 2
+      }
+    },
+    "toucannon": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {},
+      "moves": {
+        "heatwave": 1
+      }
+    },
+    "toxapex": {
+      "abilities": {},
+      "appearances": 104,
+      "items": {
+        "choicescarf": 1,
+        "leftovers": 2
+      },
+      "moves": {
+        "acidspray": 1,
+        "banefulbunker": 61,
+        "haze": 1,
+        "infestation": 77,
+        "muddywater": 4,
+        "recover": 6,
+        "stockpile": 1,
+        "toxic": 79,
+        "venoshock": 3,
+        "wideguard": 44
+      }
+    },
+    "toxicroak": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "closecombat": 3,
+        "coaching": 2,
+        "fakeout": 3
+      }
+    },
+    "trevenant": {
+      "abilities": {},
+      "appearances": 4,
+      "items": {
+        "sitrusberry": 1
+      },
+      "moves": {
+        "forestscurse": 2,
+        "hornleech": 1,
+        "poltergeist": 1,
+        "trickroom": 4,
+        "willowisp": 2
+      }
+    },
+    "tsareena": {
+      "abilities": {},
+      "appearances": 81,
+      "items": {},
+      "moves": {
+        "aquajet": 1,
+        "bravebird": 1,
+        "charm": 1,
+        "encore": 2,
+        "highjumpkick": 12,
+        "knockoff": 6,
+        "lowsweep": 2,
+        "petalblizzard": 1,
+        "powerwhip": 8,
+        "protect": 9,
+        "quickattack": 1,
+        "suckerpunch": 2,
+        "taunt": 13,
+        "tripleaxel": 33,
+        "tropkick": 26,
+        "uturn": 7
+      }
+    },
+    "typhlosion": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "eruption": 4,
+        "protect": 2,
+        "scorchingsands": 1,
+        "shadowball": 1
+      }
+    },
+    "typhlosionhisui": {
+      "abilities": {},
+      "appearances": 99,
+      "items": {
+        "choicescarf": 3
+      },
+      "moves": {
+        "burnup": 4,
+        "eruption": 52,
+        "heatwave": 16,
+        "infernalparade": 1,
+        "overheat": 1,
+        "protect": 3,
+        "shadowball": 13,
+        "willowisp": 1
+      }
+    },
+    "tyranitar": {
+      "abilities": {
+        "unnerve": 3
+      },
+      "appearances": 315,
+      "items": {
+        "tyranitarite": 79
+      },
+      "moves": {
+        "bodypress": 1,
+        "crunch": 4,
+        "dragondance": 24,
+        "dragonpulse": 1,
+        "earthpower": 1,
+        "earthquake": 3,
+        "heavyslam": 2,
+        "helpinghand": 1,
+        "highhorsepower": 2,
+        "icepunch": 22,
+        "ironhead": 1,
+        "knockoff": 123,
+        "lashout": 3,
+        "lowkick": 12,
+        "protect": 92,
+        "rockblast": 35,
+        "rockslide": 146,
+        "rocktomb": 1,
+        "stealthrock": 4,
+        "stoneedge": 1,
+        "thunderpunch": 2
+      }
+    },
+    "umbreon": {
+      "abilities": {},
+      "appearances": 11,
+      "items": {},
+      "moves": {
+        "batonpass": 1,
+        "darkpulse": 1,
+        "detect": 1,
+        "foulplay": 6,
+        "helpinghand": 1,
+        "moonlight": 1,
+        "protect": 1,
+        "snarl": 2,
+        "toxic": 1,
+        "yawn": 1
+      }
+    },
+    "vanilluxe": {
+      "abilities": {
+        "noguard": 1
+      },
+      "appearances": 24,
+      "items": {},
+      "moves": {
+        "auroraveil": 1,
+        "blizzard": 9,
+        "flashcannon": 1,
+        "freezedry": 5,
+        "icywind": 3,
+        "protect": 1,
+        "sheercold": 1
+      }
+    },
+    "vaporeon": {
+      "abilities": {},
+      "appearances": 3,
+      "items": {
+        "lifeorb": 1
+      },
+      "moves": {
+        "acidarmor": 1,
+        "detect": 1,
+        "icebeam": 1,
+        "scald": 1,
+        "shadowball": 1
+      }
+    },
+    "venusaur": {
+      "abilities": {},
+      "appearances": 316,
+      "items": {
+        "venusaurite": 136
+      },
+      "moves": {
+        "acidspray": 5,
+        "earthpower": 98,
+        "energyball": 25,
+        "gigadrain": 93,
+        "leafstorm": 7,
+        "leechseed": 5,
+        "protect": 102,
+        "sleeppowder": 63,
+        "sludgebomb": 174,
+        "sludgewave": 1,
+        "solarbeam": 16,
+        "synthesis": 1,
+        "weatherball": 2
+      }
+    },
+    "victreebel": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {
+        "victreebelite": 4
+      },
+      "moves": {
+        "acidspray": 1,
+        "energyball": 1,
+        "gigadrain": 1,
+        "protect": 1,
+        "sludgebomb": 3,
+        "toxic": 1,
+        "toxicspikes": 1,
+        "weatherball": 1
+      }
+    },
+    "vileplume": {
+      "abilities": {},
+      "appearances": 27,
+      "items": {},
+      "moves": {
+        "afteryou": 4,
+        "energyball": 2,
+        "gigadrain": 3,
+        "leafstorm": 3,
+        "leechseed": 2,
+        "sleeppowder": 10,
+        "sludgebomb": 7,
+        "solarbeam": 4,
+        "strengthsap": 5
+      }
+    },
+    "vivillon": {
+      "abilities": {},
+      "appearances": 34,
+      "items": {},
+      "moves": {
+        "hurricane": 10,
+        "pollenpuff": 4,
+        "protect": 8,
+        "ragepowder": 8,
+        "sleeppowder": 24,
+        "tailwind": 5
+      }
+    },
+    "vivillonelegant": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "sleeppowder": 1
+      }
+    },
+    "vivillonfancy": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "hurricane": 3,
+        "protect": 1,
+        "ragepowder": 1,
+        "sleeppowder": 5,
+        "tailwind": 3
+      }
+    },
+    "vivillonhighplains": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "sleeppowder": 1
+      }
+    },
+    "vivillonicysnow": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "sleeppowder": 2
+      }
+    },
+    "vivillonocean": {
+      "abilities": {},
+      "appearances": 1,
+      "items": {},
+      "moves": {
+        "hurricane": 1
+      }
+    },
+    "vivillonpokeball": {
+      "abilities": {},
+      "appearances": 7,
+      "items": {},
+      "moves": {
+        "hurricane": 1,
+        "lightscreen": 1,
+        "protect": 1,
+        "ragepowder": 3,
+        "sleeppowder": 2,
+        "tailwind": 2
+      }
+    },
+    "vivillonsavanna": {
+      "abilities": {},
+      "appearances": 5,
+      "items": {},
+      "moves": {
+        "hurricane": 2,
+        "sleeppowder": 5
+      }
+    },
+    "volcarona": {
+      "abilities": {
+        "simple": 1
+      },
+      "appearances": 27,
+      "items": {},
+      "moves": {
+        "bugbuzz": 2,
+        "fierydance": 1,
+        "flamethrower": 2,
+        "gigadrain": 5,
+        "heatwave": 11,
+        "overheat": 2,
+        "protect": 6,
+        "quiverdance": 9,
+        "ragepowder": 4,
+        "strugglebug": 6,
+        "tailwind": 3
+      }
+    },
+    "weavile": {
+      "abilities": {
+        "pressure": 1
+      },
+      "appearances": 37,
+      "items": {
+        "widelens": 1
+      },
+      "moves": {
+        "fakeout": 22,
+        "fling": 1,
+        "iceshard": 1,
+        "icespinner": 5,
+        "icywind": 2,
+        "knockoff": 11,
+        "lowkick": 3,
+        "throatchop": 2,
+        "tripleaxel": 17
+      }
+    },
+    "whimsicott": {
+      "abilities": {
+        "insomnia": 1
+      },
+      "appearances": 1725,
+      "items": {
+        "choicescarf": 1,
+        "focussash": 5
+      },
+      "moves": {
+        "beatup": 4,
+        "charm": 87,
+        "dazzlinggleam": 6,
+        "encore": 421,
+        "energyball": 19,
+        "faketears": 30,
+        "gigadrain": 4,
+        "grassknot": 4,
+        "helpinghand": 10,
+        "icywind": 2,
+        "lightscreen": 6,
+        "memento": 4,
+        "moonblast": 815,
+        "protect": 212,
+        "sunnyday": 19,
+        "tailwind": 1367,
+        "taunt": 11,
+        "tickle": 14,
+        "trickroom": 5,
+        "uturn": 1,
+        "worryseed": 3
+      }
+    },
+    "wyrdeer": {
+      "abilities": {
+        "intimidate": 3
+      },
+      "appearances": 9,
+      "items": {},
+      "moves": {
+        "earthpower": 2,
+        "energyball": 1,
+        "gravity": 4,
+        "hypnosis": 3,
+        "protect": 2,
+        "psyshieldbash": 2,
+        "skillswap": 1,
+        "thunderbolt": 1,
+        "trickroom": 2
+      }
+    },
+    "zoroark": {
+      "abilities": {},
+      "appearances": 2,
+      "items": {},
+      "moves": {
+        "protect": 1
+      }
+    },
+    "zoroarkhisui": {
+      "abilities": {},
+      "appearances": 13,
+      "items": {},
+      "moves": {
+        "bittermalice": 2,
+        "hypervoice": 1,
+        "protect": 1,
+        "round": 1,
+        "shadowball": 2
+      }
+    }
+  }
+}
