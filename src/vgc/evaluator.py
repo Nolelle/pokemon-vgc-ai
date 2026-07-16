@@ -377,7 +377,7 @@ def score_joint_orders(
     if not joint_orders:
         return []
 
-    ctx = _build_context(battle, config)
+    ctx = build_context(battle, config)
     scored: list[ScoredOrder] = []
     for order in joint_orders:
         first_info = _score_single(order.first_order, 0, ctx, config)
@@ -559,7 +559,7 @@ def _best_attacking_move(
     return best_pct, best_move_id, best_priority
 
 
-def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
+def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
     usage = load_usage_spreads()
     preview_team = list(getattr(battle, "teampreview_opponent_team", None) or [])
     if len(preview_team) != 6:
@@ -698,6 +698,12 @@ def _build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_protect_prob=opp_protect_prob,
         opp_switch_prob=opp_switch_prob,
     )
+
+
+# Backwards-compatible private alias (this module's own code used the underscore-
+# prefixed name before Phase 2c's vgc.search needed to build the same _Context itself --
+# same promotion pattern as vgc.sets.normalize_item/normalize_status).
+_build_context = build_context
 
 
 # --- per-slot scoring ---------------------------------------------------------------------

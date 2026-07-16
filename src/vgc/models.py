@@ -190,6 +190,81 @@ class PolicyConfig:
     # VGC_TRACE is set.
     trace_top_k: int = 3
 
+    # --- Phase 2c: shallow 2-ply search (vgc.search.search_joint_orders) ----------------
+    # Master switch: True routes VgcPlayer.decide() through the 2-ply search instead of
+    # the plain myopic evaluator, so the bot anticipates the opponent's best responses
+    # (Protect, their best attack, a defensive pivot) instead of assuming they stand
+    # still. Defaults to False: the offline gate proxy (poke-env's
+    # SimpleHeuristicsPlayer) never Protects and doesn't target-optimize, so it
+    # systematically punishes opponent-response modeling it doesn't itself exhibit
+    # (2026-07 gate: myopic-only 81.7% vs search 73.3% vs SimpleHeuristicsPlayer, n=300
+    # each) -- the search specifically models human ladder behaviors (Protect timing,
+    # coordinated targeting) that a non-Protecting, non-coordinating bot opponent can
+    # never demonstrate a benefit against. False must leave decide() byte-for-byte
+    # identical to the pre-Phase-2c myopic-only behavior (score_joint_orders directly).
+    # Enabled explicitly per ladder session (`ladder/run_ladder.py --search`) as an A/B
+    # against real opponents until that data settles what the default should actually be.
+    use_two_ply_search: bool = False
+    # How many of the myopic evaluator's top-ranked orders get the (expensive) exchange
+    # search at all -- orders outside this cutoff are almost never the real best move, so
+    # spending damage_range calls on them is wasted; they keep their myopic score (scaled
+    # by search_myopic_weight) so the returned list stays complete and comparable.
+    search_our_candidates: int = 10
+    # Per opponent slot, how many of their known damaging moves (ranked by expected
+    # damage against whichever of our actives it hits hardest) are kept as response
+    # candidates -- a Protect candidate (see search_opp_candidates below) is ALWAYS added
+    # on top of this cap, not counted against it, since it's usually the single most
+    # important response to get right.
+    search_opp_moves_per_slot: int = 4
+    # Cap on the joint (both opponent slots) response candidates kept after the per-slot
+    # cross product, ranked by a cheap enumeration-time score (summed expected damage,
+    # with Protect valued via protect_threat_weight) -- keeps resolve_exchange's
+    # damage_range call count bounded regardless of how many moves either slot knows.
+    search_opp_candidates: int = 8
+    # Points per 1% of a Pokemon's max HP lost during a simulated exchange -- the same
+    # currency as damage_percent_weight, so exchange-derived and myopic-derived HP
+    # percentages are directly comparable once blended together.
+    search_hp_weight: float = 1.0
+    # Points per Pokemon fainted during a simulated exchange. Set slightly ABOVE
+    # guaranteed_ko_bonus's scale (not equal) because a faint that survives a full
+    # opponent-response simulation is a higher-confidence removal than the myopic
+    # evaluator's single-ply guaranteed_ko_bonus, which only knows the target didn't
+    # dodge -- it hasn't checked whether the opponent's own best response also changes
+    # the picture (e.g. a revenge-kill that would have made the KO moot anyway).
+    search_faint_weight: float = 90.0
+    # Weight on the WORST-case opponent response when aggregating a candidate order's
+    # simulated exchange values into one number: `w * min(values) + (1-w) *
+    # response_likelihood_weighted_expectation(values)` (see search_response_temperature
+    # below for the expectation term's weights). Dropped from 0.7 -> 0.25 after v1 gate
+    # testing (2026-07) showed a HIGH worst-case weight is systematically pessimistic: a
+    # pure minimax treats "they Protect the focused slot" as certain every turn (every
+    # response set has a Protect candidate), which made the search drift passive --
+    # preferring its own Protect over a 44-point-better attack, and dodging imaginary
+    # Protects by picking worse attack targets. An opponent response's influence on the
+    # score should track how LIKELY that response actually is (the expectation term now
+    # does this, weighted by enumeration score and each Protect's real opp_protect_prob),
+    # not treat every enumerated worst case as equally certain -- the residual worst-case
+    # weight here is a tail-risk hedge on top of that, not the dominant term.
+    search_worst_case_weight: float = 0.25
+    # Points of enumeration score (see _enumerate_opp_responses' cheap per-response
+    # score) per e-fold of response likelihood in the softmax that turns those scores
+    # into weights for the expectation term above (`p_i ∝ exp(enum_score_i /
+    # search_response_temperature)`). Lower = sharper/more adversarial (the opponent's
+    # best-looking responses dominate the expectation almost as much as a pure worst
+    # case would); higher = flatter/closer to a plain average across all enumerated
+    # responses.
+    search_response_temperature: float = 30.0
+    # Weight on the plain myopic score in the final per-order blend (see
+    # search_position_weight below) -- kept at 1.0 by default so the search is additive
+    # on top of the existing (already-tuned) myopic weights, not a wholesale replacement
+    # of their calibration.
+    search_myopic_weight: float = 1.0
+    # Weight on the aggregated simulated-exchange value in the final per-order blend:
+    # `search_myopic_weight * myopic_score + search_position_weight * aggregated_value`.
+    # Setting this to 0.0 disables the search's actual influence on ranking while still
+    # paying its compute cost -- useful as an isolation test, not a recommended setting.
+    search_position_weight: float = 1.0
+
     # --- Team preview (vgc.team_preview.build_team_order) -------------------------------
     # Weight on the pairwise expected-damage-exchange ratio term (our estimated output
     # onto their previewed 6 vs theirs onto us) when scoring a 4-of-6 pick + lead order.

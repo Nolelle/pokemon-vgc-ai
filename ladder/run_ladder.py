@@ -11,6 +11,13 @@ Smoke sessions default their replay/trace artifacts and outcome log to the
 ``--local-smoke`` never silently appends to (or overwrites replays under) the real
 ``runs/ladder.jsonl``/``runs/ladder/`` record -- pass ``--log``/``--artifacts-dir``
 explicitly to override either mode's default.
+
+``--search`` opts this session into the Phase 2c 2-ply search (``PolicyConfig.
+use_two_ply_search``, False by default -- see its comment in ``vgc/models.py``) instead
+of the plain myopic evaluator, for an A/B against real ladder opponents. Every
+``runs/ladder.jsonl`` record carries a ``"policy"`` field (``"search"`` | ``"myopic"``)
+so sessions stay attributable after the fact; the running mode is also printed at
+startup and in the session summary (see ``session_config``/``policy_label``).
 """
 
 from __future__ import annotations
@@ -20,7 +27,7 @@ import asyncio
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -153,6 +160,10 @@ class LadderPlayer(VgcPlayer):
             "rating": battle.rating,
             "opponent_rating": battle.opponent_rating,
             "fallback_count": sum(bool(trace.get("fallback_used")) for trace in traces),
+            # Machine-readable A/B tag: "search" (2-ply search, --search) vs "myopic"
+            # (score_joint_orders directly, the default) -- see PolicyConfig.
+            # use_two_ply_search's comment for why the default flipped to False.
+            "policy": "search" if self.config.use_two_ply_search else "myopic",
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
         }
@@ -187,6 +198,30 @@ def resolve_output_paths(
     return resolved_artifacts_dir, resolved_log
 
 
+def session_config(search: bool) -> PolicyConfig:
+    """The `PolicyConfig` for one ladder session (smoke or live): the default config
+    (myopic evaluator only), or the same config with the Phase 2c 2-ply search
+    explicitly enabled via `--search`. `PolicyConfig.use_two_ply_search` defaults to
+    False -- the offline gate proxy (SimpleHeuristicsPlayer) systematically punishes
+    opponent-response modeling it doesn't itself exhibit, so the search's real value can
+    only be measured against actual ladder opponents, opted into per session here rather
+    than by flipping the global default. Pure and argparse-free so it's directly
+    unit-testable (see tests/test_ladder.py).
+    """
+    config = PolicyConfig(log_decisions=True)
+    if search:
+        config = replace(config, use_two_ply_search=True)
+    return config
+
+
+def policy_label(config: PolicyConfig) -> str:
+    """Human-readable mode name for startup/summary output, so a ladder session's
+    ``runs/ladder.jsonl`` records (which also carry a machine-readable ``"policy"``
+    field -- see `LadderPlayer._write_battle_record`) are attributable at a glance.
+    """
+    return "2-ply search" if config.use_two_ply_search else "myopic evaluator"
+
+
 async def run_local_smoke(
     *,
     n_games: int,
@@ -194,6 +229,7 @@ async def run_local_smoke(
     opponent: str,
     artifacts_dir: Path,
     log_path: Path,
+    config: PolicyConfig,
     timeout_seconds: float = 60.0,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
@@ -203,7 +239,7 @@ async def run_local_smoke(
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
-        config=PolicyConfig(log_decisions=True),
+        config=config,
         team=team,
         battle_format=FORMAT_ID,
         accept_open_team_sheet=True,
@@ -234,6 +270,7 @@ async def run_live_session(
     credentials: Credentials,
     artifacts_dir: Path,
     log_path: Path,
+    config: PolicyConfig,
     game_timeout_seconds: float,
     max_retries: int,
 ) -> list[dict[str, object]]:
@@ -253,7 +290,7 @@ async def run_live_session(
                     account_configuration=AccountConfiguration(
                         credentials.username, credentials.password
                     ),
-                    config=PolicyConfig(log_decisions=True),
+                    config=config,
                     team=team,
                     battle_format=FORMAT_ID,
                     accept_open_team_sheet=True,
@@ -319,6 +356,15 @@ def parse_args() -> argparse.Namespace:
         help="challenge a local baseline instead of joining the public ladder",
     )
     parser.add_argument("--opponent", choices=sorted(BASELINES), default="heuristic")
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help=(
+            "enable the Phase 2c 2-ply search (PolicyConfig.use_two_ply_search) for this "
+            "session instead of the default myopic evaluator -- an explicit per-session "
+            "A/B opt-in against real opponents (see PolicyConfig's comment for why)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -327,6 +373,8 @@ def main() -> int:
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
+    config = session_config(args.search)
+    print(f"policy: {policy_label(config)}")
     team = args.team.read_text().strip()
     if args.local_smoke:
         records = asyncio.run(
@@ -336,6 +384,7 @@ def main() -> int:
                 opponent=args.opponent,
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
+                config=config,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -348,12 +397,14 @@ def main() -> int:
                 credentials=credentials,
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
+                config=config,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )
         )
     wins = sum(record.get("won") is True for record in records)
     print(f"completed {len(records)} games: {wins} wins, {len(records) - wins} non-wins")
+    print(f"policy: {policy_label(config)}")
     print(f"artifacts: {artifacts_dir}")
     print(f"session log: {log_path}")
     return 0

@@ -12,7 +12,9 @@ from ladder.run_ladder import (
     USERNAME_ENV,
     Credentials,
     load_credentials,
+    policy_label,
     resolve_output_paths,
+    session_config,
 )
 
 
@@ -82,3 +84,33 @@ def test_resolve_output_paths_both_explicit_in_either_mode() -> None:
         )
         assert artifacts_dir == artifacts_override
         assert log_path == log_override
+
+
+# --- session_config: --search opt-in maps to PolicyConfig.use_two_ply_search --------
+
+
+def test_session_config_without_search_keeps_default_two_ply_search_off() -> None:
+    config = session_config(search=False)
+    assert config.use_two_ply_search is False
+    assert config.log_decisions is True
+
+
+def test_session_config_with_search_enables_two_ply_search() -> None:
+    config = session_config(search=True)
+    assert config.use_two_ply_search is True
+    assert config.log_decisions is True
+
+
+def test_session_config_search_flag_is_the_only_difference() -> None:
+    without_search = session_config(search=False)
+    with_search = session_config(search=True)
+    # dataclasses.replace should only ever touch use_two_ply_search here -- every other
+    # field stays at PolicyConfig's own default.
+    from dataclasses import replace
+
+    assert with_search == replace(without_search, use_two_ply_search=True)
+
+
+def test_policy_label_matches_use_two_ply_search() -> None:
+    assert policy_label(session_config(search=False)) == "myopic evaluator"
+    assert policy_label(session_config(search=True)) == "2-ply search"

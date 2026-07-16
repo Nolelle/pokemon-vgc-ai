@@ -29,6 +29,7 @@ from vgc.decision_trace import (
 )
 from vgc.evaluator import score_joint_orders
 from vgc.models import PolicyConfig
+from vgc.search import search_joint_orders
 from vgc.team_preview import build_team_order
 
 
@@ -53,9 +54,7 @@ class VgcPlayer(Player):
         self._resolved_ots_rejections: set[str] = set()
         self.decision_trace_history: list[dict[str, object]] = []
         player_kwargs.setdefault("battle_format", self.config.format_id)
-        player_kwargs.setdefault(
-            "accept_open_team_sheet", self.config.accept_open_team_sheet
-        )
+        player_kwargs.setdefault("accept_open_team_sheet", self.config.accept_open_team_sheet)
         super().__init__(**player_kwargs)
 
     async def _handle_battle_message(self, split_messages) -> None:
@@ -95,7 +94,12 @@ class VgcPlayer(Player):
 
         battle = self._battles.get(battle_tag)
         saw_plain_rejection = bool(rejection_positions) and not saw_rejection_error
-        if saw_plain_rejection and battle is not None and battle.teampreview and not request_positions:
+        if (
+            saw_plain_rejection
+            and battle is not None
+            and battle.teampreview
+            and not request_positions
+        ):
             # Upstream's plain-text branch handled this ordering itself.
             self._pending_ots_rejections.discard(battle_tag)
             self._resolved_ots_rejections.add(battle_tag)
@@ -125,14 +129,27 @@ class VgcPlayer(Player):
     # --- overridable hooks --------------------------------------------------------
 
     def decide(self, battle: AbstractBattle) -> BattleOrder:
-        """Choose a move: the argmax of `vgc.evaluator.score_joint_orders`, or a random
-        legal move if the evaluator is disabled (`PolicyConfig.use_heuristic_evaluator`)
-        or has nothing to score (e.g. `enumerate_joint_orders` came back empty -- see its
-        own docstring for when that happens). Only wired up for `DoubleBattle` (this
-        project's format is always doubles -- see vgc/config.py's FORMAT_ID); any other
-        battle type falls back to random rather than guessing.
+        """Choose a move: the argmax of `vgc.search.search_joint_orders` (Phase 2c's
+        shallow 2-ply search) when `PolicyConfig.use_two_ply_search` is explicitly set
+        (False by default -- see its comment in vgc/models.py for why: the offline gate
+        proxy punishes opponent-response modeling it doesn't itself exhibit, so this is
+        opted into per ladder session via `ladder/run_ladder.py --search` rather than
+        being the default), falling back to the plain myopic
+        `vgc.evaluator.score_joint_orders` when the search is disabled but the heuristic
+        evaluator (`PolicyConfig.use_heuristic_evaluator`, the actual default) is still
+        on, or a random legal move if both are disabled or there's nothing to score
+        (e.g. `enumerate_joint_orders` came back empty -- see its own docstring for when
+        that happens). Only wired up for `DoubleBattle` (this project's format is always
+        doubles -- see vgc/config.py's FORMAT_ID); any other battle type falls back to
+        random rather than guessing.
         """
-        if self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
+        if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
+            scored = search_joint_orders(battle, self.config)
+            if scored:
+                if self.config.log_decisions:
+                    record_note("chosen_order_score", round(scored[0].score, 3))
+                return scored[0].order
+        elif self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
             scored = score_joint_orders(battle, self.config)
             if scored:
                 if self.config.log_decisions:
