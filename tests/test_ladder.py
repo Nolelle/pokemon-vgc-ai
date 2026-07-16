@@ -1,8 +1,12 @@
+import asyncio
 import json
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import ladder.run_ladder as run_ladder_module
 from ladder.run_ladder import (
     DEFAULT_ARTIFACTS_DIR,
     DEFAULT_LOCAL_SMOKE_ARTIFACTS_DIR,
@@ -16,6 +20,7 @@ from ladder.run_ladder import (
     resolve_output_paths,
     session_config,
 )
+from ladder.run_ladder import _safe_stop_listening
 
 
 def test_credentials_load_from_environment(monkeypatch) -> None:
@@ -114,3 +119,112 @@ def test_session_config_search_flag_is_the_only_difference() -> None:
 def test_policy_label_matches_use_two_ply_search() -> None:
     assert policy_label(session_config(search=False)) == "myopic evaluator"
     assert policy_label(session_config(search=True)) == "2-ply search"
+
+
+# --- _safe_stop_listening: teardown of a dead connection must never raise -----------
+
+
+class _FakePsClient:
+    def __init__(self, stop_listening):
+        self.stop_listening = stop_listening
+
+
+class _FakePlayer:
+    def __init__(self, stop_listening):
+        self.ps_client = _FakePsClient(stop_listening)
+        self.logger = logging.getLogger("test-fake-ladder-player")
+
+
+def test_safe_stop_listening_swallows_timeout_error() -> None:
+    async def _raising_stop_listening():
+        raise TimeoutError("timed out while closing connection")
+
+    player = _FakePlayer(_raising_stop_listening)
+
+    async def _run():
+        await _safe_stop_listening(player)
+
+    asyncio.run(_run())  # must not raise
+
+
+def test_safe_stop_listening_passes_through_on_clean_close() -> None:
+    calls = []
+
+    async def _clean_stop_listening():
+        calls.append("called")
+
+    player = _FakePlayer(_clean_stop_listening)
+
+    async def _run():
+        await _safe_stop_listening(player)
+
+    asyncio.run(_run())
+    assert calls == ["called"]
+
+
+# --- run_live_session: a teardown that raises must not abort the retry loop ---------
+
+
+class _FakeLadderPlayer:
+    """Stands in for `ladder.run_ladder.LadderPlayer`: the first `ladder()` call
+    simulates a dead websocket (raises, like the real crash log), the second succeeds.
+    `attempt_count` is a CLASS attribute (reset per test) because `run_live_session`
+    constructs a brand-new instance on reconnect -- the "first call fails" behavior has
+    to survive across that reconstruction, same as the real bug did.
+    """
+
+    attempt_count = 0
+
+    def __init__(self, **kwargs) -> None:
+        self.config = kwargs.get("config")
+        self.completed_records: list[dict[str, object]] = []
+        self.n_finished_battles = 0
+        self.logger = logging.getLogger("test-fake-ladder-player")
+        self.logger.setLevel(logging.CRITICAL)  # keep the simulated failure quiet
+        self.ps_client = SimpleNamespace(stop_listening=self._stop_listening)
+
+    async def ladder(self, _n: int) -> None:
+        type(self).attempt_count += 1
+        if type(self).attempt_count == 1:
+            raise TimeoutError("simulated dead websocket (keepalive ping timeout)")
+        self.n_finished_battles += 1
+        self.completed_records.append(
+            {"won": True, "battle_tag": f"fake-{type(self).attempt_count}"}
+        )
+
+    async def flush_finished_battles(self, delay_seconds: float = 0.0) -> None:
+        return None
+
+    async def _stop_listening(self) -> None:
+        # Mirrors the confirmed crash: tearing down an already-dead connection raises.
+        raise TimeoutError("timed out while closing connection")
+
+
+def test_run_live_session_survives_a_teardown_that_raises(monkeypatch) -> None:
+    _FakeLadderPlayer.attempt_count = 0
+    monkeypatch.setattr(run_ladder_module, "LadderPlayer", _FakeLadderPlayer)
+    monkeypatch.setattr(
+        run_ladder_module,
+        "AccountConfiguration",
+        lambda username, password: SimpleNamespace(username=username, password=password),
+    )
+
+    async def _run():
+        return await run_ladder_module.run_live_session(
+            n_games=1,
+            team="fake-team",
+            credentials=Credentials(username="u", password="p"),
+            artifacts_dir=Path("/tmp/fake-artifacts"),
+            log_path=Path("/tmp/fake-log.jsonl"),
+            config=None,
+            game_timeout_seconds=5.0,
+            max_retries=2,
+        )
+
+    # Before the fix, the dead-connection stop_listening() inside the except block (or
+    # the finally block on the way out) would raise and this call would never return.
+    records = asyncio.run(_run())
+
+    assert len(records) == 1
+    assert records[0]["won"] is True
+    assert _FakeLadderPlayer.attempt_count == 2  # one simulated failure, one recovery

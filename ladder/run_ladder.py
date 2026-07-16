@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO_ROOT))
 os.environ["VGC_TRACE"] = "1"
 
 from poke_env.battle.abstract_battle import AbstractBattle  # noqa: E402
+from poke_env.player.player import Player  # noqa: E402
 from poke_env.ps_client.account_configuration import AccountConfiguration  # noqa: E402
 from poke_env.ps_client.server_configuration import (  # noqa: E402
     LocalhostServerConfiguration,
@@ -176,6 +177,21 @@ def _session_id() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
+async def _safe_stop_listening(player: Player, timeout_seconds: float = 15.0) -> None:
+    """Best-effort websocket teardown. A connection that already died server-side (e.g.
+    a keepalive ping timeout) can make `stop_listening()` itself hang or raise
+    `TimeoutError` ("timed out while closing connection") -- during reconnect/cleanup we
+    don't care, we're discarding this client regardless, so swallow (and log) any
+    failure here rather than let it propagate and abort session-level retry logic.
+    """
+    try:
+        await asyncio.wait_for(player.ps_client.stop_listening(), timeout=timeout_seconds)
+    except Exception:  # noqa: BLE001 - teardown of a dead client must never propagate
+        player.logger.debug(
+            "stop_listening during teardown failed; discarding client anyway", exc_info=True
+        )
+
+
 def resolve_output_paths(
     local_smoke: bool, log: Path | None, artifacts_dir: Path | None
 ) -> tuple[Path, Path]:
@@ -258,8 +274,10 @@ async def run_local_smoke(
         )
         await player.flush_finished_battles(delay_seconds=0.1)
     finally:
-        await player.ps_client.stop_listening()
-        await anchor.ps_client.stop_listening()
+        # Same dead-connection teardown hazard as run_live_session: guard both closes so a
+        # hung/raising stop_listening() can't mask the real result (or a real exception).
+        await _safe_stop_listening(player)
+        await _safe_stop_listening(anchor)
     return player.completed_records
 
 
@@ -306,20 +324,30 @@ async def run_live_session(
                 records.extend(player.completed_records[previous_records:])
                 consecutive_failures = 0
             except Exception:  # noqa: BLE001 - reconnect boundary for network failures
-                await player.flush_finished_battles()
+                try:
+                    await player.flush_finished_battles()
+                except Exception:  # noqa: BLE001 - the connection that failed above is
+                    # often the same one flush_finished_battles would need -- never let
+                    # a flush-on-the-way-out mask the real failure or abort the retry.
+                    player.logger.debug(
+                        "flush_finished_battles during teardown failed", exc_info=True
+                    )
                 consecutive_failures += 1
                 player.logger.exception(
                     "Ladder game failed; reconnecting (%d/%d)",
                     consecutive_failures,
                     max_retries,
                 )
-                await player.ps_client.stop_listening()
-                player = None
+                dead_player = player
+                player = None  # discard BEFORE teardown -- a hung/raising
+                # stop_listening() on an already-dead connection must never leave
+                # `player` looking "still alive" to the retry loop above.
+                await _safe_stop_listening(dead_player)
                 if consecutive_failures > max_retries:
                     raise
     finally:
         if player is not None:
-            await player.ps_client.stop_listening()
+            await _safe_stop_listening(player)
     return records[:n_games]
 
 
@@ -349,7 +377,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--credentials-file", type=Path, default=DEFAULT_CREDENTIALS_FILE)
     parser.add_argument("--game-timeout", type=float, default=300.0)
-    parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=5,
+        help=(
+            "consecutive reconnects allowed before giving up (resets to 0 after any "
+            "completed game, so this bounds a losing STREAK of connection failures, "
+            "not a lifetime/cumulative count across the whole session)"
+        ),
+    )
     parser.add_argument(
         "--local-smoke",
         action="store_true",
