@@ -298,3 +298,31 @@ class PolicyConfig:
     # the setter is also being brought, since TR mode wants a coherent slow core, not just
     # the setter alone.
     team_preview_tr_coherence_weight: float = 0.4
+
+    # --- Final integration: BC v2 candidate re-ranker (vgc.bc.policy.score_orders) ------
+    # Master switch: True blends the trained BC v2 checkpoint's learned move/target
+    # log-probabilities into the top-ranked heuristic candidates' scores instead of
+    # taking the heuristic's (search or myopic) argmax directly. Defaults to False for
+    # the same reason use_two_ply_search does: this needs a real ladder A/B before it's
+    # trusted as a default, not just an offline gate proxy -- opted in per session via
+    # `ladder/run_ladder.py --bc`.
+    use_bc_policy: bool = False
+    # Converts nats (the BC model's log-probability units) into heuristic score points
+    # for the additive blend `heuristic_score + bc_blend_weight * bc_logprob`. The
+    # heuristic's own top candidates typically sit within ~40 points of each other, so
+    # ~1.3 nats of model preference (30.0 * 1.3 ~= 40) is enough to flip a genuinely close
+    # call but not enough to override a decisive KO (which scores far outside that
+    # ~40-point band via guaranteed_ko_bonus etc).
+    bc_blend_weight: float = 30.0
+    # How many of the heuristic's top-ranked candidates get the (batched, but still not
+    # free) BC forward pass -- same enumeration-cost reasoning as
+    # search_our_candidates: candidates outside this cutoff are almost never the real
+    # best move, so re-scoring them is wasted; they keep their heuristic score, pinned
+    # strictly below the reranked block (see vgc.bc.policy.score_orders's module
+    # docstring for why, and search.py's earlier Fix-1 regression for the lesson this
+    # repeats).
+    bc_rerank_top_k: int = 10
+    # Checkpoint path `vgc.bc.policy.load_bc_policy` reads. Relative to the repo root
+    # when run from `ladder/run_ladder.py` (matches every other data/-prefixed default
+    # path in this codebase, e.g. TEAMS_DIR).
+    bc_checkpoint_path: str = "data/models/bc_policy_v2.pt"

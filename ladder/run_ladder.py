@@ -14,10 +14,13 @@ explicitly to override either mode's default.
 
 ``--search`` opts this session into the Phase 2c 2-ply search (``PolicyConfig.
 use_two_ply_search``, False by default -- see its comment in ``vgc/models.py``) instead
-of the plain myopic evaluator, for an A/B against real ladder opponents. Every
-``runs/ladder.jsonl`` record carries a ``"policy"`` field (``"search"`` | ``"myopic"``)
-so sessions stay attributable after the fact; the running mode is also printed at
-startup and in the session summary (see ``session_config``/``policy_label``).
+of the plain myopic evaluator, for an A/B against real ladder opponents. ``--bc``
+independently opts into the BC v2 candidate re-ranker (``PolicyConfig.use_bc_policy``,
+also False by default -- see its comment in ``vgc/models.py``) on top of whichever of
+those two an evaluator path (search or myopic) is running. Every ``runs/ladder.jsonl``
+record carries a ``"policy"`` field (``"myopic"`` | ``"search"`` | ``"bc"`` |
+``"search+bc"``) so sessions stay attributable after the fact; the running mode is also
+printed at startup and in the session summary (see ``session_config``/``policy_label``).
 """
 
 from __future__ import annotations
@@ -161,10 +164,9 @@ class LadderPlayer(VgcPlayer):
             "rating": battle.rating,
             "opponent_rating": battle.opponent_rating,
             "fallback_count": sum(bool(trace.get("fallback_used")) for trace in traces),
-            # Machine-readable A/B tag: "search" (2-ply search, --search) vs "myopic"
-            # (score_joint_orders directly, the default) -- see PolicyConfig.
-            # use_two_ply_search's comment for why the default flipped to False.
-            "policy": "search" if self.config.use_two_ply_search else "myopic",
+            # Machine-readable A/B tag: see policy_label's docstring for the 4-way combo
+            # this mirrors ("myopic" | "search" | "bc" | "search+bc").
+            "policy": _policy_tag(self.config),
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
         }
@@ -214,28 +216,50 @@ def resolve_output_paths(
     return resolved_artifacts_dir, resolved_log
 
 
-def session_config(search: bool) -> PolicyConfig:
+def session_config(search: bool, bc: bool = False) -> PolicyConfig:
     """The `PolicyConfig` for one ladder session (smoke or live): the default config
-    (myopic evaluator only), or the same config with the Phase 2c 2-ply search
-    explicitly enabled via `--search`. `PolicyConfig.use_two_ply_search` defaults to
-    False -- the offline gate proxy (SimpleHeuristicsPlayer) systematically punishes
-    opponent-response modeling it doesn't itself exhibit, so the search's real value can
-    only be measured against actual ladder opponents, opted into per session here rather
-    than by flipping the global default. Pure and argparse-free so it's directly
-    unit-testable (see tests/test_ladder.py).
+    (myopic evaluator only), composably extended with the Phase 2c 2-ply search
+    (`--search`) and/or the BC v2 candidate re-ranker (`--bc`) -- both default to False
+    on `PolicyConfig` for the same reason: their offline gate proxy (SimpleHeuristicsPlayer)
+    doesn't exhibit the opponent behaviors (Protect timing, human-plausible move choice)
+    they're built to anticipate, so their real value can only be measured against actual
+    ladder opponents, opted into per session here rather than by flipping either global
+    default. Pure and argparse-free so it's directly unit-testable (see
+    tests/test_ladder.py).
     """
     config = PolicyConfig(log_decisions=True)
     if search:
         config = replace(config, use_two_ply_search=True)
+    if bc:
+        config = replace(config, use_bc_policy=True)
     return config
+
+
+def _policy_tag(config: PolicyConfig) -> str:
+    """Machine-readable ``"policy"`` field for ``runs/ladder.jsonl`` records: one of the
+    four combos ``"myopic"`` | ``"search"`` | ``"bc"`` | ``"search+bc"``. ``"myopic"`` is
+    the implicit base evaluator and is only named on its own (mirrors the pre-``--bc``
+    tag exactly, so old records stay comparable) -- once BC re-ranking is on, the tag
+    names only the opt-in knobs that are actually engaged (``"bc"`` alone, or
+    ``"search+bc"`` when both are).
+    """
+    if config.use_two_ply_search and config.use_bc_policy:
+        return "search+bc"
+    if config.use_bc_policy:
+        return "bc"
+    if config.use_two_ply_search:
+        return "search"
+    return "myopic"
 
 
 def policy_label(config: PolicyConfig) -> str:
     """Human-readable mode name for startup/summary output, so a ladder session's
     ``runs/ladder.jsonl`` records (which also carry a machine-readable ``"policy"``
-    field -- see `LadderPlayer._write_battle_record`) are attributable at a glance.
+    field -- see `_policy_tag`/`LadderPlayer._write_battle_record`) are attributable at a
+    glance.
     """
-    return "2-ply search" if config.use_two_ply_search else "myopic evaluator"
+    base = "2-ply search" if config.use_two_ply_search else "myopic evaluator"
+    return f"{base} + BC re-rank" if config.use_bc_policy else base
 
 
 async def run_local_smoke(
@@ -402,6 +426,15 @@ def parse_args() -> argparse.Namespace:
             "A/B opt-in against real opponents (see PolicyConfig's comment for why)"
         ),
     )
+    parser.add_argument(
+        "--bc",
+        action="store_true",
+        help=(
+            "enable the BC v2 candidate re-ranker (PolicyConfig.use_bc_policy) for this "
+            "session, composable with --search -- an explicit per-session A/B opt-in "
+            "against real opponents (see PolicyConfig's comment for why)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -410,7 +443,7 @@ def main() -> int:
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
-    config = session_config(args.search)
+    config = session_config(args.search, args.bc)
     print(f"policy: {policy_label(config)}")
     team = args.team.read_text().strip()
     if args.local_smoke:

@@ -91,19 +91,35 @@ def test_resolve_output_paths_both_explicit_in_either_mode() -> None:
         assert log_path == log_override
 
 
-# --- session_config: --search opt-in maps to PolicyConfig.use_two_ply_search --------
+# --- session_config: --search/--bc opt-in map to PolicyConfig.use_two_ply_search/ ----
+# --- use_bc_policy, composably ---------------------------------------------------------
 
 
 def test_session_config_without_search_keeps_default_two_ply_search_off() -> None:
     config = session_config(search=False)
     assert config.use_two_ply_search is False
+    assert config.use_bc_policy is False
     assert config.log_decisions is True
 
 
 def test_session_config_with_search_enables_two_ply_search() -> None:
     config = session_config(search=True)
     assert config.use_two_ply_search is True
+    assert config.use_bc_policy is False
     assert config.log_decisions is True
+
+
+def test_session_config_with_bc_enables_bc_policy() -> None:
+    config = session_config(search=False, bc=True)
+    assert config.use_two_ply_search is False
+    assert config.use_bc_policy is True
+    assert config.log_decisions is True
+
+
+def test_session_config_search_and_bc_are_composable() -> None:
+    config = session_config(search=True, bc=True)
+    assert config.use_two_ply_search is True
+    assert config.use_bc_policy is True
 
 
 def test_session_config_search_flag_is_the_only_difference() -> None:
@@ -116,9 +132,27 @@ def test_session_config_search_flag_is_the_only_difference() -> None:
     assert with_search == replace(without_search, use_two_ply_search=True)
 
 
-def test_policy_label_matches_use_two_ply_search() -> None:
+def test_session_config_bc_flag_is_the_only_difference() -> None:
+    without_bc = session_config(search=False)
+    with_bc = session_config(search=False, bc=True)
+    from dataclasses import replace
+
+    assert with_bc == replace(without_bc, use_bc_policy=True)
+
+
+def test_policy_label_matches_use_two_ply_search_and_use_bc_policy() -> None:
     assert policy_label(session_config(search=False)) == "myopic evaluator"
     assert policy_label(session_config(search=True)) == "2-ply search"
+    assert policy_label(session_config(search=False, bc=True)) == "myopic evaluator + BC re-rank"
+    assert policy_label(session_config(search=True, bc=True)) == "2-ply search + BC re-rank"
+
+
+def test_policy_tag_covers_all_four_combos() -> None:
+    policy_tag = run_ladder_module._policy_tag
+    assert policy_tag(session_config(search=False)) == "myopic"
+    assert policy_tag(session_config(search=True)) == "search"
+    assert policy_tag(session_config(search=False, bc=True)) == "bc"
+    assert policy_tag(session_config(search=True, bc=True)) == "search+bc"
 
 
 # --- _safe_stop_listening: teardown of a dead connection must never raise -----------

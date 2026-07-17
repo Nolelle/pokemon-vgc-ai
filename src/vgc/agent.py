@@ -19,6 +19,7 @@ from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
 from vgc.actions import describe_order
+from vgc.bc.policy import load_bc_policy, score_orders
 from vgc.decision_trace import (
     current_trace,
     finish_trace,
@@ -142,19 +143,28 @@ class VgcPlayer(Player):
         that happens). Only wired up for `DoubleBattle` (this project's format is always
         doubles -- see vgc/config.py's FORMAT_ID); any other battle type falls back to
         random rather than guessing.
+
+        When `PolicyConfig.use_bc_policy` is set, the scored list from whichever path
+        above ran (search or myopic) is then passed through `vgc.bc.policy.score_orders`,
+        which blends the trained BC v2 checkpoint's learned move/target log-probability
+        into the top-ranked candidates before the argmax is taken (see that module's
+        docstring). `load_bc_policy` is cached and itself never raises -- a missing
+        checkpoint/torch install just leaves the scored list unchanged, same as this
+        whole method's outer exception-safe wrapper (`choose_move`) already guarantees
+        for any other failure here.
         """
+        scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
             scored = search_joint_orders(battle, self.config)
-            if scored:
-                if self.config.log_decisions:
-                    record_note("chosen_order_score", round(scored[0].score, 3))
-                return scored[0].order
         elif self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
             scored = score_joint_orders(battle, self.config)
-            if scored:
-                if self.config.log_decisions:
-                    record_note("chosen_order_score", round(scored[0].score, 3))
-                return scored[0].order
+        if scored:
+            if self.config.use_bc_policy:
+                policy = load_bc_policy(self.config.bc_checkpoint_path)
+                scored = score_orders(policy, battle, scored, self.config)
+            if self.config.log_decisions:
+                record_note("chosen_order_score", round(scored[0].score, 3))
+            return scored[0].order
         return self.choose_random_move(battle)
 
     def decide_teampreview(self, battle: AbstractBattle) -> str:
