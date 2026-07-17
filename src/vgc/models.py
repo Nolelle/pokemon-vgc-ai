@@ -308,12 +308,14 @@ class PolicyConfig:
     # `ladder/run_ladder.py --bc`.
     use_bc_policy: bool = False
     # Converts nats (the BC model's log-probability units) into heuristic score points
-    # for the additive blend `heuristic_score + bc_blend_weight * bc_logprob`. The
-    # heuristic's own top candidates typically sit within ~40 points of each other, so
-    # ~1.3 nats of model preference (30.0 * 1.3 ~= 40) is enough to flip a genuinely close
-    # call but not enough to override a decisive KO (which scores far outside that
-    # ~40-point band via guaranteed_ko_bonus etc).
-    bc_blend_weight: float = 30.0
+    # for the additive blend `heuristic_score + bc_blend_weight * bc_logprob`. Tuned
+    # empirically via same-session gate A/Bs (2026-07-17): at 30.0 the blend cost ~13
+    # win-rate points vs heuristic-only (candidate log-prob gaps of 2-4 nats swung
+    # +/-60-120 points, letting a 44%-top-1 imitation of ~average ladder players
+    # override decisive damage-math calls); at 10.0 it was exactly proxy-neutral
+    # (78/100 vs 78/100 same-session). 10.0 keeps the model advisory: ~1 nat of
+    # preference (~10 points) flips genuinely close calls only.
+    bc_blend_weight: float = 10.0
     # How many of the heuristic's top-ranked candidates get the (batched, but still not
     # free) BC forward pass -- same enumeration-cost reasoning as
     # search_our_candidates: candidates outside this cutoff are almost never the real
