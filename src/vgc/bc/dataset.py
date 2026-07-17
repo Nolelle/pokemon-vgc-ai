@@ -1,5 +1,5 @@
 """`BcTurnDataset`: one training sample per (turn-kind decision record, active slot)
-from `data/bc/decisions.jsonl` (`vgc.replay_parse`'s output).
+from `data/bc/decisions.jsonl` (`vgc.replay_parse`'s schema-2+ output).
 
 SCOPE reminder (see `vgc.bc` package docstring): this is pipeline-validation
 infrastructure, not a playable agent's data loader.
@@ -9,24 +9,35 @@ package dependency) does not, so `import vgc.bc.encoding` keeps working without 
 importing THIS module without torch installed raises a clear `ImportError` instead of
 whatever confusing error torch's own import machinery would otherwise produce.
 
-## Sampling
+## Sampling and the two-head (move, target) contract
 
-Only `decision_kind == "turn"` records are used (forced_switch/teampreview are a
-different, not-yet-modeled decision shape in this v1 scope -- see
-`vgc.bc.encoding.encode_action`'s docstring). Each qualifying record contributes UP TO 2
-samples (one per active slot, `slot in (0, 1)`) -- a sample is skipped (and counted in
-`BcTurnDataset.skipped`) when `encode_action` returns `None` for that slot (an
-unrecognized move id; see that function's docstring for why that's `None` and not a
-generic "unknown" class).
+Only `decision_kind == "turn"` records are used. Each qualifying record contributes UP
+TO 2 samples (one per active slot). A sample is DROPPED ENTIRELY (counted in
+`BcTurnDataset.skipped`) only when `encode_action` (the move head's label) returns
+`None` -- an unrecognized move id (see that function's docstring). `encode_target` (the
+target head's label) has its OWN, more lenient None case (e.g. a blocked
+`|cant|`-attempted move's true target is genuinely unknown): when it returns `None`,
+the sample is KEPT (the move head still has a valid label) but tagged with
+`has_target=False`, so `vgc.bc.train`'s target loss term can mask that sample out
+instead of training the target head on a fabricated label.
+
+Each sample is a 5-tuple: `(index_array, scalar_array, move_idx, target_idx,
+has_target)` --
+  - `index_array`: `(INDEX_DIM,)` int64 (`vgc.bc.encoding.flatten_state`'s index half).
+  - `scalar_array`: `(STATE_SCALAR_DIM + SLOT_FEATURE_DIM,)` float32 (the scalar half
+    plus a 2-dim one-hot for which of our 2 active slots is deciding).
+  - `move_idx`: scalar int64, the move head's label (`MOVE_VOCAB` index).
+  - `target_idx`: scalar int64, the target head's label (`TARGET_VOCAB` index) when
+    `has_target` is true, else an arbitrary placeholder (0) that MUST be masked out by
+    the caller rather than trained against.
+  - `has_target`: scalar float32, 1.0/0.0.
 
 ## Rating filter and train/val split
 
-`min_rating` drops records from replays rated below it (or null-rated) -- same
-semantics as `tools/download_replays.py`/`tools/build_set_priors.py`'s own rating
-filters. The train/val split is deterministic and keyed by `replay_id` (via a stable
-hash, NOT by shuffling individual records), so every record from one replay always
-lands in the same split -- no replay ever straddles train/val, which would leak
-within-game information (e.g. the same board state pattern) across the split boundary.
+`min_rating` drops records from replays rated below it (or null-rated). The train/val
+split is deterministic and keyed by `replay_id` (via a stable hash, NOT by shuffling
+individual records), so every record from one replay always lands in the same split --
+no replay ever straddles train/val.
 """
 
 from __future__ import annotations
@@ -44,7 +55,13 @@ except ImportError as exc:  # pragma: no cover - exercised via test_bc.py's impo
         "vgc.bc.dataset requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.bc.encoding import SLOT_FEATURE_DIM, encode_action, encode_state, flatten_state
+from vgc.bc.encoding import (
+    SLOT_FEATURE_DIM,
+    encode_action,
+    encode_state,
+    encode_target,
+    flatten_state,
+)
 
 DEFAULT_VAL_FRACTION = 0.1
 
@@ -75,11 +92,12 @@ class BcTurnDataset(Dataset):
         self.split = split
         self.val_fraction = val_fraction
 
-        # (state dict, slot, action_idx) -- state is shared by both of a record's slot
-        # samples (no need to duplicate the encoding), re-flattened lazily in
-        # __getitem__ (cheap: a handful of small numpy concatenations per call).
-        self._samples: list[tuple[dict, int, int]] = []
+        # (state dict, slot, move_idx, target_idx_or_None) -- state is shared by both
+        # of a record's slot samples (no need to duplicate the encoding), re-flattened
+        # lazily in __getitem__ (cheap: a handful of small numpy concatenations/call).
+        self._samples: list[tuple[dict, int, int, int | None]] = []
         self.skipped = 0
+        self.no_target_count = 0
         self.replays_included: set[str] = set()
 
         with self.jsonl_path.open() as file:
@@ -100,11 +118,14 @@ class BcTurnDataset(Dataset):
                 state = encode_state(record)
                 added_any = False
                 for slot in (0, 1):
-                    action_idx = encode_action(record, slot)
-                    if action_idx is None:
+                    move_idx = encode_action(record, slot)
+                    if move_idx is None:
                         self.skipped += 1
                         continue
-                    self._samples.append((state, slot, action_idx))
+                    target_idx = encode_target(record, slot)
+                    if target_idx is None:
+                        self.no_target_count += 1
+                    self._samples.append((state, slot, move_idx, target_idx))
                     added_any = True
                 if added_any:
                     self.replays_included.add(replay_id)
@@ -112,14 +133,19 @@ class BcTurnDataset(Dataset):
     def __len__(self) -> int:
         return len(self._samples)
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        state, slot, action_idx = self._samples[index]
-        scalars = flatten_state(state)
+    def __getitem__(
+        self, index: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        state, slot, move_idx, target_idx = self._samples[index]
+        index_array, scalar_array = flatten_state(state)
         slot_onehot = np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)
         slot_onehot[slot] = 1.0
-        scalars_full = np.concatenate([scalars, slot_onehot])
+        scalars_full = np.concatenate([scalar_array, slot_onehot])
+        has_target = target_idx is not None
         return (
-            torch.from_numpy(state["species_idx"].copy()),
+            torch.from_numpy(index_array.copy()),
             torch.from_numpy(scalars_full),
-            torch.tensor(action_idx, dtype=torch.long),
+            torch.tensor(move_idx, dtype=torch.long),
+            torch.tensor(target_idx if has_target else 0, dtype=torch.long),
+            torch.tensor(1.0 if has_target else 0.0, dtype=torch.float32),
         )

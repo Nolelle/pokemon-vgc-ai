@@ -379,3 +379,89 @@ def test_parse_replay_never_raises_on_a_totally_broken_log() -> None:
     assert result.ok is False
     assert result.fail_reason is not None
     assert result.records == []
+
+
+# --- schema 2: schema marker, revealed_moves, bench identity --------------------------
+
+
+def test_schema_version_present_on_every_record() -> None:
+    result = parse_replay("test-two-turn", 1400, _two_turn_log())
+    assert result.ok is True
+    assert result.records  # sanity: there's something to check
+    assert all(record["schema"] == 2 for record in result.records)
+
+
+def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
+    result = parse_replay("test-two-turn", 1400, _two_turn_log())
+    p1_turn1, p1_turn2 = _turn_records(result, "p1")
+    # Turn 1's snapshot is pre-turn-1 -- Garchomp hasn't used anything yet.
+    assert p1_turn1["state"]["our"]["active"][0]["revealed_moves"] == []
+    # Turn 2's snapshot reflects turn 1's Dragon Claw having been used.
+    assert p1_turn2["state"]["our"]["active"][0]["revealed_moves"] == ["dragonclaw"]
+    # Klefki used Protect turn 1.
+    assert p1_turn2["state"]["our"]["active"][1]["revealed_moves"] == ["protect"]
+
+
+def test_revealed_moves_includes_a_blocked_cant_attempted_move() -> None:
+    log = _log(
+        [
+            "|gen|9",
+            "|poke|p1|Garchomp, L50, M|",
+            "|poke|p2|Charizard, L50, M|",
+            "|teampreview|4",
+            "|t:|1000",
+            "|start",
+            "|switch|p1a: Garchomp|Garchomp, L50, M|100/100",
+            "|switch|p2a: Charizard|Charizard, L50, M|100/100",
+            "|turn|1",
+            "|t:|1001",
+            "|move|p2a: Charizard|Fake Out|p1a: Garchomp",
+            "|-damage|p1a: Garchomp|95/100",
+            "|cant|p1a: Garchomp|flinch|Dragon Claw",
+            "|upkeep",
+            "|turn|2",
+            "|win|test",
+        ]
+    )
+    result = parse_replay("test-cant-reveal", 1400, log)
+    assert result.ok is True
+    p1_turn2 = _turn_records(result, "p1")[1]
+    # Dragon Claw never connected (flinched) but the player DID choose it -- it's
+    # revealed all the same, per the module docstring's "cant" reasoning.
+    assert p1_turn2["state"]["our"]["active"][0]["revealed_moves"] == ["dragonclaw"]
+
+
+def test_bench_entries_have_species_id_hp_fraction_and_status() -> None:
+    log = _log(
+        [
+            "|gen|9",
+            "|poke|p1|Garchomp, L50, M|",
+            "|poke|p1|Klefki, L50, F|",
+            "|poke|p1|Incineroar, L50, F|",
+            "|poke|p2|Charizard, L50, M|",
+            "|teampreview|4",
+            "|t:|1000",
+            "|start",
+            "|switch|p1a: Garchomp|Garchomp, L50, M|100/100",
+            "|switch|p1b: Klefki|Klefki, L50, F|100/100",
+            "|switch|p2a: Charizard|Charizard, L50, M|100/100",
+            "|turn|1",
+            "|t:|1001",
+            "|move|p2a: Charizard|Toxic|p1b: Klefki",
+            "|-status|p1b: Klefki|tox",
+            "|move|p1a: Garchomp|Dragon Claw|p2a: Charizard",
+            "|upkeep",
+            "|turn|2",
+            "|t:|1002",
+            "|switch|p1b: Incineroar|Incineroar, L50, F|100/100",  # chosen swap -- Klefki to bench
+            "|move|p2a: Charizard|Flamethrower|p1a: Garchomp",
+            "|upkeep",
+            "|turn|3",
+            "|win|test",
+        ]
+    )
+    result = parse_replay("test-bench-identity", 1400, log)
+    assert result.ok is True
+    p1_turn3 = _turn_records(result, "p1")[2]
+    bench = p1_turn3["state"]["our"]["bench"]
+    assert bench == [{"species_id": "klefki", "hp_fraction": 1.0, "status": "tox"}]

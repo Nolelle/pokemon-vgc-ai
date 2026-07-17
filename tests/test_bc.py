@@ -1,4 +1,5 @@
-"""Unit tests for `vgc.bc`, the Phase 3 behavior-cloning pipeline scaffold.
+"""Unit tests for `vgc.bc`, the Phase 3 behavior-cloning pipeline scaffold (v2: richer
+per-slot features, a target head).
 
 `vgc.bc.encoding` has no torch dependency, so its tests run unconditionally (this is
 itself part of what's being verified -- see "torch must remain optional" in
@@ -16,11 +17,17 @@ import time
 import pytest
 
 from vgc.bc.encoding import (
+    ABILITY_TO_IDX,
+    INDEX_DIM,
+    ITEM_TO_IDX,
     MOVE_TO_IDX,
+    SLOT_FEATURE_DIM,
     SPECIES_TO_IDX,
     STATE_SCALAR_DIM,
+    TARGET_TO_IDX,
     encode_action,
     encode_state,
+    encode_target,
     flatten_state,
 )
 
@@ -35,6 +42,7 @@ def _mon(
     item=None,
     ability=None,
     mega=False,
+    revealed_moves=None,
 ):
     return {
         "species": species,
@@ -44,7 +52,12 @@ def _mon(
         "item": item,
         "ability": ability,
         "mega": mega,
+        "revealed_moves": revealed_moves or [],
     }
+
+
+def _bench_mon(species_id: str, hp_fraction: float = 1.0, status=None) -> dict:
+    return {"species_id": species_id, "hp_fraction": hp_fraction, "status": status}
 
 
 def _turn_record(
@@ -67,6 +80,7 @@ def _turn_record(
     return {
         "replay_id": replay_id,
         "rating": rating,
+        "schema": 2,
         "player": player,
         "turn": turn,
         "decision_kind": "turn",
@@ -103,26 +117,34 @@ def test_encode_state_fixed_shapes() -> None:
     )
     state = encode_state(record)
 
-    assert state["species_idx"].shape == (4,)
+    assert state["species_idx_active"].shape == (4,)
+    assert state["species_idx_bench"].shape == (8,)
+    assert state["item_idx"].shape == (4,)
+    assert state["ability_idx"].shape == (4,)
+    assert state["move_idx"].shape == (4, 4)
     assert state["hp_fraction"].shape == (4,)
     assert state["status"].shape == (4, 7)
     assert state["boosts"].shape == (4, 5)
     assert state["mega"].shape == (4,)
-    assert state["bench_count"].shape == (2,)
-    assert state["bench_mean_hp"].shape == (2,)
+    assert state["bench_hp_fraction"].shape == (8,)
+    assert state["fainted_count"].shape == (2,)
     assert state["weather"].shape == (5,)
     assert state["terrain"].shape == (5,)
     assert state["trick_room"].shape == (1,)
     assert state["side_conditions"].shape == (8,)
     assert state["turn"].shape == (1,)
 
-    flat = flatten_state(state)
-    assert flat.shape == (STATE_SCALAR_DIM,)
+    index_array, scalar_array = flatten_state(state)
+    assert index_array.shape == (INDEX_DIM,)
+    assert scalar_array.shape == (STATE_SCALAR_DIM,)
 
 
 def test_encode_state_is_deterministic() -> None:
     record = _turn_record(
-        our_active=[_mon("garchomp", hp_fraction=0.7, boosts={"atk": 2}), _mon("klefki")],
+        our_active=[
+            _mon("garchomp", hp_fraction=0.7, boosts={"atk": 2}, revealed_moves=["earthquake"]),
+            _mon("klefki"),
+        ],
         opp_active=[_mon("charizard", status="brn"), None],
         action={"slot0": {"kind": "move", "move_id": "earthquake"}, "slot1": {"kind": "pass"}},
     )
@@ -132,20 +154,25 @@ def test_encode_state_is_deterministic() -> None:
         assert (state_a[key] == state_b[key]).all()
 
 
-def test_encode_state_missing_slot_is_all_zero_except_pad_species() -> None:
+def test_encode_state_missing_slot_is_all_zero_except_pad_tokens() -> None:
     record = _turn_record(
         our_active=[_mon("garchomp"), None],
         opp_active=[None, None],
         action={"slot0": {"kind": "move", "move_id": "earthquake"}, "slot1": {"kind": "pass"}},
     )
     state = encode_state(record)
-    # Slot index 1 (our1) and 2,3 (opp0, opp1) are all empty.
     for idx in (1, 2, 3):
-        assert state["species_idx"][idx] == SPECIES_TO_IDX["<pad>"]
+        assert state["species_idx_active"][idx] == SPECIES_TO_IDX["<pad>"]
+        assert state["item_idx"][idx] == ITEM_TO_IDX["<unk>"]
+        assert state["ability_idx"][idx] == ABILITY_TO_IDX["<unk>"]
+        assert (state["move_idx"][idx] == MOVE_TO_IDX["<pad>"]).all()
         assert state["hp_fraction"][idx] == 0.0
         assert state["status"][idx].sum() == 0.0
         assert (state["boosts"][idx] == 0.0).all()
         assert state["mega"][idx] == 0.0
+    # Both active slots empty for opp -> both opp fainted_count contributions are "empty".
+    assert state["fainted_count"][1] == 1.0  # opp: 2/2 slots empty -> 1.0
+    assert state["fainted_count"][0] == 0.5  # our: 1/2 slots empty -> 0.5
 
 
 def test_encode_state_unknown_species_maps_to_unk() -> None:
@@ -155,15 +182,23 @@ def test_encode_state_unknown_species_maps_to_unk() -> None:
         action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
     )
     state = encode_state(record)
-    assert state["species_idx"][0] == SPECIES_TO_IDX["<unk>"]
-    # Still real HP info even though the species itself is unrecognized.
+    assert state["species_idx_active"][0] == SPECIES_TO_IDX["<unk>"]
     assert state["hp_fraction"][0] == 1.0
 
 
 def test_encode_state_hand_built_values() -> None:
     record = _turn_record(
         our_active=[
-            _mon("garchomp", hp_fraction=0.5, status="brn", boosts={"atk": 3}, mega=True),
+            _mon(
+                "garchomp",
+                hp_fraction=0.5,
+                status="brn",
+                boosts={"atk": 3},
+                mega=True,
+                item="garchompite",
+                ability="roughskin",
+                revealed_moves=["dragonclaw", "earthquake"],
+            ),
             None,
         ],
         opp_active=[None, None],
@@ -177,18 +212,16 @@ def test_encode_state_hand_built_values() -> None:
     state = encode_state(record)
 
     assert state["hp_fraction"][0] == pytest.approx(0.5)
-    # status one-hot: ["none","brn","par","psn","tox","slp","frz"] -- brn is index 1.
     assert state["status"][0].tolist() == [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    # boosts: [atk,def,spa,spd,spe] / 6.0 -- atk=+3 -> 0.5.
     assert state["boosts"][0].tolist() == pytest.approx([0.5, 0.0, 0.0, 0.0, 0.0])
     assert state["mega"][0] == 1.0
-    # weather one-hot: ["none","sun","rain","sand","snow"] -- sun is index 1.
+    assert state["item_idx"][0] == ITEM_TO_IDX["garchompite"]
+    assert state["ability_idx"][0] == ABILITY_TO_IDX["roughskin"]
+    moves = {MOVE_TO_IDX["dragonclaw"], MOVE_TO_IDX["earthquake"]}
+    assert set(state["move_idx"][0].tolist()) - {MOVE_TO_IDX["<pad>"]} == moves
     assert state["weather"].tolist() == [0.0, 1.0, 0.0, 0.0, 0.0]
-    # terrain one-hot: ["none","electric","grassy","psychic","misty"] -- electric is index 1.
     assert state["terrain"].tolist() == [0.0, 1.0, 0.0, 0.0, 0.0]
     assert state["trick_room"][0] == 1.0
-    # side_conditions: [our_tailwind, our_reflect, our_lightscreen, our_auroraveil,
-    #                    opp_tailwind, opp_reflect, opp_lightscreen, opp_auroraveil]
     assert state["side_conditions"].tolist() == [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     assert state["turn"][0] == pytest.approx(10 / 20.0)
 
@@ -204,21 +237,114 @@ def test_encode_state_turn_scaling_caps_at_one() -> None:
     assert state["turn"][0] == 1.0
 
 
-def test_encode_state_bench_summary() -> None:
+# --- item/ability: unrevealed -> <unk>, revealed -> real index ------------------------
+
+
+def test_encode_state_item_unrevealed_is_unk() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", item=None), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["item_idx"][0] == ITEM_TO_IDX["<unk>"]
+
+
+def test_encode_state_item_revealed_maps_to_real_index() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", item="lifeorb"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["item_idx"][0] == ITEM_TO_IDX["lifeorb"]
+    assert state["item_idx"][0] not in (ITEM_TO_IDX["<unk>"], ITEM_TO_IDX["<none>"])
+
+
+def test_encode_state_ability_unrevealed_is_unk() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", ability=None), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["ability_idx"][0] == ABILITY_TO_IDX["<unk>"]
+
+
+def test_encode_state_ability_revealed_maps_to_real_index() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", ability="roughskin"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["ability_idx"][0] == ABILITY_TO_IDX["roughskin"]
+
+
+# --- revealed-move pooling: padding, truncation, all-unrevealed -----------------------
+
+
+def test_encode_state_no_revealed_moves_is_all_pad() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", revealed_moves=[]), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert (state["move_idx"][0] == MOVE_TO_IDX["<pad>"]).all()
+
+
+def test_encode_state_fewer_than_four_revealed_moves_pads_rest() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", revealed_moves=["earthquake"]), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    move_row = state["move_idx"][0].tolist()
+    assert move_row.count(MOVE_TO_IDX["earthquake"]) == 1
+    assert move_row.count(MOVE_TO_IDX["<pad>"]) == 3
+
+
+def test_encode_state_more_than_four_revealed_moves_truncates_to_four() -> None:
+    # Not realistically possible in-game (max 4 real moves), but the encoder should be
+    # defensively robust to it rather than crash/overflow the fixed-size array.
+    record = _turn_record(
+        our_active=[
+            _mon(
+                "garchomp",
+                revealed_moves=["earthquake", "dragonclaw", "protect", "ironhead", "swordsdance"],
+            ),
+            None,
+        ],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["move_idx"][0].shape == (4,)
+    assert MOVE_TO_IDX["<pad>"] not in state["move_idx"][0].tolist()
+
+
+# --- bench identity: species + hp fraction, padded to 4 per side ----------------------
+
+
+def test_encode_state_bench_identity_and_padding() -> None:
     record = _turn_record(
         our_active=[_mon("garchomp"), None],
         opp_active=[None, None],
         action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
-        our_bench=[
-            {"species": "klefki", "hp_fraction": 0.5},
-            {"species": "sylveon", "hp_fraction": 1.0},
-        ],
+        our_bench=[_bench_mon("klefki", hp_fraction=0.5), _bench_mon("sylveon", hp_fraction=1.0)],
     )
     state = encode_state(record)
-    assert state["bench_count"][0] == 2.0
-    assert state["bench_mean_hp"][0] == pytest.approx(0.75)
-    assert state["bench_count"][1] == 0.0
-    assert state["bench_mean_hp"][1] == 0.0
+    # our bench occupies indices 0-3 of species_idx_bench/bench_hp_fraction.
+    assert state["species_idx_bench"][0] == SPECIES_TO_IDX["klefki"]
+    assert state["species_idx_bench"][1] == SPECIES_TO_IDX["sylveon"]
+    assert state["bench_hp_fraction"][0] == pytest.approx(0.5)
+    assert state["bench_hp_fraction"][1] == pytest.approx(1.0)
+    # Remaining 2 our-bench slots and all 4 opp-bench slots are padding.
+    for idx in (2, 3, 4, 5, 6, 7):
+        assert state["species_idx_bench"][idx] == SPECIES_TO_IDX["<pad>"]
+        assert state["bench_hp_fraction"][idx] == 0.0
 
 
 # --- encode_action: move id, switch/pass, unknown -> None ----------------------------
@@ -274,7 +400,74 @@ def test_encode_action_missing_slot_returns_none() -> None:
     assert encode_action(record, 1) is None
 
 
-# --- BcTurnDataset: split determinism + no replay overlap ----------------------------
+# --- encode_target: opp0/opp1/ally/self_or_field/spread/<none>, None-skip ------------
+
+
+def test_encode_target_opp_and_ally_and_spread() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[_mon("charizard"), _mon("incineroar")],
+        action={
+            "slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"},
+            "slot1": {"kind": "move", "move_id": "helpinghand", "target_slot": "ally"},
+        },
+    )
+    assert encode_target(record, 0) == TARGET_TO_IDX["opp0"]
+    assert encode_target(record, 1) == TARGET_TO_IDX["ally"]
+
+
+def test_encode_target_self_maps_to_self_or_field() -> None:
+    record = _turn_record(
+        our_active=[_mon("klefki"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "move", "move_id": "protect", "target_slot": "self"}},
+    )
+    assert encode_target(record, 0) == TARGET_TO_IDX["self_or_field"]
+
+
+def test_encode_target_spread() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "spread"}},
+    )
+    assert encode_target(record, 0) == TARGET_TO_IDX["spread"]
+
+
+def test_encode_target_switch_and_pass_are_none_class() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[None, None],
+        action={
+            "slot0": {"kind": "switch", "switch_species": "sylveon"},
+            "slot1": {"kind": "pass"},
+        },
+    )
+    assert encode_target(record, 0) == TARGET_TO_IDX["<none>"]
+    assert encode_target(record, 1) == TARGET_TO_IDX["<none>"]
+
+
+def test_encode_target_unknown_target_returns_none_for_skip() -> None:
+    # Mirrors a blocked |cant|-attempted move: kind="move" but no target_slot info.
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "move", "move_id": "dragonclaw", "target_slot": None}},
+    )
+    assert encode_target(record, 0) is None
+
+
+def test_encode_target_non_turn_record_returns_none() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"}},
+    )
+    record["decision_kind"] = "forced_switch"
+    assert encode_target(record, 0) is None
+
+
+# --- BcTurnDataset: split determinism + no replay overlap + target masking ----------
 
 
 def _write_jsonl(tmp_path, records: list[dict]):
@@ -300,8 +493,12 @@ def _synthetic_records(n_replays: int, turns_per_replay: int = 3, rating: int = 
                         our_active=[_mon("garchomp"), _mon("klefki")],
                         opp_active=[_mon("charizard"), _mon("incineroar")],
                         action={
-                            "slot0": {"kind": "move", "move_id": "earthquake"},
-                            "slot1": {"kind": "move", "move_id": "protect"},
+                            "slot0": {
+                                "kind": "move",
+                                "move_id": "earthquake",
+                                "target_slot": "opp0",
+                            },
+                            "slot1": {"kind": "move", "move_id": "protect", "target_slot": "self"},
                         },
                     )
                 )
@@ -320,7 +517,6 @@ def test_bc_turn_dataset_split_is_deterministic(tmp_path) -> None:
 
     assert train_a.replays_included == train_c.replays_included
     assert len(train_a) == len(train_c)
-    # Sanity: the two splits together cover every replay, with no double-counting.
     assert train_a.replays_included.isdisjoint(train_b.replays_included)
     assert train_a.replays_included | train_b.replays_included == {f"replay-{i}" for i in range(40)}
     del torch  # only imported to trigger the skip; unused otherwise
@@ -346,7 +542,7 @@ def test_bc_turn_dataset_min_rating_filters_records(tmp_path) -> None:
 
     low = _synthetic_records(n_replays=5, rating=1000)
     high = _synthetic_records(n_replays=5, rating=1400)
-    for i, record in enumerate(high):
+    for record in high:
         record["replay_id"] = f"high-{record['replay_id']}"
     path = _write_jsonl(tmp_path, low + high)
 
@@ -366,7 +562,7 @@ def test_bc_turn_dataset_skips_unrecognized_move_actions(tmp_path) -> None:
         opp_active=[_mon("charizard"), _mon("incineroar")],
         action={
             "slot0": {"kind": "move", "move_id": "not_a_real_move_xyz"},
-            "slot1": {"kind": "move", "move_id": "protect"},
+            "slot1": {"kind": "move", "move_id": "protect", "target_slot": "self"},
         },
     )
     path = _write_jsonl(tmp_path, [record])
@@ -376,7 +572,31 @@ def test_bc_turn_dataset_skips_unrecognized_move_actions(tmp_path) -> None:
     assert dataset.skipped == 1
 
 
-# --- model/training smoke test --------------------------------------------------------
+def test_bc_turn_dataset_masks_samples_with_unknown_target(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    record = _turn_record(
+        replay_id="replay-masked-target",
+        rating=1300,
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[_mon("charizard"), None],
+        action={
+            # A real, known target -- has_target should be True, target_idx meaningful.
+            "slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"},
+            # A blocked |cant|-attempted move -- move label present, target unknown.
+            "slot1": {"kind": "move", "move_id": "protect", "target_slot": None},
+        },
+    )
+    path = _write_jsonl(tmp_path, [record])
+    dataset = BcTurnDataset(path, min_rating=1000, split="train", val_fraction=0.0)
+
+    assert len(dataset) == 2  # neither sample dropped -- only the target is masked
+    has_target_values = sorted(dataset[i][4].item() for i in range(len(dataset)))
+    assert has_target_values == [0.0, 1.0]
+
+
+# --- model/training smoke test: two heads, masked target loss -------------------------
 
 
 def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
@@ -393,16 +613,24 @@ def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
 
     model = BcPolicyNet()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
-    criterion = torch.nn.CrossEntropyLoss()
+    move_criterion = torch.nn.CrossEntropyLoss()
+    target_criterion = torch.nn.CrossEntropyLoss(reduction="none")
 
     losses: list[float] = []
     steps = 0
     start = time.time()
     while steps < 30:
-        for species_idx, scalars, actions in loader:
+        for index_array, scalars, move_idx, target_idx, has_target in loader:
             optimizer.zero_grad()
-            logits = model(species_idx, scalars)
-            loss = criterion(logits, actions)
+            move_logits, target_logits = model(index_array, scalars)
+            move_loss = move_criterion(move_logits, move_idx)
+            per_sample_target_loss = target_criterion(target_logits, target_idx)
+            mask_sum = has_target.sum()
+            if mask_sum > 0:
+                target_loss = (per_sample_target_loss * has_target).sum() / mask_sum
+            else:
+                target_loss = torch.zeros(())
+            loss = move_loss + 0.5 * target_loss
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
@@ -411,7 +639,28 @@ def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
                 break
     elapsed = time.time() - start
 
-    # Average of the last 5 steps should be clearly below the average of the first 5 --
-    # a synthetic dataset with exactly 2 possible actions is trivially learnable.
     assert sum(losses[-5:]) / 5 < sum(losses[:5]) / 5
     assert elapsed < 5.0  # fast enough that this doesn't need @pytest.mark.slow
+
+
+def test_bc_policy_net_handles_batch_with_no_targets_at_all() -> None:
+    """A batch where every sample's target is masked out must not divide-by-zero."""
+    torch = pytest.importorskip("torch")
+    from vgc.bc.model import BcPolicyNet
+
+    model = BcPolicyNet()
+    batch_size = 4
+    index_array = torch.zeros((batch_size, INDEX_DIM), dtype=torch.long)
+    scalars = torch.zeros((batch_size, STATE_SCALAR_DIM + SLOT_FEATURE_DIM), dtype=torch.float32)
+    target_idx = torch.zeros((batch_size,), dtype=torch.long)
+    has_target = torch.zeros((batch_size,), dtype=torch.float32)  # all masked out
+
+    move_logits, target_logits = model(index_array, scalars)
+    target_criterion = torch.nn.CrossEntropyLoss(reduction="none")
+    per_sample_target_loss = target_criterion(target_logits, target_idx)
+    mask_sum = has_target.sum()
+    target_loss = (
+        (per_sample_target_loss * has_target).sum() / mask_sum if mask_sum > 0 else torch.zeros(())
+    )
+    assert move_logits.shape == (batch_size, len(model.move_head.bias))
+    assert float(target_loss.item()) == 0.0

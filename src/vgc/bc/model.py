@@ -1,20 +1,39 @@
-"""`BcPolicyNet`: a plain `torch.nn` species-embedding + MLP behavior-cloning policy
-network (no Lightning/other training-framework dependency).
+"""`BcPolicyNet`: a plain `torch.nn` species/item/ability/move-embedding + MLP
+behavior-cloning policy network with TWO heads (no Lightning/other training-framework
+dependency).
 
 SCOPE reminder (see `vgc.bc` package docstring): this validates that a BC pipeline can
-learn a human-plausible next-move-id distribution -- it is NOT a playable agent's
-policy network (no legal-targeting/switching model, no battle-order construction).
+learn a human-plausible next-move-id (and target) distribution -- it is NOT a playable
+agent's policy network (no legal-targeting/switching model, no battle-order
+construction).
 
 Requires the `train` extra (torch) -- see `vgc.bc.dataset`'s module docstring for why
 this import is guarded the same way.
 
-Input (see `vgc.bc.encoding`'s module docstring for the exact source layout):
-  - `species_idx`: `(batch, 4)` int64 -- `SPECIES_VOCAB` index per active slot
-    (`[our0, our1, opp0, opp1]`), embedded via `nn.Embedding` and flattened.
-  - `scalars`: `(batch, STATE_SCALAR_DIM + SLOT_FEATURE_DIM)` float32 -- `vgc.bc.
-    encoding.flatten_state`'s output concatenated with `vgc.bc.dataset`'s 2-dim
-    slot-index one-hot.
-Output: `(batch, len(MOVE_VOCAB))` logits over the move vocabulary.
+## Input (see `vgc.bc.encoding`'s module docstring for the exact source layout)
+
+- `index_array`: `(batch, INDEX_DIM)` int64 -- sliced (at `vgc.bc.encoding`'s documented
+  `INDEX_*_SLICE` offsets) into 5 embedding-lookup groups:
+  - active-slot species (4) and bench species (8) share ONE embedding table
+    (`species_embedding`) -- the same species means the same thing whether it's
+    currently active or on the bench, so there's no reason to learn two separate
+    representations for it.
+  - active-slot item (4) -> `item_embedding`.
+  - active-slot ability (4) -> `ability_embedding`.
+  - active-slot revealed moves (4 slots x 4 moves = 16) -> `move_embedding`, then
+    MEAN-POOLED down to one vector per active slot (4 vectors), with `"<pad>"` entries
+    masked OUT of the mean (a slot with 0 revealed moves -- all 4 padding -- gets an
+    all-zero vector, not garbage from averaging in the pad embedding).
+- `scalars`: `(batch, STATE_SCALAR_DIM + SLOT_FEATURE_DIM)` float32 -- `vgc.bc.
+  encoding.flatten_state`'s scalar half concatenated with `vgc.bc.dataset`'s 2-dim
+  slot-index one-hot.
+
+## Output
+
+TWO heads sharing the same trunk: `(move_logits, target_logits)` --
+`(batch, len(MOVE_VOCAB))` and `(batch, len(TARGET_VOCAB))`. See `vgc.bc.train` for how
+the two losses are combined (move loss always applies; target loss is masked per-sample
+by `vgc.bc.dataset`'s `has_target` flag).
 """
 
 from __future__ import annotations
@@ -27,43 +46,107 @@ except ImportError as exc:  # pragma: no cover - exercised via test_bc.py's impo
         "vgc.bc.model requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.bc.encoding import MOVE_VOCAB, SLOT_FEATURE_DIM, SPECIES_VOCAB, STATE_SCALAR_DIM
+from vgc.bc.encoding import (
+    ABILITY_VOCAB,
+    INDEX_ABILITY_SLICE,
+    INDEX_ITEM_SLICE,
+    INDEX_MOVES_SLICE,
+    INDEX_SPECIES_ACTIVE_SLICE,
+    INDEX_SPECIES_BENCH_SLICE,
+    ITEM_VOCAB,
+    MOVE_TO_IDX,
+    MOVE_VOCAB,
+    SLOT_FEATURE_DIM,
+    SPECIES_VOCAB,
+    STATE_SCALAR_DIM,
+    TARGET_VOCAB,
+)
 
 SPECIES_EMBED_DIM = 32
-NUM_ACTIVE_SLOTS = 4  # [our0, our1, opp0, opp1] -- see vgc.bc.encoding's layout table
+ITEM_EMBED_DIM = 12
+ABILITY_EMBED_DIM = 12
+MOVE_EMBED_DIM = 16
+NUM_ACTIVE_SLOTS = 4  # [our0, our1, opp0, opp1]
+NUM_BENCH_SLOTS = 8  # [our_bench0..3, opp_bench0..3]
+MOVES_PER_SLOT = 4
 HIDDEN_DIM = 256
 DROPOUT_P = 0.1
 DEFAULT_SCALAR_DIM = STATE_SCALAR_DIM + SLOT_FEATURE_DIM
+_MOVE_PAD_IDX = MOVE_TO_IDX["<pad>"]
 
 
 class BcPolicyNet(nn.Module):
     def __init__(
         self,
         species_vocab_size: int = len(SPECIES_VOCAB),
+        item_vocab_size: int = len(ITEM_VOCAB),
+        ability_vocab_size: int = len(ABILITY_VOCAB),
         move_vocab_size: int = len(MOVE_VOCAB),
+        target_vocab_size: int = len(TARGET_VOCAB),
         scalar_dim: int = DEFAULT_SCALAR_DIM,
-        embed_dim: int = SPECIES_EMBED_DIM,
+        species_embed_dim: int = SPECIES_EMBED_DIM,
+        item_embed_dim: int = ITEM_EMBED_DIM,
+        ability_embed_dim: int = ABILITY_EMBED_DIM,
+        move_embed_dim: int = MOVE_EMBED_DIM,
         hidden_dim: int = HIDDEN_DIM,
         dropout: float = DROPOUT_P,
     ) -> None:
         super().__init__()
-        self.species_embedding = nn.Embedding(species_vocab_size, embed_dim)
-        input_dim = NUM_ACTIVE_SLOTS * embed_dim + scalar_dim
-        self.net = nn.Sequential(
+        # Shared across active AND bench species -- see module docstring.
+        self.species_embedding = nn.Embedding(species_vocab_size, species_embed_dim)
+        self.item_embedding = nn.Embedding(item_vocab_size, item_embed_dim)
+        self.ability_embedding = nn.Embedding(ability_vocab_size, ability_embed_dim)
+        self.move_embedding = nn.Embedding(move_vocab_size, move_embed_dim)
+
+        input_dim = (
+            (NUM_ACTIVE_SLOTS + NUM_BENCH_SLOTS) * species_embed_dim
+            + NUM_ACTIVE_SLOTS * item_embed_dim
+            + NUM_ACTIVE_SLOTS * ability_embed_dim
+            + NUM_ACTIVE_SLOTS * move_embed_dim  # mean-pooled per slot, then concatenated
+            + scalar_dim
+        )
+        self.trunk = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, move_vocab_size),
+        )
+        self.move_head = nn.Linear(hidden_dim, move_vocab_size)
+        self.target_head = nn.Linear(hidden_dim, target_vocab_size)
+
+    def forward(
+        self, index_array: torch.Tensor, scalars: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """`index_array`: `(batch, INDEX_DIM)` int64. `scalars`: `(batch, scalar_dim)`
+        float32. Returns `(move_logits, target_logits)`.
+        """
+        batch_size = index_array.shape[0]
+
+        species_active = index_array[:, INDEX_SPECIES_ACTIVE_SLICE]
+        species_bench = index_array[:, INDEX_SPECIES_BENCH_SLICE]
+        item_idx = index_array[:, INDEX_ITEM_SLICE]
+        ability_idx = index_array[:, INDEX_ABILITY_SLICE]
+        move_idx = index_array[:, INDEX_MOVES_SLICE].reshape(
+            batch_size, NUM_ACTIVE_SLOTS, MOVES_PER_SLOT
         )
 
-    def forward(self, species_idx: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
-        """`species_idx`: `(batch, 4)` int64. `scalars`: `(batch, scalar_dim)` float32.
-        Returns `(batch, move_vocab_size)` logits.
-        """
-        embedded = self.species_embedding(species_idx)  # (batch, 4, embed_dim)
-        embedded_flat = embedded.reshape(embedded.shape[0], -1)  # (batch, 4*embed_dim)
-        features = torch.cat([embedded_flat, scalars], dim=-1)
-        return self.net(features)
+        species_active_emb = self.species_embedding(species_active).reshape(batch_size, -1)
+        species_bench_emb = self.species_embedding(species_bench).reshape(batch_size, -1)
+        item_emb = self.item_embedding(item_idx).reshape(batch_size, -1)
+        ability_emb = self.ability_embedding(ability_idx).reshape(batch_size, -1)
+
+        move_emb = self.move_embedding(move_idx)  # (batch, 4, 4, move_embed_dim)
+        move_mask = (move_idx != _MOVE_PAD_IDX).unsqueeze(-1).to(move_emb.dtype)  # (batch,4,4,1)
+        move_emb_sum = (move_emb * move_mask).sum(dim=2)  # (batch, 4, move_embed_dim)
+        move_counts = move_mask.sum(dim=2).clamp(min=1.0)  # (batch, 4, 1)
+        move_emb_mean = move_emb_sum / move_counts  # all-pad slot -> 0/1 == 0 (zeros)
+        move_emb_flat = move_emb_mean.reshape(batch_size, -1)
+
+        features = torch.cat(
+            [species_active_emb, species_bench_emb, item_emb, ability_emb, move_emb_flat, scalars],
+            dim=-1,
+        )
+        hidden = self.trunk(features)
+        return self.move_head(hidden), self.target_head(hidden)

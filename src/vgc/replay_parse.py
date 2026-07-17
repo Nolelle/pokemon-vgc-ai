@@ -50,6 +50,26 @@ player. "Bench" only ever lists species that have ACTUALLY appeared in the battl
 unknown-whether-brought until they appear, so listing them as "bench" would be a guess,
 not a tracked fact.
 
+## Schema (`SCHEMA_VERSION`)
+
+Every emitted record carries a `"schema": SCHEMA_VERSION` int so datasets built from
+different parser versions stay distinguishable -- additive changes bump this rather than
+silently changing meaning underneath an unversioned key. Schema 2 (current) added, on
+top of schema 1's fields (all still present, unchanged):
+
+- Each ACTIVE mon dict gains `"revealed_moves"`: every move id that mon has been SEEN
+  using so far this game (including a blocked `|cant|`-attempted move -- the player still
+  chose it, it just didn't connect), sorted for deterministic JSONL output. This is
+  USAGE-based reveal, distinct from `"sets"` (the rare Open Team Sheets full moveset) --
+  the two are never merged, since one is "confirmed used" and the other is "confirmed
+  by the sheet," and conflating them would lose that distinction.
+- Each BENCH entry changes from an HP-only summary to an identity-bearing dict:
+  `{"species_id": ..., "hp_fraction": ..., "status": ...}` (previously just
+  `{"species": ..., "hp_fraction": ...}` under schema 1 -- note the bench key is
+  `"species_id"`, while active-mon dicts still use `"species"`; this asymmetry is
+  intentional, matching exactly what was specified when schema 2 was built, not an
+  oversight).
+
 Never raises on a malformed replay: `parse_replay` catches any exception during its own
 walk and reports it as a failed parse with a reason string; individual malformed/
 ambiguous EVENTS within an otherwise-fine replay are skipped (counted, not silently
@@ -84,6 +104,13 @@ from vgc.damage import STATUS_IDS, to_id
 from vgc.data import load_species
 
 # --- protocol constants -----------------------------------------------------------------
+
+# Bumped whenever a decision record's shape changes (additive so far: schema 2 added
+# `revealed_moves` to active-mon entries and turned bench entries from HP-only summaries
+# into identity-bearing {species_id, hp_fraction, status} dicts -- see module docstring).
+# Every emitted record carries `"schema": SCHEMA_VERSION` so old (schema-1) datasets
+# stay distinguishable from newer ones instead of silently being read as if compatible.
+SCHEMA_VERSION = 2
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -202,6 +229,10 @@ class MonKnowledge:
     mega: bool = False
     tera_type: str | None = None
     fainted: bool = False
+    # Every move id this mon has been SEEN using so far this game (accumulates across
+    # turns; a `|cant|`-attempted move counts too -- see the "move"/"cant" tag handlers
+    # below). Schema 2+ only -- see module docstring and `SCHEMA_VERSION`.
+    revealed_moves: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -251,6 +282,9 @@ def _mon_dict(known: MonKnowledge | None) -> dict | None:
         "item": known.item,
         "ability": known.ability,
         "mega": known.mega,
+        # Schema 2+: every move id observed for this mon so far this game, sorted for
+        # deterministic JSONL output -- see MonKnowledge.revealed_moves' docstring.
+        "revealed_moves": sorted(known.revealed_moves),
     }
     if known.tera_type:
         result["tera_type"] = known.tera_type
@@ -260,7 +294,11 @@ def _mon_dict(known: MonKnowledge | None) -> dict | None:
 def _side_dict(side: SideState) -> dict:
     active_species = set(species_id for species_id in side.active if species_id)
     bench = [
-        {"species": species_id, "hp_fraction": round(side.known[species_id].hp_fraction, 4)}
+        {
+            "species_id": species_id,
+            "hp_fraction": round(side.known[species_id].hp_fraction, 4),
+            "status": side.known[species_id].status,
+        }
         for species_id in side.appeared_order
         if species_id not in active_species and not side.known[species_id].fainted
     ]
@@ -441,6 +479,7 @@ def _process_segment(
                     {
                         "replay_id": None,  # filled in by parse_replay
                         "rating": None,
+                        "schema": SCHEMA_VERSION,
                         "player": side,
                         "turn": turn_num,
                         "decision_kind": "forced_switch",
@@ -505,6 +544,9 @@ def _process_segment(
                 "target_slot": target_slot,
                 "mega": mega,
             }
+            acting_species = state.sides[side].active[slot]
+            if acting_species is not None and move_id:
+                state.sides[side].mon(acting_species).revealed_moves.add(move_id)
             continue
 
         if tag == "cant":
@@ -517,12 +559,16 @@ def _process_segment(
                 continue
             attempted_move = parts[4] if len(parts) > 4 and parts[4] else None
             if attempted_move:
+                attempted_move_id = to_id(attempted_move)
                 acted[(side, slot)] = {
                     "kind": "move",
-                    "move_id": to_id(attempted_move),
+                    "move_id": attempted_move_id,
                     "target_slot": None,
                     "mega": False,
                 }
+                cant_species = state.sides[side].active[slot]
+                if cant_species is not None and attempted_move_id:
+                    state.sides[side].mon(cant_species).revealed_moves.add(attempted_move_id)
             else:
                 acted[(side, slot)] = {"kind": "pass"}
             continue
@@ -754,6 +800,7 @@ def _process_segment(
             {
                 "replay_id": None,
                 "rating": None,
+                "schema": SCHEMA_VERSION,
                 "player": player,
                 "turn": turn_num,
                 "decision_kind": "turn",
@@ -825,6 +872,7 @@ def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[
             {
                 "replay_id": None,
                 "rating": None,
+                "schema": SCHEMA_VERSION,
                 "player": player,
                 "turn": 0,
                 "decision_kind": "teampreview",
