@@ -23,6 +23,7 @@ from vgc.evaluator import (
     _resolve_targets,
     _score_attack_order,
     _score_protect,
+    _score_switch,
     effective_speed,
     field_effective_speed,
     guaranteed_ko,
@@ -202,6 +203,7 @@ def _two_slot_ctx(our_alive=(True, True), opp_alive=(True, True)) -> _Context:
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
         priors={},
+        gameplan=None,
     )
 
 
@@ -231,18 +233,31 @@ def test_resolve_targets_all_adjacent_skips_fainted_ally() -> None:
 # --- _score_attack_order: Earthquake's ally-damage penalty ---------------------------
 
 
-def _attack_ctx(*, ally_state: PokemonState | None, opp_state: PokemonState) -> _Context:
-    our_states = [_garchomp(), ally_state]
+def _attack_ctx(
+    *,
+    ally_state: PokemonState | None,
+    opp_state: PokemonState,
+    gameplan=None,
+    weather: str | None = None,
+    threat_on_us: list | None = None,
+    attacker_state: PokemonState | None = None,
+) -> _Context:
+    our_states = [attacker_state if attacker_state is not None else _garchomp(), ally_state]
     opp_states = [opp_state, None]
     our_pokemon = [
-        SimpleNamespace(first_turn=False, fainted=False),
-        SimpleNamespace(first_turn=False, fainted=False) if ally_state else None,
+        SimpleNamespace(first_turn=False, fainted=False, species=our_states[0].species_id),
+        SimpleNamespace(first_turn=False, fainted=False, species=ally_state.species_id)
+        if ally_state
+        else None,
     ]
-    opp_pokemon = [SimpleNamespace(ability=opp_state.ability, fainted=False), None]
+    opp_pokemon = [
+        SimpleNamespace(ability=opp_state.ability, fainted=False, species=opp_state.species_id),
+        None,
+    ]
     return _Context(
         battle=SimpleNamespace(side_conditions=[]),
         trick_room=False,
-        weather=None,
+        weather=weather,
         terrain=None,
         our_side_screens=frozenset(),
         opp_side_screens=frozenset(),
@@ -255,17 +270,26 @@ def _attack_ctx(*, ally_state: PokemonState | None, opp_state: PokemonState) -> 
             effective_speed(ally_state) if ally_state else 0.0,
         ],
         opp_speed=[effective_speed(opp_state), 0.0],
-        threat_on_us=[_ThreatInfo(), _ThreatInfo()],
+        threat_on_us=threat_on_us if threat_on_us is not None else [_ThreatInfo(), _ThreatInfo()],
         opp_threat_score=[0.0, 0.0],
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
         priors={},
+        gameplan=gameplan,
     )
 
 
 def _earthquake_single(move_target: int = 0) -> tuple[Move, SimpleNamespace]:
     move = Move("earthquake", gen=9)
     single = SimpleNamespace(order=move, mega=False, move_target=move_target)
+    return move, single
+
+
+def _single_for(
+    move_id: str, move_target: int = 0, mega: bool = False
+) -> tuple[Move, SimpleNamespace]:
+    move = Move(move_id, gen=9)
+    single = SimpleNamespace(order=move, mega=mega, move_target=move_target)
     return move, single
 
 
@@ -447,14 +471,38 @@ def test_protect_value_scales_with_threat_percent() -> None:
     assert info["protect_counter"] == 0
 
 
-def test_protect_repeat_use_is_penalized() -> None:
+def test_protect_repeat_use_decays_geometrically() -> None:
     config = PolicyConfig()
     ctx = _two_slot_ctx()
     ctx.threat_on_us[0] = _ThreatInfo(percent=80.0, move_id="earthquake", priority=0)
     ctx.our_pokemon[0] = SimpleNamespace(protect_counter=1)
-    score, _ = _score_protect(0, ctx, config)
-    expected = 80.0 * config.protect_threat_weight - config.protect_repeat_penalty
+    score, info = _score_protect(0, ctx, config)
+    expected = 80.0 * config.protect_threat_weight * config.protect_success_decay
     assert score == pytest.approx(expected)
+    assert info["success_prob"] == pytest.approx(config.protect_success_decay)
+
+
+def test_protect_score_ratio_across_counters_is_1_third_ninth() -> None:
+    """Real Gen 9 mechanics: each consecutive Protect-family use divides success odds
+    by ~3 (counter 0 = 100%, 1 = ~33%, 2 = ~11%) -- the threat-avoidance term (not the
+    low-threat penalty, which is counter-independent) should decay in exactly that
+    1 : 1/3 : 1/9 ratio.
+    """
+    config = PolicyConfig()
+    # High enough threat that protect_low_threat_penalty never applies -- isolates the
+    # geometric decay term from that separate, counter-independent penalty.
+    ctx = _two_slot_ctx()
+    ctx.threat_on_us[0] = _ThreatInfo(percent=90.0, move_id="earthquake", priority=0)
+
+    scores = []
+    for counter in (0, 1, 2):
+        ctx.our_pokemon[0] = SimpleNamespace(protect_counter=counter)
+        score, _ = _score_protect(0, ctx, config)
+        scores.append(score)
+
+    assert scores[0] == pytest.approx(90.0 * config.protect_threat_weight)
+    assert scores[1] == pytest.approx(scores[0] / 3.0)
+    assert scores[2] == pytest.approx(scores[0] / 9.0)
 
 
 def test_protect_with_no_real_threat_is_penalized_and_negative() -> None:
@@ -712,3 +760,331 @@ def test_score_attack_order_zero_probs_match_across_configs_differing_only_in_ne
     assert breakdown_default["switch_prob_by_target"][0] == 0.0
     assert breakdown_alt["protect_prob_by_target"][0] == 0.0
     assert breakdown_alt["switch_prob_by_target"][0] == 0.0
+
+
+# --- charge/recharge move discounts ---------------------------------------------------
+
+
+def test_charge_move_discount_applies_without_sun() -> None:
+    config = PolicyConfig()
+    full_strength = PolicyConfig(charge_move_discount=1.0)
+    opp_state = _klefki()
+    move, single = _single_for("solarbeam")
+
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, weather=None)
+    score, raw, _ = _score_attack_order(move, load_moves()["solarbeam"], single, 0, ctx, config)
+    score_full, raw_full, _ = _score_attack_order(
+        move, load_moves()["solarbeam"], single, 0, ctx, full_strength
+    )
+
+    assert score_full > 0.0  # sanity: solarbeam actually does something to Klefki
+    assert score == pytest.approx(score_full * config.charge_move_discount)
+    assert raw == pytest.approx(raw_full * config.charge_move_discount)
+
+
+def test_charge_move_discount_applies_in_rain_too() -> None:
+    """Only SUN skips Solar Beam's charge turn -- any other weather (including rain,
+    which is otherwise a real mechanical modifier on plenty of moves) still gets the
+    full discount.
+    """
+    config = PolicyConfig()
+    full_strength = PolicyConfig(charge_move_discount=1.0)
+    opp_state = _klefki()
+    move, single = _single_for("solarbeam")
+
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, weather="rain")
+    score, _, _ = _score_attack_order(move, load_moves()["solarbeam"], single, 0, ctx, config)
+    score_full, _, _ = _score_attack_order(
+        move, load_moves()["solarbeam"], single, 0, ctx, full_strength
+    )
+
+    assert score == pytest.approx(score_full * config.charge_move_discount)
+
+
+def test_charge_move_discount_does_not_apply_to_solarbeam_in_sun() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _single_for("solarbeam")
+
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, weather="sun")
+    score, raw, _ = _score_attack_order(move, load_moves()["solarbeam"], single, 0, ctx, config)
+
+    full_strength = PolicyConfig(charge_move_discount=1.0)
+    score_full, raw_full, _ = _score_attack_order(
+        move, load_moves()["solarbeam"], single, 0, ctx, full_strength
+    )
+
+    # Sun skips the charge turn for Solar Beam -- no discount should apply at all.
+    assert score == pytest.approx(score_full)
+    assert raw == pytest.approx(raw_full)
+
+
+def test_recharge_move_discount_applies_regardless_of_weather() -> None:
+    config = PolicyConfig()
+    full_strength = PolicyConfig(recharge_move_discount=1.0)
+    opp_state = _klefki()
+    move, single = _single_for("hyperbeam")
+
+    for weather in (None, "sun", "rain"):
+        ctx = _attack_ctx(ally_state=None, opp_state=opp_state, weather=weather)
+        score, raw, _ = _score_attack_order(move, load_moves()["hyperbeam"], single, 0, ctx, config)
+        score_full, raw_full, _ = _score_attack_order(
+            move, load_moves()["hyperbeam"], single, 0, ctx, full_strength
+        )
+        assert score == pytest.approx(score_full * config.recharge_move_discount)
+        assert raw == pytest.approx(raw_full * config.recharge_move_discount)
+
+
+# --- game-plan layer consumption: win_con_preservation / plan_breaker / collapsed ------
+# --- matchup -- vgc.gameplan's own derivation is tested in tests/test_gameplan.py; ------
+# --- these test ONLY how vgc.evaluator READS a (hand-built) GamePlan. -----------------
+
+
+def _minimal_gameplan(
+    our_species: tuple[str, ...] = (),
+    primary_win_con_idx: int | None = None,
+    plan_breakers: frozenset = frozenset(),
+    matrix: dict | None = None,
+):
+    from vgc.gameplan import GamePlan
+
+    return GamePlan(
+        our_species=our_species,
+        opp_species=(),
+        win_con_scores=tuple(1.0 for _ in our_species),
+        their_threat_scores=(),
+        primary_win_con_idx=primary_win_con_idx,
+        primary_threat_idx=None,
+        answers={},
+        plan_breakers=plan_breakers,
+        matrix=matrix or {},
+    )
+
+
+def test_win_con_preservation_penalizes_staying_in_under_lethal_threat() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    # 100%+ threat, and earthquake here does NOT guarantee/likely-KO Klefki (verified:
+    # ~88% expected, min roll 134 < Klefki's 164 max HP) -- so
+    # resolves_threat_before_it_lands stays False and the penalty should fire.
+    threat = [_ThreatInfo(percent=100.0, move_id="tackle", priority=0), _ThreatInfo()]
+
+    ctx_no_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=None
+    )
+    score_no_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_no_plan, config
+    )
+
+    plan = _minimal_gameplan(our_species=("garchomp",), primary_win_con_idx=0)
+    ctx_with_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=plan
+    )
+    score_with_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
+    )
+
+    assert score_with_plan == pytest.approx(
+        score_no_plan - config.win_con_preservation_weight * 100.0
+    )
+
+
+def test_win_con_preservation_does_not_fire_below_100_percent_threat() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    threat = [_ThreatInfo(percent=99.9, move_id="tackle", priority=0), _ThreatInfo()]
+
+    plan = _minimal_gameplan(our_species=("garchomp",), primary_win_con_idx=0)
+    ctx_no_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=None
+    )
+    ctx_with_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=plan
+    )
+    score_no_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_no_plan, config
+    )
+    score_with_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
+    )
+    assert score_with_plan == pytest.approx(score_no_plan)
+
+
+def test_win_con_preservation_does_not_fire_for_a_non_win_con_slot() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    threat = [_ThreatInfo(percent=100.0, move_id="tackle", priority=0), _ThreatInfo()]
+
+    # primary_win_con_idx points at a DIFFERENT species than the actor (garchomp).
+    plan = _minimal_gameplan(our_species=("torkoal",), primary_win_con_idx=0)
+    ctx_no_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=None
+    )
+    ctx_with_plan = _attack_ctx(
+        ally_state=None, opp_state=opp_state, threat_on_us=threat, gameplan=plan
+    )
+    score_no_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_no_plan, config
+    )
+    score_with_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
+    )
+    assert score_with_plan == pytest.approx(score_no_plan)
+
+
+def test_plan_breaker_target_bonus_added_to_contribution() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+
+    ctx_no_plan = _attack_ctx(ally_state=None, opp_state=opp_state, gameplan=None)
+    score_no_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_no_plan, config
+    )
+
+    plan = _minimal_gameplan(plan_breakers=frozenset({"klefki"}))
+    ctx_with_plan = _attack_ctx(ally_state=None, opp_state=opp_state, gameplan=plan)
+    score_with_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
+    )
+
+    assert score_with_plan == pytest.approx(score_no_plan + config.plan_breaker_target_bonus)
+
+
+def test_plan_breaker_target_bonus_not_added_when_target_is_not_a_plan_breaker() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+
+    plan = _minimal_gameplan(plan_breakers=frozenset({"some-other-mon"}))
+    ctx_no_plan = _attack_ctx(ally_state=None, opp_state=opp_state, gameplan=None)
+    ctx_with_plan = _attack_ctx(ally_state=None, opp_state=opp_state, gameplan=plan)
+    score_no_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_no_plan, config
+    )
+    score_with_plan, _, _ = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
+    )
+    assert score_with_plan == pytest.approx(score_no_plan)
+
+
+# --- collapsed-matchup switch bonus (the Charizard-in-rain fix) -----------------------
+
+
+def _switch_ctx(
+    *,
+    outgoing_state: PokemonState,
+    outgoing_moves: list[str],
+    opp_state: PokemonState,
+    opp_moves: list[str],
+    weather: str | None = None,
+    gameplan=None,
+) -> _Context:
+    our_pokemon = [
+        SimpleNamespace(
+            species=outgoing_state.species_id, moves=dict.fromkeys(outgoing_moves), fainted=False
+        ),
+        None,
+    ]
+    opp_pokemon = [
+        SimpleNamespace(
+            species=opp_state.species_id,
+            moves=dict.fromkeys(opp_moves),
+            ability=opp_state.ability,
+            fainted=False,
+        ),
+        None,
+    ]
+    return _Context(
+        battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
+        trick_room=False,
+        weather=weather,
+        terrain=None,
+        our_side_screens=frozenset(),
+        opp_side_screens=frozenset(),
+        our_pokemon=our_pokemon,
+        opp_pokemon=opp_pokemon,
+        our_states=[outgoing_state, None],
+        opp_states=[opp_state, None],
+        our_speed=[effective_speed(outgoing_state), 0.0],
+        opp_speed=[effective_speed(opp_state), 0.0],
+        threat_on_us=[_ThreatInfo(), _ThreatInfo()],
+        opp_threat_score=[0.0, 0.0],
+        opp_protect_prob=[0.0, 0.0],
+        opp_switch_prob=[0.0, 0.0],
+        priors={},
+        gameplan=gameplan,
+    )
+
+
+def test_collapsed_matchup_switch_bonus_fires_on_weather_flip() -> None:
+    from poke_env.battle.pokemon import Pokemon
+
+    from vgc.gameplan import _best_move_percent
+
+    config = PolicyConfig()
+    charizard = PokemonState(
+        "charizard", sp_spread={"hp": 2, "spa": 32, "spe": 32}, nature="modest"
+    )
+    klefki = _klefki()
+    # The gameplan table's NEUTRAL-field expectation for this exact matchup -- computed
+    # via the same helper build_gameplan itself uses, so this isn't a hand-guessed float.
+    table_pct = _best_move_percent(charizard, ["heatwave"], klefki)
+    plan = _minimal_gameplan(matrix={("charizard", "klefki"): table_pct})
+
+    incoming = Pokemon(gen=9, species="incineroar")
+    incoming._current_hp = 100
+
+    ctx_rain = _switch_ctx(
+        outgoing_state=charizard,
+        outgoing_moves=["heatwave"],
+        opp_state=klefki,
+        opp_moves=["playrough"],
+        weather="rain",
+        gameplan=plan,
+    )
+    score_rain, info_rain = _score_switch(incoming, 0, ctx_rain, config)
+
+    ctx_neutral = _switch_ctx(
+        outgoing_state=charizard,
+        outgoing_moves=["heatwave"],
+        opp_state=klefki,
+        opp_moves=["playrough"],
+        weather=None,
+        gameplan=plan,
+    )
+    score_neutral, info_neutral = _score_switch(incoming, 0, ctx_neutral, config)
+
+    # Rain roughly halves Heat Wave's output vs the same neutral-field table value --
+    # below collapsed_matchup_floor -- so real switch pressure should appear in rain...
+    assert info_rain["collapsed_matchup_bonus"] > 0.0
+    # ...and NOT under the exact conditions the table was built for (current == table).
+    assert info_neutral["collapsed_matchup_bonus"] == pytest.approx(0.0)
+    assert score_rain > score_neutral
+
+
+def test_collapsed_matchup_switch_bonus_absent_without_a_gameplan() -> None:
+    config = PolicyConfig()
+    charizard = PokemonState(
+        "charizard", sp_spread={"hp": 2, "spa": 32, "spe": 32}, nature="modest"
+    )
+    klefki = _klefki()
+
+    from poke_env.battle.pokemon import Pokemon
+
+    incoming = Pokemon(gen=9, species="incineroar")
+    incoming._current_hp = 100
+
+    ctx = _switch_ctx(
+        outgoing_state=charizard,
+        outgoing_moves=["heatwave"],
+        opp_state=klefki,
+        opp_moves=["playrough"],
+        weather="rain",
+        gameplan=None,
+    )
+    _score, info = _score_switch(incoming, 0, ctx, config)
+    assert info["collapsed_matchup_bonus"] == 0.0

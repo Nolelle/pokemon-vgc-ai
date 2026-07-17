@@ -71,6 +71,7 @@ def _build_ctx(
     our_side_screens: frozenset = frozenset(),
     opp_side_screens: frozenset = frozenset(),
     priors: dict | None = None,
+    gameplan=None,
 ) -> _Context:
     return _Context(
         battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
@@ -90,6 +91,7 @@ def _build_ctx(
         opp_protect_prob=[0.0, 0.0],
         opp_switch_prob=[0.0, 0.0],
         priors=priors if priors is not None else {},
+        gameplan=gameplan,
     )
 
 

@@ -73,6 +73,17 @@ before it).
   response-candidate space for a v1 feature; `vgc.evaluator.opp_threat_score` already
   factors the opponent's raw damage output (mega or not, whichever poke-env currently
   reports) into the myopic half.
+- **Charge/recharge moves (Solar Beam, Hyper Beam, ...) are simulated naively.**
+  `resolve_exchange` calls `damage_range` directly for whatever move a response/order
+  names, with no notion that a charge move's damage this turn is conditional on
+  actually having charged, or that a recharge move forfeits the FOLLOWING turn --
+  `vgc.evaluator._score_attack_order`'s `charge_move_discount`/`recharge_move_discount`
+  already reshape what reaches this search (a bad Solar Beam order is discounted before
+  ever making the myopic top-K cut, so it's rarely even a search candidate), so this is
+  an accepted v1 gap rather than a silent blind spot: the search's own per-exchange
+  values for a charge/recharge move that DOES get searched are still optimistic (full
+  damage, no "wasted the charge turn" or "no follow-up next turn" modeling), same
+  reasoning as the no-opponent-switches gap above.
 """
 
 from __future__ import annotations

@@ -91,6 +91,7 @@ from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
+from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.sets import (
@@ -267,6 +268,13 @@ _SCREEN_MOVE_TO_SIDE_CONDITION = {
 _SPREAD_TARGETS_HITTING_ALLY = frozenset({"allAdjacent"})
 _SPREAD_TARGETS_FOES_ONLY = frozenset({"allAdjacentFoes"})
 _SINGLE_TARGETS = frozenset({"normal", "any", "adjacentFoe"})
+
+# `charge`-flag moves whose charge turn is skipped under sun (data/mods/champions's
+# `onBasePower`/`beforeMove` conditionals for these two -- confirmed against
+# data/champions/moves.json's `flags.charge`). Power Herb ALSO skips a charge move's
+# turn (once, then consumed) but isn't modeled here -- see charge_move_discount's
+# comment in vgc/models.py for that gap.
+_SUN_SKIPS_CHARGE_TURN = frozenset({"solarbeam", "solarblade"})
 
 _WEATHER_TO_STR = {
     Weather.SUNNYDAY: "sun",
@@ -470,6 +478,13 @@ class _Context:
     # call `opponent_move_ids` with the SAME loaded dict instead of re-reading the file
     # -- mirrors how `opponent_state`'s own `usage=` parameter is threaded through.
     priors: dict[str, object]
+    # Built once per turn by `vgc.gameplan.build_gameplan` (see that module) from our
+    # full known team + the opponent's previewed/known team -- the win-condition
+    # framework (`primary_win_con`, `plan_breakers`, ...) that `win_con_preservation_
+    # weight`/`plan_breaker_target_bonus`/`collapsed_matchup_switch_bonus` read.  `None`
+    # only when there's nothing to build it from (e.g. our own team came back empty,
+    # shouldn't normally happen) -- every read site null-checks this.
+    gameplan: GamePlan | None
 
     def field_state(
         self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
@@ -697,6 +712,43 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             pressure_on_opp[opp_idx], opp_threat_score[opp_idx], config
         )
 
+    # Game-plan layer (vgc.gameplan): built from our FULL known team (battle.team --
+    # always exactly known, unlike the opponent's) and their previewed/known team
+    # (`preview_team`, computed above -- teampreview_opponent_team when the full 6 is
+    # available, else whatever's been revealed so far via opponent_team). v1 deliberately
+    # does NOT try to fill in opponent team-preview mons we have no state for beyond that
+    # -- see vgc.gameplan's module docstring for why a pure function over already-built
+    # states is the right boundary here.
+    our_team_full = [
+        mon
+        for mon in (getattr(battle, "team", None) or {}).values()
+        if mon is not None and not mon.fainted
+    ]
+    our_gameplan_states = [_our_pokemon_state(mon) for mon in our_team_full]
+    our_gameplan_move_ids = [list(mon.moves.keys()) if mon.moves else [] for mon in our_team_full]
+
+    opp_team_full = [
+        mon for mon in preview_team if mon is not None and not getattr(mon, "fainted", False)
+    ]
+    opp_gameplan_states = [
+        opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+        for mon in opp_team_full
+    ]
+    opp_gameplan_move_ids = [
+        opponent_move_ids(mon, priors=priors, config=config) for mon in opp_team_full
+    ]
+
+    gameplan = None
+    if our_gameplan_states:
+        gameplan = build_gameplan(
+            our_gameplan_states,
+            opp_gameplan_states,
+            our_gameplan_move_ids,
+            opp_gameplan_move_ids,
+            config,
+        )
+        record_note("gameplan", gameplan.summary())
+
     return _Context(
         battle=battle,
         trick_room=trick_room,
@@ -715,6 +767,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_protect_prob=opp_protect_prob,
         opp_switch_prob=opp_switch_prob,
         priors=priors,
+        gameplan=gameplan,
     )
 
 
@@ -842,6 +895,10 @@ def _score_attack_order(
     survival_guard_slots: list[int] = []
     protect_prob_by_target: dict[int, float] = {}
     switch_prob_by_target: dict[int, float] = {}
+    # True once any target in this order gets a guaranteed/likely KO that resolves
+    # BEFORE ctx.threat_on_us[actor_slot] can land -- see win_con_preservation_weight
+    # below: a win con that removes its own threat this turn doesn't need "preserving".
+    resolves_threat_before_it_lands = False
     field_vs_opp = ctx.field_state(
         defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
     )
@@ -890,6 +947,7 @@ def _score_attack_order(
             )
         if we_move_first and (is_guaranteed or is_likely):
             ko_bonus += config.outspeed_ko_bonus
+            resolves_threat_before_it_lands = True
 
         # An opponent pivoting out under heavy pressure with weak own output still eats
         # our damage on the replacement, but any KO-dependent bonus evaporates -- only the
@@ -905,6 +963,15 @@ def _score_attack_order(
         # Protect) and regressed the bot's win rate against SimpleHeuristicsPlayer.
         ko_bonus *= 1.0 - ctx.opp_protect_prob[idx]
         contribution = damage_term + ko_bonus
+
+        # Removing a piece that specifically invalidates our win con re-enables the
+        # whole game plan (the Chandelure-vs-Torkoal case) -- worth a flat bonus on top
+        # of whatever this target's damage/KO math already contributes.
+        if ctx.gameplan is not None:
+            opp_mon_for_idx = ctx.opp_pokemon[idx]
+            opp_species_id = to_id(opp_mon_for_idx.species) if opp_mon_for_idx is not None else None
+            if opp_species_id is not None and opp_species_id in ctx.gameplan.plan_breakers:
+                contribution += config.plan_breaker_target_bonus
 
         if move_id == "fakeout" and getattr(actor_mon, "first_turn", False):
             opp_mon = ctx.opp_pokemon[idx]
@@ -941,6 +1008,35 @@ def _score_attack_order(
 
     if config.mega_evolve_asap and getattr(single, "mega", False):
         score += 1e-3  # tie-breaker nudge only -- mega stats already drive the real gain
+
+    # Charge/recharge moves telegraph a slow, punishable turn (Solar Beam et al) or
+    # forfeit the FOLLOWING turn after landing (Hyper Beam et al) -- discount the
+    # order's entire contribution rather than trying to model the extra turn's own
+    # opportunity cost or the free hit the opponent gets on it (v1 scope; see
+    # search.py's module docstring for the search-side gap this leaves).
+    move_flags = move_data.get("flags") or {}
+    if move_flags.get("charge") and not (
+        move_id in _SUN_SKIPS_CHARGE_TURN and weather_for_this_order == "sun"
+    ):
+        score *= config.charge_move_discount
+        raw_damage_score *= config.charge_move_discount
+    elif move_flags.get("recharge"):
+        score *= config.recharge_move_discount
+        raw_damage_score *= config.recharge_move_discount
+
+    # Win-con preservation: our primary win condition shouldn't be traded away on a turn
+    # where it's facing a near-certain KO and retreating (switch/Protect -- neither of
+    # which passes through this function) was available. Only fires when this order
+    # ITSELF doesn't already remove the threat first (resolves_threat_before_it_lands).
+    if (
+        ctx.gameplan is not None
+        and ctx.gameplan.primary_win_con_species is not None
+        and actor_mon is not None
+        and to_id(actor_mon.species) == ctx.gameplan.primary_win_con_species
+        and ctx.threat_on_us[actor_slot].percent >= 100.0
+        and not resolves_threat_before_it_lands
+    ):
+        score -= config.win_con_preservation_weight * ctx.threat_on_us[actor_slot].percent
 
     single_target_slot = (
         opp_targets[0]
@@ -990,12 +1086,21 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     pokemon = ctx.our_pokemon[actor_slot]
     protect_counter = getattr(pokemon, "protect_counter", 0) if pokemon is not None else 0
 
-    score = threat.percent * config.protect_threat_weight
-    if protect_counter >= 1:
-        score -= config.protect_repeat_penalty
+    # Real Gen 9 mechanics: consecutive protect-family uses divide the move's actual
+    # success chance by ~3 each time (counter 0 = 100%, 1 = ~33%, 2 = ~11%, ...) --
+    # multiplying the threat-avoidance term by that same geometric factor makes the
+    # SCORE decay the way the move's real value does (a Protect that's very likely to
+    # just fail avoids very little expected damage), superseding the old flat
+    # `protect_repeat_penalty` subtraction (see that field's comment in vgc/models.py).
+    success_prob = config.protect_success_decay**protect_counter
+    score = threat.percent * config.protect_threat_weight * success_prob
     if threat.percent < config.protect_low_threat_floor:
         score -= config.protect_low_threat_penalty
-    return score, {"threat_percent": threat.percent, "protect_counter": protect_counter}
+    return score, {
+        "threat_percent": threat.percent,
+        "protect_counter": protect_counter,
+        "success_prob": success_prob,
+    }
 
 
 def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
@@ -1087,10 +1192,44 @@ def _score_switch(
     if incoming.ability and to_id(incoming.ability) == "intimidate":
         eligible = [idx for idx in opp_alive if not _intimidate_immune(ctx.opp_pokemon[idx])]
         score += len(eligible) * config.intimidate_switch_bonus
+
+    # Collapsed-matchup pressure (the Charizard-in-rain fix): compare the OUTGOING mon's
+    # CURRENT best expected % onto the field's actives (real weather, via the same
+    # field_vs_opp/_best_attacking_move math as above) against its gameplan-table
+    # (neutral-field) expectation for those same opponents. A mon whose role has
+    # genuinely collapsed this turn (current well below what the matchup "should" do)
+    # generates real switch pressure beyond whatever the plain current-field matchup
+    # term above already captures, since that term only sees "less damage than usual",
+    # not "this matchup fundamentally isn't working under these conditions".
+    collapsed_bonus = 0.0
+    outgoing_mon = ctx.our_pokemon[actor_slot]
+    outgoing_state = ctx.our_states[actor_slot]
+    if ctx.gameplan is not None and outgoing_mon is not None and outgoing_state is not None:
+        outgoing_species = to_id(outgoing_mon.species)
+        outgoing_move_ids = list(outgoing_mon.moves.keys()) if outgoing_mon.moves else []
+        current_pct = 0.0
+        table_pct = 0.0
+        for idx in opp_alive:
+            opp_state = ctx.opp_states[idx]
+            opp_mon = ctx.opp_pokemon[idx]
+            if opp_state is None or opp_mon is None:
+                continue
+            pct, _, _ = _best_attacking_move(
+                outgoing_state, outgoing_move_ids, opp_state, field_vs_opp
+            )
+            current_pct = max(current_pct, pct)
+            table_pct = max(
+                table_pct, ctx.gameplan.table_percent(outgoing_species, to_id(opp_mon.species))
+            )
+        if table_pct > 0.0 and current_pct < config.collapsed_matchup_floor * table_pct:
+            collapsed_bonus = config.collapsed_matchup_switch_bonus * (table_pct - current_pct)
+    score += collapsed_bonus
+
     return score, {
         "matchup": matchup,
         "our_best_percent": our_best,
         "their_best_percent": their_best,
+        "collapsed_matchup_bonus": collapsed_bonus,
     }
 
 

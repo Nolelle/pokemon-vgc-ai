@@ -75,6 +75,24 @@ class PolicyConfig:
     # probability `opp_protect_prob`. 1.0 = treat it as a full EV forfeit at that
     # probability, not a partial one.
     protect_stack_penalty_weight: float = 1.0
+    # Multiplier on a `charge`-flag move's (Solar Beam, Solar Blade, Sky Attack, Dig,
+    # Fly, ...) entire per-order contribution when it does NOT skip its charge turn
+    # under current conditions (sun skips Solar Beam/Solar Blade's charge; Power Herb
+    # also skips it once -- NOT modeled here, see `_score_attack_order`'s comment for
+    # the gap). You telegraph the move and spend two turns to land roughly one turn's
+    # worth of damage, MINUS the free hit the opponent gets on your charge turn -- 0.35
+    # approximates "about a third of a normal attack's value" rather than a naive 0.5
+    # (charge turns are worse than merely "slow", since Protect/switch punishes them for
+    # free and the opponent has already seen the tell).
+    charge_move_discount: float = 0.35
+    # Multiplier on a `recharge`-flag move's (Hyper Beam, Giga Impact, ...) entire
+    # per-order contribution -- unlike charge moves, the recharge turn happens AFTER the
+    # hit lands (so this turn's damage is real, not merely telegraphed), but the
+    # following free turn for the opponent is still a real cost baked into "is this move
+    # worth clicking" -- 0.6 is a milder discount than charge_move_discount's 0.35 for
+    # exactly that reason (the damage already happened; only the follow-up cost is
+    # hypothetical).
+    recharge_move_discount: float = 0.6
 
     # -- Speed/turn order -----------------------------------------------------------------
     # When a target is faster than the attacker (post Trick Room inversion) and its best
@@ -89,11 +107,20 @@ class PolicyConfig:
     # Points per 1% of estimated incoming damage (from the opponent's best revealed move
     # onto this slot) that choosing Protect this turn avoids.
     protect_threat_weight: float = 0.8
-    # Flat penalty applied when this Pokemon's poke-env `protect_counter` is already >= 1
-    # (Protect/a protect-family move was used last turn too) -- mirrors the real success-
-    # rate falloff for chaining protection moves without pretending to model the exact
-    # (1/3)^n formula.
+    # SUPERSEDED by `protect_success_decay` (below): `_score_protect` used to subtract
+    # this flat penalty once `protect_counter >= 1` instead of actually modeling Gen 9's
+    # real geometric success-rate falloff. Kept (unread) rather than deleted so any
+    # external caller/experiment log still referencing this field name doesn't break.
     protect_repeat_penalty: float = 35.0
+    # Real Gen 9 mechanics: each consecutive protect-family use divides success odds by
+    # ~3 (counter 0 = 100%, 1 = ~33%, 2 = ~11%, ...). `_score_protect` now multiplies the
+    # threat-avoidance term by `protect_success_decay ** protect_counter` instead of
+    # `protect_repeat_penalty`'s flat subtraction, so the SCORE decays geometrically the
+    # same way the move's real success chance does (see `_opp_protect_probability`'s
+    # `opp_protect_repeat_factor` for the same 1/3 idea modeled from the OPPONENT's side
+    # -- that one stays a flat multiplier rather than switching to this exact formula
+    # since it only ever applies once, not compounding across a whole streak).
+    protect_success_decay: float = 1.0 / 3.0
     # Flat penalty for choosing Protect when the estimated incoming threat on this slot is
     # below this many HP percent -- keeps the evaluator from reflexively protecting both
     # slots when neither is actually in danger this turn.
@@ -120,7 +147,12 @@ class PolicyConfig:
     # Multiplier that collapses the Protect probability when the opponent's
     # `protect_counter` shows they already Protected last turn -- consecutive Protects
     # have a sharply reduced real success chance in the actual engine, so back-to-back
-    # Protect is rare and shouldn't be modeled as equally likely.
+    # Protect is rare and shouldn't be modeled as equally likely. Approximates the same
+    # ~1/3-per-streak falloff `protect_success_decay` models exactly for OUR OWN Protect
+    # scoring (see that field's comment) -- kept as a flat one-shot multiplier here
+    # rather than switched to the same `** protect_counter` formula since
+    # `_opp_protect_probability` only ever needs "did they Protect last turn" (one
+    # lookback), not a compounding streak counter.
     opp_protect_repeat_factor: float = 0.15
     # Flat probability an opponent slot switches out instead of attacking when it is under
     # heavy incoming pressure but its own offensive output is weak (see the floor/ceiling
@@ -328,3 +360,45 @@ class PolicyConfig:
     # when run from `ladder/run_ladder.py` (matches every other data/-prefixed default
     # path in this codebase, e.g. TEAMS_DIR).
     bc_checkpoint_path: str = "data/models/bc_policy_v2.pt"
+
+    # --- Game-plan layer (vgc.gameplan.build_gameplan, via _Context.gameplan) ----------
+    # `build_context` builds one `GamePlan` per turn (see vgc/gameplan.py) capturing the
+    # win-condition framework VGC players reason about explicitly -- "who is our win
+    # con", "who beats it", "what's our answer to their scariest threat" -- as a
+    # complement to the myopic per-turn damage/KO scoring above, which has no notion of
+    # a game-spanning plan. These three weights are how that plan actually influences
+    # scoring; see `_score_attack_order`/`_score_switch` for exactly where each is read.
+    #
+    # If the ACTOR slot IS our primary win condition and it's facing a >=100%-HP threat
+    # this turn with no KO of its own that resolves first, staying in and attacking is
+    # penalized by `weight * threat.percent` -- protects the win con from being traded
+    # away on a turn where retreating (switch/Protect, which never pass through
+    # `_score_attack_order` and so never see this penalty) was available. Named
+    # "preservation" rather than e.g. "retreat_bonus" since the mechanism is a penalty on
+    # the risky choice, not a bonus on the safe one -- symmetric either way.
+    win_con_preservation_weight: float = 0.4
+    # Flat bonus added to a target's contribution in `_score_attack_order` when that
+    # target is one of `GamePlan.plan_breakers` -- KOing the piece that specifically
+    # invalidates our win con re-enables the whole plan (the Chandelure-vs-Torkoal case:
+    # Chandelure is worth killing even off-plan-value, because its mere presence is what
+    # was stopping Torkoal from winning games). Comparable in scale to
+    # `likely_ko_bonus` (35.0) since "restores a game plan" is roughly as valuable as a
+    # real (if not guaranteed) KO.
+    plan_breaker_target_bonus: float = 25.0
+    # Weight on `_score_switch`'s collapsed-matchup term: for the OUTGOING (currently
+    # active) mon in that slot, compares its CURRENT best expected damage % onto the
+    # field's actives (real weather/field, via the same `_best_attacking_move` math
+    # `_score_switch` already runs) against `GamePlan.table_percent`'s NEUTRAL-field
+    # expectation for that same matchup. When current has collapsed to below
+    # `collapsed_matchup_floor` of the table value, every order that switches this mon
+    # out gets `weight * (table_pct - current_pct)` added. This is the Charizard-in-rain
+    # fix: rain gutting a Fire-type's damage makes current << table, generating real
+    # switch pressure that pure current-field scoring (which already just sees "this mon
+    # is doing less damage than usual", not "this mon's WHOLE role has collapsed") was
+    # underweighting relative to the tempo cost of switching.
+    collapsed_matchup_switch_bonus: float = 0.5
+    # Fraction of the gameplan-table (neutral-field) expected % below which the current
+    # (real-field) expected % counts as "collapsed" for collapsed_matchup_switch_bonus
+    # above -- 0.5 means "doing under half of what this matchup should do" triggers real
+    # switch pressure; small weather-driven fluctuations above that floor don't.
+    collapsed_matchup_floor: float = 0.5
