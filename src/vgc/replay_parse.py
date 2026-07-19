@@ -70,6 +70,17 @@ top of schema 1's fields (all still present, unchanged):
   intentional, matching exactly what was specified when schema 2 was built, not an
   oversight).
 
+Schema 3 (current) adds, on top of schema 2's fields (all still present, unchanged):
+
+- Every record gains `"won": bool` -- whether THIS record's `"player"` ultimately won
+  the game (resolved from the log's `|win|NAME|` line via `_parse_player_names`'
+  `|player|p1|NAME|`/`|player|p2|NAME|` mapping). `False` for BOTH players on a real
+  `|tie|` or an unresolvable winner name, not `None` -- outcome-value training wants a
+  plain binary label, and a tie is at least "not a win" for either side even though it
+  isn't a "loss" either (ties are rare enough in practice that this simplification
+  wasn't worth a tri-state). `ParsedReplay.winner` (`"p1"`/`"p2"`/`None`) is the
+  game-level fact this is derived from, for callers that want it directly.
+
 Never raises on a malformed replay: `parse_replay` catches any exception during its own
 walk and reports it as a failed parse with a reason string; individual malformed/
 ambiguous EVENTS within an otherwise-fine replay are skipped (counted, not silently
@@ -107,10 +118,11 @@ from vgc.data import load_species
 
 # Bumped whenever a decision record's shape changes (additive so far: schema 2 added
 # `revealed_moves` to active-mon entries and turned bench entries from HP-only summaries
-# into identity-bearing {species_id, hp_fraction, status} dicts -- see module docstring).
-# Every emitted record carries `"schema": SCHEMA_VERSION` so old (schema-1) datasets
-# stay distinguishable from newer ones instead of silently being read as if compatible.
-SCHEMA_VERSION = 2
+# into identity-bearing {species_id, hp_fraction, status} dicts; schema 3 added a
+# per-record `"won"` bool -- see module docstring). Every emitted record carries
+# `"schema": SCHEMA_VERSION` so old datasets stay distinguishable from newer ones
+# instead of silently being read as if compatible.
+SCHEMA_VERSION = 3
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -383,6 +395,11 @@ class ParsedReplay:
     records: list[dict]
     skipped: Counter  # reason -> count, for records skipped within an otherwise-ok parse
     showteam_players: set[str]
+    # "p1" | "p2" | None -- None covers both a real `|tie|` (Showdown protocol has no
+    # winner in that case) and a `|win|NAME|` whose NAME didn't match either side's
+    # `|player|` line (shouldn't happen on a real replay; defensive for hand-built test
+    # logs and any truly malformed input). See `_parse_player_names`/schema 3's `"won"`.
+    winner: str | None = None
 
 
 def _target_slot_label(
@@ -887,6 +904,28 @@ def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[
     return records
 
 
+def _parse_player_names(log: str) -> dict[str, str]:
+    """`{"p1": display_name, "p2": display_name}` from every `|player|p1|NAME|...`/
+    `|player|p2|NAME|...` line in the log (last-write-wins if a side's line appears more
+    than once, e.g. a mid-battle name/avatar update -- rare, but the protocol allows
+    it). Needed to resolve `|win|NAME|`'s display name back to a side -- see `winner`.
+    A hand-built test log with no `|player|` lines at all just yields `{}`, so `winner`
+    stays `None` (matches this function's own "no info -> unresolved" contract).
+    """
+    names: dict[str, str] = {}
+    for line in log.splitlines():
+        if not line.startswith("|player|"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 4:
+            continue
+        side = parts[2]
+        name = parts[3]
+        if side in ("p1", "p2") and name:
+            names[side] = name
+    return names
+
+
 def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
     """Parse one replay's protocol `log` into per-decision JSONL-ready records.
 
@@ -900,6 +939,8 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
         records: list[dict] = []
         skipped: Counter = Counter()
         showteam_players: set[str] = set()
+        player_names = _parse_player_names(log)
+        winner: str | None = None
 
         segment_lines: list[str] = []
         pending_turn = 0
@@ -922,6 +963,16 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                 )
                 segment_lines = []
                 ended = True
+                if line.startswith("|win|"):
+                    parts = line.split("|")
+                    winner_name = parts[2] if len(parts) > 2 else ""
+                    for side, name in player_names.items():
+                        if name == winner_name:
+                            winner = side
+                            break
+                    else:
+                        skipped["unresolved_winner_name"] += 1
+                # |tie|/|tie -- winner stays None, no real winner to resolve.
                 break
             segment_lines.append(line)
         if not ended:
@@ -930,12 +981,15 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
         records = _teampreview_record(state, showteam_players) + records
 
         # Attach each player's showteam parse (if any) to the FIRST record we emit for
-        # that (replay, player) -- see module docstring's "sets" schema note.
+        # that (replay, player) -- see module docstring's "sets" schema note. `"won"` is
+        # attached to EVERY record (a game-level fact, not decision-specific) -- see
+        # schema 3's note in the module docstring.
         attached: set[str] = set()
         for record in records:
             player = record["player"]
             record["replay_id"] = replay_id
             record["rating"] = rating
+            record["won"] = winner is not None and player == winner
             if player in showteam_players and player not in attached:
                 record["sets"] = state.sides[player].sets_by_species
                 attached.add(player)
@@ -947,6 +1001,7 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
             records=records,
             skipped=skipped,
             showteam_players=showteam_players,
+            winner=winner,
         )
     except Exception as exc:  # noqa: BLE001 -- a single bad replay must never crash a corpus run
         reason = f"{type(exc).__name__}: {exc}"

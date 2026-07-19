@@ -75,11 +75,12 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.actions import describe_order
 from vgc.bc.encoding import ENCODER_LAYOUT_VERSION, SLOT_FEATURE_DIM, encode_state, flatten_state
-from vgc.damage import to_id
+from vgc.damage import PokemonState, to_id
 from vgc.data import load_moves
 from vgc.decision_trace import record_note
 from vgc.evaluator import (
     ScoredOrder,
+    _Context,
     _SINGLE_TARGETS,
     _SPREAD_TARGETS_FOES_ONLY,
     _SPREAD_TARGETS_HITTING_ALLY,
@@ -122,6 +123,11 @@ class BcPolicy:
     ability_vocab: list[str]
     target_vocab: list[str]
     encoder_layout_version: str
+    # Which heads THIS checkpoint actually carries (`vgc.bc.model.BcPolicyNet`'s `heads`
+    # arg it was built with) -- a checkpoint saved before the value head existed has no
+    # `"heads"` key at all, treated as `("move", "target")` (see `load_bc_policy`), so
+    # `has_value_head` correctly comes out False for it rather than guessing.
+    heads: tuple[str, ...] = ("move", "target")
     move_to_idx: dict[str, int] = field(default_factory=dict)
     target_to_idx: dict[str, int] = field(default_factory=dict)
 
@@ -130,6 +136,10 @@ class BcPolicy:
             self.move_to_idx = {token: idx for idx, token in enumerate(self.move_vocab)}
         if not self.target_to_idx:
             self.target_to_idx = {token: idx for idx, token in enumerate(self.target_vocab)}
+
+    @property
+    def has_value_head(self) -> bool:
+        return "value" in self.heads
 
 
 _POLICY_CACHE: dict[str, BcPolicy | None] = {}
@@ -182,6 +192,10 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
         )
         return None
 
+    # Pre-value-head checkpoints (saved before this feature existed) have no "heads"
+    # key at all -- treat that as exactly what it is, a move+target-only model, rather
+    # than guessing it might have a value head it doesn't.
+    heads = tuple(checkpoint.get("heads", ("move", "target")))
     try:
         model = BcPolicyNet(
             species_vocab_size=len(checkpoint["species_vocab"]),
@@ -189,6 +203,7 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
             ability_vocab_size=len(checkpoint["ability_vocab"]),
             move_vocab_size=len(checkpoint["move_vocab"]),
             target_vocab_size=len(checkpoint["target_vocab"]),
+            heads=heads,
         )
         model.load_state_dict(checkpoint["state_dict"])
     except Exception:  # noqa: BLE001 - see above
@@ -208,6 +223,7 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
         ability_vocab=list(checkpoint["ability_vocab"]),
         target_vocab=list(checkpoint["target_vocab"]),
         encoder_layout_version=saved_version,
+        heads=heads,
     )
 
 
@@ -385,9 +401,16 @@ def score_orders(
     """Re-rank the top `config.bc_rerank_top_k` of `scored_orders` by blending in the BC
     model's log-probability of each candidate's joint action; see module docstring for
     the full algorithm. `policy is None` (torch/checkpoint unavailable, or
-    `scored_orders` empty) returns `scored_orders` unchanged.
+    `scored_orders` empty), or a policy that doesn't carry BOTH the move and target
+    heads (e.g. `bc_checkpoint_path` pointing at a value-only checkpoint -- see
+    `vgc.bc.model`'s `heads` config), returns `scored_orders` unchanged.
     """
-    if policy is None or not scored_orders:
+    if (
+        policy is None
+        or not scored_orders
+        or "move" not in policy.heads
+        or "target" not in policy.heads
+    ):
         return scored_orders
 
     top_k = max(1, config.bc_rerank_top_k)
@@ -407,7 +430,7 @@ def score_orders(
     scalar_batch = np.concatenate([np.tile(scalar_array, (2, 1)), slot_onehots], axis=1)
 
     with torch.no_grad():
-        move_logits, target_logits = policy.model(
+        move_logits, target_logits, _value_logit = policy.model(
             torch.from_numpy(index_batch), torch.from_numpy(scalar_batch)
         )
         move_logp = torch.log_softmax(move_logits, dim=-1)
@@ -460,3 +483,231 @@ def score_orders(
     record_note("bc_top_candidates", top_candidates)
 
     return result
+
+
+# --- position_value: the outcome value head's read on a state, for vgc.search --------
+
+
+def position_value(policy: BcPolicy | None, record_like_state: dict) -> float | None:
+    """`sigmoid(value_logit)` -- the value head's estimated P(the state's `"our"` side
+    wins), for a schema-3-shaped `{"state": {...}}` dict (the same contract
+    `battle_state_record` produces and `encode_state` consumes). Returns `None` when
+    `policy` is `None`, or the loaded checkpoint doesn't carry a value head at all (see
+    `BcPolicy.has_value_head`) -- callers (`vgc.search`) treat `None` as "no value-head
+    signal available this session," matching `load_bc_policy`'s other None-means-
+    disabled cases. Never raises for the same reason those don't.
+
+    The value head doesn't have its own "no slot" input -- every training sample (move,
+    target, AND value alike) carries a real 2-dim active-slot one-hot
+    (`vgc.bc.dataset`'s per-(record, slot) sampling), so calling the model with an
+    all-zero one would be out-of-distribution for it. Instead this averages the
+    prediction over BOTH slot one-hots (mirrors `score_orders`' 2-row batch for the same
+    underlying reason: the board state is identical either way, only the slot bit
+    differs) -- a whole-position judgment shouldn't arbitrarily favor one active slot's
+    perspective, and the model never saw a genuinely slot-less input during training.
+    """
+    if policy is None or not policy.has_value_head:
+        return None
+    index_array, scalar_array = flatten_state(encode_state(record_like_state))
+    index_batch = np.tile(index_array, (2, 1))
+    slot_onehots = np.eye(SLOT_FEATURE_DIM, dtype=np.float32)
+    scalar_batch = np.concatenate([np.tile(scalar_array, (2, 1)), slot_onehots], axis=1)
+    with torch.no_grad():
+        _move_logits, _target_logits, value_logit = policy.model(
+            torch.from_numpy(index_batch), torch.from_numpy(scalar_batch)
+        )
+        probability = torch.sigmoid(value_logit).mean().item()
+    return float(probability)
+
+
+def position_values_batch(
+    policy: BcPolicy | None, record_like_states: list[dict]
+) -> list[float | None]:
+    """Batched sibling of `position_value`: ONE forward pass scores ALL of
+    `record_like_states` (each still gets `position_value`'s 2-row slot-averaging
+    treatment -- see its docstring for why), instead of one forward pass per state.
+    Returns a list index-aligned with `record_like_states`; every entry is `None` under
+    the exact same conditions `position_value` would return `None` for each (policy
+    missing or no value head) -- in that case every entry is `None`, no partial
+    batching. `[]` in, `[]` out.
+
+    Exists purely for `vgc.search.search_joint_orders`'s `use_value_head` path, which
+    evaluates up to `search_our_candidates * len(responses)` positions per decision --
+    measured at ~40ms/decision calling `position_value` once per position (a real local
+    battle, `search_our_candidates=10` x ~8 responses), well over this feature's <5ms
+    latency budget purely from per-call Python/torch dispatch overhead, not FLOPs (the
+    2.2MB model itself is trivially fast). One batched call amortizes that overhead
+    across every position at once.
+    """
+    if policy is None or not policy.has_value_head or not record_like_states:
+        return [None] * len(record_like_states)
+    n = len(record_like_states)
+    index_arrays = []
+    scalar_arrays = []
+    for record in record_like_states:
+        index_array, scalar_array = flatten_state(encode_state(record))
+        index_arrays.append(index_array)
+        scalar_arrays.append(scalar_array)
+    index_stack = np.stack(index_arrays)
+    scalar_stack = np.stack(scalar_arrays)
+    # Each state gets 2 consecutive rows (slot-0 one-hot, slot-1 one-hot) -- see
+    # position_value's docstring for why a slot-less input isn't an option.
+    index_batch = np.repeat(index_stack, 2, axis=0)
+    slot_onehots = np.tile(np.eye(SLOT_FEATURE_DIM, dtype=np.float32), (n, 1))
+    scalar_batch = np.concatenate([np.repeat(scalar_stack, 2, axis=0), slot_onehots], axis=1)
+    with torch.no_grad():
+        _move_logits, _target_logits, value_logit = policy.model(
+            torch.from_numpy(index_batch), torch.from_numpy(scalar_batch)
+        )
+        probabilities = torch.sigmoid(value_logit).reshape(n, 2).mean(dim=1)
+    return [float(p) for p in probabilities.tolist()]
+
+
+# --- exchange_state_record: vgc.search's post-exchange adapter for the value head ----
+
+
+def exchange_state_record(
+    our_states: list[PokemonState | None],
+    opp_states: list[PokemonState | None],
+    ctx: _Context,
+    *,
+    cache: dict | None = None,
+) -> dict:
+    """Build a schema-3-shaped `{"state": {...}}` dict (same contract
+    `battle_state_record`/`encode_state` use) from a SIMULATED exchange's resulting
+    `PokemonState`s (`vgc.search.resolve_exchange`'s `ExchangeResult.our_states`/
+    `opp_states`, or `ctx.our_states`/`opp_states` themselves for the PRE-exchange
+    position) -- the counterpart to `battle_state_record`'s live-battle adapter, sourced
+    from damage-calc `PokemonState`s instead of poke-env `Pokemon` objects (a simulated
+    exchange never produces the latter).
+
+    `cache`: an optional dict a caller building MANY records against the same `ctx`
+    (`vgc.search.search_joint_orders`'s hot path -- up to `search_our_candidates *
+    len(responses)` calls per decision) can pass in and reuse across calls. Side
+    conditions/field are 100% `ctx`-derived and never vary between exchanges within one
+    decision; bench membership only varies when a candidate switches (so its cache key
+    includes the active-species set) -- both were measured as the dominant per-call cost
+    once the value head's own forward pass was batched (see `position_values_batch`'s
+    docstring), since a bare Python loop + `_resolve_species` call per bench mon adds up
+    across ~100 calls/decision even though each one is cheap in isolation. `None`
+    (the default) computes everything fresh every call, correct but slower -- fine for
+    a single-shot caller like `position_value`'s own v_before computation.
+
+    v1 scope, deliberately approximate in two documented ways (not oversights):
+    - `revealed_moves` for an active slot whose species DIDN'T change this exchange
+      comes from `ctx`'s live Pokemon object (`.moves.keys()`, exactly known/revealed so
+      far) -- a slot that SWITCHED during the exchange gets an empty `revealed_moves`
+      list instead (no way to recover a fresh switch-in's revealed moveset from a bare
+      `PokemonState`, and "nothing revealed yet" is directionally correct anyway for a
+      mon that hasn't acted this hypothetical turn).
+    - Bench comes from `ctx.battle.team`/`ctx.battle.opponent_team` (a benched mon takes
+      no action during a single exchange, so its CURRENT live state is exact, not an
+      approximation), excluding whichever species ended up active in `our_states`/
+      `opp_states`.
+    Field conditions (weather/terrain/trick room/side conditions) are `ctx`'s snapshot,
+    NOT re-derived per exchange -- `vgc.search.resolve_exchange` already tracks its own
+    `weather_for_exchange` override (a mega evolution granting Drought/Drizzle
+    mid-exchange) separately for its own damage math; this adapter doesn't thread that
+    override through, a known small gap for the (rare) mega-into-new-weather case.
+    """
+
+    def _resolved_active(state: PokemonState | None, live_mon) -> dict | None:
+        if state is None:
+            return None
+        species_id, mega = _resolve_species(state.species_id)
+        boosts = {
+            stat: value
+            for stat, value in (state.boosts or {}).items()
+            if stat in ("atk", "def", "spa", "spd", "spe") and value
+        }
+        revealed_moves: list[str] = []
+        if live_mon is not None and to_id(getattr(live_mon, "species", None)) == species_id:
+            revealed_moves = sorted(
+                {
+                    move_id
+                    for move_id in (to_id(mid) for mid in (getattr(live_mon, "moves", None) or {}))
+                    if move_id
+                }
+            )
+        max_hp = state.max_hp()
+        return {
+            "species": species_id,
+            "hp_fraction": (state.hp_or_max() / max_hp) if max_hp else 0.0,
+            "status": state.status,
+            "boosts": boosts,
+            "item": state.item,
+            "ability": state.ability,
+            "mega": mega,
+            "revealed_moves": revealed_moves,
+        }
+
+    def _bench_uncached(team: dict, active_species: set[str]) -> list[dict]:
+        bench: list[dict] = []
+        for mon in (team or {}).values():
+            if mon is None or getattr(mon, "fainted", False):
+                continue
+            species_id, _mega = _resolve_species(to_id(mon.species) or "")
+            if species_id in active_species:
+                continue
+            bench.append(
+                {
+                    "species_id": species_id,
+                    "hp_fraction": mon.current_hp_fraction,
+                    "status": normalize_status(mon.status),
+                }
+            )
+        return bench
+
+    def _bench(side: str, team: dict, active_species: set[str]) -> list[dict]:
+        if cache is None:
+            return _bench_uncached(team, active_species)
+        key = ("bench", side, frozenset(active_species))
+        if key not in cache:
+            cache[key] = _bench_uncached(team, active_species)
+        return cache[key]
+
+    our_active = [
+        _resolved_active(our_states[i] if i < len(our_states) else None, ctx.our_pokemon[i])
+        for i in range(2)
+    ]
+    opp_active = [
+        _resolved_active(opp_states[i] if i < len(opp_states) else None, ctx.opp_pokemon[i])
+        for i in range(2)
+    ]
+    our_active_species = {mon["species"] for mon in our_active if mon is not None}
+    opp_active_species = {mon["species"] for mon in opp_active if mon is not None}
+
+    if cache is not None and "conditions_and_field" in cache:
+        our_conditions_sorted, opp_conditions_sorted, field = cache["conditions_and_field"]
+    else:
+        our_conditions = set(_screens_from(ctx.battle.side_conditions))
+        if SideCondition.TAILWIND in ctx.battle.side_conditions:
+            our_conditions.add("tailwind")
+        opp_conditions = set(_screens_from(ctx.battle.opponent_side_conditions))
+        if SideCondition.TAILWIND in ctx.battle.opponent_side_conditions:
+            opp_conditions.add("tailwind")
+        our_conditions_sorted = sorted(our_conditions)
+        opp_conditions_sorted = sorted(opp_conditions)
+        field = {
+            "weather": ctx.weather,
+            "terrain": ctx.terrain,
+            "trick_room": ctx.trick_room,
+            "turn": getattr(ctx.battle, "turn", 0),
+        }
+        if cache is not None:
+            cache["conditions_and_field"] = (our_conditions_sorted, opp_conditions_sorted, field)
+
+    state = {
+        "our": {
+            "active": our_active,
+            "bench": _bench("our", getattr(ctx.battle, "team", None), our_active_species),
+            "side_conditions": our_conditions_sorted,
+        },
+        "opp": {
+            "active": opp_active,
+            "bench": _bench("opp", getattr(ctx.battle, "opponent_team", None), opp_active_species),
+            "side_conditions": opp_conditions_sorted,
+        },
+        "field": field,
+    }
+    return {"state": state}

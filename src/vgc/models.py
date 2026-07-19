@@ -215,7 +215,18 @@ class PolicyConfig:
     # Default "mega as soon as legal" knob: True always scores an available mega order at
     # least as high as the non-mega version of the same move (mega stats strictly help
     # here since this evaluator has no lookahead cost to "saving" the mega turn).
-    mega_evolve_asap: bool = True
+    mega_evolve_asap: bool = False
+    # Preserve the once-per-battle Mega resource when evolving does not materially alter
+    # this turn's damage, Speed order, ability, weather, or survival. Applied to a Mega
+    # order whose estimated improvement is below mega_material_gain_floor.
+    mega_unnecessary_penalty: float = 18.0
+    # Score-point improvement required before Mega is considered to change the current
+    # turn enough to spend the resource without the delay penalty.
+    mega_material_gain_floor: float = 10.0
+    # Small tie-shaping bonus for the matchup-selected default Mega from team preview;
+    # alternate Megas remain legal but need a real current-turn gain to overcome it.
+    default_mega_bonus: float = 6.0
+    alternate_mega_penalty: float = 8.0
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when
@@ -226,7 +237,8 @@ class PolicyConfig:
     # Master switch: True routes VgcPlayer.decide() through the 2-ply search instead of
     # the plain myopic evaluator, so the bot anticipates the opponent's best responses
     # (Protect, their best attack, a defensive pivot) instead of assuming they stand
-    # still. Defaults to False: the offline gate proxy (poke-env's
+    # still. Defaults to True because robust coverage of reasonable opposing actions is a
+    # required policy principle. The old offline gate proxy (poke-env's
     # SimpleHeuristicsPlayer) never Protects and doesn't target-optimize, so it
     # systematically punishes opponent-response modeling it doesn't itself exhibit
     # (2026-07 gate: myopic-only 81.7% vs search 73.3% vs SimpleHeuristicsPlayer, n=300
@@ -234,9 +246,9 @@ class PolicyConfig:
     # coordinated targeting) that a non-Protecting, non-coordinating bot opponent can
     # never demonstrate a benefit against. False must leave decide() byte-for-byte
     # identical to the pre-Phase-2c myopic-only behavior (score_joint_orders directly).
-    # Enabled explicitly per ladder session (`ladder/run_ladder.py --search`) as an A/B
-    # against real opponents until that data settles what the default should actually be.
-    use_two_ply_search: bool = False
+    # can still be selected explicitly for diagnostic A/Bs with
+    # `ladder/run_ladder.py --myopic`; it is no longer the shipped decision process.
+    use_two_ply_search: bool = True
     # How many of the myopic evaluator's top-ranked orders get the (expensive) exchange
     # search at all -- orders outside this cutoff are almost never the real best move, so
     # spending damage_range calls on them is wasted; they keep their myopic score (scaled
@@ -252,7 +264,7 @@ class PolicyConfig:
     # cross product, ranked by a cheap enumeration-time score (summed expected damage,
     # with Protect valued via protect_threat_weight) -- keeps resolve_exchange's
     # damage_range call count bounded regardless of how many moves either slot knows.
-    search_opp_candidates: int = 8
+    search_opp_candidates: int = 12
     # Points per 1% of a Pokemon's max HP lost during a simulated exchange -- the same
     # currency as damage_percent_weight, so exchange-derived and myopic-derived HP
     # percentages are directly comparable once blended together.
@@ -296,6 +308,16 @@ class PolicyConfig:
     # Setting this to 0.0 disables the search's actual influence on ranking while still
     # paying its compute cost -- useful as an isolation test, not a recommended setting.
     search_position_weight: float = 1.0
+    # Number of strategically distinct non-damaging opponent actions retained per slot
+    # (setup, denial, speed control, redirection, screens). These sit alongside attacks
+    # and Protect so the robust-play check cannot ignore a free Trick Room/Tailwind/setup.
+    search_opp_utility_per_slot: int = 2
+    # Number of previewed bench candidates retained as plausible defensive switches for
+    # each opposing slot. Search resolves these before moves, like the real engine.
+    search_opp_switches_per_slot: int = 2
+    # Exchange-value cost when the opponent successfully establishes an important
+    # non-damaging effect. Individual utility actions scale this shared currency.
+    search_opp_utility_weight: float = 25.0
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
@@ -330,6 +352,21 @@ class PolicyConfig:
     # the setter is also being brought, since TR mode wants a coherent slow core, not just
     # the setter alone.
     team_preview_tr_coherence_weight: float = 0.4
+    # Explicit first-principles preview terms. The raw damage/speed proxy remains useful,
+    # but these ensure engine denial, a closer, functional leads, and repair-capable backs
+    # can change the selected four rather than existing only in a trace.
+    team_preview_engine_answer_bonus: float = 22.0
+    team_preview_closer_pick_bonus: float = 28.0
+    team_preview_closer_back_bonus: float = 10.0
+    team_preview_lead_function_bonus: float = 12.0
+    team_preview_passive_lead_penalty: float = 30.0
+    team_preview_backline_safety_weight: float = 0.2
+    team_preview_role_coverage_bonus: float = 7.0
+    team_preview_default_mega_bonus: float = 10.0
+    team_preview_extra_mega_penalty: float = 6.0
+    team_preview_lead_engine_denial_bonus: float = 15.0
+    team_preview_second_speed_mode_bonus: float = 10.0
+    team_preview_balanced_structure_bonus: float = 8.0
 
     # --- Final integration: BC v2 candidate re-ranker (vgc.bc.policy.score_orders) ------
     # Master switch: True blends the trained BC v2 checkpoint's learned move/target
@@ -402,3 +439,66 @@ class PolicyConfig:
     # above -- 0.5 means "doing under half of what this matchup should do" triggers real
     # switch pressure; small weather-driven fluctuations above that floor don't.
     collapsed_matchup_floor: float = 0.5
+
+    # --- First-principles turn layer ---------------------------------------------------
+    # Target-selection bonuses for the opponent's whole-team primary threat and explicit
+    # engine enablers (weather/TR/Tailwind/screens/redirection/pivot cycle).
+    primary_threat_target_bonus: float = 18.0
+    engine_enabler_target_bonus: float = 15.0
+    # Action-economy values for utility/control moves that the old generic status fallback
+    # scored as zero. Accuracy is folded into the move-specific scorer when available.
+    redirection_base_value: float = 20.0
+    taunt_base_value: float = 28.0
+    encore_base_value: float = 20.0
+    yawn_base_value: float = 22.0
+    generic_sleep_value: float = 32.0
+    burn_base_value: float = 24.0
+    setup_base_value: float = 24.0
+    unsafe_setup_penalty: float = 32.0
+    wide_defense_base_value: float = 22.0
+    recovery_base_value: float = 18.0
+    # Speed-lowering attacks and Tailwind/TR are worth more when they flip the partner's
+    # order into an immediate attack/KO, not merely because speed control exists.
+    speed_drop_target_value: float = 10.0
+    speed_control_immediate_ko_bonus: float = 25.0
+    # Expected action denial from flinch-bearing moves other than Fake Out.
+    generic_flinch_weight: float = 20.0
+    # Explicit two-slot pressure synergies.
+    dual_target_pressure_bonus: float = 12.0
+    fake_out_setup_bonus: float = 18.0
+    redirection_setup_bonus: float = 22.0
+    protect_partner_cleanup_bonus: float = 20.0
+    # Information/position components of Protect and switching.
+    protect_information_per_unknown: float = 3.0
+    protect_field_stall_per_turn: float = 5.0
+    protect_reposition_bonus: float = 10.0
+    switch_activation_bonus: float = 10.0
+    switch_safe_both_bonus: float = 15.0
+    switch_endgame_preservation_bonus: float = 15.0
+    # Hard double-target threats are built from both opposing slots rather than only the
+    # single strongest move; this weight makes that realistic danger affect preservation.
+    double_target_threat_weight: float = 0.35
+
+    # --- Phase 3: outcome value head (vgc.bc.policy.position_value, in vgc.search) -----
+    # Master switch: True adds the value head's judgment of each simulated exchange's
+    # resulting position to that exchange's value in vgc.search's 2-ply search, ON TOP
+    # of the existing HP/faint-based `_exchange_value` -- the move/target heads only
+    # ever learn to imitate an average-rated ladder player's CLICK (an imitation
+    # ceiling); a value head trained on game OUTCOMES has no such ceiling, since "who's
+    # actually winning this position" doesn't care that the players it learned from were
+    # average. Defaults to False for the same reason use_bc_policy/use_two_ply_search do
+    # -- needs a real ladder A/B, not just an offline proxy, before it's trusted as a
+    # default. Requires BOTH this flag AND the checkpoint at `bc_checkpoint_path`
+    # actually carrying a value head (see `vgc.bc.policy.BcPolicy.has_value_head`) --
+    # silently a no-op (falls back to the pre-value-head exchange value) if either is
+    # false, same graceful-degradation contract as `use_bc_policy`. Opted into per
+    # ladder session via `ladder/run_ladder.py --value`.
+    use_value_head: bool = False
+    # Converts a win-probability delta (the value head's sigmoid output is in [0, 1])
+    # into the search's percent-of-HP currency: `value_head_weight * 100 * (v_after -
+    # v_before)`. 100x puts a full 0->1 probability swing (e.g. "this exchange looks
+    # like a guaranteed loss" -> "a guaranteed win") on the same scale as losing/gaining
+    # 100% of a Pokemon's HP -- deliberately the SAME scale `search_hp_weight`/
+    # `search_faint_weight` already use, so a 10% win-probability swing (10 points) is
+    # roughly comparable to a 10%-HP swing, not dominating or negligible by construction.
+    value_head_weight: float = 1.0

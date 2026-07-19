@@ -12,15 +12,19 @@ Smoke sessions default their replay/trace artifacts and outcome log to the
 ``runs/ladder.jsonl``/``runs/ladder/`` record -- pass ``--log``/``--artifacts-dir``
 explicitly to override either mode's default.
 
-``--search`` opts this session into the Phase 2c 2-ply search (``PolicyConfig.
-use_two_ply_search``, False by default -- see its comment in ``vgc/models.py``) instead
-of the plain myopic evaluator, for an A/B against real ladder opponents. ``--bc``
+The first-principles robust-response search (``PolicyConfig.use_two_ply_search``) is the
+default. ``--myopic`` opts a diagnostic session back into the old one-turn evaluator;
+``--search`` remains as a backwards-compatible explicit spelling of the default. ``--bc``
 independently opts into the BC v2 candidate re-ranker (``PolicyConfig.use_bc_policy``,
 also False by default -- see its comment in ``vgc/models.py``) on top of whichever of
-those two an evaluator path (search or myopic) is running. Every ``runs/ladder.jsonl``
-record carries a ``"policy"`` field (``"myopic"`` | ``"search"`` | ``"bc"`` |
-``"search+bc"``) so sessions stay attributable after the fact; the running mode is also
-printed at startup and in the session summary (see ``session_config``/``policy_label``).
+those two an evaluator path (search or myopic) is running. ``--value`` independently
+opts into the Phase 3 outcome value head (``PolicyConfig.use_value_head``, also False by
+default) -- only actually consumed inside the 2-ply search, so it's a no-op without
+``--search``. Every ``runs/ladder.jsonl`` record carries a ``"policy"`` field
+(``"myopic"`` | any ``"+"``-joined combo of ``"search"``/``"bc"``/``"value"``, e.g.
+``"search+bc"`` or ``"search+bc+value"``) so sessions stay attributable after the fact;
+the running mode is also printed at startup and in the session summary (see
+``session_config``/``policy_label``).
 """
 
 from __future__ import annotations
@@ -53,6 +57,7 @@ from vgc.agent import VgcPlayer  # noqa: E402
 from vgc.baselines import BASELINES, make_player  # noqa: E402
 from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
+from vgc.postmortem import classify_loss  # noqa: E402
 
 USERNAME_ENV = "VGC_SHOWDOWN_USERNAME"
 PASSWORD_ENV = "VGC_SHOWDOWN_PASSWORD"
@@ -164,12 +169,13 @@ class LadderPlayer(VgcPlayer):
             "rating": battle.rating,
             "opponent_rating": battle.opponent_rating,
             "fallback_count": sum(bool(trace.get("fallback_used")) for trace in traces),
-            # Machine-readable A/B tag: see policy_label's docstring for the 4-way combo
-            # this mirrors ("myopic" | "search" | "bc" | "search+bc").
+            # Machine-readable A/B tag for the evaluator plus optional BC/value layers.
             "policy": _policy_tag(self.config),
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
         }
+        if battle.lost:
+            record["loss_classification"] = classify_loss(traces)
         with self.log_path.open("a") as log_file:
             log_file.write(json.dumps(record, sort_keys=True) + "\n")
         self.completed_records.append(record)
@@ -216,40 +222,43 @@ def resolve_output_paths(
     return resolved_artifacts_dir, resolved_log
 
 
-def session_config(search: bool, bc: bool = False) -> PolicyConfig:
+def session_config(search: bool = True, bc: bool = False, value: bool = False) -> PolicyConfig:
     """The `PolicyConfig` for one ladder session (smoke or live): the default config
-    (myopic evaluator only), composably extended with the Phase 2c 2-ply search
-    (`--search`) and/or the BC v2 candidate re-ranker (`--bc`) -- both default to False
-    on `PolicyConfig` for the same reason: their offline gate proxy (SimpleHeuristicsPlayer)
-    doesn't exhibit the opponent behaviors (Protect timing, human-plausible move choice)
-    they're built to anticipate, so their real value can only be measured against actual
-    ladder opponents, opted into per session here rather than by flipping either global
-    default. Pure and argparse-free so it's directly unit-testable (see
-    tests/test_ladder.py).
+    (robust-response search), optionally changed to the diagnostic myopic path
+    (`--myopic`) and composably extended with the BC v2 candidate re-ranker (`--bc`)
+    and/or the outcome value head
+    (`--value`). Search is now required by the first-principles policy and defaults on;
+    BC/value remain opt-in. `--value` is only actually CONSUMED inside
+    `vgc.search.search_joint_orders` (see `PolicyConfig.use_value_head`'s comment), so
+    it composes freely but is a no-op without `--search` -- same "orthogonal flags,
+    some combinations degrade to a no-op" contract `--bc` already has (e.g. a value-only
+    checkpoint at `bc_checkpoint_path` would make `--bc` itself a no-op the same way).
+    Pure and argparse-free so it's directly unit-testable (see tests/test_ladder.py).
     """
-    config = PolicyConfig(log_decisions=True)
-    if search:
-        config = replace(config, use_two_ply_search=True)
+    config = replace(PolicyConfig(log_decisions=True), use_two_ply_search=search)
     if bc:
         config = replace(config, use_bc_policy=True)
+    if value:
+        config = replace(config, use_value_head=True)
     return config
 
 
 def _policy_tag(config: PolicyConfig) -> str:
-    """Machine-readable ``"policy"`` field for ``runs/ladder.jsonl`` records: one of the
-    four combos ``"myopic"`` | ``"search"`` | ``"bc"`` | ``"search+bc"``. ``"myopic"`` is
-    the implicit base evaluator and is only named on its own (mirrors the pre-``--bc``
-    tag exactly, so old records stay comparable) -- once BC re-ranking is on, the tag
-    names only the opt-in knobs that are actually engaged (``"bc"`` alone, or
-    ``"search+bc"`` when both are).
+    """Machine-readable ``"policy"`` field for ``runs/ladder.jsonl`` records: ``"myopic"``
+    when no opt-in knob is engaged, else ``"+"``-joined tags for whichever of
+    ``search``/``bc``/``value`` are (in that order, e.g. ``"search+bc"``,
+    ``"search+value"``, ``"bc+value"``, ``"search+bc+value"``). ``"myopic"`` alone
+    (no flags) matches the pre-``--bc``/``--value`` tag exactly, so old records stay
+    comparable.
     """
-    if config.use_two_ply_search and config.use_bc_policy:
-        return "search+bc"
-    if config.use_bc_policy:
-        return "bc"
+    parts = []
     if config.use_two_ply_search:
-        return "search"
-    return "myopic"
+        parts.append("search")
+    if config.use_bc_policy:
+        parts.append("bc")
+    if config.use_value_head:
+        parts.append("value")
+    return "+".join(parts) if parts else "myopic"
 
 
 def policy_label(config: PolicyConfig) -> str:
@@ -259,7 +268,14 @@ def policy_label(config: PolicyConfig) -> str:
     glance.
     """
     base = "2-ply search" if config.use_two_ply_search else "myopic evaluator"
-    return f"{base} + BC re-rank" if config.use_bc_policy else base
+    extras = []
+    if config.use_bc_policy:
+        extras.append("BC re-rank")
+    if config.use_value_head:
+        extras.append("value head")
+    if extras:
+        return f"{base} + {' + '.join(extras)}"
+    return base
 
 
 async def run_local_smoke(
@@ -269,11 +285,12 @@ async def run_local_smoke(
     opponent: str,
     artifacts_dir: Path,
     log_path: Path,
-    config: PolicyConfig,
+    config: PolicyConfig | None = None,
     timeout_seconds: float = 60.0,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
+    config = config or PolicyConfig(log_decisions=True)
     session_id = f"local-{_session_id()}"
     player = LadderPlayer(
         artifacts_dir=artifacts_dir,
@@ -420,11 +437,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--search",
         action="store_true",
+        default=True,
         help=(
-            "enable the Phase 2c 2-ply search (PolicyConfig.use_two_ply_search) for this "
-            "session instead of the default myopic evaluator -- an explicit per-session "
-            "A/B opt-in against real opponents (see PolicyConfig's comment for why)"
+            "use the first-principles robust-response search (now the default; retained "
+            "as a backwards-compatible explicit flag)"
         ),
+    )
+    parser.add_argument(
+        "--myopic",
+        action="store_false",
+        dest="search",
+        help="diagnostic opt-out: use the old one-turn evaluator without response search",
     )
     parser.add_argument(
         "--bc",
@@ -435,6 +458,16 @@ def parse_args() -> argparse.Namespace:
             "against real opponents (see PolicyConfig's comment for why)"
         ),
     )
+    parser.add_argument(
+        "--value",
+        action="store_true",
+        help=(
+            "enable the outcome value head (PolicyConfig.use_value_head) for this "
+            "session, composable with --search/--bc -- only actually consumed inside "
+            "the 2-ply search, so it's a no-op without --search (see PolicyConfig's "
+            "comment for why)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -443,7 +476,7 @@ def main() -> int:
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
-    config = session_config(args.search, args.bc)
+    config = session_config(args.search, args.bc, args.value)
     print(f"policy: {policy_label(config)}")
     team = args.team.read_text().strip()
     if args.local_smoke:

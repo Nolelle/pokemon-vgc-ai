@@ -147,12 +147,54 @@ def test_policy_label_matches_use_two_ply_search_and_use_bc_policy() -> None:
     assert policy_label(session_config(search=True, bc=True)) == "2-ply search + BC re-rank"
 
 
+# --- session_config: --value opt-in maps to PolicyConfig.use_value_head, composably --
+
+
+def test_session_config_with_value_enables_use_value_head() -> None:
+    config = session_config(search=False, value=True)
+    assert config.use_value_head is True
+    assert config.use_two_ply_search is False
+    assert config.use_bc_policy is False
+
+
+def test_session_config_value_flag_is_the_only_difference() -> None:
+    without_value = session_config(search=False)
+    with_value = session_config(search=False, value=True)
+    from dataclasses import replace
+
+    assert with_value == replace(without_value, use_value_head=True)
+
+
+def test_session_config_search_bc_value_are_all_composable() -> None:
+    config = session_config(search=True, bc=True, value=True)
+    assert config.use_two_ply_search is True
+    assert config.use_bc_policy is True
+    assert config.use_value_head is True
+
+
+def test_policy_label_includes_value_head() -> None:
+    assert policy_label(session_config(search=True, value=True)) == "2-ply search + value head"
+    assert (
+        policy_label(session_config(search=True, bc=True, value=True))
+        == "2-ply search + BC re-rank + value head"
+    )
+    assert policy_label(session_config(search=False, value=True)) == "myopic evaluator + value head"
+
+
 def test_policy_tag_covers_all_four_combos() -> None:
     policy_tag = run_ladder_module._policy_tag
     assert policy_tag(session_config(search=False)) == "myopic"
     assert policy_tag(session_config(search=True)) == "search"
     assert policy_tag(session_config(search=False, bc=True)) == "bc"
     assert policy_tag(session_config(search=True, bc=True)) == "search+bc"
+
+
+def test_policy_tag_covers_value_head_combos() -> None:
+    policy_tag = run_ladder_module._policy_tag
+    assert policy_tag(session_config(search=False, value=True)) == "value"
+    assert policy_tag(session_config(search=True, value=True)) == "search+value"
+    assert policy_tag(session_config(search=False, bc=True, value=True)) == "bc+value"
+    assert policy_tag(session_config(search=True, bc=True, value=True)) == "search+bc+value"
 
 
 # --- _safe_stop_listening: teardown of a dead connection must never raise -----------

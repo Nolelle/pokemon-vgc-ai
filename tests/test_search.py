@@ -27,6 +27,7 @@ from vgc.search import (
     _enumerate_opp_responses,
     _opp_slot_candidates,
     _response_weights,
+    _value_head_delta,
     resolve_exchange,
 )
 
@@ -224,6 +225,56 @@ def test_our_switch_replaces_slot_and_takes_no_action() -> None:
     assert result.our_hp_lost_pct > 0.0
 
 
+def test_opponent_defensive_switch_replaces_target_before_our_attack() -> None:
+    outgoing = _garchomp(current_hp=1)
+    incoming = _klefki()
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[outgoing, None],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(species="garchomp"), None],
+    )
+    our_order = _fake_order(_fake_single("bodyslam", move_target=1), None)
+    response = OppResponse(
+        slot0=_OppSlotAction(
+            kind="switch",
+            switch_state=incoming,
+            switch_species="klefki",
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(our_order, response, ctx, PolicyConfig())
+
+    assert result.opp_states[0].species_id == "klefki"
+    assert result.opp_faints == 0
+
+
+def test_opponent_redirection_changes_our_single_target() -> None:
+    redirector = _klefki()
+    fragile_partner = _klefki(current_hp=1)
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[redirector, fragile_partner],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(moves={"ragepowder": None}), _mon()],
+    )
+    our_order = _fake_order(_fake_single("bodyslam", move_target=2), None)
+    response = OppResponse(
+        slot0=_OppSlotAction(
+            kind="utility",
+            move_id="ragepowder",
+            utility_value=20.0,
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(our_order, response, ctx, PolicyConfig())
+
+    assert result.opp_states[1].hp_or_max() == 1
+    assert result.opp_utility_value == 20.0
+
+
 def test_our_ally_takes_spread_damage_counted_into_our_hp_lost() -> None:
     attacker = _garchomp()
     ally = _garchomp()
@@ -285,6 +336,22 @@ def test_opp_slot_candidates_excludes_protect_when_already_used_last_turn() -> N
     )
     candidates = _opp_slot_candidates(0, ctx, config)
     assert not any(c.kind == "protect" for c in candidates)
+
+
+def test_opp_slot_candidates_include_setup_and_control_utility() -> None:
+    config = PolicyConfig(search_opp_utility_per_slot=3)
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[_klefki(), None],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[
+            _mon(moves={"taunt": None, "tailwind": None, "swordsdance": None}),
+            None,
+        ],
+    )
+    candidates = _opp_slot_candidates(0, ctx, config)
+    utility_moves = {candidate.move_id for candidate in candidates if candidate.kind == "utility"}
+    assert {"taunt", "tailwind", "swordsdance"} <= utility_moves
 
 
 def test_opp_slot_candidates_no_protect_when_move_unknown() -> None:
@@ -638,3 +705,164 @@ def test_use_two_ply_search_true_uses_shallow_search_result(monkeypatch) -> None
 
     assert myopic_calls == []
     assert result is sentinel_order
+
+
+# --- resolve_exchange: ExchangeResult carries post-exchange states/weather -----------
+
+
+def test_resolve_exchange_result_carries_post_exchange_states_and_weather() -> None:
+    attacker = _garchomp()
+    defender = _klefki(current_hp=1)
+    ctx = _build_ctx(
+        our_states=[attacker, None],
+        opp_states=[defender, None],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(moves={"psychic": None}), None],
+        weather="rain",
+    )
+    our_order = _fake_order(_fake_single("earthquake"), None)
+    opp_response = OppResponse(
+        slot0=_OppSlotAction(kind="move", move_id="psychic", target_our_slot=0),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(our_order, opp_response, ctx, PolicyConfig())
+
+    assert result.weather == "rain"
+    assert len(result.our_states) == 2
+    assert len(result.opp_states) == 2
+    # Klefki (1 HP) was guarantee-KO'd by earthquake -- its post-exchange state should
+    # reflect 0 (or near-0) HP, not the pre-exchange snapshot's.
+    assert result.opp_states[0].hp_or_max() <= 1
+    # ctx's OWN states must never be mutated (module docstring's "never mutate ctx"
+    # contract) -- still the original object, still at its original 1 HP, even though
+    # result.opp_states[0] (a COPY) now reflects the KO.
+    assert ctx.opp_states[0] is defender
+    assert defender.current_hp == 1
+    assert result.opp_states[0] is not defender
+
+
+# --- _value_head_delta: only nonzero when the full signal chain is available --------
+
+
+def test_value_head_delta_zero_when_v_after_is_none() -> None:
+    delta = _value_head_delta(None, 0.5, PolicyConfig())
+    assert delta == 0.0
+
+
+def test_value_head_delta_zero_when_v_before_is_none() -> None:
+    delta = _value_head_delta(0.7, None, PolicyConfig())
+    assert delta == 0.0
+
+
+def test_value_head_delta_zero_when_both_are_none() -> None:
+    delta = _value_head_delta(None, None, PolicyConfig())
+    assert delta == 0.0
+
+
+def test_value_head_delta_matches_the_documented_formula_when_available() -> None:
+    config = PolicyConfig(value_head_weight=2.0)
+    v_before = 0.3
+    v_after = 0.55
+
+    delta = _value_head_delta(v_after, v_before, config)
+
+    expected = config.value_head_weight * 100.0 * (v_after - v_before)
+    assert delta == pytest.approx(expected)
+    assert delta == pytest.approx(50.0)  # 2.0 * 100 * (0.55 - 0.3)
+    # Sanity: the weight actually scales the term (not silently ignored).
+    delta_double_weight = _value_head_delta(v_after, v_before, PolicyConfig(value_head_weight=4.0))
+    assert delta_double_weight == pytest.approx(delta * 2.0)
+
+
+def test_position_values_batch_matches_position_value_per_state() -> None:
+    """`position_values_batch` (used by search_joint_orders for latency -- one batched
+    forward pass instead of one call per (candidate, response) pair) must produce
+    numerically identical results to calling position_value once per state.
+    """
+    pytest.importorskip("torch")
+    from vgc.bc.encoding import (
+        ABILITY_VOCAB,
+        ENCODER_LAYOUT_VERSION,
+        ITEM_VOCAB,
+        MOVE_VOCAB,
+        SPECIES_VOCAB,
+        TARGET_VOCAB,
+    )
+    from vgc.bc.model import BcPolicyNet
+    from vgc.bc.policy import BcPolicy, exchange_state_record, position_value, position_values_batch
+
+    import torch as torch_module
+
+    torch_module.manual_seed(0)
+    model = BcPolicyNet(heads=("value",))
+    model.eval()
+    policy = BcPolicy(
+        model=model,
+        species_vocab=list(SPECIES_VOCAB),
+        move_vocab=list(MOVE_VOCAB),
+        item_vocab=list(ITEM_VOCAB),
+        ability_vocab=list(ABILITY_VOCAB),
+        target_vocab=list(TARGET_VOCAB),
+        encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
+    )
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[_klefki(), None],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(), None],
+    )
+    exchange_a = ExchangeResult(our_states=[_garchomp(), None], opp_states=[_klefki(), None])
+    exchange_b = ExchangeResult(
+        our_states=[_garchomp(current_hp=1), None], opp_states=[_klefki(), None]
+    )
+    records = [
+        exchange_state_record(exchange_a.our_states, exchange_a.opp_states, ctx),
+        exchange_state_record(exchange_b.our_states, exchange_b.opp_states, ctx),
+    ]
+
+    batched = position_values_batch(policy, records)
+    individual = [position_value(policy, record) for record in records]
+
+    assert len(batched) == 2
+    for b, i in zip(batched, individual, strict=True):
+        assert b == pytest.approx(i, abs=1e-5)
+
+
+def test_position_values_batch_none_when_no_value_head() -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.encoding import (
+        ABILITY_VOCAB,
+        ENCODER_LAYOUT_VERSION,
+        ITEM_VOCAB,
+        MOVE_VOCAB,
+        SPECIES_VOCAB,
+        TARGET_VOCAB,
+    )
+    from vgc.bc.model import BcPolicyNet
+    from vgc.bc.policy import BcPolicy, exchange_state_record, position_values_batch
+
+    model = BcPolicyNet(heads=("move", "target"))
+    policy = BcPolicy(
+        model=model,
+        species_vocab=list(SPECIES_VOCAB),
+        move_vocab=list(MOVE_VOCAB),
+        item_vocab=list(ITEM_VOCAB),
+        ability_vocab=list(ABILITY_VOCAB),
+        target_vocab=list(TARGET_VOCAB),
+        encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
+    )
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[_klefki(), None],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(), None],
+    )
+    exchange = ExchangeResult(our_states=[_garchomp(), None], opp_states=[_klefki(), None])
+    records = [exchange_state_record(exchange.our_states, exchange.opp_states, ctx)]
+
+    assert position_values_batch(policy, records) == [None]
+    assert position_values_batch(None, records) == [None]
+    assert position_values_batch(policy, []) == []

@@ -79,6 +79,9 @@ def main() -> int:
     records_by_kind: Counter = Counter()
     skipped_by_reason: Counter = Counter()
     showteam_player_slots = 0
+    replays_with_resolved_winner = 0
+    won_true_count = 0
+    won_false_count = 0
 
     with tmp_path.open("w") as out_file:
         for path in files:
@@ -106,10 +109,16 @@ def main() -> int:
 
             replays_parsed += 1
             showteam_player_slots += len(result.showteam_players)
+            if result.winner is not None:
+                replays_with_resolved_winner += 1
             for key, count in result.skipped.items():
                 skipped_by_reason[key] += count
             for record in result.records:
                 records_by_kind[record["decision_kind"]] += 1
+                if record.get("won"):
+                    won_true_count += 1
+                else:
+                    won_false_count += 1
                 out_file.write(json.dumps(record, sort_keys=True) + "\n")
 
     tmp_path.replace(args.out)
@@ -128,6 +137,16 @@ def main() -> int:
     print(f"  decision records:  {total_decision_records}")
     for kind, count in sorted(records_by_kind.items()):
         print(f"    {kind}: {count}")
+    winner_rate = replays_with_resolved_winner / replays_parsed if replays_parsed else 0.0
+    won_rate = won_true_count / total_decision_records if total_decision_records else 0.0
+    print(
+        f"  resolved winner:   {replays_with_resolved_winner}/{replays_parsed} replays "
+        f"({winner_rate:.1%})"
+    )
+    print(
+        f"  won label balance: {won_true_count} True / {won_false_count} False "
+        f"({won_rate:.1%} True)"
+    )
     if skipped_by_reason:
         print("  skipped records by reason:")
         for reason, count in skipped_by_reason.most_common():

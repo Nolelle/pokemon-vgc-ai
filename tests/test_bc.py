@@ -76,11 +76,12 @@ def _turn_record(
     trick_room: bool = False,
     our_bench: list | None = None,
     opp_bench: list | None = None,
+    won: bool | None = False,
 ) -> dict:
-    return {
+    record = {
         "replay_id": replay_id,
         "rating": rating,
-        "schema": 2,
+        "schema": 3,
         "player": player,
         "turn": turn,
         "decision_kind": "turn",
@@ -104,6 +105,9 @@ def _turn_record(
         },
         "action": action,
     }
+    if won is not None:
+        record["won"] = won
+    return record
 
 
 # --- encode_state: fixed sizes, determinism, missing/unknown handling ----------------
@@ -482,8 +486,13 @@ def _synthetic_records(n_replays: int, turns_per_replay: int = 3, rating: int = 
     records = []
     for replay_idx in range(n_replays):
         replay_id = f"replay-{replay_idx}"
+        # Alternate winner so the value label has both classes -- p1 wins even replays,
+        # p2 wins odd ones (mirrors vgc.replay_parse's per-record "won" contract: True
+        # for the winning player's records, False for the other player's).
+        p1_won = replay_idx % 2 == 0
         for turn in range(1, turns_per_replay + 1):
             for player in ("p1", "p2"):
+                won = p1_won if player == "p1" else not p1_won
                 records.append(
                     _turn_record(
                         replay_id=replay_id,
@@ -500,6 +509,7 @@ def _synthetic_records(n_replays: int, turns_per_replay: int = 3, rating: int = 
                             },
                             "slot1": {"kind": "move", "move_id": "protect", "target_slot": "self"},
                         },
+                        won=won,
                     )
                 )
     return records
@@ -596,10 +606,117 @@ def test_bc_turn_dataset_masks_samples_with_unknown_target(tmp_path) -> None:
     assert has_target_values == [0.0, 1.0]
 
 
-# --- model/training smoke test: two heads, masked target loss -------------------------
+# --- BcTurnDataset: value label (schema 3 "won") + turn field -----------------------
 
 
-def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
+def test_bc_turn_dataset_value_label_matches_won(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    won_record = _turn_record(
+        replay_id="replay-won",
+        rating=1300,
+        turn=5,
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[_mon("charizard"), None],
+        action={
+            "slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"},
+            "slot1": {"kind": "move", "move_id": "protect", "target_slot": "self"},
+        },
+        won=True,
+    )
+    lost_record = _turn_record(
+        replay_id="replay-lost",
+        rating=1300,
+        turn=7,
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[_mon("charizard"), None],
+        action={
+            "slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"},
+            "slot1": {"kind": "move", "move_id": "protect", "target_slot": "self"},
+        },
+        won=False,
+    )
+    path = _write_jsonl(tmp_path, [won_record, lost_record])
+    dataset = BcTurnDataset(path, min_rating=1000, split="train", val_fraction=0.0)
+
+    assert len(dataset) == 4  # 2 slots x 2 records
+    by_turn = {int(dataset[i][7].item()): dataset[i] for i in range(len(dataset))}
+    won_sample = by_turn[5]
+    lost_sample = by_turn[7]
+    assert won_sample[5].item() == 1.0  # value_label
+    assert won_sample[6].item() == 1.0  # has_value
+    assert lost_sample[5].item() == 0.0
+    assert lost_sample[6].item() == 1.0
+
+
+def test_bc_turn_dataset_missing_won_key_masks_value_out(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    record = _turn_record(
+        replay_id="replay-pre-schema3",
+        rating=1300,
+        our_active=[_mon("garchomp"), None],
+        opp_active=[_mon("charizard"), None],
+        action={"slot0": {"kind": "move", "move_id": "earthquake", "target_slot": "opp0"}},
+        won=None,  # simulates a pre-schema-3 record with no "won" key at all
+    )
+    assert "won" not in record
+    path = _write_jsonl(tmp_path, [record])
+    dataset = BcTurnDataset(path, min_rating=1000, split="train", val_fraction=0.0)
+
+    assert len(dataset) == 1
+    assert dataset[0][6].item() == 0.0  # has_value == False
+    assert dataset.no_value_count == 1
+
+
+# --- model/training smoke test: three heads, masked target/value loss ----------------
+
+
+def test_bc_policy_net_forward_returns_three_heads_by_default() -> None:
+    torch = pytest.importorskip("torch")
+    from vgc.bc.model import BcPolicyNet
+
+    model = BcPolicyNet()
+    batch_size = 4
+    index_array = torch.zeros((batch_size, INDEX_DIM), dtype=torch.long)
+    scalars = torch.zeros((batch_size, STATE_SCALAR_DIM + SLOT_FEATURE_DIM), dtype=torch.float32)
+
+    move_logits, target_logits, value_logit = model(index_array, scalars)
+
+    assert move_logits.shape == (batch_size, len(model.move_head.bias))
+    assert target_logits.shape == (batch_size, len(model.target_head.bias))
+    assert value_logit.shape == (batch_size,)
+
+
+def test_bc_policy_net_value_only_head_config_omits_move_and_target() -> None:
+    torch = pytest.importorskip("torch")
+    from vgc.bc.model import BcPolicyNet
+
+    model = BcPolicyNet(heads=("value",))
+    assert model.move_head is None
+    assert model.target_head is None
+    assert model.value_head is not None
+
+    batch_size = 3
+    index_array = torch.zeros((batch_size, INDEX_DIM), dtype=torch.long)
+    scalars = torch.zeros((batch_size, STATE_SCALAR_DIM + SLOT_FEATURE_DIM), dtype=torch.float32)
+    move_logits, target_logits, value_logit = model(index_array, scalars)
+    assert move_logits is None
+    assert target_logits is None
+    assert value_logit.shape == (batch_size,)
+    # A value-only model carries no move/target parameters at all.
+    state_dict_keys = model.state_dict().keys()
+    assert not any(key.startswith("move_head") for key in state_dict_keys)
+    assert not any(key.startswith("target_head") for key in state_dict_keys)
+
+
+def test_bc_policy_net_multi_task_loss_decreases_over_gradient_steps(tmp_path) -> None:
+    """Masked multi-task loss smoke test: move + target + value losses jointly, loss
+    should decrease over a handful of gradient steps the same way the single/two-head
+    version always has.
+    """
     torch = pytest.importorskip("torch")
     from torch.utils.data import DataLoader
 
@@ -615,22 +732,43 @@ def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
     move_criterion = torch.nn.CrossEntropyLoss()
     target_criterion = torch.nn.CrossEntropyLoss(reduction="none")
+    value_criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
 
     losses: list[float] = []
     steps = 0
     start = time.time()
     while steps < 30:
-        for index_array, scalars, move_idx, target_idx, has_target in loader:
+        for (
+            index_array,
+            scalars,
+            move_idx,
+            target_idx,
+            has_target,
+            value_label,
+            has_value,
+            _turn,
+        ) in loader:
             optimizer.zero_grad()
-            move_logits, target_logits = model(index_array, scalars)
+            move_logits, target_logits, value_logit = model(index_array, scalars)
             move_loss = move_criterion(move_logits, move_idx)
+
             per_sample_target_loss = target_criterion(target_logits, target_idx)
-            mask_sum = has_target.sum()
-            if mask_sum > 0:
-                target_loss = (per_sample_target_loss * has_target).sum() / mask_sum
-            else:
-                target_loss = torch.zeros(())
-            loss = move_loss + 0.5 * target_loss
+            target_mask_sum = has_target.sum()
+            target_loss = (
+                (per_sample_target_loss * has_target).sum() / target_mask_sum
+                if target_mask_sum > 0
+                else torch.zeros(())
+            )
+
+            per_sample_value_loss = value_criterion(value_logit, value_label)
+            value_mask_sum = has_value.sum()
+            value_loss = (
+                (per_sample_value_loss * has_value).sum() / value_mask_sum
+                if value_mask_sum > 0
+                else torch.zeros(())
+            )
+
+            loss = move_loss + 0.5 * target_loss + 1.0 * value_loss
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
@@ -643,8 +781,10 @@ def test_bc_policy_net_loss_decreases_over_gradient_steps(tmp_path) -> None:
     assert elapsed < 5.0  # fast enough that this doesn't need @pytest.mark.slow
 
 
-def test_bc_policy_net_handles_batch_with_no_targets_at_all() -> None:
-    """A batch where every sample's target is masked out must not divide-by-zero."""
+def test_bc_policy_net_handles_batch_with_no_targets_or_values_at_all() -> None:
+    """A batch where every sample's target AND value is masked out must not
+    divide-by-zero for either head.
+    """
     torch = pytest.importorskip("torch")
     from vgc.bc.model import BcPolicyNet
 
@@ -654,13 +794,59 @@ def test_bc_policy_net_handles_batch_with_no_targets_at_all() -> None:
     scalars = torch.zeros((batch_size, STATE_SCALAR_DIM + SLOT_FEATURE_DIM), dtype=torch.float32)
     target_idx = torch.zeros((batch_size,), dtype=torch.long)
     has_target = torch.zeros((batch_size,), dtype=torch.float32)  # all masked out
+    value_label = torch.zeros((batch_size,), dtype=torch.float32)
+    has_value = torch.zeros((batch_size,), dtype=torch.float32)  # all masked out
 
-    move_logits, target_logits = model(index_array, scalars)
+    move_logits, target_logits, value_logit = model(index_array, scalars)
     target_criterion = torch.nn.CrossEntropyLoss(reduction="none")
     per_sample_target_loss = target_criterion(target_logits, target_idx)
     mask_sum = has_target.sum()
     target_loss = (
         (per_sample_target_loss * has_target).sum() / mask_sum if mask_sum > 0 else torch.zeros(())
     )
+    value_criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
+    per_sample_value_loss = value_criterion(value_logit, value_label)
+    value_mask_sum = has_value.sum()
+    value_loss = (
+        (per_sample_value_loss * has_value).sum() / value_mask_sum
+        if value_mask_sum > 0
+        else torch.zeros(())
+    )
     assert move_logits.shape == (batch_size, len(model.move_head.bias))
     assert float(target_loss.item()) == 0.0
+    assert float(value_loss.item()) == 0.0
+
+
+def test_compute_auc_perfect_separation_is_one() -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.train import compute_auc
+
+    scores = [0.1, 0.2, 0.8, 0.9]
+    labels = [0, 0, 1, 1]
+    assert compute_auc(scores, labels) == pytest.approx(1.0)
+
+
+def test_compute_auc_inverted_separation_is_zero() -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.train import compute_auc
+
+    scores = [0.9, 0.8, 0.2, 0.1]
+    labels = [0, 0, 1, 1]
+    assert compute_auc(scores, labels) == pytest.approx(0.0)
+
+
+def test_compute_auc_random_ish_is_near_half() -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.train import compute_auc
+
+    scores = [0.5, 0.5, 0.5, 0.5]
+    labels = [0, 1, 0, 1]
+    assert compute_auc(scores, labels) == pytest.approx(0.5)
+
+
+def test_compute_auc_all_one_class_returns_half() -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.train import compute_auc
+
+    assert compute_auc([0.1, 0.9], [1, 1]) == 0.5
+    assert compute_auc([], []) == 0.5

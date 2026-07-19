@@ -55,7 +55,18 @@ def parse_args() -> argparse.Namespace:
         "--target-loss-weight",
         type=float,
         default=0.5,
-        help="weight on the target-head loss: total = move_loss + weight * target_loss",
+        help="weight on the target-head loss: total = move_loss + weight * target_loss + ...",
+    )
+    parser.add_argument(
+        "--value-loss-weight",
+        type=float,
+        default=1.0,
+        help="weight on the value-head loss: total = move_loss + ... + weight * value_loss",
+    )
+    parser.add_argument(
+        "--heads",
+        default="move,target,value",
+        help="comma-separated subset of move,target,value to train (default: all three)",
     )
     parser.add_argument(
         "--patience",
@@ -67,7 +78,7 @@ def parse_args() -> argparse.Namespace:
         "--extra-checkpoint",
         type=Path,
         default=None,
-        help="also save the best checkpoint to this path (e.g. data/models/bc_policy_v2.pt)",
+        help="also save the best checkpoint to this path (e.g. data/models/bc_policy_v3.pt)",
     )
     return parser.parse_args()
 
@@ -78,6 +89,7 @@ def main() -> int:
         print(f"{args.data} does not exist -- run tools/parse_replays.py first", file=sys.stderr)
         return 1
 
+    heads = tuple(h.strip() for h in args.heads.split(",") if h.strip())
     config = TrainConfig(
         data=str(args.data),
         epochs=args.epochs,
@@ -87,8 +99,10 @@ def main() -> int:
         device=args.device,
         out_dir=str(args.out),
         target_loss_weight=args.target_loss_weight,
+        value_loss_weight=args.value_loss_weight,
         patience=args.patience,
         extra_checkpoint_path=str(args.extra_checkpoint) if args.extra_checkpoint else None,
+        heads=heads,
     )
     result = train(config)
 
@@ -99,9 +113,18 @@ def main() -> int:
     print(f"  val samples:            {result['val_samples']} (skipped {result['val_skipped']})")
     print(f"  move baseline:          {result['move_baseline']:.4f}")
     print(f"  target baseline:        {result['target_baseline']:.4f}")
+    print(
+        f"  value label balance:    {result['value_positive']}/{result['value_total']} True "
+        f"({result['value_label_rate']:.1%})"
+    )
+    print(f"  value baseline:         {result['value_baseline']:.4f}")
     print(f"  best val move top-1:    {result['best_val_move_top1']:.4f}")
     print(f"  best val move top-3:    {result['best_val_move_top3']:.4f}")
     print(f"  best val target top-1:  {result['best_val_target_top1']:.4f}")
+    print(f"  best val value acc:     {result['best_val_value_accuracy']:.4f}")
+    print(f"  best val value AUC:     {result['best_val_value_auc']:.4f}")
+    for name, acc in result["best_val_value_accuracy_by_turn_bucket"].items():
+        print(f"    value acc (turn {name}):  {acc:.4f}")
     print(
         f"  best epoch:             {result['best_epoch']} (ran {result['epochs_run']}/{args.epochs})"
     )

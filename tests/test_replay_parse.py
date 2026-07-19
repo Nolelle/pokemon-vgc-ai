@@ -388,7 +388,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 2 for record in result.records)
+    assert all(record["schema"] == 3 for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -465,3 +465,85 @@ def test_bench_entries_have_species_id_hp_fraction_and_status() -> None:
     p1_turn3 = _turn_records(result, "p1")[2]
     bench = p1_turn3["state"]["our"]["bench"]
     assert bench == [{"species_id": "klefki", "hp_fraction": 1.0, "status": "tox"}]
+
+
+# --- schema 3: winner resolution + per-record "won" ----------------------------------
+
+
+def _log_with_players(lines: list[str], *, p1_name: str = "alice", p2_name: str = "bob") -> str:
+    return _log(
+        [
+            "|gen|9",
+            f"|player|p1|{p1_name}|101|1500",
+            f"|player|p2|{p2_name}|102|1500",
+            "|poke|p1|Garchomp, L50, M|",
+            "|poke|p2|Charizard, L50, M|",
+            "|teampreview|4",
+            "|t:|1000",
+            "|start",
+            "|switch|p1a: Garchomp|Garchomp, L50, M|100/100",
+            "|switch|p2a: Charizard|Charizard, L50, M|100/100",
+            "|turn|1",
+            *lines,
+        ]
+    )
+
+
+def test_win_line_resolves_winner_to_the_matching_side() -> None:
+    log = _log_with_players(["|win|bob"])
+    result = parse_replay("test-win-p2", 1400, log)
+    assert result.ok is True
+    assert result.winner == "p2"
+
+
+def test_win_line_marks_only_the_winning_players_records_as_won() -> None:
+    log = _log_with_players(["|win|alice"])
+    result = parse_replay("test-win-p1", 1400, log)
+    assert result.winner == "p1"
+    assert all(record["won"] is True for record in result.records if record["player"] == "p1")
+    assert all(record["won"] is False for record in result.records if record["player"] == "p2")
+
+
+def test_tie_line_leaves_winner_none_and_every_record_unwon() -> None:
+    log = _log_with_players(["|tie|"])
+    result = parse_replay("test-tie", 1400, log)
+    assert result.winner is None
+    assert all(record["won"] is False for record in result.records)
+
+
+def test_win_line_with_unresolvable_name_leaves_winner_none() -> None:
+    log = _log_with_players(["|win|someone-else-entirely"])
+    result = parse_replay("test-win-unresolved", 1400, log)
+    assert result.winner is None
+    assert result.skipped["unresolved_winner_name"] == 1
+    assert all(record["won"] is False for record in result.records)
+
+
+def test_no_player_lines_at_all_leaves_winner_none_gracefully() -> None:
+    # Every OTHER fixture log in this file omits |player| lines entirely -- confirms
+    # that's handled gracefully (not just incidentally not-crashing).
+    result = parse_replay("test-two-turn", 1400, _two_turn_log())
+    assert result.ok is True
+    assert result.winner is None
+    assert all(record["won"] is False for record in result.records)
+
+
+def test_every_record_carries_a_won_key_regardless_of_decision_kind() -> None:
+    result = parse_replay("test-two-turn", 1400, _two_turn_log())
+    assert result.records
+    assert all("won" in record for record in result.records)
+    kinds = {record["decision_kind"] for record in result.records}
+    assert "teampreview" in kinds and "turn" in kinds
+
+
+def test_real_fixture_winner_matches_the_actual_replay_outcome() -> None:
+    payload = json.loads(FIXTURE_PATH.read_text())
+    result = parse_replay(payload["id"], payload.get("rating"), payload["log"])
+    assert result.ok is True
+    # tests/fixtures/replay_sample.json: |player|p1|Marihuano0503|..., |player|p2|
+    # pcrlbot0421735f7b|..., |win|pcrlbot0421735f7b -- p2 won.
+    assert result.winner == "p2"
+    p2_records = [r for r in result.records if r["player"] == "p2"]
+    p1_records = [r for r in result.records if r["player"] == "p1"]
+    assert p2_records and all(r["won"] is True for r in p2_records)
+    assert p1_records and all(r["won"] is False for r in p1_records)

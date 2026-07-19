@@ -43,6 +43,7 @@ from vgc.bc.policy import (
     _target_token,
     battle_state_record,
     load_bc_policy,
+    position_value,
     score_orders,
 )
 from vgc.data import load_moves
@@ -473,6 +474,7 @@ def test_load_bc_policy_caches_per_path(tmp_path, monkeypatch) -> None:
             "ability_vocab": ABILITY_VOCAB,
             "target_vocab": TARGET_VOCAB,
             "encoder_layout_version": ENCODER_LAYOUT_VERSION,
+            "heads": model.heads,
         },
         checkpoint_path,
     )
@@ -508,6 +510,7 @@ def _tiny_checkpoint_policy(tmp_path) -> BcPolicy:
         ability_vocab=list(ABILITY_VOCAB),
         target_vocab=list(TARGET_VOCAB),
         encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
     )
 
 
@@ -558,7 +561,7 @@ def test_score_orders_blends_heuristic_and_bc_logprob(tmp_path) -> None:
     slot_onehots = np.eye(SLOT_FEATURE_DIM, dtype=np.float32)
     scalar_batch = np.concatenate([np.tile(scalar_array, (2, 1)), slot_onehots], axis=1)
     with torch.no_grad():
-        move_logits, target_logits = policy.model(
+        move_logits, target_logits, _value_logit = policy.model(
             torch.from_numpy(index_batch), torch.from_numpy(scalar_batch)
         )
         move_logp = torch.log_softmax(move_logits, dim=-1)
@@ -629,3 +632,102 @@ def test_score_orders_out_of_vocab_candidate_keeps_heuristic_score() -> None:
 
     assert result[0].score == 42.0
     assert result[0].breakdown["bc_skipped"] is True
+
+
+# --- position_value: None when absent, sigmoid-bounded when present -----------------
+
+
+def test_position_value_none_when_policy_is_none() -> None:
+    battle = _score_battle()
+    record = battle_state_record(battle, None)
+    assert position_value(None, record) is None
+
+
+def test_position_value_none_when_checkpoint_has_no_value_head() -> None:
+    torch = pytest.importorskip("torch")
+    from vgc.bc.model import BcPolicyNet
+
+    torch.manual_seed(0)
+    model = BcPolicyNet(heads=("move", "target"))
+    model.eval()
+    policy = BcPolicy(
+        model=model,
+        species_vocab=list(SPECIES_VOCAB),
+        move_vocab=list(MOVE_VOCAB),
+        item_vocab=list(ITEM_VOCAB),
+        ability_vocab=list(ABILITY_VOCAB),
+        target_vocab=list(TARGET_VOCAB),
+        encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
+    )
+    battle = _score_battle()
+    record = battle_state_record(battle, None)
+    assert position_value(policy, record) is None
+
+
+def test_position_value_returns_a_probability_when_value_head_present() -> None:
+    torch = pytest.importorskip("torch")
+    from vgc.bc.model import BcPolicyNet
+
+    torch.manual_seed(0)
+    model = BcPolicyNet(heads=("value",))
+    model.eval()
+    policy = BcPolicy(
+        model=model,
+        species_vocab=list(SPECIES_VOCAB),
+        move_vocab=list(MOVE_VOCAB),
+        item_vocab=list(ITEM_VOCAB),
+        ability_vocab=list(ABILITY_VOCAB),
+        target_vocab=list(TARGET_VOCAB),
+        encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
+    )
+    battle = _score_battle()
+    record = battle_state_record(battle, None)
+
+    value = position_value(policy, record)
+
+    assert value is not None
+    assert 0.0 <= value <= 1.0
+
+
+def test_position_value_averages_over_both_slot_perspectives() -> None:
+    """Independently recompute the slot-0/slot-1 forward passes and confirm
+    position_value is their mean, not just one slot's opinion.
+    """
+    torch = pytest.importorskip("torch")
+    import numpy as np
+
+    from vgc.bc.encoding import SLOT_FEATURE_DIM, encode_state, flatten_state
+    from vgc.bc.model import BcPolicyNet
+
+    torch.manual_seed(0)
+    model = BcPolicyNet(heads=("value",))
+    model.eval()
+    policy = BcPolicy(
+        model=model,
+        species_vocab=list(SPECIES_VOCAB),
+        move_vocab=list(MOVE_VOCAB),
+        item_vocab=list(ITEM_VOCAB),
+        ability_vocab=list(ABILITY_VOCAB),
+        target_vocab=list(TARGET_VOCAB),
+        encoder_layout_version=ENCODER_LAYOUT_VERSION,
+        heads=model.heads,
+    )
+    battle = _score_battle()
+    record = battle_state_record(battle, None)
+    index_array, scalar_array = flatten_state(encode_state(record))
+
+    with torch.no_grad():
+        probs = []
+        for slot in (0, 1):
+            onehot = np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)
+            onehot[slot] = 1.0
+            scalars = np.concatenate([scalar_array, onehot])
+            _m, _t, value_logit = model(
+                torch.from_numpy(index_array).unsqueeze(0), torch.from_numpy(scalars).unsqueeze(0)
+            )
+            probs.append(torch.sigmoid(value_logit).item())
+    expected = sum(probs) / 2.0
+
+    assert position_value(policy, record) == pytest.approx(expected, abs=1e-5)

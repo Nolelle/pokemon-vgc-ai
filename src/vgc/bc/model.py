@@ -1,6 +1,6 @@
 """`BcPolicyNet`: a plain `torch.nn` species/item/ability/move-embedding + MLP
-behavior-cloning policy network with TWO heads (no Lightning/other training-framework
-dependency).
+behavior-cloning policy network with up to THREE heads sharing one trunk (no
+Lightning/other training-framework dependency).
 
 SCOPE reminder (see `vgc.bc` package docstring): this validates that a BC pipeline can
 learn a human-plausible next-move-id (and target) distribution -- it is NOT a playable
@@ -30,10 +30,24 @@ this import is guarded the same way.
 
 ## Output
 
-TWO heads sharing the same trunk: `(move_logits, target_logits)` --
-`(batch, len(MOVE_VOCAB))` and `(batch, len(TARGET_VOCAB))`. See `vgc.bc.train` for how
-the two losses are combined (move loss always applies; target loss is masked per-sample
-by `vgc.bc.dataset`'s `has_target` flag).
+`forward` always returns a 3-tuple `(move_logits, target_logits, value_logit)`; a head
+that isn't in `heads` (constructor arg, default `("move", "target", "value")`) returns
+`None` in its slot instead of a tensor, and its `nn.Linear` is never constructed at all
+(so a value-only checkpoint carries no move/target parameters, and vice versa) -- ONE
+model class covers move+target (the original v2 policy), move+target+value (Phase 3's
+outcome-value net trained jointly), or value-only, entirely via which strings are in
+`heads`. Shapes when present: `move_logits` `(batch, len(MOVE_VOCAB))`, `target_logits`
+`(batch, len(TARGET_VOCAB))`, `value_logit` `(batch,)` (a single raw logit per sample --
+callers apply `sigmoid` themselves for `P(this record's player wins)`, matching how
+`move_logits`/`target_logits` are raw too and `vgc.bc.train`/`vgc.bc.policy` do their own
+softmax/log-softmax). See `vgc.bc.train` for how the (up to three) losses are combined --
+move loss always applies when the move head exists; target/value loss are masked
+per-sample by `vgc.bc.dataset`'s `has_target`/`has_value` flags.
+
+Every checkpoint saves its own `"heads"` tuple (`vgc.bc.train._checkpoint_payload`)
+alongside the vocab lists, so `vgc.bc.policy.load_bc_policy` rebuilds the exact same head
+configuration a checkpoint was trained with -- a checkpoint saved before this feature
+(no `"heads"` key) is treated as `("move", "target")`, matching what it actually is.
 """
 
 from __future__ import annotations
@@ -74,6 +88,11 @@ DROPOUT_P = 0.1
 DEFAULT_SCALAR_DIM = STATE_SCALAR_DIM + SLOT_FEATURE_DIM
 _MOVE_PAD_IDX = MOVE_TO_IDX["<pad>"]
 
+# Every head this architecture knows how to build -- `heads` args elsewhere are always a
+# subset of this tuple, in this order (mirrors forward()'s return order).
+ALL_HEADS: tuple[str, ...] = ("move", "target", "value")
+DEFAULT_HEADS: tuple[str, ...] = ALL_HEADS
+
 
 class BcPolicyNet(nn.Module):
     def __init__(
@@ -90,8 +109,10 @@ class BcPolicyNet(nn.Module):
         move_embed_dim: int = MOVE_EMBED_DIM,
         hidden_dim: int = HIDDEN_DIM,
         dropout: float = DROPOUT_P,
+        heads: tuple[str, ...] = DEFAULT_HEADS,
     ) -> None:
         super().__init__()
+        self.heads: tuple[str, ...] = tuple(heads)
         # Shared across active AND bench species -- see module docstring.
         self.species_embedding = nn.Embedding(species_vocab_size, species_embed_dim)
         self.item_embedding = nn.Embedding(item_vocab_size, item_embed_dim)
@@ -113,14 +134,25 @@ class BcPolicyNet(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
         )
-        self.move_head = nn.Linear(hidden_dim, move_vocab_size)
-        self.target_head = nn.Linear(hidden_dim, target_vocab_size)
+        # A head not in `self.heads` is `None` -- never constructed, never trained,
+        # never appears in state_dict() -- rather than built-but-unused, so a value-only
+        # checkpoint genuinely carries no move/target parameters (and vice versa).
+        self.move_head = nn.Linear(hidden_dim, move_vocab_size) if "move" in self.heads else None
+        self.target_head = (
+            nn.Linear(hidden_dim, target_vocab_size) if "target" in self.heads else None
+        )
+        # Single logit -- sigmoid(value_logit) = P(this record's player wins). No hidden
+        # layer of its own (unlike move/target, "who's winning" is a much lower-capacity
+        # question than "which of ~400 moves" -- a linear readout off the shared trunk is
+        # plenty, and keeps the head cheap to add without changing the trunk's own size).
+        self.value_head = nn.Linear(hidden_dim, 1) if "value" in self.heads else None
 
     def forward(
         self, index_array: torch.Tensor, scalars: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
         """`index_array`: `(batch, INDEX_DIM)` int64. `scalars`: `(batch, scalar_dim)`
-        float32. Returns `(move_logits, target_logits)`.
+        float32. Returns `(move_logits, target_logits, value_logit)` -- `None` in any
+        slot whose head isn't in `self.heads` (see module docstring).
         """
         batch_size = index_array.shape[0]
 
@@ -149,4 +181,7 @@ class BcPolicyNet(nn.Module):
             dim=-1,
         )
         hidden = self.trunk(features)
-        return self.move_head(hidden), self.target_head(hidden)
+        move_logits = self.move_head(hidden) if self.move_head is not None else None
+        target_logits = self.target_head(hidden) if self.target_head is not None else None
+        value_logit = self.value_head(hidden).squeeze(-1) if self.value_head is not None else None
+        return move_logits, target_logits, value_logit

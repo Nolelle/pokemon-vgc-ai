@@ -119,10 +119,24 @@ The `TARGET_VOCAB` index of WHERE that slot's action goes:
   still train the move head on the same sample (see `vgc.bc.dataset`).
 - Anything else -> `None`.
 
+## `encode_value(record) -> float | None`
+
+`1.0` if `record["won"]` is `True`, `0.0` if `False`, `None` if the key is missing
+entirely (a pre-schema-3 `vgc.replay_parse` record). Unlike `encode_action`/
+`encode_target`, NOT gated to `decision_kind == "turn"` -- "who won the game" is a
+per-record fact regardless of decision kind (`vgc.bc.dataset.BcTurnDataset` only ever
+calls this for "turn" records today, matching the move/target heads' training data, but
+the function itself doesn't assume that). The `None` case masks the value loss out the
+same way `encode_target`'s `None` masks the target loss (see `vgc.bc.dataset`) --
+matters for training on any decisions.jsonl built before schema 3.
+
 ## `ENCODER_LAYOUT_VERSION`
 
 Bumped to `"bc-encoding-v2"`. Saved into every training checkpoint alongside the vocab
-lists -- bump again whenever this module's encoding layout changes.
+lists -- bump again whenever this module's STATE encoding layout changes. `encode_value`
+doesn't touch state encoding at all (it reads `record["won"]` directly, nothing from
+`encode_state`'s output), so adding it did NOT bump this version -- a value-headed
+checkpoint's compatibility is still gated purely on the state layout, exactly as before.
 """
 
 from __future__ import annotations
@@ -383,3 +397,11 @@ def encode_target(record: dict, slot: int) -> int | None:
             return TARGET_TO_IDX["self_or_field"]
         return TARGET_TO_IDX.get(target_slot)
     return None
+
+
+def encode_value(record: dict) -> float | None:
+    """See module docstring's "`encode_value`" section."""
+    won = record.get("won")
+    if won is None:
+        return None
+    return 1.0 if won else 0.0

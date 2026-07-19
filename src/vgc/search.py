@@ -20,15 +20,12 @@ before it).
    `search_myopic_weight`) and the returned list stays complete and consistently
    comparable (see `search_joint_orders`'s docstring for the exact blend).
 3. `_enumerate_opp_responses(ctx, config)` builds a capped set of plausible opponent
-   joint responses: per opponent slot, the top `search_opp_moves_per_slot` known
-   damaging moves by expected damage (one candidate per (move, our-target-slot) pair for
-   single-target moves, one candidate for spread moves) PLUS a Protect candidate
-   whenever the slot's known kit contains a `_SELF_PROTECT_MOVES` member and it hasn't
-   already Protected last turn -- "known" via `vgc.sets.opponent_move_ids` (Open Team
-   Sheets when available, PLUS a replay-corpus-frequency fill for whatever's still
-   unrevealed, since OTS essentially never triggers on the real ladder -- see
-   `vgc.evaluator`'s module docstring) -- cross-producted across the two slots and
-   pruned to `search_opp_candidates` by a cheap enumeration-time score.
+   joint responses: per opponent slot, top known damaging moves/targets, Protect,
+   strategic utility/control (setup, speed control, denial, redirection, screens), and
+   the safest previewed defensive switches. "Known" moves come from
+   `vgc.sets.opponent_move_ids` (revealed set plus replay-corpus priors). The per-slot
+   choices are cross-producted and pruned to `search_opp_candidates` by a cheap
+   enumeration-time score; Protect and switch likelihoods are calibrated separately.
 4. `resolve_exchange(our_order, opp_response, ctx, config)` simulates ONE turn: our
    switches/mega resolve first (like the real engine), then every remaining move/Protect
    action (ours and theirs) executes in priority/speed order (Trick-Room-aware, reusing
@@ -60,11 +57,10 @@ before it).
 
 ## v1 scope gaps (documented, not oversights)
 
-- **No opponent switches.** Open Team Sheets reveal the previewed 6's sets, not which
-  four are actually on this opponent's team or what a switch-in's likely play would be
-  -- modeling a switch response would be pure guesswork at this depth. The myopic
-  evaluator's `opp_switch_prob` dampening (`vgc.evaluator`) already covers this
-  probabilistically inside the myopic half of the blend above.
+- **Opponent switches use preview candidates.** The search retains the safest previewed
+  bench states and weights them by pressure-derived switch probability. It cannot know
+  which four were actually brought, and it does not predict the switch-in's following-
+  turn move at this depth.
 - **Only ONE ply of opponent response** -- this is a 2-ply search (our move, then their
   best response), not a full minimax tree. No modeling of what WE would do on the
   following turn.
@@ -89,7 +85,7 @@ before it).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import cmp_to_key, partial
 
 from poke_env.battle.double_battle import DoubleBattle
@@ -99,6 +95,12 @@ from poke_env.battle.side_condition import SideCondition
 from poke_env.player.battle_order import DoubleBattleOrder
 
 from vgc.actions import describe_order
+from vgc.bc.policy import (
+    exchange_state_record,
+    load_bc_policy,
+    position_value,
+    position_values_batch,
+)
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves
 from vgc.decision_trace import record_note
@@ -120,7 +122,8 @@ from vgc.evaluator import (
     score_joint_orders,
 )
 from vgc.models import PolicyConfig
-from vgc.sets import opponent_move_ids
+from vgc.principles import REDIRECTION_MOVES, utility_kind
+from vgc.sets import load_usage_spreads, opponent_move_ids, opponent_state
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -144,6 +147,9 @@ class _OppSlotAction:
     move_id: str | None = None
     target_our_slot: int | None = None
     value: float = 0.0
+    switch_state: PokemonState | None = None
+    switch_species: str | None = None
+    utility_value: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -170,6 +176,8 @@ def _describe_opp_slot_action(action: _OppSlotAction) -> str:
         return "pass"
     if action.kind == "protect":
         return action.move_id or "protect"
+    if action.kind == "switch":
+        return f"switch->{action.switch_species or 'unknown'}"
     target = f"@our{action.target_our_slot}" if action.target_our_slot is not None else ""
     return f"{action.move_id}{target}"
 
@@ -269,6 +277,73 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
             _OppSlotAction(kind="protect", move_id=protect_move_id, value=protect_value)
         )
 
+    utility_actions: list[_OppSlotAction] = []
+    for move_id in move_ids:
+        kind = utility_kind(move_id)
+        if kind is None or kind == "protect":
+            continue
+        kind_scale = {
+            "speed_control": 1.0,
+            "action_denial": 1.0,
+            "redirection": 0.9,
+            "setup": 0.9,
+            "screen": 0.7,
+            "burn": 0.7,
+            "wide_defense": 0.8,
+            "recovery": 0.5,
+            "pivot": 0.6,
+        }.get(kind, 0.5)
+        strategic_value = config.search_opp_utility_weight * kind_scale
+        utility_actions.append(
+            _OppSlotAction(
+                kind="utility",
+                move_id=move_id,
+                value=strategic_value,
+                utility_value=strategic_value,
+            )
+        )
+    utility_actions.sort(key=lambda action: action.value, reverse=True)
+    candidates.extend(utility_actions[: max(0, config.search_opp_utility_per_slot)])
+
+    # Previewed-but-not-active Pokemon are plausible defensive pivots. Retain the switch-
+    # ins that take the least estimated damage from our current board; response weighting
+    # below scales them by the evaluator's pressure-derived switch probability.
+    preview = list(getattr(ctx.battle, "teampreview_opponent_team", None) or [])
+    active_species = {
+        to_id(mon.species) for mon in ctx.opp_pokemon if mon is not None and not mon.fainted
+    }
+    usage = load_usage_spreads()
+    switch_actions: list[_OppSlotAction] = []
+    for bench_mon in preview:
+        species_id = to_id(getattr(bench_mon, "species", None))
+        if not species_id or species_id in active_species or getattr(bench_mon, "fainted", False):
+            continue
+        bench_state = opponent_state(bench_mon, usage=usage)
+        worst_incoming = 0.0
+        for our_idx in ctx.our_alive():
+            our_state = ctx.our_states[our_idx]
+            our_mon = ctx.our_pokemon[our_idx]
+            if our_state is None or our_mon is None:
+                continue
+            pct, _, _ = _best_attacking_move(
+                our_state,
+                list(our_mon.moves.keys()) if our_mon.moves else [],
+                bench_state,
+                ctx.field_state(defender_is_ours=False, num_targets=1),
+            )
+            worst_incoming = max(worst_incoming, pct)
+        switch_value = max(0.0, 100.0 - worst_incoming)
+        switch_actions.append(
+            _OppSlotAction(
+                kind="switch",
+                value=switch_value,
+                switch_state=bench_state,
+                switch_species=species_id,
+            )
+        )
+    switch_actions.sort(key=lambda action: action.value, reverse=True)
+    candidates.extend(switch_actions[: max(0, config.search_opp_switches_per_slot)])
+
     if not candidates:
         candidates.append(_OppSlotAction(kind="none"))
     return candidates
@@ -284,6 +359,12 @@ def _enumerate_opp_responses(ctx: _Context, config: PolicyConfig) -> list[OppRes
     joint: list[tuple[float, OppResponse]] = []
     for slot0_action in per_slot[0]:
         for slot1_action in per_slot[1]:
+            if (
+                slot0_action.kind == "switch"
+                and slot1_action.kind == "switch"
+                and slot0_action.switch_species == slot1_action.switch_species
+            ):
+                continue
             joint_score = slot0_action.value + slot1_action.value
             joint.append(
                 (
@@ -307,12 +388,23 @@ class ExchangeResult:
     percent of ITS OWN max HP (capped at whatever HP it had left when hit, so overkill
     damage past 0 doesn't inflate the total). `faints` counts mons that crossed from
     HP > 0 to HP <= 0 during this exchange.
+
+    `our_states`/`opp_states`/`weather` are the POST-exchange snapshot (copies -- see
+    `resolve_exchange`'s "never mutate ctx" contract) -- only populated for
+    `PolicyConfig.use_value_head`'s benefit (`vgc.bc.policy.exchange_state_record`
+    builds a value-head-ready record from them); every other caller only reads the
+    HP/faint totals above, same as before this field existed.
     """
 
     our_hp_lost_pct: float = 0.0
     our_faints: int = 0
     opp_hp_lost_pct: float = 0.0
     opp_faints: int = 0
+    our_states: list[PokemonState | None] = field(default_factory=list)
+    opp_states: list[PokemonState | None] = field(default_factory=list)
+    weather: str | None = None
+    our_utility_value: float = 0.0
+    opp_utility_value: float = 0.0
 
 
 @dataclass
@@ -324,11 +416,13 @@ class _Action:
 
     side: str  # "our" | "opp"
     slot: int
-    kind: str  # "move" | "protect"
+    kind: str  # "move" | "protect" | "utility"
     move_id: str | None
     targets: list[tuple[str, int, bool]]  # (side, idx, is_ally_of_the_actor)
     priority: int
     speed: float = 0.0  # filled in once the exchange's weather/mega state is settled
+    utility_value: float = 0.0
+    spread: bool = False
 
 
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
@@ -342,7 +436,10 @@ def _copy_state(state: PokemonState | None) -> PokemonState | None:
 
 
 def _build_our_actions(
-    our_order: DoubleBattleOrder, ctx: _Context, our_states: list[PokemonState | None]
+    our_order: DoubleBattleOrder,
+    ctx: _Context,
+    our_states: list[PokemonState | None],
+    config: PolicyConfig,
 ) -> tuple[list[_Action], str | None]:
     """Resolve OUR switches/mega evolution immediately (mutating `our_states` in place,
     exactly as the real engine resolves them before any move executes), then return the
@@ -384,7 +481,32 @@ def _build_our_actions(
                         priority=int(move_data.get("priority", 0)),
                     )
                 )
-            continue  # other status moves have no HP effect in the exchange (v1 scope)
+            else:
+                kind = utility_kind(move_id)
+                if kind is not None:
+                    utility_scale = {
+                        "speed_control": 1.0,
+                        "action_denial": 1.0,
+                        "redirection": 0.9,
+                        "setup": 0.9,
+                        "screen": 0.7,
+                        "burn": 0.7,
+                        "wide_defense": 0.8,
+                        "recovery": 0.5,
+                        "pivot": 0.6,
+                    }.get(kind, 0.5)
+                    actions.append(
+                        _Action(
+                            side="our",
+                            slot=slot,
+                            kind="utility",
+                            move_id=move_id,
+                            targets=[],
+                            priority=int(move_data.get("priority", 0)),
+                            utility_value=config.search_opp_utility_weight * utility_scale,
+                        )
+                    )
+            continue
         targets = _resolve_targets(move_data, slot, single.move_target, ctx)
         side_tagged = [("opp", idx, False) for idx, is_ally in targets if not is_ally] + [
             ("our", idx, True) for idx, is_ally in targets if is_ally
@@ -397,18 +519,18 @@ def _build_our_actions(
                 move_id=move_id,
                 targets=side_tagged,
                 priority=int(move_data.get("priority", 0)),
+                spread=move_data.get("target")
+                in (_SPREAD_TARGETS_FOES_ONLY | _SPREAD_TARGETS_HITTING_ALLY),
             )
         )
     return actions, weather_override
 
 
 def _build_opp_actions(opp_response: OppResponse, ctx: _Context) -> list[_Action]:
-    """Opponent responses never include switches (see module docstring's scope gaps),
-    so this only needs to turn each `_OppSlotAction` into a move/Protect `_Action`.
-    """
+    """Turn non-switch response choices into executable move/Protect/utility actions."""
     actions: list[_Action] = []
     for slot, slot_action in enumerate((opp_response.slot0, opp_response.slot1)):
-        if slot_action.kind == "none":
+        if slot_action.kind in {"none", "switch"}:
             continue
         move_data = load_moves().get(slot_action.move_id) if slot_action.move_id else None
         if slot_action.kind == "protect":
@@ -420,6 +542,21 @@ def _build_opp_actions(opp_response: OppResponse, ctx: _Context) -> list[_Action
                     move_id=slot_action.move_id,
                     targets=[],
                     priority=int((move_data or {}).get("priority", 0)),
+                )
+            )
+            continue
+        if slot_action.kind == "utility":
+            if move_data is None:
+                continue
+            actions.append(
+                _Action(
+                    side="opp",
+                    slot=slot,
+                    kind="utility",
+                    move_id=slot_action.move_id,
+                    targets=[],
+                    priority=int(move_data.get("priority", 0)),
+                    utility_value=slot_action.utility_value,
                 )
             )
             continue
@@ -447,6 +584,8 @@ def _build_opp_actions(opp_response: OppResponse, ctx: _Context) -> list[_Action
                 move_id=slot_action.move_id,
                 targets=targets,
                 priority=int(move_data.get("priority", 0)),
+                spread=move_data.get("target")
+                in (_SPREAD_TARGETS_FOES_ONLY | _SPREAD_TARGETS_HITTING_ALLY),
             )
         )
     return actions
@@ -476,6 +615,8 @@ def _apply_action(
     opp_states: list[PokemonState | None],
     our_protected: list[bool],
     opp_protected: list[bool],
+    our_redirector: list[int | None],
+    opp_redirector: list[int | None],
     weather_for_exchange: str | None,
     ctx: _Context,
     result: ExchangeResult,
@@ -488,6 +629,16 @@ def _apply_action(
     if action.kind == "protect":
         protected = our_protected if action.side == "our" else opp_protected
         protected[action.slot] = True
+        return
+    if action.kind == "utility":
+        if action.side == "our":
+            result.our_utility_value += action.utility_value
+            if action.move_id in REDIRECTION_MOVES:
+                our_redirector[0] = action.slot
+        else:
+            result.opp_utility_value += action.utility_value
+            if action.move_id in REDIRECTION_MOVES:
+                opp_redirector[0] = action.slot
         return
 
     num_targets = len(action.targets)
@@ -507,7 +658,12 @@ def _apply_action(
         is_doubles=True,
         num_targets=num_targets,
     )
-    for side, idx, _is_ally in action.targets:
+    for side, original_idx, _is_ally in action.targets:
+        idx = original_idx
+        if not action.spread and side != action.side:
+            redirector = our_redirector[0] if side == "our" else opp_redirector[0]
+            if redirector is not None:
+                idx = redirector
         defender_states = our_states if side == "our" else opp_states
         defender_state = defender_states[idx]
         if defender_state is None or defender_state.hp_or_max() <= 0:
@@ -549,8 +705,11 @@ def resolve_exchange(
     our_states = [_copy_state(state) for state in ctx.our_states]
     opp_states = [_copy_state(state) for state in ctx.opp_states]
 
-    our_actions, weather_override = _build_our_actions(our_order, ctx, our_states)
+    our_actions, weather_override = _build_our_actions(our_order, ctx, our_states, config)
     weather_for_exchange = weather_override if weather_override is not None else ctx.weather
+    for slot, slot_action in enumerate((opp_response.slot0, opp_response.slot1)):
+        if slot_action.kind == "switch" and slot_action.switch_state is not None:
+            opp_states[slot] = _copy_state(slot_action.switch_state)
     opp_actions = _build_opp_actions(opp_response, ctx)
 
     our_tailwind = SideCondition.TAILWIND in ctx.battle.side_conditions
@@ -576,6 +735,8 @@ def resolve_exchange(
     result = ExchangeResult()
     our_protected = [False, False]
     opp_protected = [False, False]
+    our_redirector: list[int | None] = [None]
+    opp_redirector: list[int | None] = [None]
     for action in all_actions:
         _apply_action(
             action,
@@ -583,10 +744,15 @@ def resolve_exchange(
             opp_states,
             our_protected,
             opp_protected,
+            our_redirector,
+            opp_redirector,
             weather_for_exchange,
             ctx,
             result,
         )
+    result.our_states = our_states
+    result.opp_states = opp_states
+    result.weather = weather_for_exchange
     return result
 
 
@@ -617,6 +783,8 @@ def _response_weights(
         for slot_idx, slot_action in enumerate((response.slot0, response.slot1)):
             if slot_action.kind == "protect":
                 raw_weights[i] *= ctx.opp_protect_prob[slot_idx]
+            elif slot_action.kind == "switch":
+                raw_weights[i] *= max(0.05, ctx.opp_switch_prob[slot_idx])
 
     total = sum(raw_weights)
     if total <= 0.0:
@@ -666,7 +834,27 @@ def _exchange_value(result: ExchangeResult, config: PolicyConfig) -> float:
         result.our_hp_lost_pct * config.search_hp_weight
         + result.our_faints * config.search_faint_weight
     )
-    return opp_loss - our_loss
+    return opp_loss - our_loss + result.our_utility_value - result.opp_utility_value
+
+
+def _value_head_delta(v_after: float | None, v_before: float | None, config: PolicyConfig) -> float:
+    """`config.value_head_weight * 100 * (v_after - v_before)` -- the outcome value
+    head's opinion of how much an exchange's resulting position improved/worsened our
+    win probability, in the same percent-of-HP currency `_exchange_value` already uses
+    (see `PolicyConfig.value_head_weight`'s comment for the 100x scale). Returns 0.0 (a
+    true no-op, not just "small") whenever either probability is unavailable -- `v_after`/
+    `v_before` being `None` covers every disabled/degraded case upstream (flag off,
+    checkpoint missing, checkpoint has no value head -- see `vgc.bc.policy.position_value`
+    and `position_values_batch`'s own None-means-disabled contracts), so this function
+    itself doesn't need to know WHY a probability is missing, only that it is. Pure
+    arithmetic (no policy/state lookups of its own) so `search_joint_orders` can call
+    `vgc.bc.policy.position_values_batch` ONCE for every (candidate, response) pair
+    instead of once per pair -- see that function's docstring for the latency this
+    batching fixes (~40ms/decision unbatched vs a <5ms budget).
+    """
+    if v_after is None or v_before is None:
+        return 0.0
+    return config.value_head_weight * 100.0 * (v_after - v_before)
 
 
 # --- top-level entry point ---------------------------------------------------------------
@@ -701,17 +889,62 @@ def search_joint_orders(
     ctx = build_context(battle, config)
     responses = _enumerate_opp_responses(ctx, config)
 
+    # Outcome value head (opt-in, see PolicyConfig.use_value_head's comment): v_before
+    # is the CURRENT position's value, computed ONCE and reused across every candidate x
+    # response pair below (it doesn't depend on either) -- only loaded/computed at all
+    # when the flag is on, so this is a true no-op (not even a checkpoint load attempt)
+    # when it's off, matching every other opt-in knob's graceful-degradation contract.
+    # `record_cache` is shared across every exchange_state_record call this decision --
+    # bench/side-conditions/field are ctx-derived and (almost always) identical across
+    # every exchange, see that function's `cache` param docstring for the latency this
+    # avoids recomputing buys back.
+    value_policy = None
+    v_before: float | None = None
+    record_cache: dict = {}
+    if config.use_value_head:
+        value_policy = load_bc_policy(config.bc_checkpoint_path)
+        if value_policy is not None and value_policy.has_value_head:
+            v_before = position_value(
+                value_policy,
+                exchange_state_record(ctx.our_states, ctx.opp_states, ctx, cache=record_cache),
+            )
+
     cutoff = max(1, config.search_our_candidates)
     searched, unsearched = myopic[:cutoff], myopic[cutoff:]
 
+    # Every (candidate, response) exchange is resolved FIRST, across the whole searched
+    # block, so the value head (if active) can be scored in ONE batched forward pass
+    # over all of them (vgc.bc.policy.position_values_batch) instead of one call per
+    # pair -- see that function's docstring for the latency this fixes.
+    exchanges_by_entry: list[list[ExchangeResult]] = [
+        [resolve_exchange(entry.order, response, ctx, config) for response in responses]
+        for entry in searched
+    ]
+    v_after_by_entry: list[list[float | None]]
+    if v_before is not None:
+        flat_records = [
+            exchange_state_record(exchange.our_states, exchange.opp_states, ctx, cache=record_cache)
+            for exchanges in exchanges_by_entry
+            for exchange in exchanges
+        ]
+        flat_v_after = position_values_batch(value_policy, flat_records)
+        v_after_by_entry = []
+        cursor = 0
+        for exchanges in exchanges_by_entry:
+            v_after_by_entry.append(flat_v_after[cursor : cursor + len(exchanges)])
+            cursor += len(exchanges)
+    else:
+        v_after_by_entry = [[None] * len(exchanges) for exchanges in exchanges_by_entry]
+
     scored: list[ScoredOrder] = []
     searched_finals: list[float] = []
-    for entry in searched:
+    for entry, exchanges, v_afters in zip(
+        searched, exchanges_by_entry, v_after_by_entry, strict=True
+    ):
         values: list[float] = []
         response_values: list[tuple[OppResponse, float]] = []
-        for response in responses:
-            exchange = resolve_exchange(entry.order, response, ctx, config)
-            value = _exchange_value(exchange, config)
+        for response, exchange, v_after in zip(responses, exchanges, v_afters, strict=True):
+            value = _exchange_value(exchange, config) + _value_head_delta(v_after, v_before, config)
             values.append(value)
             response_values.append((response, value))
 
