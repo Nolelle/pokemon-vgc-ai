@@ -1402,15 +1402,87 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     }
 
 
+def _speed_control_flip_value(
+    ctx: _Context,
+    config: PolicyConfig,
+    hypothetical_our_speed,  # Callable[[int], float] -- the slot's speed AFTER setting this
+    trick_room_hypothetical: bool,  # ctx.trick_room's value AFTER setting this
+) -> tuple[float, dict]:
+    """Speed control's value should scale with its DAMAGE-ORDER consequence, not just
+    the raw average-speed gap `_score_trick_room`'s base term already prices in (see
+    that function's docstring for why the base term alone is far too small to ever win
+    the argmax against a real attack -- confirmed against a reconstructed postmortem
+    trace: Venusaur+Farigiraf vs Sneasler+Blaziken, no field, scored the base term at
+    34.2 points while a single attacking move scored 260+).
+
+    For each of our alive slots, checks whether setting this (Trick Room or Tailwind)
+    would flip that slot from LOSING the speed race against its biggest known threat
+    (`ctx.threat_on_us[slot]`) to WINNING it -- i.e. we stop eating
+    `threatened_output_discount` and start landing our own hits (or a KO) before that
+    threat resolves. A threat with priority > 0 never flips (priority brackets are
+    untouched by both Trick Room and Tailwind, matching `resolves_before`'s own
+    modeling) -- correctly excludes Fake Out-class pressure from inflating this term.
+
+    `value = speed_control_flip_weight * (sum over BENEFITING slots of
+    min(100, threat_on_us[slot].percent)) * (benefiting slot count / alive slot count)`
+    -- the sum rewards flipping order against a THREATENING slot specifically (a flip
+    that doesn't matter for any real incoming threat contributes nothing), and the
+    fraction-of-team term keeps a flip that only helps one of two alive slots worth less
+    than one that helps the whole team, without any per-turn counter/state (a pure
+    function of this turn's `_Context` alone, by design -- see PolicyConfig's comment).
+    """
+    our_alive = ctx.our_alive()
+    if not our_alive:
+        return 0.0, {"benefiting_slots": []}
+    benefiting_slots: list[int] = []
+    benefiting_pct_sum = 0.0
+    for slot in our_alive:
+        threat = ctx.threat_on_us[slot]
+        if threat.move_id is None or threat.source_slot is None:
+            continue
+        opp_speed = ctx.opp_speed[threat.source_slot]
+        currently_first = resolves_before(
+            0, ctx.our_speed[slot], threat.priority, opp_speed, ctx.trick_room
+        )
+        if currently_first:
+            continue  # already winning the race against this threat -- no flip to earn
+        hypothetically_first = resolves_before(
+            0, hypothetical_our_speed(slot), threat.priority, opp_speed, trick_room_hypothetical
+        )
+        if hypothetically_first:
+            benefiting_slots.append(slot)
+            benefiting_pct_sum += min(100.0, threat.percent)
+    fraction_benefiting = len(benefiting_slots) / len(our_alive)
+    value = config.speed_control_flip_weight * benefiting_pct_sum * fraction_benefiting
+    return value, {
+        "benefiting_slots": benefiting_slots,
+        "benefiting_pct_sum": round(benefiting_pct_sum, 3),
+        "fraction_benefiting": round(fraction_benefiting, 3),
+        "flip_value": round(value, 3),
+    }
+
+
 def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
     if ctx.trick_room:
         return -config.trick_room_teardown_penalty, {"reason": "already_active"}
     our_alive, opp_alive = ctx.our_alive(), ctx.opp_alive()
     our_avg = mean([ctx.our_speed[i] for i in our_alive]) if our_alive else 0.0
     opp_avg = mean([ctx.opp_speed[i] for i in opp_alive]) if opp_alive else 0.0
-    return (opp_avg - our_avg) * config.trick_room_setup_weight, {
+    base = (opp_avg - our_avg) * config.trick_room_setup_weight
+    # Trick Room flips the FULL speed comparison (same raw speeds, inverted direction --
+    # not a multiplier the way Tailwind is), so the hypothetical speed per slot is just
+    # its CURRENT effective speed.
+    flip_value, flip_info = _speed_control_flip_value(
+        ctx,
+        config,
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    return base + flip_value, {
         "our_avg_speed": our_avg,
         "opp_avg_speed": opp_avg,
+        "base_value": round(base, 3),
+        **flip_info,
     }
 
 
@@ -1529,8 +1601,24 @@ def _score_parting_shot(actor_slot: int, ctx: _Context, config: PolicyConfig) ->
 def _score_screen(move_id: str, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
     if move_id == "tailwind":
         already_active = SideCondition.TAILWIND in ctx.battle.side_conditions
-    else:
-        already_active = _SCREEN_MOVE_TO_SIDE_CONDITION[move_id] in ctx.our_side_screens
+        if already_active:
+            return -config.screen_setup_weight * 0.5, {"reason": "already_active"}
+        # Tailwind flips the speed race the same way Trick Room does but via a 2x
+        # multiplier on OUR side's speed rather than inverting the comparison -- same
+        # `_speed_control_flip_value` helper, different hypothetical-speed function (see
+        # `field_effective_speed`'s own `tailwind` handling for why 2.0 is the real
+        # mechanical multiplier, not a separately-tuned literal here).
+        flip_value, flip_info = _speed_control_flip_value(
+            ctx,
+            config,
+            hypothetical_our_speed=lambda slot: ctx.our_speed[slot] * 2.0,
+            trick_room_hypothetical=ctx.trick_room,
+        )
+        return config.screen_setup_weight + flip_value, {
+            "utility_kind": "speed_control",
+            **flip_info,
+        }
+    already_active = _SCREEN_MOVE_TO_SIDE_CONDITION[move_id] in ctx.our_side_screens
     if already_active:
         return -config.screen_setup_weight * 0.5, {"reason": "already_active"}
     return config.screen_setup_weight, {}

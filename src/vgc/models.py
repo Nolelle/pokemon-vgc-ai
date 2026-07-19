@@ -175,6 +175,23 @@ class PolicyConfig:
     # ALREADY up -- using the move again cancels it early (data/moves.ts's toggle
     # behavior), which is almost always wrong if it's currently helping our slower side.
     trick_room_teardown_penalty: float = 50.0
+    # Points per 1% of threat avoided by FLIPPING a slot's speed-race outcome against its
+    # biggest known threat (see `_speed_control_flip_value`) -- on top of
+    # trick_room_setup_weight's plain average-speed-gap term, which alone is far too
+    # small to ever win the argmax (confirmed against a reconstructed real postmortem
+    # trace, gen9championsvgc2026regmb-2651715825: a 228-point average speed deficit
+    # scored only ~34 points under trick_room_setup_weight=0.15 alone, while a single
+    # attacking move scored 260+ -- Trick Room could never be chosen even while outsped
+    # on every slot). 1.0 was tuned so the reconstructed scenario's Trick Room order
+    # (both our slots flip from losing to winning their speed race) becomes competitive
+    # with/beats passive Protect+chip-damage orders, while staying well below what a
+    # guaranteed-KO order scores (guaranteed_ko_bonus=80 + ~100 points of raw damage +
+    # possibly outspeed_ko_bonus=25 on top, easily 200+ from ONE target alone) --
+    # see tests/test_evaluator.py's speed-control-flip tests for both directions.
+    # Applies identically to Tailwind (`_score_screen`'s tailwind branch) since it flips
+    # the same speed-race outcome via a different mechanism (2x our speed, not an
+    # inverted comparison) -- see that function's comment.
+    speed_control_flip_weight: float = 1.0
 
     # -- Status/utility: Fake Out ----------------------------------------------------------
     # Base value for a legal (first-turn-out) Fake Out on a target without flinch immunity

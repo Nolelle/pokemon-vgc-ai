@@ -7,10 +7,13 @@ style.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from statistics import mean
 from types import SimpleNamespace
 
 import pytest
 from poke_env.battle.move import Move
+from poke_env.battle.side_condition import SideCondition
 
 from vgc.damage import FieldState, PokemonState, damage_range
 from vgc.data import load_moves
@@ -23,9 +26,14 @@ from vgc.evaluator import (
     _resolve_targets,
     _score_attack_order,
     _score_protect,
+    _score_screen,
+    _score_single,
     _score_status_mega,
     _score_status_move,
     _score_switch,
+    _score_trick_room,
+    _speed_control_flip_value,
+    build_context,
     effective_speed,
     field_effective_speed,
     guaranteed_ko,
@@ -1202,3 +1210,428 @@ def test_collapsed_matchup_switch_bonus_absent_without_a_gameplan() -> None:
     )
     _score, info = _score_switch(incoming, 0, ctx, config)
     assert info["collapsed_matchup_bonus"] == 0.0
+
+
+# --- speed control: Trick Room / Tailwind flip-value fix -----------------------------
+# See vgc.evaluator._speed_control_flip_value's docstring for the postmortem root cause
+# this addresses: the old flat (opp_avg_speed - our_avg_speed) * trick_room_setup_weight
+# term is far too small to ever win the argmax against a real attack, even when every
+# slot is outsped. Reconstructed against the actual postmortem trace (see this task's
+# report for the real numbers): Venusaur+Farigiraf vs Sneasler+Blaziken, no field --
+# base term alone scored 34.2, a single attacking move scored 260+.
+
+
+def _speed_ctx(
+    *,
+    our_speed=(80.0, 80.0),
+    opp_speed=(200.0, 200.0),
+    threat_on_us=None,
+    trick_room=False,
+    our_alive=(True, True),
+    opp_alive=(True, True),
+) -> _Context:
+    our_pokemon = [_FakeActive(fainted=not alive) for alive in our_alive]
+    opp_pokemon = [_FakeActive(fainted=not alive) for alive in opp_alive]
+    return _Context(
+        battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
+        trick_room=trick_room,
+        weather=None,
+        terrain=None,
+        our_side_screens=frozenset(),
+        opp_side_screens=frozenset(),
+        our_pokemon=our_pokemon,
+        opp_pokemon=opp_pokemon,
+        our_states=[None, None],
+        opp_states=[None, None],
+        our_speed=list(our_speed),
+        opp_speed=list(opp_speed),
+        threat_on_us=list(threat_on_us)
+        if threat_on_us is not None
+        else [_ThreatInfo(), _ThreatInfo()],
+        opp_threat_score=[0.0, 0.0],
+        opp_protect_prob=[0.0, 0.0],
+        opp_switch_prob=[0.0, 0.0],
+        priors={},
+        gameplan=None,
+    )
+
+
+def test_speed_control_flip_value_zero_when_no_slots_lose_their_race() -> None:
+    # We're faster than both threats on every slot -- nothing to flip, and the guard
+    # (task requirement 4) needs this to stay non-positive overall via _score_trick_room.
+    ctx = _speed_ctx(
+        our_speed=(300.0, 300.0),
+        opp_speed=(100.0, 100.0),
+        threat_on_us=[
+            _ThreatInfo(percent=50.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=50.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    value, info = _speed_control_flip_value(
+        ctx,
+        PolicyConfig(),
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    assert value == 0.0
+    assert info["benefiting_slots"] == []
+
+
+def test_speed_control_flip_value_identifies_flipping_slots() -> None:
+    # Both slots currently lose their speed race; Trick Room (raw speed unchanged, just
+    # inverted) flips both.
+    ctx = _speed_ctx(
+        our_speed=(80.0, 90.0),
+        opp_speed=(200.0, 210.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=40.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    value, info = _speed_control_flip_value(
+        ctx,
+        config,
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    assert info["benefiting_slots"] == [0, 1]
+    assert value == pytest.approx(1.0 * (60.0 + 40.0) * 1.0)  # both slots, full team
+
+
+def test_speed_control_flip_value_priority_threats_never_flip() -> None:
+    # A priority move's resolution order is untouched by Trick Room -- must not count as
+    # a benefiting slot even though the raw speed comparison alone would flip.
+    ctx = _speed_ctx(
+        our_speed=(80.0, 80.0),
+        opp_speed=(200.0, 200.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="fakeout", priority=1, source_slot=0),
+            _ThreatInfo(),
+        ],
+    )
+    value, info = _speed_control_flip_value(
+        ctx,
+        PolicyConfig(),
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    assert 0 not in info["benefiting_slots"]
+    assert value == 0.0
+
+
+def test_speed_control_flip_value_caps_percent_at_100_per_slot() -> None:
+    ctx = _speed_ctx(
+        our_speed=(80.0, 80.0),
+        opp_speed=(200.0, 200.0),
+        threat_on_us=[
+            _ThreatInfo(percent=150.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(),
+        ],
+        our_alive=(True, False),
+        opp_alive=(True, True),
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    value, info = _speed_control_flip_value(
+        ctx,
+        config,
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    assert info["benefiting_pct_sum"] == pytest.approx(100.0)  # capped, not 150
+    assert value == pytest.approx(100.0)  # 1 alive slot, 1 benefits -- fraction 1.0
+
+
+def test_speed_control_flip_value_fraction_scales_by_benefiting_count() -> None:
+    # Two alive slots; only ONE benefits from the flip -- fraction_benefiting halves it.
+    ctx = _speed_ctx(
+        our_speed=(80.0, 300.0),  # slot 0 loses its race, slot 1 already wins
+        opp_speed=(200.0, 100.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    value, info = _speed_control_flip_value(
+        ctx,
+        config,
+        hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
+        trick_room_hypothetical=True,
+    )
+    assert info["benefiting_slots"] == [0]
+    assert info["fraction_benefiting"] == pytest.approx(0.5)
+    assert value == pytest.approx(1.0 * 60.0 * 0.5)
+
+
+def test_score_trick_room_includes_flip_value_when_outsped() -> None:
+    ctx = _speed_ctx(
+        our_speed=(80.0, 90.0),
+        opp_speed=(200.0, 210.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=40.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_trick_room(ctx, config)
+    base = (mean([200.0, 210.0]) - mean([80.0, 90.0])) * config.trick_room_setup_weight
+    expected_flip = 1.0 * (60.0 + 40.0) * 1.0
+    assert score == pytest.approx(base + expected_flip)
+    assert info["flip_value"] == pytest.approx(expected_flip)
+
+
+def test_score_trick_room_stays_non_positive_when_already_faster() -> None:
+    """Guard (task requirement 4): setting Trick Room when we're already faster must
+    stay negative -- the flip term must not accidentally make an obviously-bad Trick
+    Room order look good.
+    """
+    ctx = _speed_ctx(
+        our_speed=(300.0, 320.0),
+        opp_speed=(100.0, 110.0),
+        threat_on_us=[
+            _ThreatInfo(percent=50.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=50.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_trick_room(ctx, config)
+    assert score < 0.0
+    assert info["benefiting_slots"] == []
+
+
+def test_score_trick_room_already_active_ignores_flip_entirely() -> None:
+    ctx = _speed_ctx(trick_room=True)
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_trick_room(ctx, config)
+    assert score == pytest.approx(-config.trick_room_teardown_penalty)
+    assert info == {"reason": "already_active"}
+
+
+def test_score_screen_tailwind_includes_flip_value() -> None:
+    ctx = _speed_ctx(
+        our_speed=(80.0, 90.0),
+        opp_speed=(150.0, 160.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(percent=40.0, move_id="tackle", priority=0, source_slot=1),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_screen("tailwind", ctx, config)
+    assert "flip_value" in info
+    assert score > config.screen_setup_weight  # base + a positive flip contribution
+
+
+def test_score_screen_tailwind_already_active_unaffected_by_flip() -> None:
+    ctx = _speed_ctx()
+    ctx.battle.side_conditions = [SideCondition.TAILWIND]
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_screen("tailwind", ctx, config)
+    assert score == pytest.approx(-config.screen_setup_weight * 0.5)
+    assert info == {"reason": "already_active"}
+
+
+def test_score_screen_reflect_unaffected_by_speed_control_flip() -> None:
+    # Non-speed screens (reflect/lightscreen/auroraveil) must never touch the flip path.
+    ctx = _speed_ctx(
+        our_speed=(80.0, 90.0),
+        opp_speed=(200.0, 210.0),
+        threat_on_us=[
+            _ThreatInfo(percent=60.0, move_id="tackle", priority=0, source_slot=0),
+            _ThreatInfo(),
+        ],
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+    score, info = _score_screen("reflect", ctx, config)
+    assert score == pytest.approx(config.screen_setup_weight)
+    assert "flip_value" not in info
+
+
+# --- reconstructed postmortem scenario: real meta1 sets via Teambuilder --------------
+
+
+def _meta1_mon(species_id: str):
+    from poke_env.battle.pokemon import Pokemon
+    from poke_env.teambuilder.teambuilder import Teambuilder
+
+    team_text = (Path(__file__).parent.parent / "teams" / "meta1.packed.txt").read_text().strip()
+    for tb_mon in Teambuilder.parse_packed_team(team_text):
+        pokemon = Pokemon(gen=9, teambuilder=tb_mon)
+        if pokemon.species == species_id:
+            pokemon._active = True
+            pokemon._current_hp = pokemon.max_hp
+            return pokemon
+    raise KeyError(species_id)
+
+
+def _fast_opponent(species_id: str):
+    from poke_env.battle.pokemon import Pokemon
+
+    mon = Pokemon(gen=9, species=species_id)
+    mon._active = True
+    mon._current_hp = 100
+    mon._max_hp = 100
+    return mon
+
+
+class _FakeFullBattle:
+    def __init__(self, our_active, opp_active, our_team):
+        self.active_pokemon = our_active
+        self.opponent_active_pokemon = opp_active
+        self.team = {f"p1: {mon.species}": mon for mon in our_team}
+        self.opponent_team = {
+            f"p2{chr(97 + i)}: {mon.species}": mon for i, mon in enumerate(opp_active)
+        }
+        self.teampreview_opponent_team = []
+        self.side_conditions = []
+        self.opponent_side_conditions = []
+        self.fields = []
+        self.weather = []
+        self.turn = 3
+
+
+def _reconstructed_scenario_candidates(ctx: _Context, config: PolicyConfig) -> dict[str, float]:
+    """The same representative candidate set used to root-cause and tune this fix
+    (see this task's report): Venusaur (slot 0) Protect/attacks, Farigiraf (slot 1)
+    attacks or sets Trick Room. `enumerate_joint_orders`/`score_joint_orders` need a
+    real poke-env `DoubleBattle` for `battle.valid_orders`, which a hand-built fake
+    battle can't provide -- scoring these candidates directly via `_score_single` (the
+    same building block `score_joint_orders` itself calls per slot) is the practical
+    equivalent without that dependency.
+    """
+
+    def single(move_id: str, move_target: int = 0):
+        return SimpleNamespace(order=Move(move_id, gen=9), mega=False, move_target=move_target)
+
+    def joint(slot0_id: str, slot1_id: str, slot0_target: int = 0, slot1_target: int = 0) -> float:
+        info0 = _score_single(single(slot0_id, slot0_target), 0, ctx, config)
+        info1 = _score_single(single(slot1_id, slot1_target), 1, ctx, config)
+        cross = _cross_slot_adjustments(info0, info1, config)
+        return info0["score"] + info1["score"] + cross
+
+    return {
+        "protect / trickroom": joint("protect", "trickroom"),
+        "protect / psychic@1": joint("protect", "psychic", slot1_target=1),
+        "protect / thunderbolt@1": joint("protect", "thunderbolt", slot1_target=1),
+        "leafstorm@1 / psychic@1": joint("leafstorm", "psychic", slot0_target=1, slot1_target=1),
+        "leafstorm@1 / trickroom": joint("leafstorm", "trickroom", slot0_target=1),
+        "sludgebomb@1 / psychic@1": joint("sludgebomb", "psychic", slot0_target=1, slot1_target=1),
+        "sleeppowder@1 / psychic@1": joint(
+            "sleeppowder", "psychic", slot0_target=1, slot1_target=1
+        ),
+    }
+
+
+def test_reconstructed_postmortem_scenario_trick_room_reaches_top_three() -> None:
+    """Reconstructs the real postmortem trace (gen9championsvgc2026regmb-2651715825):
+    Venusaur+Farigiraf (meta1 sets, real Stat Points/nature/moves) vs Sneasler+Blaziken
+    (both genuinely faster), no field. Confirms the fix: the best Trick Room candidate
+    now lands in the top 3 of this representative candidate set, instead of dead last
+    (see this task's report for the pre-fix numbers: TR scored 138.81 vs 365.16 for the
+    top attacking candidate, ranked 6th of 7).
+    """
+    venusaur = _meta1_mon("venusaur")
+    farigiraf = _meta1_mon("farigiraf")
+    sneasler = _fast_opponent("sneasler")
+    blaziken = _fast_opponent("blaziken")
+    battle = _FakeFullBattle([venusaur, farigiraf], [sneasler, blaziken], [venusaur, farigiraf])
+
+    config = PolicyConfig(log_decisions=True)
+    ctx = build_context(battle, config)
+    candidates = _reconstructed_scenario_candidates(ctx, config)
+    ranked = sorted(candidates.items(), key=lambda kv: -kv[1])
+    ranked_names = [name for name, _score in ranked]
+
+    trick_room_ranks = [i for i, name in enumerate(ranked_names) if "trickroom" in name]
+    assert trick_room_ranks, "no trickroom candidate present"
+    assert min(trick_room_ranks) < 3, (
+        f"best trickroom rank {min(trick_room_ranks)}, order: {ranked_names}"
+    )
+
+
+def test_reconstructed_postmortem_scenario_old_formula_ranked_trick_room_worse() -> None:
+    """Same scenario, but with speed_control_flip_weight=0 (the old behavior) --
+    confirms the fix actually changed something: Trick Room should rank much worse
+    without the flip term, not merely "still fine".
+    """
+    venusaur = _meta1_mon("venusaur")
+    farigiraf = _meta1_mon("farigiraf")
+    sneasler = _fast_opponent("sneasler")
+    blaziken = _fast_opponent("blaziken")
+    battle = _FakeFullBattle([venusaur, farigiraf], [sneasler, blaziken], [venusaur, farigiraf])
+
+    def trick_room_rank(config: PolicyConfig) -> int:
+        ctx = build_context(battle, config)
+        candidates = _reconstructed_scenario_candidates(ctx, config)
+        ranked_names = [name for name, _score in sorted(candidates.items(), key=lambda kv: -kv[1])]
+        return min(i for i, name in enumerate(ranked_names) if "trickroom" in name)
+
+    with_flip_rank = trick_room_rank(PolicyConfig(log_decisions=True))
+    without_flip_rank = trick_room_rank(
+        PolicyConfig(log_decisions=True, speed_control_flip_weight=0.0)
+    )
+    assert with_flip_rank < without_flip_rank
+
+
+def test_guaranteed_ko_still_outranks_trick_room() -> None:
+    """Guard: the flip term must not let Trick Room outrank a real guaranteed KO that
+    resolves before the opposing threat -- a KO removes the threat outright, which is
+    strictly better than merely flipping next turn's speed race.
+    """
+    attacker = _garchomp()  # fast, jolly
+    slow_partner = PokemonState(
+        "farigiraf", sp_spread={"hp": 25, "def": 26, "spd": 15}, nature="modest"
+    )
+    victim = _klefki(current_hp=1)  # any real hit guarantee-KOs
+    threat = PokemonState("sneasler", sp_spread={"hp": 2, "atk": 32, "spe": 32}, nature="jolly")
+
+    our_states = [attacker, slow_partner]
+    opp_states = [victim, threat]
+    our_pokemon = [
+        SimpleNamespace(first_turn=False, fainted=False, species="garchomp", ability=None),
+        SimpleNamespace(first_turn=False, fainted=False, species="farigiraf", ability=None),
+    ]
+    opp_pokemon = [
+        SimpleNamespace(ability=None, fainted=False, species="klefki"),
+        SimpleNamespace(ability=None, fainted=False, species="sneasler"),
+    ]
+    ctx = _Context(
+        battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
+        trick_room=False,
+        weather=None,
+        terrain=None,
+        our_side_screens=frozenset(),
+        opp_side_screens=frozenset(),
+        our_pokemon=our_pokemon,
+        opp_pokemon=opp_pokemon,
+        our_states=our_states,
+        opp_states=opp_states,
+        our_speed=[effective_speed(attacker), effective_speed(slow_partner)],
+        opp_speed=[effective_speed(victim), effective_speed(threat)],
+        threat_on_us=[
+            _ThreatInfo(),
+            _ThreatInfo(
+                percent=90.0, move_id="closecombat", priority=0, source_slot=1
+            ),  # slow_partner losing to the faster "threat" mon
+        ],
+        opp_threat_score=[0.0, 0.0],
+        opp_protect_prob=[0.0, 0.0],
+        opp_switch_prob=[0.0, 0.0],
+        priors={},
+        gameplan=None,
+    )
+    config = PolicyConfig(speed_control_flip_weight=1.0)
+
+    move = Move("earthquake", gen=9)
+    ko_single = SimpleNamespace(order=move, mega=False, move_target=0)
+    ko_info = _score_attack_order(move, load_moves()["earthquake"], ko_single, 0, ctx, config)
+    ko_score = ko_info[0]
+
+    tr_move = Move("trickroom", gen=9)
+    tr_single = SimpleNamespace(order=tr_move, mega=False, move_target=0)
+    tr_score, _tr_info = _score_status_move(
+        "trickroom", load_moves()["trickroom"], tr_single, 1, ctx, config
+    )
+
+    assert ko_score > tr_score
