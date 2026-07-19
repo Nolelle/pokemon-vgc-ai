@@ -200,6 +200,7 @@ def build_gameplan(
     our_move_ids: list[list[str]],
     opp_move_ids: list[list[str]],
     config: PolicyConfig | None = None,
+    preferred_win_con_species: str | None = None,
 ) -> GamePlan:
     """Pure derivation of a `GamePlan` from already-built states + movesets -- see module
     docstring for the full algorithm. Callers pass only REAL (non-None, non-fainted)
@@ -266,6 +267,14 @@ def build_gameplan(
         for j in range(len(opp_states))
     )
     primary_win_con_idx = _argmax(win_con_scores)
+    if preferred_win_con_species is not None:
+        preferred_id = to_id(preferred_win_con_species)
+        preferred_idx = next(
+            (idx for idx, species_id in enumerate(our_species) if species_id == preferred_id),
+            None,
+        )
+        if preferred_idx is not None:
+            primary_win_con_idx = preferred_idx
     primary_threat_idx = _argmax(their_threat_scores)
 
     answers: dict[str, str] = {}

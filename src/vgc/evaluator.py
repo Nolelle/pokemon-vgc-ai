@@ -94,6 +94,20 @@ from vgc.decision_trace import record_note
 from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
+from vgc.principles import (
+    BURN_MOVES,
+    DIRECT_DENIAL_MOVES,
+    RECOVERY_MOVES,
+    REDIRECTION_MOVES,
+    SETUP_MOVES,
+    SLEEP_MOVES,
+    SPEED_CONTROL_MOVES,
+    WIDE_DEFENSE_MOVES,
+    detect_team_signals,
+    is_speed_drop_attack,
+    normalized_move_ids,
+    utility_kind,
+)
 from vgc.sets import (
     load_set_priors,
     load_usage_spreads,
@@ -440,6 +454,7 @@ class _ThreatInfo:
     percent: float = 0.0
     move_id: str | None = None
     priority: int = 0
+    source_slot: int | None = None
 
 
 @dataclass
@@ -485,6 +500,17 @@ class _Context:
     # only when there's nothing to build it from (e.g. our own team came back empty,
     # shouldn't normally happen) -- every read site null-checks this.
     gameplan: GamePlan | None
+    # Full joint danger if both opposing slots target the same one of ours, rather than
+    # only the single strongest hit. Used for survival and Protect decisions.
+    double_target_threat: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    # Missing move/item/ability facts per opposing active. Protect can earn information
+    # value instead of being treated solely as damage prevention.
+    opp_uncertainty: list[int] = field(default_factory=lambda: [0, 0])
+    # Strategic non-damage threat (TR/Tailwind/setup/redirection/denial) per opposing slot.
+    opp_control_threat: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    opp_engine_enabler_slots: frozenset[int] = frozenset()
+    preview_plan: object | None = None
+    endgame: bool = False
 
     def field_state(
         self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
@@ -661,11 +687,13 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
     )
 
     threat_on_us = [_ThreatInfo(), _ThreatInfo()]
+    double_target_threat = [0.0, 0.0]
     opp_threat_score = [0.0, 0.0]
     for our_idx in (0, 1):
         our_state = our_states[our_idx]
         if our_state is None:
             continue
+        threats_from_each_opp: list[float] = []
         for opp_idx in (0, 1):
             opp_state = opp_states[opp_idx]
             opp_mon = opp_pokemon[opp_idx]
@@ -675,9 +703,13 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             pct, move_id, priority = _best_attacking_move(
                 opp_state, move_ids, our_state, field_vs_us
             )
+            threats_from_each_opp.append(pct)
             if pct > threat_on_us[our_idx].percent:
-                threat_on_us[our_idx] = _ThreatInfo(percent=pct, move_id=move_id, priority=priority)
+                threat_on_us[our_idx] = _ThreatInfo(
+                    percent=pct, move_id=move_id, priority=priority, source_slot=opp_idx
+                )
             opp_threat_score[opp_idx] = max(opp_threat_score[opp_idx], pct)
+        double_target_threat[our_idx] = sum(threats_from_each_opp)
 
     # Our best expected % onto each opponent slot (the mirror image of threat_on_us) --
     # drives both Protect pressure and switch-incentive pressure below.
@@ -697,6 +729,8 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
 
     opp_protect_prob = [0.0, 0.0]
     opp_switch_prob = [0.0, 0.0]
+    opp_uncertainty = [0, 0]
+    opp_control_threat = [0.0, 0.0]
     for opp_idx in (0, 1):
         opp_state = opp_states[opp_idx]
         opp_mon = opp_pokemon[opp_idx]
@@ -711,6 +745,18 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_switch_prob[opp_idx] = _opp_switch_probability(
             pressure_on_opp[opp_idx], opp_threat_score[opp_idx], config
         )
+        revealed_move_count = len(getattr(opp_mon, "moves", None) or {})
+        opp_uncertainty[opp_idx] = max(0, 4 - revealed_move_count)
+        if not getattr(opp_mon, "item", None):
+            opp_uncertainty[opp_idx] += 1
+        if not getattr(opp_mon, "ability", None):
+            opp_uncertainty[opp_idx] += 1
+        # Open Team Sheets do not reveal this format's Stat Point spread/nature.
+        opp_uncertainty[opp_idx] += 1
+        control_ids = known_move_ids & (
+            DIRECT_DENIAL_MOVES | REDIRECTION_MOVES | SPEED_CONTROL_MOVES | SETUP_MOVES
+        )
+        opp_control_threat[opp_idx] = min(100.0, 20.0 * len(control_ids))
 
     # Game-plan layer (vgc.gameplan): built from our FULL known team (battle.team --
     # always exactly known, unlike the opponent's) and their previewed/known team
@@ -738,6 +784,8 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opponent_move_ids(mon, priors=priors, config=config) for mon in opp_team_full
     ]
 
+    preview_plan = getattr(battle, "_vgc_preview_plan", None)
+    preferred_closer = getattr(preview_plan, "our_closer_species", None)
     gameplan = None
     if our_gameplan_states:
         gameplan = build_gameplan(
@@ -746,8 +794,47 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             our_gameplan_move_ids,
             opp_gameplan_move_ids,
             config,
+            preferred_win_con_species=preferred_closer,
         )
         record_note("gameplan", gameplan.summary())
+
+    opp_signals = detect_team_signals(opp_team_full)
+    enabler_species = {
+        to_id(opp_team_full[idx].species)
+        for idx in opp_signals.engine_enabler_indices
+        if idx < len(opp_team_full)
+    }
+    opp_engine_enabler_slots = frozenset(
+        idx
+        for idx, mon in enumerate(opp_pokemon)
+        if mon is not None and to_id(mon.species) in enabler_species
+    )
+    selected_ours = [
+        mon
+        for mon in (getattr(battle, "team", None) or {}).values()
+        if mon is not None
+        and not mon.fainted
+        and (
+            getattr(mon, "selected_in_teampreview", False)
+            or getattr(mon, "_selected_in_teampreview", False)
+        )
+    ]
+    if not selected_ours:
+        selected_ours = our_team_full
+    alive_opponents = [mon for mon in opp_team_full if not getattr(mon, "fainted", False)]
+    endgame = len(selected_ours) <= 2 or len(alive_opponents) <= 2
+    record_note(
+        "principles_turn",
+        {
+            "our_speed": [round(speed, 3) for speed in our_speed],
+            "opponent_speed": [round(speed, 3) for speed in opp_speed],
+            "double_target_threat": [round(value, 3) for value in double_target_threat],
+            "opponent_uncertainty": opp_uncertainty,
+            "opponent_control_threat": opp_control_threat,
+            "engine_enabler_slots": sorted(opp_engine_enabler_slots),
+            "endgame": endgame,
+        },
+    )
 
     return _Context(
         battle=battle,
@@ -768,6 +855,12 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_switch_prob=opp_switch_prob,
         priors=priors,
         gameplan=gameplan,
+        double_target_threat=double_target_threat,
+        opp_uncertainty=opp_uncertainty,
+        opp_control_threat=opp_control_threat,
+        opp_engine_enabler_slots=opp_engine_enabler_slots,
+        preview_plan=preview_plan,
+        endgame=endgame,
     )
 
 
@@ -802,6 +895,12 @@ def _score_single(
             return info
         if move_data["category"] == "Status":
             score, extra = _score_status_move(move_id, move_data, single, actor_slot, ctx, config)
+            if getattr(single, "mega", False):
+                mega_adjustment, mega_info = _score_status_mega(actor_slot, ctx, config)
+                score += mega_adjustment
+                extra.update(mega_info)
+            extra.setdefault("actor_slot", actor_slot)
+            extra.setdefault("utility_kind", utility_kind(move_id))
             info["score"] = score
             info.update(extra)
             return info
@@ -820,6 +919,37 @@ def _score_single(
         return info
     # PassBattleOrder / str message orders (e.g. forced pass) -- neutral score.
     return info
+
+
+def _score_status_mega(
+    actor_slot: int, ctx: _Context, config: PolicyConfig
+) -> tuple[float, dict[str, object]]:
+    """Mega-resource adjustment for non-damaging orders such as Protect + Mega."""
+    base_state = ctx.our_states[actor_slot]
+    actor_mon = ctx.our_pokemon[actor_slot]
+    if base_state is None:
+        return -config.mega_unnecessary_penalty, {"mega_material": False}
+    mega_state = mega_evolved_state(base_state)
+    weather_change = _ABILITY_WEATHER.get(mega_state.ability, ctx.weather) != ctx.weather
+    speed_flip = any(
+        effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(mega_state)
+        for idx in ctx.opp_alive()
+    )
+    material = weather_change or speed_flip
+    score = 0.0 if material else -config.mega_unnecessary_penalty
+    planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
+    actor_species = to_id(getattr(actor_mon, "species", None))
+    if planned_mega is not None:
+        score += (
+            config.default_mega_bonus
+            if actor_species == planned_mega
+            else -config.alternate_mega_penalty
+        )
+    return score, {
+        "mega_material": material,
+        "mega_weather_change": weather_change,
+        "mega_speed_flip": speed_flip,
+    }
 
 
 def _attacker_state_for(single: SingleBattleOrder, actor_slot: int, ctx: _Context) -> PokemonState:
@@ -892,13 +1022,17 @@ def _score_attack_order(
     expected_percent_by_target: dict[int, float] = {}
     current_hp_percent_by_target: dict[int, float] = {}
     guaranteed_ko_slots: list[int] = []
+    ko_slots: list[int] = []
     survival_guard_slots: list[int] = []
     protect_prob_by_target: dict[int, float] = {}
     switch_prob_by_target: dict[int, float] = {}
+    ally_expected_percent_by_target: dict[int, float] = {}
     # True once any target in this order gets a guaranteed/likely KO that resolves
     # BEFORE ctx.threat_on_us[actor_slot] can land -- see win_con_preservation_weight
     # below: a win con that removes its own threat this turn doesn't need "preserving".
     resolves_threat_before_it_lands = False
+    speed_drop_targets: list[int] = []
+    flinch_targets: list[int] = []
     field_vs_opp = ctx.field_state(
         defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
     )
@@ -920,8 +1054,10 @@ def _score_attack_order(
         ko_bonus = 0.0
         if is_guaranteed:
             guaranteed_ko_slots.append(idx)
+            ko_slots.append(idx)
             ko_bonus += config.guaranteed_ko_bonus
         elif is_likely:
+            ko_slots.append(idx)
             ko_bonus += config.likely_ko_bonus
 
         damage_term = base_damage
@@ -972,6 +1108,38 @@ def _score_attack_order(
             opp_species_id = to_id(opp_mon_for_idx.species) if opp_mon_for_idx is not None else None
             if opp_species_id is not None and opp_species_id in ctx.gameplan.plan_breakers:
                 contribution += config.plan_breaker_target_bonus
+            if opp_species_id == ctx.gameplan.primary_threat_species:
+                contribution += config.primary_threat_target_bonus
+        if idx in ctx.opp_engine_enabler_slots:
+            contribution += config.engine_enabler_target_bonus
+
+        if is_speed_drop_attack(move_id):
+            reduced_speed = ctx.opp_speed[idx] * (2.0 / 3.0)
+            flips_order = any(
+                ctx.our_speed[our_idx] < ctx.opp_speed[idx]
+                and ctx.our_speed[our_idx] >= reduced_speed
+                for our_idx in ctx.our_alive()
+            )
+            speed_value = config.speed_drop_target_value * (1.0 + ctx.opp_threat_score[idx] / 100.0)
+            if flips_order:
+                speed_value += config.speed_control_immediate_ko_bonus * 0.5
+            contribution += speed_value
+            speed_drop_targets.append(idx)
+
+        secondary = move_data.get("secondary") or {}
+        if (
+            secondary.get("volatileStatus") == "flinch"
+            and we_move_first
+            and to_id(getattr(ctx.opp_pokemon[idx], "ability", None))
+            not in _FLINCH_IMMUNE_ABILITIES
+        ):
+            flinch_chance = float(secondary.get("chance", 0.0)) / 100.0
+            contribution += (
+                flinch_chance
+                * config.generic_flinch_weight
+                * (1.0 + ctx.opp_threat_score[idx] / 100.0)
+            )
+            flinch_targets.append(idx)
 
         if move_id == "fakeout" and getattr(actor_mon, "first_turn", False):
             opp_mon = ctx.opp_pokemon[idx]
@@ -1000,14 +1168,46 @@ def _score_attack_order(
         if ally_state is None:
             continue
         result = damage_range(attacker_state, ally_state, move_id, field_vs_us)
+        ally_expected_percent_by_target[idx] = result.expected_percent
         score -= (
             result.expected_percent
             * config.damage_percent_weight
             * config.ally_damage_penalty_weight
         )
 
-    if config.mega_evolve_asap and getattr(single, "mega", False):
-        score += 1e-3  # tie-breaker nudge only -- mega stats already drive the real gain
+    mega_material = False
+    mega_gain = 0.0
+    if getattr(single, "mega", False):
+        base_state = ctx.our_states[actor_slot]
+        if base_state is not None:
+            base_field = ctx.field_state(defender_is_ours=False, num_targets=num_hit)
+            base_expected = 0.0
+            for idx in opp_targets:
+                defender_state = ctx.opp_states[idx]
+                if defender_state is not None:
+                    base_expected += damage_range(
+                        base_state, defender_state, move_id, base_field
+                    ).expected_percent
+            mega_gain = raw_damage_score - base_expected * config.damage_percent_weight
+            speed_flip = any(
+                effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(attacker_state)
+                for idx in opp_targets
+            )
+            weather_change = weather_for_this_order != ctx.weather
+            mega_material = (
+                mega_gain >= config.mega_material_gain_floor or speed_flip or weather_change
+            )
+            if not mega_material:
+                score -= config.mega_unnecessary_penalty
+        planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
+        actor_species = to_id(getattr(actor_mon, "species", None))
+        if planned_mega is not None:
+            if actor_species == planned_mega:
+                score += config.default_mega_bonus
+            else:
+                score -= config.alternate_mega_penalty
+        if config.mega_evolve_asap:
+            score += 1e-3
 
     # Charge/recharge moves telegraph a slow, punishable turn (Solar Beam et al) or
     # forfeit the FOLLOWING turn after landing (Hyper Beam et al) -- discount the
@@ -1028,15 +1228,25 @@ def _score_attack_order(
     # where it's facing a near-certain KO and retreating (switch/Protect -- neither of
     # which passes through this function) was available. Only fires when this order
     # ITSELF doesn't already remove the threat first (resolves_threat_before_it_lands).
+    win_con_preservation_penalty = 0.0
     if (
         ctx.gameplan is not None
         and ctx.gameplan.primary_win_con_species is not None
         and actor_mon is not None
         and to_id(actor_mon.species) == ctx.gameplan.primary_win_con_species
-        and ctx.threat_on_us[actor_slot].percent >= 100.0
+        and max(
+            ctx.threat_on_us[actor_slot].percent,
+            ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+        )
+        >= 100.0
         and not resolves_threat_before_it_lands
     ):
-        score -= config.win_con_preservation_weight * ctx.threat_on_us[actor_slot].percent
+        preservation_threat = max(
+            ctx.threat_on_us[actor_slot].percent,
+            ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+        )
+        win_con_preservation_penalty = config.win_con_preservation_weight * preservation_threat
+        score -= win_con_preservation_penalty
 
     single_target_slot = (
         opp_targets[0]
@@ -1051,9 +1261,21 @@ def _score_attack_order(
             "expected_percent_by_target": expected_percent_by_target,
             "current_hp_percent_by_target": current_hp_percent_by_target,
             "guaranteed_ko_slots": guaranteed_ko_slots,
+            "ko_slots": ko_slots,
             "survival_guard_slots": survival_guard_slots,
             "protect_prob_by_target": protect_prob_by_target,
             "switch_prob_by_target": switch_prob_by_target,
+            "ally_expected_percent_by_target": ally_expected_percent_by_target,
+            "actor_slot": actor_slot,
+            "actor_species": to_id(getattr(actor_mon, "species", None)),
+            "actor_speed": ctx.our_speed[actor_slot],
+            "actor_priority": actor_priority,
+            "target_speeds": {idx: ctx.opp_speed[idx] for idx in opp_targets},
+            "speed_drop_targets": speed_drop_targets,
+            "flinch_targets": flinch_targets,
+            "mega_material": mega_material,
+            "mega_gain": mega_gain,
+            "win_con_preservation_penalty": win_con_preservation_penalty,
         },
     )
 
@@ -1070,14 +1292,56 @@ def _score_status_move(
         return _score_protect(actor_slot, ctx, config)
     if move_id == "trickroom":
         return _score_trick_room(ctx, config)
-    if move_id == "sleeppowder":
-        return _score_sleep_powder(move_data, single, actor_slot, ctx, config)
+    if move_id in SLEEP_MOVES:
+        return _score_sleep_move(move_id, move_data, single, actor_slot, ctx, config)
     if move_id == "helpinghand":
         return 0.0, {}  # cross-slot value only -- see _cross_slot_adjustments
     if move_id == "partingshot":
         return _score_parting_shot(actor_slot, ctx, config)
     if move_id in _SCREEN_MOVE_TO_SIDE_CONDITION or move_id == "tailwind":
         return _score_screen(move_id, ctx, config)
+    if move_id in REDIRECTION_MOVES:
+        partner_slot = 1 - actor_slot
+        partner_threat = max(
+            ctx.threat_on_us[partner_slot].percent,
+            ctx.double_target_threat[partner_slot] * config.double_target_threat_weight,
+        )
+        return config.redirection_base_value + partner_threat * 0.4, {
+            "utility_kind": "redirection",
+            "partner_slot": partner_slot,
+            "partner_threat": partner_threat,
+        }
+    if move_id in {"taunt", "encore", "yawn"}:
+        return _score_targeted_denial(move_id, move_data, single, actor_slot, ctx, config)
+    if move_id in SETUP_MOVES:
+        danger = max(
+            ctx.threat_on_us[actor_slot].percent,
+            ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+        )
+        score = config.setup_base_value
+        if danger >= 80.0:
+            score -= config.unsafe_setup_penalty
+        return score, {"utility_kind": "setup", "danger": danger}
+    if move_id in BURN_MOVES:
+        return _score_burn(move_data, single, actor_slot, ctx, config)
+    if move_id in WIDE_DEFENSE_MOVES:
+        spread_threats = 0
+        for mon in ctx.opp_pokemon:
+            for known_id in normalized_move_ids(mon) if mon is not None else ():
+                known_data = load_moves().get(known_id) or {}
+                if known_data.get("target") in _SPREAD_TARGETS_FOES_ONLY:
+                    spread_threats += 1
+        return config.wide_defense_base_value * min(2, spread_threats), {
+            "utility_kind": "wide_defense",
+            "spread_threats": spread_threats,
+        }
+    if move_id in RECOVERY_MOVES:
+        state = ctx.our_states[actor_slot]
+        missing = 100.0 * (1.0 - state.hp_or_max() / state.max_hp()) if state is not None else 0.0
+        return config.recovery_base_value * min(1.0, missing / 50.0), {
+            "utility_kind": "recovery",
+            "missing_hp_percent": missing,
+        }
     return 0.0, {"reason": "unmodeled_status_move"}
 
 
@@ -1093,13 +1357,48 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     # just fail avoids very little expected damage), superseding the old flat
     # `protect_repeat_penalty` subtraction (see that field's comment in vgc/models.py).
     success_prob = config.protect_success_decay**protect_counter
-    score = threat.percent * config.protect_threat_weight * success_prob
+    combined_threat = max(
+        threat.percent,
+        ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+    )
+    score = combined_threat * config.protect_threat_weight * success_prob
     if threat.percent < config.protect_low_threat_floor:
         score -= config.protect_low_threat_penalty
+    information_value = (
+        min(4, sum(ctx.opp_uncertainty)) * config.protect_information_per_unknown
+        if combined_threat > 0.0
+        else 0.0
+    )
+    stall_reasons = 0
+    if SideCondition.TAILWIND in getattr(ctx.battle, "opponent_side_conditions", ()):
+        stall_reasons += 1
+    if ctx.trick_room:
+        our_alive, opp_alive = ctx.our_alive(), ctx.opp_alive()
+        if our_alive and opp_alive:
+            our_avg = mean(ctx.our_speed[idx] for idx in our_alive)
+            opp_avg = mean(ctx.opp_speed[idx] for idx in opp_alive)
+            if our_avg > opp_avg:  # Trick Room is helping their slower side.
+                stall_reasons += 1
+    if ctx.weather is not None:
+        stall_reasons += 1
+    if any(state is not None and state.status is not None for state in ctx.opp_states):
+        stall_reasons += 1
+    stall_value = stall_reasons * config.protect_field_stall_per_turn
+    available_switches = getattr(ctx.battle, "available_switches", None) or [[], []]
+    has_reposition = actor_slot < len(available_switches) and bool(available_switches[actor_slot])
+    reposition_value = config.protect_reposition_bonus if has_reposition else 0.0
+    score += information_value + stall_value + reposition_value
     return score, {
         "threat_percent": threat.percent,
+        "combined_threat_percent": combined_threat,
         "protect_counter": protect_counter,
         "success_prob": success_prob,
+        "information_value": information_value,
+        "stall_value": stall_value,
+        "reposition_value": reposition_value,
+        "utility_kind": "protect",
+        "actor_slot": actor_slot,
+        "threat_source_slot": threat.source_slot,
     }
 
 
@@ -1115,8 +1414,13 @@ def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]
     }
 
 
-def _score_sleep_powder(
-    move_data: dict, single: SingleBattleOrder, actor_slot: int, ctx: _Context, config: PolicyConfig
+def _score_sleep_move(
+    move_id: str,
+    move_data: dict,
+    single: SingleBattleOrder,
+    actor_slot: int,
+    ctx: _Context,
+    config: PolicyConfig,
 ) -> tuple[float, dict]:
     targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
     opp_targets = [idx for idx, is_ally in targets if not is_ally]
@@ -1128,10 +1432,87 @@ def _score_sleep_powder(
         return 0.0, {"reason": "no_target"}
     if state.status is not None:
         return 0.0, {"reason": "already_statused"}
-    if "Grass" in state.types() or state.ability == "overcoat":
+    if move_id in {"sleeppowder", "spore"} and (
+        "Grass" in state.types() or state.ability == "overcoat"
+    ):
         return 0.0, {"reason": "powder_immune"}
-    value = config.sleep_powder_weight * (1.0 + ctx.opp_speed[idx] / 200.0)
-    return value, {"target_slot": idx}
+    accuracy = move_data.get("accuracy", 100)
+    accuracy_factor = 1.0 if accuracy is True else float(accuracy) / 100.0
+    base = config.sleep_powder_weight if move_id == "sleeppowder" else config.generic_sleep_value
+    value = base * accuracy_factor * (1.0 + ctx.opp_speed[idx] / 200.0)
+    return value, {"target_slot": idx, "utility_kind": "action_denial"}
+
+
+def _score_targeted_denial(
+    move_id: str,
+    move_data: dict,
+    single: SingleBattleOrder,
+    actor_slot: int,
+    ctx: _Context,
+    config: PolicyConfig,
+) -> tuple[float, dict]:
+    targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
+    opp_targets = [idx for idx, is_ally in targets if not is_ally]
+    if not opp_targets:
+        return 0.0, {"reason": "no_target"}
+    idx = opp_targets[0]
+    mon = ctx.opp_pokemon[idx]
+    state = ctx.opp_states[idx]
+    known_ids = set(normalized_move_ids(mon)) if mon is not None else set()
+    known_status = sum(
+        (load_moves().get(known_id) or {}).get("category") == "Status" for known_id in known_ids
+    )
+    accuracy = move_data.get("accuracy", 100)
+    accuracy_factor = 1.0 if accuracy is True else float(accuracy) / 100.0
+    if move_id == "taunt":
+        value = config.taunt_base_value * min(1.0, known_status / 2.0)
+    elif move_id == "encore":
+        protect_counter = getattr(mon, "protect_counter", 0) if mon is not None else 0
+        value = config.encore_base_value * (
+            1.0 if protect_counter else min(1.0, known_status / 2.0)
+        )
+    else:  # Yawn: delayed but near-certain action denial or a forced switch.
+        if state is None or state.status is not None:
+            return 0.0, {"reason": "ineligible_target"}
+        value = config.yawn_base_value
+    value *= accuracy_factor
+    value *= 1.0 + ctx.opp_control_threat[idx] / 100.0
+    return value, {
+        "target_slot": idx,
+        "utility_kind": "action_denial",
+        "known_status_moves": known_status,
+    }
+
+
+def _score_burn(
+    move_data: dict,
+    single: SingleBattleOrder,
+    actor_slot: int,
+    ctx: _Context,
+    config: PolicyConfig,
+) -> tuple[float, dict]:
+    targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
+    opp_targets = [idx for idx, is_ally in targets if not is_ally]
+    if not opp_targets:
+        return 0.0, {"reason": "no_target"}
+    idx = opp_targets[0]
+    state = ctx.opp_states[idx]
+    mon = ctx.opp_pokemon[idx]
+    if state is None or state.status is not None or "Fire" in state.types():
+        return 0.0, {"reason": "burn_ineligible"}
+    known_ids = normalized_move_ids(mon) if mon is not None else frozenset()
+    physical = sum(
+        (load_moves().get(move_id) or {}).get("category") == "Physical" for move_id in known_ids
+    )
+    damaging = sum(
+        (load_moves().get(move_id) or {}).get("category") != "Status" for move_id in known_ids
+    )
+    physical_share = physical / max(1, damaging)
+    accuracy = move_data.get("accuracy", 100)
+    accuracy_factor = 1.0 if accuracy is True else float(accuracy) / 100.0
+    value = config.burn_base_value * physical_share * accuracy_factor
+    value *= 1.0 + ctx.opp_threat_score[idx] / 100.0
+    return value, {"target_slot": idx, "utility_kind": "burn", "physical_share": physical_share}
 
 
 def _score_parting_shot(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
@@ -1174,6 +1555,7 @@ def _score_switch(
 
     our_best = 0.0
     their_best = 0.0
+    incoming_by_opponent: list[float] = []
     for idx in opp_alive:
         opp_state = ctx.opp_states[idx]
         opp_mon = ctx.opp_pokemon[idx]
@@ -1183,15 +1565,24 @@ def _score_switch(
             incoming_state, incoming_move_ids, opp_state, field_vs_opp
         )
         our_best = max(our_best, pct_out)
-        opp_move_ids = list(opp_mon.moves.keys()) if opp_mon.moves else []
+        opp_move_ids = opponent_move_ids(opp_mon, priors=ctx.priors, config=config)
         pct_in, _, _ = _best_attacking_move(opp_state, opp_move_ids, incoming_state, field_vs_us)
         their_best = max(their_best, pct_in)
+        incoming_by_opponent.append(pct_in)
 
     matchup = (our_best - their_best) * config.switch_matchup_weight
     score = matchup - config.switch_tempo_cost
     if incoming.ability and to_id(incoming.ability) == "intimidate":
         eligible = [idx for idx in opp_alive if not _intimidate_immune(ctx.opp_pokemon[idx])]
         score += len(eligible) * config.intimidate_switch_bonus
+    incoming_ability = to_id(getattr(incoming, "ability", None))
+    if incoming_ability in {"drizzle", "drought", "sandstream", "snowwarning", "hospitality"}:
+        score += config.switch_activation_bonus
+    safe_from_both = bool(incoming_by_opponent) and all(
+        pct < config.opp_switch_output_ceiling for pct in incoming_by_opponent
+    )
+    if safe_from_both:
+        score += config.switch_safe_both_bonus
 
     # Collapsed-matchup pressure (the Charizard-in-rain fix): compare the OUTGOING mon's
     # CURRENT best expected % onto the field's actives (real weather, via the same
@@ -1225,11 +1616,29 @@ def _score_switch(
             collapsed_bonus = config.collapsed_matchup_switch_bonus * (table_pct - current_pct)
     score += collapsed_bonus
 
+    endgame_bonus = 0.0
+    if ctx.gameplan is not None and ctx.gameplan.primary_win_con_species is not None:
+        outgoing_mon = ctx.our_pokemon[actor_slot]
+        outgoing_is_closer = (
+            outgoing_mon is not None
+            and to_id(outgoing_mon.species) == ctx.gameplan.primary_win_con_species
+        )
+        incoming_is_closer = to_id(incoming.species) == ctx.gameplan.primary_win_con_species
+        if outgoing_is_closer and not incoming_is_closer:
+            endgame_bonus += config.switch_endgame_preservation_bonus
+        elif ctx.endgame and incoming_is_closer and our_best > their_best:
+            endgame_bonus += config.switch_endgame_preservation_bonus
+    score += endgame_bonus
+
     return score, {
         "matchup": matchup,
         "our_best_percent": our_best,
         "their_best_percent": their_best,
+        "incoming_percent_by_opponent": incoming_by_opponent,
+        "safe_from_both": safe_from_both,
+        "activation_ability": incoming_ability,
         "collapsed_matchup_bonus": collapsed_bonus,
+        "endgame_bonus": endgame_bonus,
     }
 
 
@@ -1240,8 +1649,74 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
     if second_info.get("move_id") == "helpinghand" and first_info.get("raw_damage_score"):
         bonus += float(first_info["raw_damage_score"]) * config.helping_hand_weight
 
+    # Spread damage beside Protect is a deliberate pressure pairing: the ally does not
+    # take the spread hit in the real turn, so refund the evaluator's ally-damage penalty.
+    for protect_info, attack_info in ((first_info, second_info), (second_info, first_info)):
+        if protect_info.get("utility_kind") == "protect":
+            protected_slot = protect_info.get("actor_slot")
+            ally_damage = float(
+                attack_info.get("ally_expected_percent_by_target", {}).get(protected_slot, 0.0)
+            )
+            bonus += ally_damage * config.damage_percent_weight * config.ally_damage_penalty_weight
+
+    utility_pairs = (
+        (first_info.get("move_id"), second_info.get("utility_kind")),
+        (second_info.get("move_id"), first_info.get("utility_kind")),
+    )
+    if any(move_id == "fakeout" and kind == "setup" for move_id, kind in utility_pairs):
+        bonus += config.fake_out_setup_bonus
+    if any(
+        redirect.get("utility_kind") == "redirection" and partner.get("utility_kind") == "setup"
+        for redirect, partner in ((first_info, second_info), (second_info, first_info))
+    ):
+        bonus += config.redirection_setup_bonus
+
+    # Protect is strongest when the partner removes the exact attacker committing into
+    # the protected slot, converting one enemy action into nothing while we still act.
+    for protect_info, partner_info in ((first_info, second_info), (second_info, first_info)):
+        source_slot = protect_info.get("threat_source_slot")
+        if (
+            protect_info.get("utility_kind") == "protect"
+            and source_slot is not None
+            and (
+                source_slot in partner_info.get("ko_slots", ())
+                or source_slot in partner_info.get("flinch_targets", ())
+                or (
+                    partner_info.get("utility_kind") == "action_denial"
+                    and partner_info.get("target_slot") == source_slot
+                )
+            )
+        ):
+            bonus += config.protect_partner_cleanup_bonus
+
+    # Tailwind/Trick Room/speed drops earn their largest value only when they immediately
+    # flip the partner into a KO before the target can act.
+    for control_info, attack_info in ((first_info, second_info), (second_info, first_info)):
+        ko_slots = attack_info.get("ko_slots", ())
+        actor_speed = float(attack_info.get("actor_speed", 0.0))
+        target_speeds = attack_info.get("target_speeds", {})
+        enables_ko = False
+        if control_info.get("move_id") == "tailwind":
+            enables_ko = any(
+                actor_speed < float(target_speeds.get(slot, 0.0)) <= actor_speed * 2.0
+                for slot in ko_slots
+            )
+        elif control_info.get("move_id") == "trickroom":
+            enables_ko = any(actor_speed < float(target_speeds.get(slot, 0.0)) for slot in ko_slots)
+        elif control_info.get("speed_drop_targets"):
+            enables_ko = any(
+                slot in control_info.get("speed_drop_targets", ())
+                and actor_speed < float(target_speeds.get(slot, 0.0))
+                and actor_speed >= float(target_speeds.get(slot, 0.0)) * (2.0 / 3.0)
+                for slot in ko_slots
+            )
+        if enables_ko:
+            bonus += config.speed_control_immediate_ko_bonus
+
     first_target = first_info.get("single_target_slot")
     second_target = second_info.get("single_target_slot")
+    if first_target is not None and second_target is not None and first_target != second_target:
+        bonus += config.dual_target_pressure_bonus
     if first_target is not None and first_target == second_target:
         target = int(first_target)
         first_guarantees = target in first_info.get("guaranteed_ko_slots", ())
@@ -1281,4 +1756,25 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
             if first_expected < target_hp and second_expected < target_hp:
                 if first_expected + second_expected >= target_hp:
                     bonus += config.focus_fire_ko_bonus
+
+    # Spread-plus-cleanup is the other canonical focus-fire pattern. It never enters the
+    # same-single-target branch above because a spread move has no single_target_slot.
+    first_expected_map = first_info.get("expected_percent_by_target", {})
+    second_expected_map = second_info.get("expected_percent_by_target", {})
+    if first_target is None or second_target is None:
+        for target in set(first_expected_map).intersection(second_expected_map):
+            first_expected = float(first_expected_map[target])
+            second_expected = float(second_expected_map[target])
+            target_hp = float(
+                first_info.get("current_hp_percent_by_target", {}).get(
+                    target,
+                    second_info.get("current_hp_percent_by_target", {}).get(target, 100.0),
+                )
+            )
+            if (
+                first_expected < target_hp
+                and second_expected < target_hp
+                and first_expected + second_expected >= target_hp
+            ):
+                bonus += config.focus_fire_ko_bonus
     return bonus

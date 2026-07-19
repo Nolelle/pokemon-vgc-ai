@@ -131,11 +131,9 @@ class VgcPlayer(Player):
 
     def decide(self, battle: AbstractBattle) -> BattleOrder:
         """Choose a move: the argmax of `vgc.search.search_joint_orders` (Phase 2c's
-        shallow 2-ply search) when `PolicyConfig.use_two_ply_search` is explicitly set
-        (False by default -- see its comment in vgc/models.py for why: the offline gate
-        proxy punishes opponent-response modeling it doesn't itself exhibit, so this is
-        opted into per ladder session via `ladder/run_ladder.py --search` rather than
-        being the default), falling back to the plain myopic
+        shallow robust-response search) when `PolicyConfig.use_two_ply_search` is set
+        (True by default; `ladder/run_ladder.py --myopic` is the diagnostic opt-out),
+        falling back to the plain myopic
         `vgc.evaluator.score_joint_orders` when the search is disabled but the heuristic
         evaluator (`PolicyConfig.use_heuristic_evaluator`, the actual default) is still
         on, or a random legal move if both are disabled or there's nothing to score

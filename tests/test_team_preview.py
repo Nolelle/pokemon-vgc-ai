@@ -111,3 +111,21 @@ def test_chlorophyll_speed_is_doubled_in_preview_sun() -> None:
     venusaur = PokemonState(species_id="venusaur", ability="chlorophyll")
 
     assert _preview_speed(venusaur, "sun") == 2 * _preview_speed(venusaur, None)
+
+
+def test_preview_carries_engine_closer_lead_backline_and_mega_plan_into_battle() -> None:
+    battle = _FakeBattle(_our_team(), _opp_team())
+    order = build_team_order(battle, PolicyConfig())
+    plan = battle._vgc_preview_plan
+
+    picked = {to_id for to_id in plan.picked_species}
+    assert plan.our_closer_species in picked
+    assert plan.default_mega_species == "charizard"
+    assert len(plan.lead_functions) >= 2
+    assert len(plan.picked_species) == 4
+    assert len(plan.lead_species) == 2
+    assert plan.lead_covers_engine
+    assert plan.balanced_structure["two_attackers"]
+    assert plan.balanced_structure["closer"]
+    assert plan.speed_modes
+    assert order.startswith("/team ")

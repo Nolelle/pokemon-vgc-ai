@@ -23,6 +23,8 @@ from vgc.evaluator import (
     _resolve_targets,
     _score_attack_order,
     _score_protect,
+    _score_status_mega,
+    _score_status_move,
     _score_switch,
     effective_speed,
     field_effective_speed,
@@ -172,6 +174,32 @@ def test_mega_evolved_state_uses_mega_stats_and_ability() -> None:
     assert mega.species_id == "charizardmegay"
     assert mega.ability == "drought"
     assert mega.stats()["spa"] > state.stats()["spa"]
+
+
+def test_mega_is_delayed_when_it_does_not_change_the_current_turn() -> None:
+    config = PolicyConfig()
+    ctx = _attack_ctx(
+        ally_state=None,
+        opp_state=_klefki(),
+        attacker_state=_garchomp(item="garchompite", ability="roughskin"),
+    )
+    score, info = _score_status_mega(0, ctx, config)
+    assert info["mega_material"] is False
+    assert score == -config.mega_unnecessary_penalty
+
+
+def test_weather_setting_mega_is_material_even_beside_status_move() -> None:
+    config = PolicyConfig()
+    charizard = PokemonState("charizard", item="charizarditey", ability="blaze")
+    ctx = _attack_ctx(
+        ally_state=None,
+        opp_state=_klefki(),
+        attacker_state=charizard,
+    )
+    score, info = _score_status_mega(0, ctx, config)
+    assert info["mega_weather_change"] is True
+    assert info["mega_material"] is True
+    assert score == 0.0
 
 
 # --- _resolve_targets: allAdjacent (hits ally) vs allAdjacentFoes (foes only) --------
@@ -424,14 +452,51 @@ def test_cross_slot_stacking_penalty_zero_when_protect_prob_is_zero() -> None:
     assert adjustment == config.focus_fire_ko_bonus
 
 
-def test_cross_slot_stacking_penalty_zero_when_targets_differ() -> None:
+def test_cross_slot_different_targets_earn_dual_pressure_bonus() -> None:
     config = PolicyConfig()
     first = _target_info(expected=60.0, protect_prob=0.9, target_slot=0)
     second = _target_info(expected=45.0, protect_prob=0.9, target_slot=1)
 
-    # Different single_target_slot values -> the shared-target branch never runs, so no
-    # stacking penalty (and no redundant-KO/focus-fire adjustment either).
-    assert _cross_slot_adjustments(first, second, config) == 0.0
+    # Threatening both opposing slots makes a single Protect insufficient.
+    assert _cross_slot_adjustments(first, second, config) == config.dual_target_pressure_bonus
+
+
+def test_fake_out_plus_setup_has_explicit_action_economy_synergy() -> None:
+    config = PolicyConfig()
+    first = {"move_id": "fakeout"}
+    second = {"move_id": "swordsdance", "utility_kind": "setup"}
+    assert _cross_slot_adjustments(first, second, config) == config.fake_out_setup_bonus
+
+
+def test_redirection_plus_setup_has_explicit_pressure_pairing_synergy() -> None:
+    config = PolicyConfig()
+    first = {"move_id": "ragepowder", "utility_kind": "redirection"}
+    second = {"move_id": "trickroom", "utility_kind": "setup"}
+    assert _cross_slot_adjustments(first, second, config) == config.redirection_setup_bonus
+
+
+def test_protect_plus_partner_ko_of_threat_has_action_denial_synergy() -> None:
+    config = PolicyConfig()
+    first = {
+        "move_id": "protect",
+        "utility_kind": "protect",
+        "actor_slot": 0,
+        "threat_source_slot": 1,
+    }
+    second = {"move_id": "earthquake", "ko_slots": [1]}
+    assert _cross_slot_adjustments(first, second, config) == config.protect_partner_cleanup_bonus
+
+
+def test_tailwind_that_immediately_enables_partner_ko_gets_bonus() -> None:
+    config = PolicyConfig()
+    first = {"move_id": "tailwind", "utility_kind": "speed_control"}
+    second = {
+        "move_id": "dragonclaw",
+        "ko_slots": [0],
+        "actor_speed": 100.0,
+        "target_speeds": {0: 150.0},
+    }
+    assert _cross_slot_adjustments(first, second, config) == config.speed_control_immediate_ko_bonus
 
 
 def test_cross_slot_stacking_penalty_applies_alongside_redundant_ko_penalty() -> None:
@@ -523,6 +588,55 @@ def test_protect_beats_low_threat_penalty_when_threat_is_high() -> None:
     ctx.our_pokemon[0] = SimpleNamespace(protect_counter=0)
     score, _ = _score_protect(0, ctx, config)
     assert score > 0
+
+
+def test_protect_values_information_when_opponent_set_is_unknown() -> None:
+    config = PolicyConfig()
+    ctx = _two_slot_ctx()
+    ctx.threat_on_us[0] = _ThreatInfo(percent=50.0, move_id="earthquake", priority=0)
+    ctx.our_pokemon[0] = SimpleNamespace(protect_counter=0)
+    ctx.opp_uncertainty = [3, 2]
+    score, info = _score_protect(0, ctx, config)
+    baseline = 50.0 * config.protect_threat_weight
+    assert score > baseline
+    assert info["information_value"] == 4 * config.protect_information_per_unknown
+
+
+def test_combined_double_target_threat_can_justify_protect() -> None:
+    config = PolicyConfig()
+    ctx = _two_slot_ctx()
+    ctx.threat_on_us[0] = _ThreatInfo(percent=40.0, move_id="tackle", priority=0)
+    ctx.double_target_threat[0] = 200.0
+    ctx.our_pokemon[0] = SimpleNamespace(protect_counter=0)
+    _, info = _score_protect(0, ctx, config)
+    assert info["combined_threat_percent"] == pytest.approx(
+        200.0 * config.double_target_threat_weight
+    )
+
+
+def test_taunt_explicitly_values_denial_of_opponent_setup() -> None:
+    config = PolicyConfig()
+    ctx = _attack_ctx(ally_state=None, opp_state=_klefki())
+    ctx.opp_pokemon[0].moves = {"trickroom": None, "protect": None, "psychic": None}
+    ctx.opp_control_threat[0] = 40.0
+    move = Move("taunt", gen=9)
+    single = SimpleNamespace(order=move, move_target=1, mega=False)
+    score, info = _score_status_move("taunt", load_moves()["taunt"], single, 0, ctx, config)
+    assert score > config.taunt_base_value
+    assert info["utility_kind"] == "action_denial"
+
+
+def test_setup_is_penalized_when_user_is_in_immediate_danger() -> None:
+    config = PolicyConfig()
+    ctx = _attack_ctx(ally_state=None, opp_state=_klefki())
+    ctx.threat_on_us[0] = _ThreatInfo(percent=100.0, move_id="psychic")
+    move = Move("swordsdance", gen=9)
+    single = SimpleNamespace(order=move, move_target=0, mega=False)
+    score, info = _score_status_move(
+        "swordsdance", load_moves()["swordsdance"], single, 0, ctx, config
+    )
+    assert score == config.setup_base_value - config.unsafe_setup_penalty
+    assert info["danger"] == 100.0
 
 
 # --- _opp_protect_probability: opponent Protect anticipation -------------------------
