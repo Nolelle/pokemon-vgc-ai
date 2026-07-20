@@ -211,6 +211,93 @@ def predict_preview_choice(
     return weighted
 
 
+def _bring4_usage_distribution(species: list[str], priors: dict) -> dict[tuple[int, ...], float]:
+    """`P(bring 4-subset S) ∝ product of each member's usage SHARE among `species`'s
+    own six` -- from `data/usage/set_priors.json`'s per-species `"appearances"` counts
+    (`vgc.sets.load_set_priors()`), NOT a raw Smogon usage file, so this reflects THIS
+    ladder's actual corpus (see `docs/preview_prediction_plan.md`'s iteration-6 backtest:
+    "their 4 most-used species by corpus usage" was the strongest baseline by a wide
+    margin -- 27.4%/40.9% bring-4 top-1/top-3 vs the pure matchup predictor's 7.7%/21.1%).
+
+    A species with zero (or missing -- never tracked in the corpus) appearances gets a
+    floor of 1 rather than 0, so it doesn't zero out every subset containing it -- a
+    genuinely rare/untracked pick should be treated as unlikely, not impossible.
+    """
+    species_data = priors.get("species") or {}
+    appearances = [max(1, species_data.get(s, {}).get("appearances", 0)) for s in species]
+    total_appearances = sum(appearances)
+    shares = [count / total_appearances for count in appearances]
+    subsets = list(combinations(range(len(species)), _PICK_COUNT))
+    raw = {subset: math.prod(shares[i] for i in subset) for subset in subsets}
+    total = sum(raw.values())
+    if total <= 0.0:
+        uniform = 1.0 / len(subsets)
+        return dict.fromkeys(subsets, uniform)
+    return {subset: value / total for subset, value in raw.items()}
+
+
+def predict_preview_hybrid(
+    picker_species: list[str],
+    target_species: list[str],
+    config: PolicyConfig | None = None,
+) -> list[PreviewCandidate]:
+    """Hybrid predictor: bring-4 comes from corpus USAGE (`_bring4_usage_distribution`
+    -- the backtest's strongest signal for THAT decision), leads come from the
+    symmetric matchup scorer (`predict_preview_choice`'s `_score_choice` internals) but
+    CONDITIONED on the usage-predicted bring -- i.e. `P(leads) = sum_over_picks[
+    P_usage(pick) * P_matchup(leads | pick) ]`, where `P_matchup(leads | pick)` is a
+    softmax over just the (up to 6) lead-pair candidates that share that pick, using
+    the SAME `preview_prediction_temperature` knob. This keeps the strong bring-4 signal
+    (usage) from getting diluted by mixing it with the weak standalone matchup signal,
+    while still letting matchup reasoning pick among leads WITHIN a fixed, usage-likely
+    bring -- exactly the "conditioned on the usage-predicted brings" fix the pure
+    predictor's backtest pointed at (see `tools/backtest_preview_prediction.py`).
+
+    Returns all 90 legal `PreviewCandidate`s (probabilities sum to 1), sorted descending.
+    `predict_preview_choice` (the pure matchup-only predictor) is kept unchanged for
+    comparison -- see that function's docstring.
+    """
+    config = config or PolicyConfig()
+    if len(picker_species) < _PICK_COUNT or len(target_species) < _LEADS_COUNT:
+        return []
+
+    priors = load_set_priors()
+    bring4_probs = _bring4_usage_distribution(picker_species, priors)
+
+    matchup_candidates = predict_preview_choice(picker_species, target_species, config)
+    if not matchup_candidates:
+        return []
+
+    by_pick: dict[tuple[int, ...], list[PreviewCandidate]] = {}
+    for candidate in matchup_candidates:
+        by_pick.setdefault(candidate.pick, []).append(candidate)
+
+    temperature = config.preview_prediction_temperature or 1e-6
+    hybrid: list[PreviewCandidate] = []
+    for pick, group in by_pick.items():
+        scaled = [c.score / temperature for c in group]
+        max_scaled = max(scaled)
+        raw_weights = [math.exp(s - max_scaled) for s in scaled]
+        total = sum(raw_weights)
+        lead_probs = (
+            [w / total for w in raw_weights] if total > 0 else [1.0 / len(group)] * len(group)
+        )
+        bring_prob = bring4_probs.get(pick, 0.0)
+        for candidate, lead_prob in zip(group, lead_probs, strict=True):
+            hybrid.append(
+                PreviewCandidate(
+                    pick=candidate.pick,
+                    leads=candidate.leads,
+                    order=candidate.order,
+                    score=candidate.score,
+                    probability=bring_prob * lead_prob,
+                )
+            )
+
+    hybrid.sort(key=lambda c: -c.probability)
+    return hybrid
+
+
 def bring4_distribution(candidates: list[PreviewCandidate]) -> list[tuple[tuple[int, ...], float]]:
     """Aggregate `candidates`' probability by 4-subset (summing over the up-to-6
     lead-pair orderings sharing that subset) -- ranked descending. The bring-4 decision

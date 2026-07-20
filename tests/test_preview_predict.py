@@ -12,10 +12,12 @@ import pytest
 from vgc.models import PolicyConfig
 from vgc.preview_predict import (
     PreviewCandidate,
+    _bring4_usage_distribution,
     _species_only_team,
     bring4_distribution,
     lead_distribution,
     predict_preview_choice,
+    predict_preview_hybrid,
 )
 from vgc.sets import load_set_priors, load_usage_spreads
 
@@ -166,3 +168,132 @@ def test_predict_preview_choice_is_methodologically_symmetric() -> None:
     b_vs_a = predict_preview_choice(_TARGET_PREVIEW, _PICKER_PREVIEW, PolicyConfig())
     assert len(a_vs_b) == len(b_vs_a) == 90
     assert sum(c.probability for c in b_vs_a) == pytest.approx(1.0, abs=1e-6)
+
+
+# --- _bring4_usage_distribution: usage-weighted bring-4 prior ------------------------
+
+
+def test_bring4_usage_distribution_sums_to_one() -> None:
+    priors = {
+        "species": {
+            "garchomp": {"appearances": 800},
+            "klefki": {"appearances": 400},
+            "incineroar": {"appearances": 600},
+            "sylveon": {"appearances": 200},
+            "torkoal": {"appearances": 100},
+            "farigiraf": {"appearances": 50},
+        }
+    }
+    species = ["garchomp", "klefki", "incineroar", "sylveon", "torkoal", "farigiraf"]
+    dist = _bring4_usage_distribution(species, priors)
+    assert len(dist) == 15  # C(6,4)
+    assert sum(dist.values()) == pytest.approx(1.0)
+
+
+def test_bring4_usage_distribution_favors_higher_usage_species() -> None:
+    priors = {
+        "species": {
+            "garchomp": {"appearances": 10_000},
+            "klefki": {"appearances": 10},
+            "incineroar": {"appearances": 10},
+            "sylveon": {"appearances": 10},
+            "torkoal": {"appearances": 10},
+            "farigiraf": {"appearances": 10},
+        }
+    }
+    species = ["garchomp", "klefki", "incineroar", "sylveon", "torkoal", "farigiraf"]
+    dist = _bring4_usage_distribution(species, priors)
+    best_subset = max(dist.items(), key=lambda item: item[1])[0]
+    # index 0 is garchomp (overwhelmingly more used) -- every top subset should include it.
+    assert 0 in best_subset
+
+
+def test_bring4_usage_distribution_floors_unseen_species_instead_of_zeroing() -> None:
+    priors = {
+        "species": {
+            "garchomp": {"appearances": 500},
+            "klefki": {"appearances": 500},
+            "incineroar": {"appearances": 500},
+            "sylveon": {"appearances": 500},
+            "torkoal": {"appearances": 500},
+            # "farigiraf" deliberately absent -- never tracked in the corpus.
+        }
+    }
+    species = ["garchomp", "klefki", "incineroar", "sylveon", "torkoal", "farigiraf"]
+    dist = _bring4_usage_distribution(species, priors)
+    subsets_with_farigiraf = [subset for subset in dist if 5 in subset]
+    assert subsets_with_farigiraf
+    assert all(dist[subset] > 0.0 for subset in subsets_with_farigiraf)
+
+
+# --- predict_preview_hybrid: usage bring-4 + matchup-conditioned leads ---------------
+
+
+def test_predict_preview_hybrid_returns_90_candidates_summing_to_one() -> None:
+    candidates = predict_preview_hybrid(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+    assert len(candidates) == 90
+    assert sum(c.probability for c in candidates) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_predict_preview_hybrid_bring4_matches_usage_distribution_exactly() -> None:
+    """Hybrid's bring-4 marginal must equal _bring4_usage_distribution exactly (up to
+    floating point) -- leads are conditioned WITHIN a pick, so summing over a pick's
+    lead group must reproduce that pick's usage probability unchanged.
+    """
+    priors = load_set_priors()
+    usage_dist = _bring4_usage_distribution(_PICKER_PREVIEW, priors)
+
+    candidates = predict_preview_hybrid(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+    hybrid_bring4 = dict(bring4_distribution(candidates))
+
+    assert set(hybrid_bring4) == set(usage_dist)
+    for subset, usage_prob in usage_dist.items():
+        assert hybrid_bring4[subset] == pytest.approx(usage_prob, abs=1e-9)
+
+
+def test_predict_preview_hybrid_empty_when_picker_has_fewer_than_four() -> None:
+    assert predict_preview_hybrid(_PICKER_PREVIEW[:3], _TARGET_PREVIEW, PolicyConfig()) == []
+
+
+def test_predict_preview_hybrid_empty_when_target_has_fewer_than_two() -> None:
+    assert predict_preview_hybrid(_PICKER_PREVIEW, _TARGET_PREVIEW[:1], PolicyConfig()) == []
+
+
+def test_predict_preview_hybrid_preserves_matchup_rank_order_within_a_pick() -> None:
+    """Within one fixed bring-4, the hybrid's lead-pair ordering (by conditional
+    probability) must match the pure matchup predictor's own score ordering -- the
+    conditioning only reweights ACROSS picks, never reorders leads within one.
+    """
+    matchup = predict_preview_choice(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+    hybrid = predict_preview_hybrid(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+
+    by_pick_matchup: dict[tuple[int, ...], list] = {}
+    for c in matchup:
+        by_pick_matchup.setdefault(c.pick, []).append(c)
+    by_pick_hybrid: dict[tuple[int, ...], list] = {}
+    for c in hybrid:
+        by_pick_hybrid.setdefault(c.pick, []).append(c)
+
+    for pick, matchup_group in by_pick_matchup.items():
+        matchup_order = [c.leads for c in sorted(matchup_group, key=lambda c: -c.score)]
+        hybrid_group = by_pick_hybrid[pick]
+        hybrid_order = [c.leads for c in sorted(hybrid_group, key=lambda c: -c.probability)]
+        assert matchup_order == hybrid_order
+
+
+def test_predict_preview_hybrid_differs_from_pure_matchup_bring4() -> None:
+    """Sanity that the hybrid actually changed something relative to the pure matchup
+    predictor -- the backtest's whole motivation was that pure-matchup bring-4 was weak.
+    """
+    matchup = predict_preview_choice(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+    hybrid = predict_preview_hybrid(_PICKER_PREVIEW, _TARGET_PREVIEW, PolicyConfig())
+    matchup_top_bring4 = bring4_distribution(matchup)[0][0]
+    hybrid_top_bring4 = bring4_distribution(hybrid)[0][0]
+    priors = load_set_priors()
+    usage_top_bring4 = max(
+        _bring4_usage_distribution(_PICKER_PREVIEW, priors).items(), key=lambda item: item[1]
+    )[0]
+    assert hybrid_top_bring4 == usage_top_bring4
+    # Not asserting hybrid != matchup unconditionally (they COULD coincide by chance),
+    # just confirming the hybrid tracks usage rather than the pure matchup score.
+    del matchup_top_bring4

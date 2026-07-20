@@ -87,6 +87,15 @@ class PreviewPlan:
     balanced_structure: dict[str, bool]
     lead_covers_engine: bool
     back_has_second_speed_mode: bool
+    # Iteration 6 (vgc.preview_predict.predict_preview_hybrid): the opponent's
+    # single-highest-probability predicted lead pair, species ids -- `None` when
+    # `PolicyConfig.use_preview_prediction` is off or prediction failed (e.g. an
+    # opponent preview with fewer than 6 species). Seeds turn-1 context: available to
+    # any downstream reader via `_Context.preview_plan` the same way
+    # `our_closer_species`/`default_mega_species` already are, and recorded for tracing
+    # regardless (see `.summary()`) so predicted-vs-actual accuracy is inspectable from
+    # a real session's traces.
+    predicted_opponent_leads: tuple[str, ...] | None = None
 
     def summary(self) -> dict[str, object]:
         return {
@@ -101,6 +110,11 @@ class PreviewPlan:
             "balanced_structure": dict(self.balanced_structure),
             "lead_covers_engine": self.lead_covers_engine,
             "back_has_second_speed_mode": self.back_has_second_speed_mode,
+            "predicted_opponent_leads": (
+                list(self.predicted_opponent_leads)
+                if self.predicted_opponent_leads is not None
+                else None
+            ),
         }
 
 
@@ -139,9 +153,7 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
     ]
     our_signals = detect_team_signals(our_team)
     opp_signals = detect_team_signals(opp_team)
-    gameplan = build_gameplan(
-        our_states, opp_states, our_move_id_lists, opp_move_id_lists, config
-    )
+    gameplan = build_gameplan(our_states, opp_states, our_move_id_lists, opp_move_id_lists, config)
     closer_idx = gameplan.primary_win_con_idx
     opponent_closer_idx = gameplan.primary_threat_idx
     mega_indices = frozenset(
@@ -167,6 +179,53 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         for weather in _PREVIEW_WEATHERS
     }
 
+    # Iteration 6 (docs/preview_prediction_plan.md): predict the OPPONENT's own bring-4
+    # + leads (vgc.preview_predict.predict_preview_hybrid -- usage-driven bring-4,
+    # matchup-conditioned leads, backtest-gated -- see PolicyConfig.
+    # use_preview_prediction's comment) and score our candidates against THAT
+    # distribution instead of assuming all 6 previewed opponent mons are equally likely
+    # to be brought. Deferred import: vgc.preview_predict imports FROM this module
+    # (_build_matchup_matrix/_score_choice/etc, to reuse these internals without
+    # duplicating them), so importing it back at module level here would be circular --
+    # this local import only ever runs at call time, by which point both modules are
+    # fully loaded.
+    opp_bring_weights = None
+    opp_worst_case_subset = None
+    predicted_opponent_leads: tuple[str, ...] | None = None
+    predicted_preview_summary: dict[str, object] | None = None
+    if config.use_preview_prediction:
+        from vgc.preview_predict import (
+            bring4_distribution,
+            lead_distribution,
+            predict_preview_hybrid,
+        )
+
+        opp_species_ids = [to_id(mon.species) for mon in opp_team]
+        our_species_ids = [to_id(mon.species) for mon in our_team]
+        hybrid_candidates = predict_preview_hybrid(opp_species_ids, our_species_ids, config)
+        if hybrid_candidates:
+            bring4_ranked = bring4_distribution(hybrid_candidates)
+            opp_bring_weights = [0.0] * len(opp_team)
+            for subset, prob in bring4_ranked:
+                for idx in subset:
+                    opp_bring_weights[idx] += prob
+            opp_worst_case_subset = bring4_ranked[0][0]
+            lead_ranked = lead_distribution(hybrid_candidates)
+            if lead_ranked:
+                predicted_opponent_leads = tuple(
+                    to_id(opp_team[idx].species) for idx in lead_ranked[0][0]
+                )
+            predicted_preview_summary = {
+                "predicted_bring4": [
+                    [to_id(opp_team[i].species) for i in subset] for subset, _p in bring4_ranked[:3]
+                ],
+                "predicted_bring4_probs": [round(p, 4) for _s, p in bring4_ranked[:3]],
+                "predicted_leads": [
+                    [to_id(opp_team[i].species) for i in pair] for pair, _p in lead_ranked[:3]
+                ],
+                "predicted_leads_probs": [round(p, 4) for _pair, p in lead_ranked[:3]],
+            }
+
     best_score = float("-inf")
     best_order: tuple[int, ...] = tuple(range(_PICK_COUNT))
     best_breakdown: dict[str, object] = {}
@@ -189,6 +248,8 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
                 mega_indices=mega_indices,
                 default_mega_idx=default_mega_idx,
                 config=config,
+                opp_bring_weights=opp_bring_weights,
+                opp_worst_case_subset=opp_worst_case_subset,
             )
             if score > best_score:
                 best_score = score
@@ -216,9 +277,8 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         speed_modes=tuple(best_breakdown.get("speed_modes", ())),
         balanced_structure=dict(best_breakdown.get("balanced_structure", {})),
         lead_covers_engine=bool(best_breakdown.get("lead_covers_engine", False)),
-        back_has_second_speed_mode=bool(
-            best_breakdown.get("back_has_second_speed_mode", False)
-        ),
+        back_has_second_speed_mode=bool(best_breakdown.get("back_has_second_speed_mode", False)),
+        predicted_opponent_leads=predicted_opponent_leads,
     )
     # poke-env battle objects are mutable throughout a battle. Carry the preview choice
     # forward so turn scoring preserves the closer and default Mega we actually selected
@@ -241,6 +301,8 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
             "plan": preview_plan.summary(),
         },
     )
+    if predicted_preview_summary is not None:
+        record_note("predicted_opponent_preview", predicted_preview_summary)
     if meta_team is not None:
         record_note(
             "opponent_meta_team",
@@ -303,15 +365,48 @@ def _score_choice(
     mega_indices,
     default_mega_idx,
     config,
+    opp_bring_weights=None,
+    opp_worst_case_subset=None,
 ) -> tuple[float, dict[str, object]]:
+    """`opp_bring_weights`/`opp_worst_case_subset` (both `None` by default, giving the
+    EXACT pre-iteration-6 flat-average-over-all-6 behavior): when
+    `PolicyConfig.use_preview_prediction` is on, `build_team_order` passes
+    `opp_bring_weights` (per-opponent-mon marginal predicted bring probability, from
+    `vgc.preview_predict.predict_preview_hybrid`) and `opp_worst_case_subset` (the
+    single highest-probability predicted opponent bring-4) so `exchange_score` reflects
+    "how do we do against what they'll ACTUALLY bring" instead of "how do we do against
+    all 6 previewed mons equally" -- see `PolicyConfig.team_preview_opponent_worst_case_
+    weight`'s comment for the blend.
+    """
     leads = order[:_LEADS_COUNT]
     weather = _lead_weather(leads, our_states)
     our_onto_them, them_onto_us = matchup_by_weather[weather]
 
-    exchange_terms = [
-        our_onto_them[i][j] - them_onto_us[i][j] for i in picked for j in range(n_opp)
-    ]
-    exchange_score = mean(exchange_terms) if exchange_terms else 0.0
+    if opp_bring_weights is None:
+        exchange_terms = [
+            our_onto_them[i][j] - them_onto_us[i][j] for i in picked for j in range(n_opp)
+        ]
+        exchange_score = mean(exchange_terms) if exchange_terms else 0.0
+    else:
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for i in picked:
+            for j in range(n_opp):
+                weight = opp_bring_weights[j]
+                weighted_sum += weight * (our_onto_them[i][j] - them_onto_us[i][j])
+                total_weight += weight
+        expectation_score = weighted_sum / total_weight if total_weight > 0 else 0.0
+        if opp_worst_case_subset:
+            worst_terms = [
+                our_onto_them[i][j] - them_onto_us[i][j]
+                for i in picked
+                for j in opp_worst_case_subset
+            ]
+            worst_case_score = mean(worst_terms) if worst_terms else expectation_score
+            hedge = config.team_preview_opponent_worst_case_weight
+            exchange_score = (1.0 - hedge) * expectation_score + hedge * worst_case_score
+        else:
+            exchange_score = expectation_score
 
     lead_speed = mean(_preview_speed(our_states[i], weather) for i in leads)
     speed_score = lead_speed - opp_avg_speed
@@ -335,22 +430,17 @@ def _score_choice(
     if any(role.redirection or role.protection for role in lead_roles):
         lead_functions.add("protect_partner")
     if any(
-        max((our_onto_them[i][j] - them_onto_us[i][j] for j in range(n_opp)), default=0.0)
-        >= 40.0
+        max((our_onto_them[i][j] - them_onto_us[i][j] for j in range(n_opp)), default=0.0) >= 40.0
         for i in leads
     ):
         lead_functions.add("force_switch")
     if any(role.protection for role in lead_roles) and any(role.attacker for role in lead_roles):
         lead_functions.add("safe_information")
-    if any(
-        our_onto_them[i][j] >= 100.0 for i in leads for j in range(n_opp)
-    ):
+    if any(our_onto_them[i][j] >= 100.0 for i in leads for j in range(n_opp)):
         lead_functions.add("immediate_ko")
 
     lead_function_score = min(4, len(lead_functions)) * config.team_preview_lead_function_bonus
-    passive_penalty = (
-        config.team_preview_passive_lead_penalty if len(lead_functions) < 2 else 0.0
-    )
+    passive_penalty = config.team_preview_passive_lead_penalty if len(lead_functions) < 2 else 0.0
 
     # Their engine enablers and closer must have at least one favorable answer among our
     # selected four. Each covered strategic target earns one explicit bonus.
@@ -475,5 +565,7 @@ def _score_choice(
         "speed_modes": sorted(speed_modes),
         "back_has_second_speed_mode": back_has_second_speed_mode,
         "balanced_structure": balanced_checks,
-        "default_mega_picked": default_mega_idx in picked if default_mega_idx is not None else False,
+        "default_mega_picked": default_mega_idx in picked
+        if default_mega_idx is not None
+        else False,
     }

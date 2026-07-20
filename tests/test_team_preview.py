@@ -43,7 +43,9 @@ def _our_team():
         _mon("charizard", ["heatwave", "protect"], item="charizarditey", ability="blaze"),
         _mon("farigiraf", ["psychic", "trickroom", "helpinghand"], ability="armortail"),
         _mon("venusaur", ["leafstorm", "sleeppowder", "protect"], ability="chlorophyll"),
-        _mon("garchomp", ["earthquake", "dragonclaw", "protect"], item="lifeorb", ability="roughskin"),
+        _mon(
+            "garchomp", ["earthquake", "dragonclaw", "protect"], item="lifeorb", ability="roughskin"
+        ),
         _mon("incineroar", ["flareblitz", "fakeout", "partingshot"], ability="intimidate"),
         _mon("sylveon", ["hypervoice", "protect"], ability="pixilate"),
     ]
@@ -129,3 +131,118 @@ def test_preview_carries_engine_closer_lead_backline_and_mega_plan_into_battle()
     assert plan.balanced_structure["closer"]
     assert plan.speed_modes
     assert order.startswith("/team ")
+
+
+# --- iteration 6 integration: opponent preview prediction shifts our own pick --------
+
+
+def _teambuilder_team(packed_text: str):
+    from poke_env.battle.pokemon import Pokemon
+    from poke_env.teambuilder.teambuilder import Teambuilder
+
+    team = []
+    for tb_mon in Teambuilder.parse_packed_team(packed_text):
+        mon = Pokemon(gen=9, teambuilder=tb_mon)
+        mon._active = False
+        mon._current_hp = mon.max_hp
+        team.append(mon)
+    return team
+
+
+def _bare_opponent(species: str):
+    from poke_env.battle.pokemon import Pokemon
+
+    mon = Pokemon(gen=9, species=species)
+    mon._active = False
+    mon._current_hp = 100
+    mon._max_hp = 100
+    return mon
+
+
+def test_predicted_rain_engine_opponent_shifts_our_own_bring_four(monkeypatch) -> None:
+    """Integration-level test for iteration 6's gate-passed integration
+    (docs/preview_prediction_plan.md step 3): an opponent previewing a Drizzle setter
+    (Pelipper) + a Swift Swim sweeper (Barraskewda) -- a textbook rain engine -- should,
+    once corpus usage strongly favors that pair being brought together (monkeypatched
+    set_priors appearances, isolating the effect from real-corpus noise), change which
+    4 of OUR OWN 6 we select: Torkoal (Fire, weak to Water, a bad answer to a rain
+    engine) should be DROPPED in favor of Sylveon (Fairy, a clean matchup against
+    Water/Flying) once `use_preview_prediction` correctly weights their likely bring
+    over the flat assume-all-6-equally-likely baseline.
+    """
+    import vgc.preview_predict as preview_predict_module
+
+    real_load_set_priors = preview_predict_module.load_set_priors
+
+    def boosted_priors(path=None):
+        real = real_load_set_priors(path)
+        species = dict(real.get("species") or {})
+        species["pelipper"] = {**species.get("pelipper", {}), "appearances": 100_000}
+        species["barraskewda"] = {**species.get("barraskewda", {}), "appearances": 100_000}
+        return {"meta": real.get("meta", {}), "species": species}
+
+    monkeypatch.setattr(preview_predict_module, "load_set_priors", boosted_priors)
+
+    our_team_text = (
+        "Raichu||Leftovers|Static|Thunderbolt,Protect,FocusBlast,VoltSwitch|Timid|2,,,32,,32||||50|]"
+        "Torkoal||WhiteHerb|Drought|Overheat,Protect,SolarBeam,RapidSpin|Modest|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FlareBlitz,Protect,DarkestLariat,PartingShot|Careful"
+        "|32,,14,,20,||||50|]"
+        "Charizard||CharizarditeY|Blaze|HeatWave,Protect,SolarBeam,WeatherBall|Modest|10,,,32,,24||||50|]"
+        "Camerupt||Leftovers|SolidRock|EarthPower,Protect,Overheat,RockSlide|Modest|2,,,32,,32||||50|]"
+        "Sylveon||FairyFeather|Pixilate|HyperVoice,Protect,HyperBeam,QuickAttack|Modest"
+        "|9,,22,20,,15||||50|"
+    )
+    our_team = _teambuilder_team(our_team_text)
+    opp_species = ["pelipper", "barraskewda", "tyranitar", "incineroar", "milotic", "excadrill"]
+
+    def make_battle():
+        opp_team = [_bare_opponent(s) for s in opp_species]
+        return _FakeBattle(our_team, opp_team)
+
+    config_on = PolicyConfig(
+        use_preview_prediction=True, team_preview_opponent_worst_case_weight=0.9
+    )
+    config_off = PolicyConfig(use_preview_prediction=False)
+
+    order_on = build_team_order(make_battle(), config_on)
+    order_off = build_team_order(make_battle(), config_off)
+
+    picked_on = {our_team[int(d) - 1].species for d in order_on.removeprefix("/team ")}
+    picked_off = {our_team[int(d) - 1].species for d in order_off.removeprefix("/team ")}
+
+    assert picked_on != picked_off
+    assert "torkoal" not in picked_on
+    assert "torkoal" in picked_off
+    assert "sylveon" in picked_on
+
+
+def test_predicted_opponent_leads_seed_the_preview_plan() -> None:
+    our_team = _teambuilder_team(
+        "Raichu||Leftovers|Static|Thunderbolt,Protect,FocusBlast,VoltSwitch|Timid|2,,,32,,32||||50|]"
+        "Torkoal||WhiteHerb|Drought|Overheat,Protect,SolarBeam,RapidSpin|Modest|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FlareBlitz,Protect,DarkestLariat,PartingShot|Careful"
+        "|32,,14,,20,||||50|]"
+        "Charizard||CharizarditeY|Blaze|HeatWave,Protect,SolarBeam,WeatherBall|Modest|10,,,32,,24||||50|]"
+        "Camerupt||Leftovers|SolidRock|EarthPower,Protect,Overheat,RockSlide|Modest|2,,,32,,32||||50|]"
+        "Sylveon||FairyFeather|Pixilate|HyperVoice,Protect,HyperBeam,QuickAttack|Modest"
+        "|9,,22,20,,15||||50|"
+    )
+    opp_species = ["pelipper", "barraskewda", "tyranitar", "incineroar", "milotic", "excadrill"]
+    opp_team = [_bare_opponent(s) for s in opp_species]
+    battle = _FakeBattle(our_team, opp_team)
+
+    build_team_order(battle, PolicyConfig(use_preview_prediction=True))
+    plan = battle._vgc_preview_plan
+
+    assert plan.predicted_opponent_leads is not None
+    assert len(plan.predicted_opponent_leads) == 2
+    assert set(plan.predicted_opponent_leads).issubset(set(opp_species))
+    assert "predicted_opponent_leads" in plan.summary()
+
+
+def test_use_preview_prediction_off_leaves_predicted_opponent_leads_none() -> None:
+    battle = _FakeBattle(_our_team(), _opp_team())
+    build_team_order(battle, PolicyConfig(use_preview_prediction=False))
+    plan = battle._vgc_preview_plan
+    assert plan.predicted_opponent_leads is None

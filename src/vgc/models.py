@@ -399,10 +399,46 @@ class PolicyConfig:
     # first-pass default (candidate score gaps in this scoring scale typically run
     # tens of points -- see `_score_choice`'s per-term weights -- so a handful of nats
     # of separation between the top few candidates is plausible without the whole
-    # distribution collapsing onto one option) -- `tools/backtest_preview_prediction.py`
-    # is the actual calibration signal for this, not a hand-picked number; NOT tuned
-    # against ground truth yet (see `docs/preview_prediction_plan.md`'s step-2 gate).
+    # distribution collapsing onto one option); also used by
+    # `predict_preview_hybrid`'s lead-pair softmax WITHIN a fixed bring-4 (see that
+    # function's docstring). Not directly re-tuned by the backtest (which only compares
+    # ranked orderings, insensitive to this knob's exact value), only the two GATED
+    # knobs below were.
     preview_prediction_temperature: float = 20.0
+    # Master switch: True scores our 90 team-preview candidates against
+    # `vgc.preview_predict.predict_preview_hybrid`'s predicted opponent bring/lead
+    # distribution (likelihood-weighted + a worst-case hedge, see
+    # `team_preview_opponent_worst_case_weight` below) instead of the flat
+    # assume-all-6-equally-likely baseline `_score_choice` used before this feature.
+    # Defaults to True (unlike `use_two_ply_search`/`use_bc_policy`/`use_value_head`,
+    # which stay opt-in pending a real ladder A/B) because this one has a real backtest
+    # gate behind it, over 4,871 real teampreview records
+    # (`tools/backtest_preview_prediction.py`, iteration-6 plan): the hybrid predictor's
+    # bring-4 top-1/top-3 accuracy (27.4%/41.2%) matches or slightly beats the strongest
+    # baseline (top-4-by-corpus-usage: 27.4%/40.9%, essentially by construction -- the
+    # hybrid's bring-4 IS that same usage signal), and its LEAD accuracy clearly beats
+    # that same baseline (10.8%/21.1% vs 5.3%/15.3%, roughly 2x on top-1) -- the gate the
+    # plan specified before integrating. The pure matchup-only predictor (no longer used
+    # for bring-4) failed this gate badly on its own (7.7%/21.1% bring-4 top-1/top-3,
+    # barely above the 6.7%/20.0% uniform-random floor) -- see
+    # `vgc.preview_predict.predict_preview_choice`'s module docstring for why bring-4
+    # needed the usage signal instead.
+    use_preview_prediction: bool = True
+    # Blend weight for `_score_choice`'s opponent-matchup term when
+    # `use_preview_prediction` is on: `(1 - w) * likelihood_weighted_exchange_score + w
+    # * worst_case_exchange_score`, where the likelihood-weighted term averages over ALL
+    # 6 previewed opponent mons weighted by each one's marginal predicted bring
+    # probability, and the worst-case term restricts that same average to ONLY the
+    # single highest-probability predicted bring-4 (a sharper, less-diluted "what we
+    # actually expect to face" signal) -- mirrors `search_worst_case_weight`'s blend
+    # philosophy (a real opponent isn't a perfect predictable optimizer, but hedging
+    # entirely against "any of their 6" when 2 are very unlikely to be brought is overly
+    # conservative). 0.3 is a first-pass default in the same spirit as
+    # `search_worst_case_weight`'s own tuning history (dropped from an initially-higher
+    # value after over-weighting worst cases made search too passive) -- kept modest
+    # rather than re-deriving from this backtest, which doesn't measure this specific
+    # blend's in-battle effect.
+    team_preview_opponent_worst_case_weight: float = 0.3
 
     # --- Final integration: BC v2 candidate re-ranker (vgc.bc.policy.score_orders) ------
     # Master switch: True blends the trained BC v2 checkpoint's learned move/target

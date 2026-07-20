@@ -1,6 +1,11 @@
 #!/usr/bin/env python
-"""Backtest `vgc.preview_predict.predict_preview_choice` against real teampreview
-ground truth (iteration 6 plan, step 2 -- `docs/preview_prediction_plan.md`).
+"""Backtest `vgc.preview_predict.predict_preview_choice` (pure matchup) and
+`predict_preview_hybrid` (usage bring-4 + matchup-conditioned leads) against real
+teampreview ground truth (iteration 6 plan, steps 2 and its follow-up --
+`docs/preview_prediction_plan.md`). The hybrid predictor exists because the FIRST
+backtest run of the pure predictor showed it losing badly to the "top-4 by usage"
+baseline on bring-4 (7.7%/21.1% vs 27.4%/40.9% top-1/top-3) while still beating it on
+leads (7.0%/24.3% vs 5.3%/15.3%) -- the hybrid combines the strong half of each.
 
 Ground truth: every `decision_kind == "teampreview"` record in `data/bc/decisions.jsonl`
 (one per (replay, player)) -- `action["picked"]`/`action["lead_order"]` are
@@ -10,7 +15,7 @@ capture (replay logs don't carry that). A record whose derived ground truth has 
 than 4 picked or 2 led species (the game ended before every pick appeared) can't be
 scored and is skipped, counted separately.
 
-Metrics, for the predictor AND two baselines:
+Metrics, for both predictors AND two baselines:
   - **bring-4 top-1/top-3 accuracy**: does the ground-truth 4-of-6 subset match the
     highest-probability (or one of the top-3) predicted subset, via
     `vgc.preview_predict.bring4_distribution`.
@@ -59,9 +64,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from vgc.config import DATA_DIR  # noqa: E402
-from vgc.models import PolicyConfig  # noqa: E402
-from vgc.preview_predict import bring4_distribution, lead_distribution, predict_preview_choice  # noqa: E402
 from vgc.data import load_species  # noqa: E402
+from vgc.models import PolicyConfig  # noqa: E402
+from vgc.preview_predict import (  # noqa: E402
+    bring4_distribution,
+    lead_distribution,
+    predict_preview_choice,
+    predict_preview_hybrid,
+)
 from vgc.sets import load_set_priors  # noqa: E402
 
 DEFAULT_DATA_PATH = DATA_DIR.parent / "bc" / "decisions.jsonl"
@@ -149,6 +159,7 @@ def main() -> int:
     known_species = set(load_species().keys())
 
     predictor_acc = _Accumulator()
+    hybrid_acc = _Accumulator()
     baseline_b_acc = _Accumulator()
 
     n_seen = 0
@@ -209,6 +220,11 @@ def main() -> int:
             lead_ranked = [pair for pair, _p in lead_distribution(candidates)]
             predictor_acc.record(bring4_ranked, lead_ranked, gt_pick, gt_leads)
 
+            hybrid_candidates = predict_preview_hybrid(own_preview, opp_preview, config)
+            hybrid_bring4_ranked = [subset for subset, _p in bring4_distribution(hybrid_candidates)]
+            hybrid_lead_ranked = [pair for pair, _p in lead_distribution(hybrid_candidates)]
+            hybrid_acc.record(hybrid_bring4_ranked, hybrid_lead_ranked, gt_pick, gt_leads)
+
             baseline_b_acc.record(
                 _usage_ranked_bring4(own_preview, priors),
                 _usage_ranked_leads(own_preview, priors),
@@ -249,7 +265,8 @@ def main() -> int:
     )
     print()
     for name, summary in (
-        ("predictor", predictor_acc.summary()),
+        ("predictor (pure matchup)", predictor_acc.summary()),
+        ("hybrid (usage bring4 + conditioned leads)", hybrid_acc.summary()),
         ("baseline_a (uniform random legal, analytical)", baseline_a_summary),
         ("baseline_b (top-4 by corpus usage)", baseline_b_acc.summary()),
     ):
