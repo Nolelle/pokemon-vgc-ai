@@ -306,7 +306,13 @@ class PolicyConfig:
     # does this, weighted by enumeration score and each Protect's real opp_protect_prob),
     # not treat every enumerated worst case as equally certain -- the residual worst-case
     # weight here is a tail-risk hedge on top of that, not the dominant term.
-    search_worst_case_weight: float = 0.25
+    # Raised 0.25 -> 0.4 in campaign iteration 4: ladder block 3's postmortem made
+    # unnecessary_prediction co-dominant (6/14 losses = "the selected line had a severely
+    # losing reasonable opponent response" -- 1200+-rated opponents actually find those
+    # punishes), and the same-session A/B agreed: 0.4 won 96/100 vs 0.25's 92/100 (with
+    # a heavier expected_death_cost_weight adding nothing on top). 0.4 keeps the
+    # likelihood-weighted expectation dominant while hedging real punishes harder.
+    search_worst_case_weight: float = 0.4
     # Points of enumeration score (see _enumerate_opp_responses' cheap per-response
     # score) per e-fold of response likelihood in the softmax that turns those scores
     # into weights for the expectation term above (`p_i ∝ exp(enum_score_i /
