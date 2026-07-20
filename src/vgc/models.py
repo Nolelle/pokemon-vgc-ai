@@ -431,6 +431,23 @@ class PolicyConfig:
     # "preservation" rather than e.g. "retreat_bonus" since the mechanism is a penalty on
     # the risky choice, not a bonus on the safe one -- symmetric either way.
     win_con_preservation_weight: float = 0.4
+    # Expected-death cost for ANY of our mons (not just the win con) staying in under a
+    # lethal threat: when the bigger of the single-threat percent and the (weighted)
+    # combined double-target threat on the ACTOR slot is >= 100 and this order doesn't
+    # itself remove the threat before it lands, the order pays
+    # `weight * min(200, that threat percent)` -- pricing the mon's likely faint into the
+    # myopic argmax the way the search's exchange delta already prices it one layer up.
+    # Added after ladder block 2's postmortem put lost_positioning first (9/16 losses,
+    # "stayed exposed to a combined KO threat"): stay-in chip attacks previously paid
+    # NOTHING for the actor dying, so a doomed Psychic always outbid a defensive switch
+    # (switch orders never pass through `_score_attack_order`, so they escape this cost
+    # exactly like they escape win_con_preservation_weight's). 0.5 puts a full-lethal
+    # (100%) exposure at ~50-100 points: a doomed chip attack (~60-90 pts) now loses to a
+    # decent switch, while a guaranteed KO elsewhere (~205 pts) still trades on purpose
+    # -- deliberate sacrifices for a KO remain legal, mindless exposure does not. Stacks
+    # with win_con_preservation_weight on the win con by design (the win con should be
+    # MORE protected than the average team member, not equally).
+    expected_death_cost_weight: float = 0.5
     # Flat bonus added to a target's contribution in `_score_attack_order` when that
     # target is one of `GamePlan.plan_breakers` -- KOing the piece that specifically
     # invalidates our win con re-enables the whole plan (the Chandelure-vs-Torkoal case:

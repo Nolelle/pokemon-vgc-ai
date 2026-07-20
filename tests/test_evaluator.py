@@ -6,7 +6,7 @@ style.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import mean
 from types import SimpleNamespace
@@ -1055,6 +1055,86 @@ def test_win_con_preservation_does_not_fire_for_a_non_win_con_slot() -> None:
         move, load_moves()["earthquake"], single, 0, ctx_with_plan, config
     )
     assert score_with_plan == pytest.approx(score_no_plan)
+
+
+def test_expected_death_cost_fires_under_lethal_single_threat() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    threat = [_ThreatInfo(percent=120.0, move_id="tackle", priority=0), _ThreatInfo()]
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, threat_on_us=threat)
+
+    score_with, _, info = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx, config
+    )
+    score_without, _, _ = _score_attack_order(
+        move,
+        load_moves()["earthquake"],
+        single,
+        0,
+        ctx,
+        replace(config, expected_death_cost_weight=0.0),
+    )
+    expected_cost = config.expected_death_cost_weight * 120.0
+    assert info["expected_death_cost"] == pytest.approx(expected_cost)
+    assert score_with == pytest.approx(score_without - expected_cost)
+
+
+def test_expected_death_cost_fires_on_combined_double_target_threat() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    # Neither single threat alone is lethal, but the weighted combined double-target
+    # threat crosses 100 -- the block-2 postmortem's "stayed exposed to a combined KO
+    # threat" case, which the single-threat gate alone would never price.
+    threat = [_ThreatInfo(percent=60.0, move_id="tackle", priority=0), _ThreatInfo()]
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, threat_on_us=threat)
+    ctx.double_target_threat[0] = 300.0
+
+    weighted = 300.0 * config.double_target_threat_weight
+    assert weighted >= 100.0  # scenario premise
+    score_with, _, info = _score_attack_order(
+        move, load_moves()["earthquake"], single, 0, ctx, config
+    )
+    score_without, _, _ = _score_attack_order(
+        move,
+        load_moves()["earthquake"],
+        single,
+        0,
+        ctx,
+        replace(config, expected_death_cost_weight=0.0),
+    )
+    expected_cost = config.expected_death_cost_weight * min(200.0, weighted)
+    assert info["expected_death_cost"] == pytest.approx(expected_cost)
+    assert score_with == pytest.approx(score_without - expected_cost)
+
+
+def test_expected_death_cost_absent_below_lethal_threat() -> None:
+    config = PolicyConfig()
+    opp_state = _klefki()
+    move, single = _earthquake_single()
+    threat = [_ThreatInfo(percent=60.0, move_id="tackle", priority=0), _ThreatInfo()]
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, threat_on_us=threat)
+    ctx.double_target_threat[0] = 100.0  # weighted: 35 -- still under the 100 gate
+
+    _, _, info = _score_attack_order(move, load_moves()["earthquake"], single, 0, ctx, config)
+    assert info["expected_death_cost"] == 0.0
+
+
+def test_expected_death_cost_skipped_when_first_strike_ko_resolves_threat() -> None:
+    config = PolicyConfig()
+    # A one-HP defender makes Earthquake a guaranteed KO, and Garchomp outspeeds
+    # Klefki, so resolves_threat_before_it_lands is True -- deliberate first-strike
+    # trades stay legal even under a lethal threat.
+    opp_state = _klefki()
+    opp_state.current_hp = 1
+    move, single = _earthquake_single()
+    threat = [_ThreatInfo(percent=120.0, move_id="tackle", priority=0), _ThreatInfo()]
+    ctx = _attack_ctx(ally_state=None, opp_state=opp_state, threat_on_us=threat)
+
+    _, _, info = _score_attack_order(move, load_moves()["earthquake"], single, 0, ctx, config)
+    assert info["guaranteed_ko_slots"] == [0]
+    assert info["expected_death_cost"] == 0.0
 
 
 def test_plan_breaker_target_bonus_added_to_contribution() -> None:

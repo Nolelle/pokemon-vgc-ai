@@ -1248,6 +1248,23 @@ def _score_attack_order(
         win_con_preservation_penalty = config.win_con_preservation_weight * preservation_threat
         score -= win_con_preservation_penalty
 
+    # Expected-death cost for ANY actor staying in under a lethal threat (see the
+    # PolicyConfig comment for the block-2 postmortem behind this): a stay-in order that
+    # neither removes the threat first nor retreats pays for the actor's likely faint,
+    # so a doomed chip attack can finally lose the argmax to a defensive switch.
+    # `resolves_threat_before_it_lands` only knows THIS order's own first-strike KO --
+    # KOing one contributor of a two-mon combined threat via the PARTNER's order isn't
+    # visible from this per-slot function (v1 gap; the search's exchange resolution does
+    # capture that case one layer up).
+    expected_death_cost = 0.0
+    lethal_threat = max(
+        ctx.threat_on_us[actor_slot].percent,
+        ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+    )
+    if lethal_threat >= 100.0 and not resolves_threat_before_it_lands:
+        expected_death_cost = config.expected_death_cost_weight * min(200.0, lethal_threat)
+        score -= expected_death_cost
+
     single_target_slot = (
         opp_targets[0]
         if move_data.get("target") in _SINGLE_TARGETS and len(opp_targets) == 1
@@ -1276,6 +1293,7 @@ def _score_attack_order(
             "mega_material": mega_material,
             "mega_gain": mega_gain,
             "win_con_preservation_penalty": win_con_preservation_penalty,
+            "expected_death_cost": expected_death_cost,
         },
     )
 
