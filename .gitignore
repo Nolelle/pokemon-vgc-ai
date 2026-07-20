@@ -1,6 +1,7 @@
 runs/
 data/replays/
 data/bc/
+data/selfplay/
 .venv/
 __pycache__/
 *.egg-info

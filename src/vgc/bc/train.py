@@ -39,6 +39,29 @@ head's effective sample diversity per unique state is lower) regularize the trun
 state representation, which should help the value head generalize better than training
 it alone on the same trunk-sized network would.
 
+## Mixing in self-play data (`TrainConfig.extra_data`/`selfplay_weight`)
+
+`extra_data` (default `None`, no behavior change) points at a second JSONL file --
+typically `data/selfplay/records.jsonl` (`vgc.bc.selfplay.RecordingVgcPlayer`'s output,
+see `selfplay/run_selfplay.py`) -- loaded via a SECOND `BcTurnDataset` with
+`allow_null_rating=True` (self-play games have no ladder Elo at all, see that flag's
+docstring) and `val_fraction=0.0`/`split="train"` so 100% of it lands in TRAIN, never
+val: this module always validates on the ORIGINAL corpus's val split ONLY, regardless of
+`extra_data` -- mixing self-play into the reported accuracy numbers would silently
+answer a different, less meaningful question ("does the net fit self-play-flavored
+positions") than the one that actually matters here ("did adding self-play data improve
+the net's judgment on REAL human ladder positions").
+
+The two datasets are concatenated (`torch.utils.data.ConcatDataset`) and drawn from via
+a `WeightedRandomSampler` instead of `shuffle=True` -- every corpus sample gets weight
+1.0, every self-play sample gets `selfplay_weight` (default 1.0, i.e. sampled at the same
+rate as a corpus sample; raise it to over-sample self-play, lower it to down-weight a
+much larger but possibly lower-quality self-play set relative to the corpus). The
+sampler still draws `len(combined)` samples per epoch (with replacement), so a
+default-weighted mix behaves like plain concatenated shuffling, not a different epoch
+size. `extra_data=None` (the default) leaves everything byte-for-byte identical to the
+pre-self-play training path -- no `ConcatDataset`/sampler machinery is even constructed.
+
 ## Value-head metrics (every epoch)
 
 Beyond move/target top-1/top-3 and their majority-class baselines (unchanged from v2):
@@ -70,7 +93,7 @@ try:
     import torch
     from torch import nn
     from torch.optim.lr_scheduler import CosineAnnealingLR
-    from torch.utils.data import DataLoader
+    from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 except ImportError as exc:  # pragma: no cover - exercised via test_bc.py's importorskip
     raise ImportError(
         "vgc.bc.train requires the 'train' extra (torch) -- run `uv sync --extra train`."
@@ -110,6 +133,14 @@ class TrainConfig:
     patience: int = 5
     extra_checkpoint_path: str | None = None
     heads: tuple[str, ...] = DEFAULT_HEADS
+    # A second JSONL path (e.g. data/selfplay/records.jsonl) MIXED INTO TRAINING ONLY --
+    # not related to extra_checkpoint_path above (which just saves an additional copy of
+    # the checkpoint). None (default) leaves training byte-for-byte unchanged from before
+    # this knob existed. See module docstring's "Mixing in self-play data" section.
+    extra_data: str | None = None
+    # Relative sampling weight for each `extra_data` sample vs each main-corpus sample
+    # (1.0 each by default -- see module docstring).
+    selfplay_weight: float = 1.0
 
 
 def resolve_device(requested: str) -> str:
@@ -309,9 +340,34 @@ def train(config: TrainConfig) -> dict[str, object]:
     """
     device = resolve_device(config.device)
     train_ds = BcTurnDataset(config.data, min_rating=config.min_rating, split="train")
+    # Validation ALWAYS comes only from the main corpus's val split -- see module
+    # docstring's "Mixing in self-play data" section for why extra_data never touches
+    # this, regardless of whether it's set below.
     val_ds = BcTurnDataset(config.data, min_rating=config.min_rating, split="val")
 
-    train_loader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
+    extra_ds: BcTurnDataset | None = None
+    if config.extra_data:
+        # min_rating is irrelevant here (allow_null_rating=True bypasses the rating
+        # filter entirely for null-rated records -- see that flag's docstring), and
+        # val_fraction=0.0 with split="train" means 100% of this data lands in TRAIN,
+        # never val, regardless of vgc.bc.dataset.split_for_replay's hash.
+        extra_ds = BcTurnDataset(
+            config.extra_data,
+            min_rating=config.min_rating,
+            split="train",
+            val_fraction=0.0,
+            allow_null_rating=True,
+        )
+
+    if extra_ds is not None and len(extra_ds) > 0:
+        combined_train_ds = ConcatDataset([train_ds, extra_ds])
+        sample_weights = [1.0] * len(train_ds) + [config.selfplay_weight] * len(extra_ds)
+        sampler = WeightedRandomSampler(
+            sample_weights, num_samples=len(combined_train_ds), replacement=True
+        )
+        train_loader = DataLoader(combined_train_ds, batch_size=config.batch_size, sampler=sampler)
+    else:
+        train_loader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False)
 
     heads = tuple(config.heads)
@@ -450,8 +506,14 @@ def train(config: TrainConfig) -> dict[str, object]:
                 break
 
     elapsed_seconds = time.time() - start
+    extra_train_samples = len(extra_ds) if extra_ds is not None else 0
     return {
+        # Corpus-only train count (unchanged meaning from before extra_data existed) --
+        # "train_samples_total" below is what actually fed the DataLoader when
+        # extra_data was mixed in.
         "train_samples": len(train_ds),
+        "extra_train_samples": extra_train_samples,
+        "train_samples_total": len(train_ds) + extra_train_samples,
         "val_samples": len(val_ds),
         "train_skipped": train_ds.skipped,
         "val_skipped": val_ds.skipped,

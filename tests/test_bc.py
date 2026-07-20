@@ -647,6 +647,61 @@ def test_bc_turn_dataset_min_rating_filters_records(tmp_path) -> None:
     assert included_prefixes == {"high"}
 
 
+# --- allow_null_rating: explicit opt-in for null-rated (e.g. self-play) records -----
+
+
+def test_bc_turn_dataset_null_rating_dropped_by_default(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    records = _synthetic_records(n_replays=5, rating=None)
+    for record in records:
+        record["replay_id"] = f"selfplay-{record['replay_id']}"
+    path = _write_jsonl(tmp_path, records)
+
+    dataset = BcTurnDataset(path, min_rating=1150, split="train", val_fraction=0.0)
+    assert len(dataset) == 0
+    assert dataset.replays_included == set()
+
+
+def test_bc_turn_dataset_allow_null_rating_includes_them(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    records = _synthetic_records(n_replays=5, rating=None)
+    for record in records:
+        record["replay_id"] = f"selfplay-{record['replay_id']}"
+    path = _write_jsonl(tmp_path, records)
+
+    dataset = BcTurnDataset(
+        path, min_rating=1150, split="train", val_fraction=0.0, allow_null_rating=True
+    )
+    assert len(dataset) > 0
+    assert dataset.replays_included == {f"selfplay-replay-{i}" for i in range(5)}
+
+
+def test_bc_turn_dataset_allow_null_rating_still_filters_real_low_ratings(tmp_path) -> None:
+    """allow_null_rating must ONLY change what happens to `rating is None` -- a real
+    (non-null) rating below min_rating is still dropped exactly as before.
+    """
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    null_rated = _synthetic_records(n_replays=3, rating=None)
+    for record in null_rated:
+        record["replay_id"] = f"selfplay-{record['replay_id']}"
+    low_rated = _synthetic_records(n_replays=3, rating=1000)
+    for record in low_rated:
+        record["replay_id"] = f"low-{record['replay_id']}"
+    path = _write_jsonl(tmp_path, null_rated + low_rated)
+
+    dataset = BcTurnDataset(
+        path, min_rating=1150, split="train", val_fraction=0.0, allow_null_rating=True
+    )
+    prefixes = {replay_id.split("-")[0] for replay_id in dataset.replays_included}
+    assert prefixes == {"selfplay"}
+
+
 def test_bc_turn_dataset_skips_unrecognized_move_actions(tmp_path) -> None:
     pytest.importorskip("torch")
     from vgc.bc.dataset import BcTurnDataset
@@ -936,3 +991,67 @@ def test_compute_auc_all_one_class_returns_half() -> None:
 
     assert compute_auc([0.1, 0.9], [1, 1]) == 0.5
     assert compute_auc([], []) == 0.5
+
+
+# --- train(): mixing self-play data via extra_data/selfplay_weight -----------------
+
+
+def test_train_mixes_extra_data_into_training_only(tmp_path) -> None:
+    """Self-play (null-rated) data mixed via `TrainConfig.extra_data` must land ONLY in
+    training -- `train_samples_total` should reflect corpus + extra, while `val_samples`
+    stays exactly what the corpus-only val split would have produced.
+    """
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+    from vgc.bc.train import TrainConfig, train
+
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    corpus_records = _synthetic_records(n_replays=8, rating=1300)
+    corpus_path = _write_jsonl(corpus_dir, corpus_records)
+
+    selfplay_dir = tmp_path / "selfplay"
+    selfplay_dir.mkdir()
+    selfplay_records = _synthetic_records(n_replays=10, rating=None)
+    for record in selfplay_records:
+        record["replay_id"] = f"selfplay-{record['replay_id']}"
+    selfplay_path = _write_jsonl(selfplay_dir, selfplay_records)
+
+    expected_val_samples = len(BcTurnDataset(corpus_path, min_rating=1150, split="val"))
+
+    config = TrainConfig(
+        data=str(corpus_path),
+        extra_data=str(selfplay_path),
+        selfplay_weight=1.0,
+        epochs=1,
+        batch_size=8,
+        min_rating=1150,
+        out_dir=str(tmp_path / "runs"),
+    )
+    result = train(config)
+
+    assert result["extra_train_samples"] > 0
+    assert result["train_samples_total"] == result["train_samples"] + result["extra_train_samples"]
+    assert result["val_samples"] == expected_val_samples
+
+
+def test_train_without_extra_data_reports_zero_extra_samples(tmp_path) -> None:
+    """extra_data=None (the default) must leave train_samples_total == train_samples --
+    same-behavior contract for callers that never opt into self-play mixing."""
+    pytest.importorskip("torch")
+    from vgc.bc.train import TrainConfig, train
+
+    corpus_records = _synthetic_records(n_replays=8, rating=1300)
+    corpus_path = _write_jsonl(tmp_path, corpus_records)
+
+    config = TrainConfig(
+        data=str(corpus_path),
+        epochs=1,
+        batch_size=8,
+        min_rating=1150,
+        out_dir=str(tmp_path / "runs"),
+    )
+    result = train(config)
+
+    assert result["extra_train_samples"] == 0
+    assert result["train_samples_total"] == result["train_samples"]

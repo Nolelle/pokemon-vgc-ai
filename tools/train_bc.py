@@ -10,6 +10,8 @@ Usage:
     .venv/bin/python tools/train_bc.py
     .venv/bin/python tools/train_bc.py --epochs 30 --min-rating 1150 \
         --extra-checkpoint data/models/bc_policy_v2.pt
+    .venv/bin/python tools/train_bc.py --extra-data data/selfplay/records.jsonl \
+        --selfplay-weight 1.0 --extra-checkpoint data/models/bc_policy_v4.pt
 """
 
 from __future__ import annotations
@@ -80,6 +82,24 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="also save the best checkpoint to this path (e.g. data/models/bc_policy_v3.pt)",
     )
+    parser.add_argument(
+        "--extra-data",
+        type=Path,
+        default=None,
+        help=(
+            "a second JSONL path (e.g. data/selfplay/records.jsonl) mixed into TRAINING "
+            "only -- validation always stays the main --data corpus's val split alone "
+            "(see vgc.bc.train's module docstring). Records may be null-rated "
+            "(vgc.bc.dataset.BcTurnDataset's allow_null_rating is set True for this file "
+            "only, not for --data)."
+        ),
+    )
+    parser.add_argument(
+        "--selfplay-weight",
+        type=float,
+        default=1.0,
+        help="relative sampling weight for each --extra-data sample vs each corpus sample",
+    )
     return parser.parse_args()
 
 
@@ -87,6 +107,9 @@ def main() -> int:
     args = parse_args()
     if not args.data.exists():
         print(f"{args.data} does not exist -- run tools/parse_replays.py first", file=sys.stderr)
+        return 1
+    if args.extra_data and not args.extra_data.exists():
+        print(f"{args.extra_data} (--extra-data) does not exist", file=sys.stderr)
         return 1
 
     heads = tuple(h.strip() for h in args.heads.split(",") if h.strip())
@@ -103,6 +126,8 @@ def main() -> int:
         patience=args.patience,
         extra_checkpoint_path=str(args.extra_checkpoint) if args.extra_checkpoint else None,
         heads=heads,
+        extra_data=str(args.extra_data) if args.extra_data else None,
+        selfplay_weight=args.selfplay_weight,
     )
     result = train(config)
 
@@ -110,6 +135,12 @@ def main() -> int:
     print(
         f"  train samples:          {result['train_samples']} (skipped {result['train_skipped']})"
     )
+    if result["extra_train_samples"]:
+        print(
+            f"  extra (self-play) samples: {result['extra_train_samples']} "
+            f"(weight {args.selfplay_weight})"
+        )
+        print(f"  train samples (total):  {result['train_samples_total']}")
     print(f"  val samples:            {result['val_samples']} (skipped {result['val_skipped']})")
     print(f"  move baseline:          {result['move_baseline']:.4f}")
     print(f"  target baseline:        {result['target_baseline']:.4f}")

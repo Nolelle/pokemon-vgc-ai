@@ -50,6 +50,18 @@ has_target, value_label, has_value, turn)` --
 split is deterministic and keyed by `replay_id` (via a stable hash, NOT by shuffling
 individual records), so every record from one replay always lands in the same split --
 no replay ever straddles train/val.
+
+`allow_null_rating` (default `False`, unchanged behavior) is the EXPLICIT opt-in for a
+null-rated record to be included instead of dropped -- self-play games
+(`vgc.bc.selfplay.RecordingVgcPlayer`) have no ladder Elo at all, so every one of their
+records carries `"rating": None` by construction, and the plain `min_rating` filter would
+silently drop 100% of that data with no way to tell "min_rating was too strict" apart
+from "this data source is null-rated on purpose." Setting this flag True does NOT relax
+`min_rating` for records that DO have a real (non-null) rating below it -- those are
+still dropped exactly as before; it only changes what happens to `rating is None`
+specifically. `vgc.bc.train.train()`'s `extra_data`/`selfplay_weight` knobs are the
+caller that actually sets this True, and only for that extra dataset -- the main corpus
+dataset is always built with the default `False`.
 """
 
 from __future__ import annotations
@@ -97,6 +109,7 @@ class BcTurnDataset(Dataset):
         min_rating: int = 1150,
         split: str = "train",
         val_fraction: float = DEFAULT_VAL_FRACTION,
+        allow_null_rating: bool = False,
     ) -> None:
         if split not in ("train", "val"):
             raise ValueError(f"split must be 'train' or 'val', got {split!r}")
@@ -104,6 +117,7 @@ class BcTurnDataset(Dataset):
         self.min_rating = min_rating
         self.split = split
         self.val_fraction = val_fraction
+        self.allow_null_rating = allow_null_rating
 
         # (state dict, slot, move_idx, target_idx_or_None, value_label_or_None, turn) --
         # state/value_label/turn are shared by both of a record's slot samples (no need
@@ -124,7 +138,10 @@ class BcTurnDataset(Dataset):
                 if record.get("decision_kind") != "turn":
                     continue
                 rating = record.get("rating")
-                if rating is None or rating < self.min_rating:
+                if rating is None:
+                    if not self.allow_null_rating:
+                        continue
+                elif rating < self.min_rating:
                     continue
                 replay_id = record.get("replay_id")
                 if not replay_id or split_for_replay(replay_id, val_fraction) != split:
