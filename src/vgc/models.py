@@ -391,6 +391,19 @@ class PolicyConfig:
     team_preview_second_speed_mode_bonus: float = 10.0
     team_preview_balanced_structure_bonus: float = 8.0
 
+    # --- Iteration 6: symmetric opponent preview prediction (vgc.preview_predict) ------
+    # Softmax temperature for `vgc.preview_predict.predict_preview_choice`'s distribution
+    # over the 90 (pick, leads) candidates: `p_i ∝ exp(score_i / temperature)`. Lower =
+    # sharper/more confident the predicted opponent always takes their single
+    # highest-scoring option; higher = flatter, closer to uniform over all 90. 20.0 is a
+    # first-pass default (candidate score gaps in this scoring scale typically run
+    # tens of points -- see `_score_choice`'s per-term weights -- so a handful of nats
+    # of separation between the top few candidates is plausible without the whole
+    # distribution collapsing onto one option) -- `tools/backtest_preview_prediction.py`
+    # is the actual calibration signal for this, not a hand-picked number; NOT tuned
+    # against ground truth yet (see `docs/preview_prediction_plan.md`'s step-2 gate).
+    preview_prediction_temperature: float = 20.0
+
     # --- Final integration: BC v2 candidate re-ranker (vgc.bc.policy.score_orders) ------
     # Master switch: True blends the trained BC v2 checkpoint's learned move/target
     # log-probabilities into the top-ranked heuristic candidates' scores instead of
