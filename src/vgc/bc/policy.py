@@ -17,7 +17,7 @@ scores unchanged."
 
 ## `battle_state_record(battle, config) -> dict`
 
-The live adapter from a poke-env `DoubleBattle` to the SAME schema-2 state shape
+The live adapter from a poke-env `DoubleBattle` to the SAME schema-4 state shape
 `vgc.replay_parse` emits (`{"state": {"our": ..., "opp": ..., "field": ...}}`), so it can
 be fed straight into `vgc.bc.encoding.encode_state` -- the exact function the training
 pipeline uses. Field-name drift between this adapter and `vgc.replay_parse`'s schema is
@@ -25,7 +25,7 @@ the single biggest silent-failure risk here (wrong-but-not-crashing feature valu
 every table this reuses (`_weather_str`/`_terrain_str`/`_screens_from`, `_resolve_species`)
 is IMPORTED from `vgc.evaluator`/`vgc.replay_parse` rather than re-derived, and
 `tests/test_bc_policy.py` asserts this adapter's output round-trips through the same
-`encode_state` path as a real schema-2 fixture record.
+`encode_state` path as a real schema-4 fixture record.
 
 Our own side is built from `battle.active_pokemon`/`battle.team` -- HP fractions, item,
 ability, and all 4 moves are exactly known (it's our own team). The opponent side is
@@ -36,6 +36,12 @@ has actually seen them). Deliberately does NOT fill unrevealed opponent moves fr
 own Protect/switch heuristics: the model was trained on moves ACTUALLY USED in the replay
 corpus, not prior-filled ones, so feeding it prior-filled moves here would shift its input
 distribution away from what it learned on.
+
+`preview_species`/`unseen_count` (schema 4) are filled by `_preview_species_for_our_side`/
+`_preview_species_for_opp_side` -- see those functions' docstrings for why OUR side reads
+`battle.team` (poke-env's `teampreview_team` is unreliable/effectively unpopulated in the
+installed version) while the OPPONENT side reads `battle.teampreview_opponent_team`
+(reliably populated from real `|poke|` lines).
 
 ## `score_orders(policy, battle, scored_orders, config) -> list[ScoredOrder]`
 
@@ -275,7 +281,57 @@ def _bench_list(team: dict, active: list[Pokemon | None]) -> list[dict]:
     return bench
 
 
-def _side_dict(active: list[Pokemon | None], team: dict, side_conditions) -> dict:
+def _preview_species_for_our_side(battle: DoubleBattle) -> tuple[list[str], int]:
+    """`(species_ids, unseen_count)` for OUR OWN previewed roster (schema-4 parity with
+    `vgc.replay_parse`'s `preview_species`/`unseen_count`). Sourced from `battle.team`,
+    NOT `battle.teampreview_team` -- the installed poke-env version populates `team`
+    with all 6 of our own team members from the very first battle request (our own
+    roster is fully known from the start, revealed or not), while `teampreview_team`
+    is left empty in practice (never populated by the `|poke|`-line handler, which only
+    ever appends to the OPPONENT's preview list -- see `_preview_species_for_opp_side`).
+    `Pokemon.revealed` (poke-env's own "has this specific team slot ever been switched
+    in this game" flag, set by `Pokemon.switch_in`) is exactly `vgc.replay_parse`'s
+    `appeared_order` membership test for OUR side.
+    """
+    team = getattr(battle, "team", None) or {}
+    species_ids: list[str] = []
+    unseen_count = 0
+    for mon in team.values():
+        species_id, _mega = _resolve_species(to_id(mon.species) or "")
+        if species_id:
+            species_ids.append(species_id)
+        if not getattr(mon, "revealed", False):
+            unseen_count += 1
+    return species_ids, unseen_count
+
+
+def _preview_species_for_opp_side(battle: DoubleBattle) -> tuple[list[str], int]:
+    """`(species_ids, unseen_count)` for the OPPONENT's previewed roster. Sourced from
+    `battle.teampreview_opponent_team` (populated from real `|poke|` Team Preview reveal
+    lines -- reliably available for the opponent side, unlike our own, see
+    `_preview_species_for_our_side`). `battle.opponent_team` only ever contains species
+    that have actually appeared (poke-env has no equivalent of our own side's
+    always-fully-known `team`), so unseen is preview-species minus that appeared overlap.
+    """
+    preview = getattr(battle, "teampreview_opponent_team", None) or []
+    species_ids: list[str] = []
+    for mon in preview:
+        species_id, _mega = _resolve_species(to_id(mon.species) or "")
+        if species_id:
+            species_ids.append(species_id)
+    opp_team = getattr(battle, "opponent_team", None) or {}
+    appeared = {_resolve_species(to_id(mon.species) or "")[0] for mon in opp_team.values()}
+    unseen_count = sum(1 for species_id in species_ids if species_id not in appeared)
+    return species_ids, unseen_count
+
+
+def _side_dict(
+    active: list[Pokemon | None],
+    team: dict,
+    side_conditions,
+    preview_species: list[str],
+    unseen_count: int,
+) -> dict:
     conditions = set(_screens_from(side_conditions))
     if SideCondition.TAILWIND in side_conditions:
         conditions.add("tailwind")
@@ -283,6 +339,8 @@ def _side_dict(active: list[Pokemon | None], team: dict, side_conditions) -> dic
         "active": [_active_mon_dict(mon) for mon in active],
         "bench": _bench_list(team, active),
         "side_conditions": sorted(conditions),
+        "preview_species": preview_species,
+        "unseen_count": unseen_count,
     }
 
 
@@ -313,9 +371,20 @@ def battle_state_record(battle: DoubleBattle, config: PolicyConfig | None = None
     our_team = getattr(battle, "team", {}) or {}
     opp_team = getattr(battle, "opponent_team", {}) or {}
 
+    our_preview_species, our_unseen_count = _preview_species_for_our_side(battle)
+    opp_preview_species, opp_unseen_count = _preview_species_for_opp_side(battle)
+
     state = {
-        "our": _side_dict(our_active, our_team, battle.side_conditions),
-        "opp": _side_dict(opp_active, opp_team, battle.opponent_side_conditions),
+        "our": _side_dict(
+            our_active, our_team, battle.side_conditions, our_preview_species, our_unseen_count
+        ),
+        "opp": _side_dict(
+            opp_active,
+            opp_team,
+            battle.opponent_side_conditions,
+            opp_preview_species,
+            opp_unseen_count,
+        ),
         "field": _field_dict(battle),
     }
     return {"state": state}
@@ -697,16 +766,39 @@ def exchange_state_record(
         if cache is not None:
             cache["conditions_and_field"] = (our_conditions_sorted, opp_conditions_sorted, field)
 
+    # Schema 4: preview_species/unseen_count are 100% battle-global facts (like
+    # side_conditions/field above), never varying between exchanges within one decision
+    # -- see battle_state_record's docstring for why our own side reads `ctx.battle.team`
+    # while the opponent side reads `ctx.battle.teampreview_opponent_team`.
+    if cache is not None and "preview" in cache:
+        our_preview_species, our_unseen_count, opp_preview_species, opp_unseen_count = cache[
+            "preview"
+        ]
+    else:
+        our_preview_species, our_unseen_count = _preview_species_for_our_side(ctx.battle)
+        opp_preview_species, opp_unseen_count = _preview_species_for_opp_side(ctx.battle)
+        if cache is not None:
+            cache["preview"] = (
+                our_preview_species,
+                our_unseen_count,
+                opp_preview_species,
+                opp_unseen_count,
+            )
+
     state = {
         "our": {
             "active": our_active,
             "bench": _bench("our", getattr(ctx.battle, "team", None), our_active_species),
             "side_conditions": our_conditions_sorted,
+            "preview_species": our_preview_species,
+            "unseen_count": our_unseen_count,
         },
         "opp": {
             "active": opp_active,
             "bench": _bench("opp", getattr(ctx.battle, "opponent_team", None), opp_active_species),
             "side_conditions": opp_conditions_sorted,
+            "preview_species": opp_preview_species,
+            "unseen_count": opp_unseen_count,
         },
         "field": field,
     }

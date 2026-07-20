@@ -388,7 +388,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 3 for record in result.records)
+    assert all(record["schema"] == 4 for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -547,3 +547,111 @@ def test_real_fixture_winner_matches_the_actual_replay_outcome() -> None:
     p1_records = [r for r in result.records if r["player"] == "p1"]
     assert p2_records and all(r["won"] is True for r in p2_records)
     assert p1_records and all(r["won"] is False for r in p1_records)
+
+
+# --- schema 4: preview_species + unseen_count on turn/forced_switch state -------------
+
+
+def _preview_log(extra_lines: list[str]) -> str:
+    return _log(
+        [
+            "|gen|9",
+            "|poke|p1|Garchomp, L50, M|",
+            "|poke|p1|Klefki, L50, F|",
+            "|poke|p1|Incineroar, L50, F|",
+            "|poke|p2|Charizard, L50, M|",
+            "|poke|p2|Gholdengo, L50|",
+            "|teampreview|4",
+            "|t:|1000",
+            "|start",
+            "|switch|p1a: Garchomp|Garchomp, L50, M|100/100",
+            "|switch|p1b: Klefki|Klefki, L50, F|100/100",
+            "|switch|p2a: Charizard|Charizard, L50, M|100/100",
+            *extra_lines,
+        ]
+    )
+
+
+def test_side_dict_includes_preview_species_in_poke_line_order() -> None:
+    log = _preview_log(["|turn|1", "|win|test"])
+    result = parse_replay("test-preview-species", 1400, log)
+    assert result.ok is True
+    p1_turn1 = _turn_records(result, "p1")[0]
+    assert p1_turn1["state"]["our"]["preview_species"] == ["garchomp", "klefki", "incineroar"]
+    assert p1_turn1["state"]["opp"]["preview_species"] == ["charizard", "gholdengo"]
+
+
+def test_unseen_count_reflects_previewed_but_never_appeared_species() -> None:
+    log = _preview_log(["|turn|1", "|win|test"])
+    result = parse_replay("test-unseen-count", 1400, log)
+    p1_turn1 = _turn_records(result, "p1")[0]
+    # Garchomp and Klefki led (appeared); Incineroar never showed up in this short log.
+    assert p1_turn1["state"]["our"]["unseen_count"] == 1
+    # p2's Gholdengo was previewed but only Charizard led -- 1 still unseen.
+    assert p1_turn1["state"]["opp"]["unseen_count"] == 1
+
+
+def test_unseen_count_drops_once_a_previewed_bench_mon_appears() -> None:
+    log = _preview_log(
+        [
+            "|turn|1",
+            "|t:|1001",
+            "|switch|p1a: Incineroar|Incineroar, L50, F|100/100",
+            "|upkeep",
+            "|turn|2",
+            "|win|test",
+        ]
+    )
+    result = parse_replay("test-unseen-count-drops", 1400, log)
+    p1_turn1, p1_turn2 = _turn_records(result, "p1")
+    assert p1_turn1["state"]["our"]["unseen_count"] == 1  # pre-switch: Incineroar unseen
+    assert p1_turn2["state"]["our"]["unseen_count"] == 0  # post-switch: all 3 previewed seen
+
+
+def test_forced_switch_record_also_carries_preview_species_and_unseen_count() -> None:
+    log = _preview_log(
+        [
+            "|switch|p2b: Gholdengo|Gholdengo, L50|100/100",
+            "|turn|1",
+            "|t:|1001",
+            "|move|p2a: Charizard|Heat Wave|p1a: Garchomp",
+            "|-damage|p1a: Garchomp|0 fnt",
+            "|faint|p1a: Garchomp",
+            "|move|p1b: Klefki|Protect|p1b: Klefki",
+            "|move|p2b: Gholdengo|Shadow Ball|p1b: Klefki",
+            "|",
+            "|t:|1002",
+            "|switch|p1a: Incineroar|Incineroar, L50, F|100/100",
+            "|upkeep",
+            "|turn|2",
+            "|win|test",
+        ]
+    )
+    result = parse_replay("test-forced-switch-preview", 1400, log)
+    forced = next(r for r in result.records if r["decision_kind"] == "forced_switch")
+    assert forced["state"]["our"]["preview_species"] == ["garchomp", "klefki", "incineroar"]
+    # Snapshot is taken BEFORE the replacement switch is applied -- Incineroar still unseen.
+    assert forced["state"]["our"]["unseen_count"] == 1
+
+
+def test_preview_species_defensively_resolves_mega_formes_via_resolve_species() -> None:
+    # Not realistic real-corpus data (Mega Evolution can't happen before turn 1) but the
+    # module docstring documents this resolution as defensive -- exercise it directly.
+    log = _log(
+        [
+            "|gen|9",
+            "|poke|p1|Garchomp-Mega, L50, M|",
+            "|poke|p2|Charizard, L50, M|",
+            "|teampreview|4",
+            "|t:|1000",
+            "|start",
+            "|switch|p1a: Garchomp|Garchomp, L50, M|100/100",
+            "|switch|p2a: Charizard|Charizard, L50, M|100/100",
+            "|turn|1",
+            "|win|test",
+        ]
+    )
+    result = parse_replay("test-preview-mega-resolve", 1400, log)
+    assert result.ok is True
+    p1_turn1 = _turn_records(result, "p1")[0]
+    assert p1_turn1["state"]["our"]["preview_species"] == ["garchomp"]

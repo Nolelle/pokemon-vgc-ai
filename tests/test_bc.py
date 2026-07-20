@@ -77,11 +77,15 @@ def _turn_record(
     our_bench: list | None = None,
     opp_bench: list | None = None,
     won: bool | None = False,
+    our_preview_species: list | None = None,
+    opp_preview_species: list | None = None,
+    our_unseen_count: int | None = None,
+    opp_unseen_count: int | None = None,
 ) -> dict:
     record = {
         "replay_id": replay_id,
         "rating": rating,
-        "schema": 3,
+        "schema": 4,
         "player": player,
         "turn": turn,
         "decision_kind": "turn",
@@ -90,11 +94,15 @@ def _turn_record(
                 "active": our_active,
                 "bench": our_bench or [],
                 "side_conditions": our_side_conditions or [],
+                "preview_species": our_preview_species or [],
+                "unseen_count": our_unseen_count or 0,
             },
             "opp": {
                 "active": opp_active,
                 "bench": opp_bench or [],
                 "side_conditions": opp_side_conditions or [],
+                "preview_species": opp_preview_species or [],
+                "unseen_count": opp_unseen_count or 0,
             },
             "field": {
                 "weather": weather,
@@ -123,6 +131,7 @@ def test_encode_state_fixed_shapes() -> None:
 
     assert state["species_idx_active"].shape == (4,)
     assert state["species_idx_bench"].shape == (8,)
+    assert state["species_idx_preview"].shape == (12,)
     assert state["item_idx"].shape == (4,)
     assert state["ability_idx"].shape == (4,)
     assert state["move_idx"].shape == (4, 4)
@@ -137,6 +146,9 @@ def test_encode_state_fixed_shapes() -> None:
     assert state["trick_room"].shape == (1,)
     assert state["side_conditions"].shape == (8,)
     assert state["turn"].shape == (1,)
+    assert state["alive_known_count"].shape == (2,)
+    assert state["alive_known_mean_hp"].shape == (2,)
+    assert state["preview_unseen_count"].shape == (2,)
 
     index_array, scalar_array = flatten_state(state)
     assert index_array.shape == (INDEX_DIM,)
@@ -349,6 +361,80 @@ def test_encode_state_bench_identity_and_padding() -> None:
     for idx in (2, 3, 4, 5, 6, 7):
         assert state["species_idx_bench"][idx] == SPECIES_TO_IDX["<pad>"]
         assert state["bench_hp_fraction"][idx] == 0.0
+
+
+# --- v4: preview species (6-slot, per side) + resource-state scalars -----------------
+
+
+def test_encode_state_preview_species_indices_and_padding() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+        our_preview_species=["garchomp", "klefki", "incineroar"],
+        opp_preview_species=["charizard", "gholdengo"],
+    )
+    state = encode_state(record)
+    assert state["species_idx_preview"].shape == (12,)
+    # our0..5 occupy indices 0-5, opp0..5 occupy indices 6-11.
+    assert state["species_idx_preview"][0] == SPECIES_TO_IDX["garchomp"]
+    assert state["species_idx_preview"][1] == SPECIES_TO_IDX["klefki"]
+    assert state["species_idx_preview"][2] == SPECIES_TO_IDX["incineroar"]
+    for idx in (3, 4, 5):
+        assert state["species_idx_preview"][idx] == SPECIES_TO_IDX["<pad>"]
+    assert state["species_idx_preview"][6] == SPECIES_TO_IDX["charizard"]
+    assert state["species_idx_preview"][7] == SPECIES_TO_IDX["gholdengo"]
+    for idx in (8, 9, 10, 11):
+        assert state["species_idx_preview"][idx] == SPECIES_TO_IDX["<pad>"]
+
+
+def test_encode_state_preview_species_missing_defaults_to_all_pad() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert (state["species_idx_preview"] == SPECIES_TO_IDX["<pad>"]).all()
+
+
+def test_encode_state_preview_unseen_count_scaled_by_six() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+        our_unseen_count=2,
+        opp_unseen_count=4,
+    )
+    state = encode_state(record)
+    assert state["preview_unseen_count"].tolist() == pytest.approx([2 / 6, 4 / 6])
+
+
+def test_encode_state_alive_known_count_and_mean_hp_from_active_and_bench() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp", hp_fraction=0.5), _mon("klefki", hp_fraction=1.0)],
+        opp_active=[_mon("charizard", hp_fraction=0.25), None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+        our_bench=[_bench_mon("incineroar", hp_fraction=0.75)],
+    )
+    state = encode_state(record)
+    # our: 2 active + 1 bench = 3 alive known mons, mean hp (0.5+1.0+0.75)/3.
+    assert state["alive_known_count"][0] == pytest.approx(3 / 4.0)
+    assert state["alive_known_mean_hp"][0] == pytest.approx((0.5 + 1.0 + 0.75) / 3)
+    # opp: 1 active, no bench -> mean hp is just that slot's fraction.
+    assert state["alive_known_count"][1] == pytest.approx(1 / 4.0)
+    assert state["alive_known_mean_hp"][1] == pytest.approx(0.25)
+
+
+def test_encode_state_alive_known_mean_hp_zero_when_no_known_mons() -> None:
+    record = _turn_record(
+        our_active=[None, None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}, "slot1": {"kind": "pass"}},
+    )
+    state = encode_state(record)
+    assert state["alive_known_count"][0] == 0.0
+    assert state["alive_known_mean_hp"][0] == 0.0
 
 
 # --- encode_action: move id, switch/pass, unknown -> None ----------------------------

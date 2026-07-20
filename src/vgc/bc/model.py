@@ -13,11 +13,19 @@ this import is guarded the same way.
 ## Input (see `vgc.bc.encoding`'s module docstring for the exact source layout)
 
 - `index_array`: `(batch, INDEX_DIM)` int64 -- sliced (at `vgc.bc.encoding`'s documented
-  `INDEX_*_SLICE` offsets) into 5 embedding-lookup groups:
-  - active-slot species (4) and bench species (8) share ONE embedding table
+  `INDEX_*_SLICE` offsets) into 6 embedding-lookup groups:
+  - active-slot species (4), bench species (8), AND (v4, NEW) each side's up-to-6
+    previewed species (12: our0..5, opp0..5) share ONE embedding table
     (`species_embedding`) -- the same species means the same thing whether it's
-    currently active or on the bench, so there's no reason to learn two separate
-    representations for it.
+    currently active, on the bench, or only known from Team Preview, so there's no
+    reason to learn separate representations for it. The previewed-species group is
+    MEAN-POOLED per SIDE (2 vectors: our-preview-mean, opp-preview-mean), `"<pad>"`
+    entries masked out of the mean the same way revealed moves already are below --
+    this is the network's only view of a side's full 6-mon roster (including the 2
+    that were previewed but never brought, and any brought mon that hasn't appeared
+    yet), letting it infer archetype context (e.g. "these two previewed species
+    together usually mean a rain team") purely from the shared embedding, with no
+    hand-engineered archetype features.
   - active-slot item (4) -> `item_embedding`.
   - active-slot ability (4) -> `ability_embedding`.
   - active-slot revealed moves (4 slots x 4 moves = 16) -> `move_embedding`, then
@@ -25,7 +33,9 @@ this import is guarded the same way.
     masked OUT of the mean (a slot with 0 revealed moves -- all 4 padding -- gets an
     all-zero vector, not garbage from averaging in the pad embedding).
 - `scalars`: `(batch, STATE_SCALAR_DIM + SLOT_FEATURE_DIM)` float32 -- `vgc.bc.
-  encoding.flatten_state`'s scalar half concatenated with `vgc.bc.dataset`'s 2-dim
+  encoding.flatten_state`'s scalar half (v4, NEW: includes each side's
+  `alive_known_count`/`alive_known_mean_hp`/`preview_unseen_count` resource-state
+  summary, see that module's docstring) concatenated with `vgc.bc.dataset`'s 2-dim
   slot-index one-hot.
 
 ## Output
@@ -67,10 +77,12 @@ from vgc.bc.encoding import (
     INDEX_MOVES_SLICE,
     INDEX_SPECIES_ACTIVE_SLICE,
     INDEX_SPECIES_BENCH_SLICE,
+    INDEX_SPECIES_PREVIEW_SLICE,
     ITEM_VOCAB,
     MOVE_TO_IDX,
     MOVE_VOCAB,
     SLOT_FEATURE_DIM,
+    SPECIES_TO_IDX,
     SPECIES_VOCAB,
     STATE_SCALAR_DIM,
     TARGET_VOCAB,
@@ -82,11 +94,14 @@ ABILITY_EMBED_DIM = 12
 MOVE_EMBED_DIM = 16
 NUM_ACTIVE_SLOTS = 4  # [our0, our1, opp0, opp1]
 NUM_BENCH_SLOTS = 8  # [our_bench0..3, opp_bench0..3]
+NUM_PREVIEW_SIDES = 2  # [our, opp] -- each side's up-to-6 previewed species mean-pooled
+NUM_PREVIEW_SLOTS_PER_SIDE = 6
 MOVES_PER_SLOT = 4
 HIDDEN_DIM = 256
 DROPOUT_P = 0.1
 DEFAULT_SCALAR_DIM = STATE_SCALAR_DIM + SLOT_FEATURE_DIM
 _MOVE_PAD_IDX = MOVE_TO_IDX["<pad>"]
+_SPECIES_PAD_IDX = SPECIES_TO_IDX["<pad>"]
 
 # Every head this architecture knows how to build -- `heads` args elsewhere are always a
 # subset of this tuple, in this order (mirrors forward()'s return order).
@@ -113,7 +128,7 @@ class BcPolicyNet(nn.Module):
     ) -> None:
         super().__init__()
         self.heads: tuple[str, ...] = tuple(heads)
-        # Shared across active AND bench species -- see module docstring.
+        # Shared across active, bench, AND (v4) previewed species -- see module docstring.
         self.species_embedding = nn.Embedding(species_vocab_size, species_embed_dim)
         self.item_embedding = nn.Embedding(item_vocab_size, item_embed_dim)
         self.ability_embedding = nn.Embedding(ability_vocab_size, ability_embed_dim)
@@ -121,6 +136,7 @@ class BcPolicyNet(nn.Module):
 
         input_dim = (
             (NUM_ACTIVE_SLOTS + NUM_BENCH_SLOTS) * species_embed_dim
+            + NUM_PREVIEW_SIDES * species_embed_dim  # v4: mean-pooled per side
             + NUM_ACTIVE_SLOTS * item_embed_dim
             + NUM_ACTIVE_SLOTS * ability_embed_dim
             + NUM_ACTIVE_SLOTS * move_embed_dim  # mean-pooled per slot, then concatenated
@@ -158,6 +174,9 @@ class BcPolicyNet(nn.Module):
 
         species_active = index_array[:, INDEX_SPECIES_ACTIVE_SLICE]
         species_bench = index_array[:, INDEX_SPECIES_BENCH_SLICE]
+        species_preview = index_array[:, INDEX_SPECIES_PREVIEW_SLICE].reshape(
+            batch_size, NUM_PREVIEW_SIDES, NUM_PREVIEW_SLOTS_PER_SIDE
+        )
         item_idx = index_array[:, INDEX_ITEM_SLICE]
         ability_idx = index_array[:, INDEX_ABILITY_SLICE]
         move_idx = index_array[:, INDEX_MOVES_SLICE].reshape(
@@ -169,6 +188,16 @@ class BcPolicyNet(nn.Module):
         item_emb = self.item_embedding(item_idx).reshape(batch_size, -1)
         ability_emb = self.ability_embedding(ability_idx).reshape(batch_size, -1)
 
+        # v4: mean-pooled per SIDE (our-preview-mean, opp-preview-mean), "<pad>" masked
+        # out of the mean -- mirrors the revealed-moves pooling immediately below, just
+        # pooled over a side's 6 preview slots instead of a slot's 4 revealed moves.
+        preview_emb = self.species_embedding(species_preview)  # (batch, 2, 6, species_embed_dim)
+        preview_mask = (species_preview != _SPECIES_PAD_IDX).unsqueeze(-1).to(preview_emb.dtype)
+        preview_emb_sum = (preview_emb * preview_mask).sum(dim=2)  # (batch, 2, species_embed_dim)
+        preview_counts = preview_mask.sum(dim=2).clamp(min=1.0)  # (batch, 2, 1)
+        preview_emb_mean = preview_emb_sum / preview_counts  # all-pad side -> zeros
+        preview_emb_flat = preview_emb_mean.reshape(batch_size, -1)
+
         move_emb = self.move_embedding(move_idx)  # (batch, 4, 4, move_embed_dim)
         move_mask = (move_idx != _MOVE_PAD_IDX).unsqueeze(-1).to(move_emb.dtype)  # (batch,4,4,1)
         move_emb_sum = (move_emb * move_mask).sum(dim=2)  # (batch, 4, move_embed_dim)
@@ -177,7 +206,15 @@ class BcPolicyNet(nn.Module):
         move_emb_flat = move_emb_mean.reshape(batch_size, -1)
 
         features = torch.cat(
-            [species_active_emb, species_bench_emb, item_emb, ability_emb, move_emb_flat, scalars],
+            [
+                species_active_emb,
+                species_bench_emb,
+                preview_emb_flat,
+                item_emb,
+                ability_emb,
+                move_emb_flat,
+                scalars,
+            ],
             dim=-1,
         )
         hidden = self.trunk(features)

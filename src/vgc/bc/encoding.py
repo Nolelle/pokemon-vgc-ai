@@ -15,6 +15,42 @@ entries, though bench `status` is present in the data but NOT yet consumed by th
 layout version); and a second prediction target, `encode_target`, for WHERE a move
 goes (not just which move).
 
+## v4 changes from v2/v3 (`ENCODER_LAYOUT_VERSION` bumped to `"bc-encoding-v4"`,
+additive; there was no separate v3 state-encoding layout -- the outcome-value head
+`encode_value`/`vgc.bc.model`'s `value` head added in that phase read `record["won"]`
+directly and never touched `encode_state`'s output, so the layout version wasn't bumped
+then, see that section below)
+
+Everything up to v2 is blind to anything that hasn't appeared on the field yet: neither
+side's previewed six nor unrevealed bench members are in the state at all, even though
+`vgc.replay_parse`'s schema 4 now carries exactly that per-battle context
+(`preview_species`/`unseen_count`, see that module's docstring). v4 adds, per side:
+
+- `species_idx_preview` (new INDEX key, 12 total: 6 our + 6 opp): `SPECIES_VOCAB` index
+  of each of that side's up-to-6 previewed species (Team Preview order), `"<pad>"` for
+  an unfilled/missing preview slot -- shares `species_embedding` with the active/bench
+  species indices (`vgc.bc.model` mean-pools each side's 6 slots into one vector,
+  `"<pad>"`-masked, mirroring how `move_idx` is already mean-pooled per active slot).
+  This is deliberately RAW species identity, not a derived archetype label -- the
+  network is expected to learn associations (e.g. "these two species together usually
+  mean a rain team") from the embedding itself, the same way it already does for
+  active/bench species.
+- `alive_known_count` (2,), `alive_known_mean_hp` (2,), `preview_unseen_count` (2,) (new
+  SCALAR keys, `[our, opp]` each): resource-state summaries computable directly from the
+  snapshot's own `active`/`bench`/`unseen_count` fields, with NO dependency on
+  `vgc.evaluator`/`vgc.gameplan` (this module stays pure/torch-free/battle-free by
+  design -- see the module docstring's opening paragraph). "Known" mons are exactly
+  what's already in the state (active non-empty slots + bench entries -- bench, per
+  `vgc.replay_parse`'s docstring, only ever lists species that have actually appeared
+  and aren't fainted), so "alive known" needs no new data, just a sum/mean over what's
+  already there.
+
+## v3 (no state-layout change)
+
+Phase 3's outcome-value head (`encode_value`, `vgc.bc.model`'s `"value"` head) was added
+without bumping `ENCODER_LAYOUT_VERSION` -- see that function's docstring below for why
+its compatibility is independent of the state-encoding layout.
+
 ## Vocabularies
 
 Built deterministically at import time from COMMITTED data -- nothing is persisted by
@@ -61,33 +97,37 @@ always `[our_bench0..3, opp_bench0..3]` (each side's own bench entries in
 bring-6-pick-4 format at most 2 bench slots are ever realistically populated per side,
 but the array is sized 4 regardless, per this feature's spec, for headroom).
 
-| key                  | shape  | dtype   | meaning |
-|----------------------|--------|---------|---------|
-| `species_idx_active` | (4,)   | int64   | `SPECIES_VOCAB` index per active slot |
-| `species_idx_bench`  | (8,)   | int64   | `SPECIES_VOCAB` index per bench slot, `"<pad>"` for an unfilled slot |
-| `item_idx`           | (4,)   | int64   | `ITEM_VOCAB` index per active slot |
-| `ability_idx`        | (4,)   | int64   | `ABILITY_VOCAB` index per active slot |
-| `move_idx`           | (4,4)  | int64   | `MOVE_VOCAB` index of each active slot's up-to-4 revealed moves (`"<pad>"` for the rest); slot order matches the other 4-slot arrays, move order is `vgc.replay_parse`'s sorted `revealed_moves`, truncated to 4 |
-| `hp_fraction`        | (4,)   | float32 | 0.0-1.0, 0.0 for an empty slot |
-| `status`             | (4,7)  | float32 | one-hot over `["none","brn","par","psn","tox","slp","frz"]` |
-| `boosts`             | (4,5)  | float32 | `[atk,def,spa,spd,spe]` stage / 6.0 |
-| `mega`               | (4,)   | float32 | 1.0/0.0 |
-| `bench_hp_fraction`  | (8,)   | float32 | 0.0-1.0, 0.0 for an unfilled bench slot |
-| `fainted_count`      | (2,)   | float32 | `[our, opp]` -- count of that side's CURRENTLY EMPTY active slots (0, 1, or 2), / 2.0. This is a per-snapshot signal ("this side has an empty slot right now"), NOT a full-game running tally of every faint that's ever happened -- the latter isn't derivable from a single state snapshot (a fainted mon simply disappears from both `active` and `bench`) without a `vgc.replay_parse` schema change beyond schema 2's scope. |
-| `weather`            | (5,)   | float32 | one-hot over `["none","sun","rain","sand","snow"]` |
-| `terrain`            | (5,)   | float32 | one-hot over `["none","electric","grassy","psychic","misty"]` |
-| `trick_room`         | (1,)   | float32 | 1.0/0.0 |
-| `side_conditions`    | (8,)   | float32 | `[our_tailwind, our_reflect, our_lightscreen, our_auroraveil, opp_tailwind, opp_reflect, opp_lightscreen, opp_auroraveil]` |
-| `turn`               | (1,)   | float32 | `min(1.0, state["field"]["turn"] / 20.0)` |
+| key                     | shape  | dtype   | meaning |
+|-------------------------|--------|---------|---------|
+| `species_idx_active`    | (4,)   | int64   | `SPECIES_VOCAB` index per active slot |
+| `species_idx_bench`     | (8,)   | int64   | `SPECIES_VOCAB` index per bench slot, `"<pad>"` for an unfilled slot |
+| `species_idx_preview`   | (12,)  | int64   | `SPECIES_VOCAB` index per previewed slot, `[our0..5, opp0..5]`, `"<pad>"` for an unfilled/missing preview slot (v4, NEW) |
+| `item_idx`              | (4,)   | int64   | `ITEM_VOCAB` index per active slot |
+| `ability_idx`           | (4,)   | int64   | `ABILITY_VOCAB` index per active slot |
+| `move_idx`              | (4,4)  | int64   | `MOVE_VOCAB` index of each active slot's up-to-4 revealed moves (`"<pad>"` for the rest); slot order matches the other 4-slot arrays, move order is `vgc.replay_parse`'s sorted `revealed_moves`, truncated to 4 |
+| `hp_fraction`           | (4,)   | float32 | 0.0-1.0, 0.0 for an empty slot |
+| `status`                | (4,7)  | float32 | one-hot over `["none","brn","par","psn","tox","slp","frz"]` |
+| `boosts`                | (4,5)  | float32 | `[atk,def,spa,spd,spe]` stage / 6.0 |
+| `mega`                  | (4,)   | float32 | 1.0/0.0 |
+| `bench_hp_fraction`     | (8,)   | float32 | 0.0-1.0, 0.0 for an unfilled bench slot |
+| `fainted_count`         | (2,)   | float32 | `[our, opp]` -- count of that side's CURRENTLY EMPTY active slots (0, 1, or 2), / 2.0. This is a per-snapshot signal ("this side has an empty slot right now"), NOT a full-game running tally of every faint that's ever happened -- the latter isn't derivable from a single state snapshot (a fainted mon simply disappears from both `active` and `bench`) without a `vgc.replay_parse` schema change beyond schema 2's scope. |
+| `weather`               | (5,)   | float32 | one-hot over `["none","sun","rain","sand","snow"]` |
+| `terrain`               | (5,)   | float32 | one-hot over `["none","electric","grassy","psychic","misty"]` |
+| `trick_room`            | (1,)   | float32 | 1.0/0.0 |
+| `side_conditions`       | (8,)   | float32 | `[our_tailwind, our_reflect, our_lightscreen, our_auroraveil, opp_tailwind, opp_reflect, opp_lightscreen, opp_auroraveil]` |
+| `turn`                  | (1,)   | float32 | `min(1.0, state["field"]["turn"] / 20.0)` |
+| `alive_known_count`     | (2,)   | float32 | `[our, opp]` -- count of that side's currently-alive KNOWN mons (non-empty active slots + bench entries -- bench already excludes fainted mons, see `vgc.replay_parse`'s docstring) / 4.0 (v4, NEW; scaled by the bring-6-pick-4 format's max of 4 mons a side can ever have known+alive at once) |
+| `alive_known_mean_hp`   | (2,)   | float32 | `[our, opp]` -- mean `hp_fraction` across that side's currently-alive known mons (active + bench), 0.0 if none (v4, NEW) |
+| `preview_unseen_count`  | (2,)   | float32 | `[our, opp]` -- `state["our"/"opp"]["unseen_count"]` / 6.0 (v4, NEW; see `vgc.replay_parse` schema 4's docstring for why this doesn't trend to 0) |
 
 `flatten_state(state) -> (index_array, scalar_array)` concatenates every INDEX key
-(`species_idx_active`, `species_idx_bench`, `item_idx`, `ability_idx`, `move_idx`
-flattened) into one `(INDEX_DIM,)` int64 array in that exact order -- see
-`INDEX_SPECIES_ACTIVE_SLICE`/etc. below for the exact offsets `vgc.bc.model` slices by
--- and every remaining (scalar) key into one `(STATE_SCALAR_DIM,)` float32 array, in
-the table's top-to-bottom order (skipping the 5 index keys). The model consumes exactly
-these two tensors (plus `vgc.bc.dataset`'s slot-index one-hot appended to the scalar
-array) -- see `vgc.bc.model`'s module docstring.
+(`species_idx_active`, `species_idx_bench`, `species_idx_preview`, `item_idx`,
+`ability_idx`, `move_idx` flattened) into one `(INDEX_DIM,)` int64 array in that exact
+order -- see `INDEX_SPECIES_ACTIVE_SLICE`/etc. below for the exact offsets `vgc.bc.model`
+slices by -- and every remaining (scalar) key into one `(STATE_SCALAR_DIM,)` float32
+array, in the table's top-to-bottom order (skipping the 6 index keys). The model
+consumes exactly these two tensors (plus `vgc.bc.dataset`'s slot-index one-hot appended
+to the scalar array) -- see `vgc.bc.model`'s module docstring.
 
 "Missing/None -> zeros" everywhere, same contract as v1.
 
@@ -132,11 +172,12 @@ matters for training on any decisions.jsonl built before schema 3.
 
 ## `ENCODER_LAYOUT_VERSION`
 
-Bumped to `"bc-encoding-v2"`. Saved into every training checkpoint alongside the vocab
-lists -- bump again whenever this module's STATE encoding layout changes. `encode_value`
-doesn't touch state encoding at all (it reads `record["won"]` directly, nothing from
-`encode_state`'s output), so adding it did NOT bump this version -- a value-headed
-checkpoint's compatibility is still gated purely on the state layout, exactly as before.
+Bumped to `"bc-encoding-v4"` (see the v4 changes section above). Saved into every
+training checkpoint alongside the vocab lists -- bump again whenever this module's STATE
+encoding layout changes. `encode_value` doesn't touch state encoding at all (it reads
+`record["won"]` directly, nothing from `encode_state`'s output), so adding it did NOT
+bump this version -- a value-headed checkpoint's compatibility is still gated purely on
+the state layout, exactly as before.
 """
 
 from __future__ import annotations
@@ -174,7 +215,7 @@ ABILITY_TO_IDX: dict[str, int] = {token: idx for idx, token in enumerate(ABILITY
 TARGET_VOCAB: list[str] = ["opp0", "opp1", "ally", "self_or_field", "spread", "<none>"]
 TARGET_TO_IDX: dict[str, int] = {token: idx for idx, token in enumerate(TARGET_VOCAB)}
 
-ENCODER_LAYOUT_VERSION = "bc-encoding-v2"
+ENCODER_LAYOUT_VERSION = "bc-encoding-v4"
 
 # --- encode_state's fixed vocab-like orderings ----------------------------------------
 
@@ -191,21 +232,27 @@ _TURN_SCALE = 20.0
 
 _MAX_BENCH_SLOTS = 4
 _MAX_REVEALED_MOVES = 4
+# Bring-6-pick-4: a side's full previewed roster is always 6, and at most 4 of them can
+# ever be known+alive on the field at once -- see the v4 docstring section above.
+_MAX_PREVIEW_SLOTS = 6
+_MAX_KNOWN_ALIVE = 4.0
 
 # --- index array layout (documented offsets vgc.bc.model slices by) -------------------
 
 INDEX_SPECIES_ACTIVE_SLICE = slice(0, 4)
 INDEX_SPECIES_BENCH_SLICE = slice(4, 12)
-INDEX_ITEM_SLICE = slice(12, 16)
-INDEX_ABILITY_SLICE = slice(16, 20)
-INDEX_MOVES_SLICE = slice(20, 36)
-INDEX_DIM = 36  # 4 + 8 + 4 + 4 + 16
+INDEX_SPECIES_PREVIEW_SLICE = slice(12, 24)
+INDEX_ITEM_SLICE = slice(24, 28)
+INDEX_ABILITY_SLICE = slice(28, 32)
+INDEX_MOVES_SLICE = slice(32, 48)
+INDEX_DIM = 48  # 4 + 8 + 12 + 4 + 4 + 16
 
-# Scalar feature dim `flatten_state` produces (every encode_state key EXCEPT the 5
+# Scalar feature dim `flatten_state` produces (every encode_state key EXCEPT the 6
 # index keys above): hp_fraction (4) + status (4*7=28) + boosts (4*5=20) + mega (4) +
 # bench_hp_fraction (8) + fainted_count (2) + weather (5) + terrain (5) + trick_room
-# (1) + side_conditions (8) + turn (1).
-STATE_SCALAR_DIM = 4 + 28 + 20 + 4 + 8 + 2 + 5 + 5 + 1 + 8 + 1
+# (1) + side_conditions (8) + turn (1) + alive_known_count (2) + alive_known_mean_hp (2)
+# + preview_unseen_count (2) [v4, NEW: last 3 terms].
+STATE_SCALAR_DIM = 4 + 28 + 20 + 4 + 8 + 2 + 5 + 5 + 1 + 8 + 1 + 2 + 2 + 2
 # vgc.bc.dataset appends a 2-dim one-hot (which of our 2 active slots is deciding) on
 # top of flatten_state's scalar output before feeding vgc.bc.model.BcPolicyNet -- both
 # modules import this constant rather than hardcoding "2" so they can't silently drift.
@@ -266,6 +313,20 @@ def _encode_bench(bench: list[dict] | None) -> tuple[list[int], list[float]]:
     return species_idx, hp_fraction
 
 
+def _encode_preview(preview_species: list[str] | None) -> list[int]:
+    """(v4) `SPECIES_VOCAB` index per previewed species, truncated/padded to exactly
+    `_MAX_PREVIEW_SLOTS` -- mirrors `_encode_bench`'s truncate-then-pad shape, but for
+    `vgc.replay_parse` schema 4's `preview_species` (always up to 6, Team Preview
+    order) rather than the appeared-only bench list.
+    """
+    preview_species = list(preview_species or [])[:_MAX_PREVIEW_SLOTS]
+    species_idx = [
+        SPECIES_TO_IDX.get(species_id, SPECIES_TO_IDX["<unk>"]) for species_id in preview_species
+    ]
+    species_idx += [SPECIES_TO_IDX["<pad>"]] * (_MAX_PREVIEW_SLOTS - len(species_idx))
+    return species_idx
+
+
 def _encode_side(side: dict | None) -> dict[str, object]:
     side = side or {}
     active = list(side.get("active") or [])
@@ -273,15 +334,33 @@ def _encode_side(side: dict | None) -> dict[str, object]:
         active.append(None)
     slots = [_encode_active_slot(active[i]) for i in range(2)]
     fainted_count = sum(1 for mon in active[:2] if not mon) / 2.0
-    bench_species_idx, bench_hp_fraction = _encode_bench(side.get("bench"))
+    bench_raw = list(side.get("bench") or [])
+    bench_species_idx, bench_hp_fraction = _encode_bench(bench_raw)
     conditions = set(side.get("side_conditions") or [])
     condition_flags = [1.0 if flag in conditions else 0.0 for flag in _SIDE_CONDITION_FLAGS]
+    preview_species_idx = _encode_preview(side.get("preview_species"))
+
+    # v4 resource-state summary: "known" mons are exactly what's already in the state
+    # (non-empty active slots + bench, which per vgc.replay_parse's docstring only ever
+    # lists species that have appeared and aren't fainted) -- no evaluator/gameplan
+    # dependency needed, see module docstring's v4 section.
+    alive_hp_fractions = [float(mon.get("hp_fraction") or 0.0) for mon in active[:2] if mon] + [
+        float(mon.get("hp_fraction") or 0.0) for mon in bench_raw
+    ]
+    alive_known_count = len(alive_hp_fractions)
+    alive_known_mean_hp = sum(alive_hp_fractions) / alive_known_count if alive_known_count else 0.0
+    unseen_count = float(side.get("unseen_count") or 0)
+
     return {
         "slots": slots,
         "bench_species_idx": bench_species_idx,
         "bench_hp_fraction": bench_hp_fraction,
         "fainted_count": fainted_count,
         "condition_flags": condition_flags,
+        "preview_species_idx": preview_species_idx,
+        "alive_known_count": alive_known_count / _MAX_KNOWN_ALIVE,
+        "alive_known_mean_hp": alive_known_mean_hp,
+        "preview_unseen_count": unseen_count / _MAX_PREVIEW_SLOTS,
     }
 
 
@@ -305,6 +384,9 @@ def encode_state(record: dict) -> dict[str, np.ndarray]:
         "species_idx_bench": np.array(
             our["bench_species_idx"] + opp["bench_species_idx"], dtype=np.int64
         ),
+        "species_idx_preview": np.array(
+            our["preview_species_idx"] + opp["preview_species_idx"], dtype=np.int64
+        ),
         "item_idx": np.array([slot["item_idx"] for slot in all_slots], dtype=np.int64),
         "ability_idx": np.array([slot["ability_idx"] for slot in all_slots], dtype=np.int64),
         "move_idx": np.array([slot["move_idx"] for slot in all_slots], dtype=np.int64),
@@ -323,6 +405,15 @@ def encode_state(record: dict) -> dict[str, np.ndarray]:
             our["condition_flags"] + opp["condition_flags"], dtype=np.float32
         ),
         "turn": np.array([turn_value], dtype=np.float32),
+        "alive_known_count": np.array(
+            [our["alive_known_count"], opp["alive_known_count"]], dtype=np.float32
+        ),
+        "alive_known_mean_hp": np.array(
+            [our["alive_known_mean_hp"], opp["alive_known_mean_hp"]], dtype=np.float32
+        ),
+        "preview_unseen_count": np.array(
+            [our["preview_unseen_count"], opp["preview_unseen_count"]], dtype=np.float32
+        ),
     }
 
 
@@ -336,6 +427,7 @@ def flatten_state(state: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]
         [
             state["species_idx_active"],
             state["species_idx_bench"],
+            state["species_idx_preview"],
             state["item_idx"],
             state["ability_idx"],
             state["move_idx"].reshape(-1),
@@ -354,6 +446,9 @@ def flatten_state(state: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]
             state["trick_room"],
             state["side_conditions"],
             state["turn"],
+            state["alive_known_count"],
+            state["alive_known_mean_hp"],
+            state["preview_unseen_count"],
         ]
     ).astype(np.float32)
     return index_array, scalar_array

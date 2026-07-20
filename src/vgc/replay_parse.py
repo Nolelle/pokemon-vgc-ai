@@ -81,6 +81,27 @@ Schema 3 (current) adds, on top of schema 2's fields (all still present, unchang
   wasn't worth a tri-state). `ParsedReplay.winner` (`"p1"`/`"p2"`/`None`) is the
   game-level fact this is derived from, for callers that want it directly.
 
+Schema 4 (current) adds, on top of schema 3's fields (all still present, unchanged) --
+motivated by the value network being blind to anything that hasn't appeared on the
+field yet, when the previewed-but-unseen roster (both sides' full 6, and which of them
+have shown up so far) is exactly the per-battle context a human uses to judge a
+position (e.g. "their back two are probably the rain core they haven't brought in
+yet"):
+
+- Each side dict (`"our"`/`"opp"` in a `"turn"`/`"forced_switch"` record's `"state"`)
+  gains `"preview_species"`: the six species ids from that side's Team Preview `|poke|`
+  lines, mega formes resolved to their base species via `_resolve_species` (defensive
+  only -- a `|poke|` line never actually shows a mega forme in practice, since Mega
+  Evolution can't happen before turn 1, but resolving keeps this list keyed the same way
+  `known{}`/bench identity already are, and costs nothing when it's a no-op).
+- Each side dict also gains `"unseen_count"`: how many of that side's `preview_species`
+  have NOT appeared (switched in) as of this snapshot, i.e.
+  `len(preview_species) - |preview_species ∩ appeared_order|`, always >= 0. This
+  format's bring-6-pick-4 rule guarantees at least 2 of the 6 previewed species can
+  NEVER appear (not brought), so `unseen_count` doesn't trend to 0 even in a long game
+  -- it's "how much of this side's full previewed roster remains genuinely unknown to
+  us," not a proxy for "how close to the end of the roster we are."
+
 Never raises on a malformed replay: `parse_replay` catches any exception during its own
 walk and reports it as a failed parse with a reason string; individual malformed/
 ambiguous EVENTS within an otherwise-fine replay are skipped (counted, not silently
@@ -119,10 +140,11 @@ from vgc.data import load_species
 # Bumped whenever a decision record's shape changes (additive so far: schema 2 added
 # `revealed_moves` to active-mon entries and turned bench entries from HP-only summaries
 # into identity-bearing {species_id, hp_fraction, status} dicts; schema 3 added a
-# per-record `"won"` bool -- see module docstring). Every emitted record carries
-# `"schema": SCHEMA_VERSION` so old datasets stay distinguishable from newer ones
-# instead of silently being read as if compatible.
-SCHEMA_VERSION = 3
+# per-record `"won"` bool; schema 4 added per-side `"preview_species"`/`"unseen_count"`
+# -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
+# old datasets stay distinguishable from newer ones instead of silently being read as if
+# compatible.
+SCHEMA_VERSION = 4
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -314,6 +336,11 @@ def _side_dict(side: SideState) -> dict:
         for species_id in side.appeared_order
         if species_id not in active_species and not side.known[species_id].fainted
     ]
+    appeared = set(side.appeared_order)
+    # Schema 4: how much of this side's full previewed roster is still genuinely
+    # unknown to us -- see module docstring's schema-4 note for why this doesn't trend
+    # to 0 (bring-6-pick-4 guarantees at least 2 previewed species can never appear).
+    unseen_count = sum(1 for species_id in side.preview_species if species_id not in appeared)
     return {
         "active": [
             _mon_dict(side.known.get(species_id)) if species_id else None
@@ -321,6 +348,8 @@ def _side_dict(side: SideState) -> dict:
         ],
         "bench": bench,
         "side_conditions": sorted(side.side_conditions),
+        "preview_species": list(side.preview_species),
+        "unseen_count": unseen_count,
     }
 
 
@@ -845,7 +874,10 @@ def _process_teampreview_segment(
             side = parts[2]
             if side not in ("p1", "p2"):
                 continue
-            species_id = _species_from_details(parts[3])
+            # Mega resolution here is defensive-only (see schema 4's docstring note) --
+            # a `|poke|` line never actually names a mega forme in practice, since Mega
+            # Evolution can't happen before turn 1.
+            species_id, _is_mega = _resolve_species(_species_from_details(parts[3]))
             if species_id and species_id not in state.sides[side].preview_species:
                 state.sides[side].preview_species.append(species_id)
             continue

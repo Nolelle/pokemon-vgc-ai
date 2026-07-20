@@ -4,7 +4,7 @@ re-ranker. Split into three groups:
 - `battle_state_record`: torch-free, exercised against hand-built fake poke-env objects
   (mirrors tests/test_team_preview.py's `_FakeMon`/`_FakeBattle` style) -- including a
   direct cross-check that this adapter's output runs through the SAME `encode_state` path
-  as a hand-built schema-2 fixture record and produces IDENTICAL arrays (field-name drift
+  as a hand-built schema-4 fixture record and produces IDENTICAL arrays (field-name drift
   between this adapter and `vgc.replay_parse`'s schema is the #1 silent-failure risk here).
 - Token-mapping (`_single_tokens`/`_order_tokens`/`_target_token`): also torch-free, using
   a hand-built `BcPolicy` (its `model` field is unused by these tests, so no torch/model
@@ -39,6 +39,8 @@ from vgc.bc.encoding import (
 from vgc.bc.policy import (
     BcPolicy,
     _order_tokens,
+    _preview_species_for_opp_side,
+    _preview_species_for_our_side,
     _single_tokens,
     _target_token,
     battle_state_record,
@@ -64,6 +66,11 @@ class _FakeMon:
     current_hp_fraction: float = 1.0
     fainted: bool = False
     moves: dict = field(default_factory=dict)
+    # Mirrors poke-env's `Pokemon.revealed` -- "has this team slot ever been switched in
+    # this game" (set by `Pokemon.switch_in`). Defaults True: every existing fixture in
+    # this file represents an already-battling active/bench mon, so defaulting True
+    # keeps their `unseen_count` at 0 unless a test opts into a never-appeared mon.
+    revealed: bool = True
 
 
 class _FakeBattle:
@@ -80,13 +87,22 @@ class _FakeBattle:
         weather=None,
         terrain_fields=None,
         turn=1,
+        our_preview_only=None,
+        teampreview_opponent_team=None,
     ):
         self.active_pokemon = our_active
         self.opponent_active_pokemon = opp_active
         # Real poke-env's team/opponent_team dicts hold only ACTUAL Pokemon (never a
         # `None` placeholder the way the fixed-size active_pokemon/opponent_active_pokemon
         # lists do for an empty slot) -- filter here to match that contract.
-        our_members = [mon for mon in our_active if mon is not None] + (our_bench or [])
+        our_members = (
+            [mon for mon in our_active if mon is not None]
+            + (our_bench or [])
+            # `battle.team` holds ALL 6 of our own team members from the start (see
+            # _preview_species_for_our_side's docstring) -- `our_preview_only` lets a
+            # test add species that are known but have never appeared this game.
+            + (our_preview_only or [])
+        )
         opp_members = [mon for mon in opp_active if mon is not None] + (opp_bench or [])
         self.team = {f"our{i}": mon for i, mon in enumerate(our_members)}
         self.opponent_team = {f"opp{i}": mon for i, mon in enumerate(opp_members)}
@@ -95,6 +111,13 @@ class _FakeBattle:
         self.fields = fields or []
         self.weather = weather or []
         self.turn = turn
+        # `battle.teampreview_opponent_team` -- see _preview_species_for_opp_side's
+        # docstring. Defaults to the currently-active/benched opponent mons (i.e. "the
+        # whole previewed roster is exactly what's appeared so far") unless a test wants
+        # to model a still-unseen previewed species explicitly.
+        self.teampreview_opponent_team = (
+            teampreview_opponent_team if teampreview_opponent_team is not None else opp_members
+        )
 
 
 def _fake_single(move_id: str, move_target: int = 0, mega: bool = False):
@@ -243,10 +266,71 @@ def test_battle_state_record_field_dict() -> None:
     assert field_dict == {"weather": "sun", "terrain": None, "trick_room": False, "turn": 7}
 
 
-# --- adapter output must encode IDENTICALLY to a hand-built schema-2 fixture record -
+# --- v4: preview_species/unseen_count helpers + battle_state_record wiring ----------
 
 
-def test_battle_state_record_encodes_identically_to_schema2_fixture() -> None:
+def test_preview_species_for_our_side_reads_battle_team_and_revealed_flag() -> None:
+    battle = _FakeBattle(
+        our_active=[_FakeMon(species="garchomp"), _FakeMon(species="klefki")],
+        opp_active=[None, None],
+        our_preview_only=[
+            _FakeMon(species="incineroar", revealed=False),
+            _FakeMon(species="raichu", revealed=False),
+        ],
+    )
+    species_ids, unseen_count = _preview_species_for_our_side(battle)
+    assert species_ids == ["garchomp", "klefki", "incineroar", "raichu"]
+    assert unseen_count == 2
+
+
+def test_preview_species_for_our_side_empty_when_team_missing() -> None:
+    battle = _FakeBattle(our_active=[None, None], opp_active=[None, None])
+    battle.team = {}
+    assert _preview_species_for_our_side(battle) == ([], 0)
+
+
+def test_preview_species_for_opp_side_reads_teampreview_opponent_team() -> None:
+    battle = _FakeBattle(
+        our_active=[_FakeMon(species="garchomp"), None],
+        opp_active=[_FakeMon(species="gholdengo"), None],
+        teampreview_opponent_team=[
+            _FakeMon(species="gholdengo"),
+            _FakeMon(species="dragonite"),  # previewed, never actually sent out
+        ],
+    )
+    species_ids, unseen_count = _preview_species_for_opp_side(battle)
+    assert species_ids == ["gholdengo", "dragonite"]
+    assert unseen_count == 1  # only dragonite hasn't appeared in opponent_team
+
+
+def test_preview_species_for_opp_side_empty_when_attribute_missing() -> None:
+    # A bare SimpleNamespace-style fake battle without teampreview_opponent_team at all
+    # (mirrors tests/test_search.py's minimal `_Context.battle` stand-in) must degrade
+    # to empty rather than crash.
+    from types import SimpleNamespace
+
+    battle = SimpleNamespace(opponent_team={})
+    assert _preview_species_for_opp_side(battle) == ([], 0)
+
+
+def test_battle_state_record_wires_preview_species_and_unseen_count_into_state() -> None:
+    battle = _FakeBattle(
+        our_active=[_FakeMon(species="garchomp"), None],
+        opp_active=[_FakeMon(species="gholdengo"), None],
+        our_preview_only=[_FakeMon(species="klefki", revealed=False)],
+        teampreview_opponent_team=[_FakeMon(species="gholdengo"), _FakeMon(species="dragonite")],
+    )
+    record = battle_state_record(battle, None)
+    assert record["state"]["our"]["preview_species"] == ["garchomp", "klefki"]
+    assert record["state"]["our"]["unseen_count"] == 1
+    assert record["state"]["opp"]["preview_species"] == ["gholdengo", "dragonite"]
+    assert record["state"]["opp"]["unseen_count"] == 1
+
+
+# --- adapter output must encode IDENTICALLY to a hand-built schema-4 fixture record -
+
+
+def test_battle_state_record_encodes_identically_to_schema4_fixture() -> None:
     battle = _FakeBattle(
         our_active=[
             _FakeMon(
@@ -264,6 +348,19 @@ def test_battle_state_record_encodes_identically_to_schema2_fixture() -> None:
             None,
         ],
         our_bench=[_FakeMon(species="incineroar", current_hp_fraction=1.0)],
+        # A previewed-but-never-appeared team member (v4) -- exercises a real nonzero
+        # unseen_count rather than the always-0 default every other fixture here gets.
+        # NOTE: `battle.team` (which `_bench_list` also reads) has no way to distinguish
+        # "appeared, now benched" from "never appeared at all" the way
+        # `vgc.replay_parse`'s bench (appeared-only) does -- a known, pre-existing
+        # adapter/schema asymmetry, not something this test is trying to paper over, so
+        # the fixture below matches what the LIVE adapter actually produces (raichu
+        # shows up in "bench" too) rather than the schema-pure ideal.
+        our_preview_only=[_FakeMon(species="raichu", revealed=False)],
+        teampreview_opponent_team=[
+            _FakeMon(species="gholdengo", status=Status.BRN, moves={"shadowball": None}),
+            _FakeMon(species="dragonite"),  # previewed, never actually appeared
+        ],
         side_conditions=[SideCondition.REFLECT],
         weather=[Weather.SUNNYDAY],
         turn=5,
@@ -294,8 +391,13 @@ def test_battle_state_record_encodes_identically_to_schema2_fixture() -> None:
                         "revealed_moves": ["protect"],
                     },
                 ],
-                "bench": [{"species_id": "incineroar", "hp_fraction": 1.0, "status": None}],
+                "bench": [
+                    {"species_id": "incineroar", "hp_fraction": 1.0, "status": None},
+                    {"species_id": "raichu", "hp_fraction": 1.0, "status": None},
+                ],
                 "side_conditions": ["reflect"],
+                "preview_species": ["garchomp", "klefki", "incineroar", "raichu"],
+                "unseen_count": 1,
             },
             "opp": {
                 "active": [
@@ -313,6 +415,8 @@ def test_battle_state_record_encodes_identically_to_schema2_fixture() -> None:
                 ],
                 "bench": [],
                 "side_conditions": [],
+                "preview_species": ["gholdengo", "dragonite"],
+                "unseen_count": 1,
             },
             "field": {"weather": "sun", "terrain": None, "trick_room": False, "turn": 5},
         }
