@@ -467,8 +467,15 @@ class PolicyConfig:
     bc_rerank_top_k: int = 10
     # Checkpoint path `vgc.bc.policy.load_bc_policy` reads. Relative to the repo root
     # when run from `ladder/run_ladder.py` (matches every other data/-prefixed default
-    # path in this codebase, e.g. TEAMS_DIR).
-    bc_checkpoint_path: str = "data/models/bc_policy_v2.pt"
+    # path in this codebase, e.g. TEAMS_DIR). Points at the value-head checkpoint
+    # trained on corpus + self-play data (`bc_policy_v3sp.pt` -- 63%+ value accuracy /
+    # 0.675+ AUC on the held-out corpus val split, vs the prior corpus-only
+    # `bc_policy_v3.pt`'s 59.93%/0.6496 -- see runs/experiments.jsonl's self-play
+    # entries). This checkpoint uses the PRE-v4 `bc-encoding-v2` layout (trained before
+    # the preview-context encoder existed, which self-play showed doesn't pay off yet --
+    # see that experiment log); `vgc.bc.policy.load_bc_policy`/`vgc.bc.model.BcPolicyNet`
+    # serve it via their `legacy_v2_layout` compatibility path rather than refusing it.
+    bc_checkpoint_path: str = "data/models/bc_policy_v3sp.pt"
 
     # --- Game-plan layer (vgc.gameplan.build_gameplan, via _Context.gameplan) ----------
     # `build_context` builds one `GamePlan` per turn (see vgc/gameplan.py) capturing the

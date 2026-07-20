@@ -178,6 +178,12 @@ encoding layout changes. `encode_value` doesn't touch state encoding at all (it 
 `record["won"]` directly, nothing from `encode_state`'s output), so adding it did NOT
 bump this version -- a value-headed checkpoint's compatibility is still gated purely on
 the state layout, exactly as before.
+
+A checkpoint saved with an OLDER layout version in `LEGACY_ENCODER_LAYOUT_VERSIONS`
+(currently just `"bc-encoding-v2"`) is NOT simply refused -- `vgc.bc.policy.
+load_bc_policy` serves it via `flatten_state_v2`/`vgc.bc.model.BcPolicyNet`'s
+`legacy_v2_layout` flag instead (see `flatten_state_v2`'s section below). Only a layout
+version that's neither the current one nor a recognized legacy one is actually refused.
 """
 
 from __future__ import annotations
@@ -449,6 +455,67 @@ def flatten_state(state: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]
             state["alive_known_count"],
             state["alive_known_mean_hp"],
             state["preview_unseen_count"],
+        ]
+    ).astype(np.float32)
+    return index_array, scalar_array
+
+
+# --- legacy `bc-encoding-v2` layout: compatibility shim for pre-v4 checkpoints --------
+#
+# A checkpoint trained before v4 (e.g. `bc_policy_v3.pt`/`bc_policy_v3sp.pt`, saved
+# `encoder_layout_version == "bc-encoding-v2"`) was never trained on the preview-species
+# index group or the three v4 resource-state scalars -- feeding it the current (v4)
+# `flatten_state` output would silently misalign every downstream slice (item/ability/
+# move indices shift by 12, scalars shift by 6) rather than just "missing a feature."
+# `vgc.bc.policy.load_bc_policy` refuses a genuine layout mismatch by design (see that
+# function's docstring), but "refuses" must not mean "a legacy checkpoint can never be
+# served again" -- `flatten_state_v2` (paired with `vgc.bc.model.BcPolicyNet`'s
+# `legacy_v2_layout` flag) reproduces EXACTLY the pre-v4 `(36,)`/`(86,)` shapes from the
+# SAME `encode_state(record)` output `flatten_state` already computes (the v4 fields are
+# simply left out of the concatenation, not computed differently), so a legacy
+# checkpoint keeps working against live/self-play data without this module needing two
+# parallel `encode_state` implementations.
+LEGACY_ENCODER_LAYOUT_VERSIONS: frozenset[str] = frozenset({"bc-encoding-v2"})
+
+INDEX_SPECIES_ACTIVE_SLICE_V2 = slice(0, 4)
+INDEX_SPECIES_BENCH_SLICE_V2 = slice(4, 12)
+INDEX_ITEM_SLICE_V2 = slice(12, 16)
+INDEX_ABILITY_SLICE_V2 = slice(16, 20)
+INDEX_MOVES_SLICE_V2 = slice(20, 36)
+INDEX_DIM_V2 = 36  # 4 + 8 + 4 + 4 + 16 -- no species_idx_preview group
+
+STATE_SCALAR_DIM_V2 = 4 + 28 + 20 + 4 + 8 + 2 + 5 + 5 + 1 + 8 + 1  # == 86, no v4 additions
+
+
+def flatten_state_v2(state: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """Legacy counterpart to `flatten_state`: `(INDEX_DIM_V2,)`/`(STATE_SCALAR_DIM_V2,)`
+    arrays with the SAME values `flatten_state` would produce for every pre-v4 field,
+    just omitting `species_idx_preview`/`alive_known_count`/`alive_known_mean_hp`/
+    `preview_unseen_count` -- see this section's header comment for why this exists
+    instead of a second `encode_state`.
+    """
+    index_array = np.concatenate(
+        [
+            state["species_idx_active"],
+            state["species_idx_bench"],
+            state["item_idx"],
+            state["ability_idx"],
+            state["move_idx"].reshape(-1),
+        ]
+    ).astype(np.int64)
+    scalar_array = np.concatenate(
+        [
+            state["hp_fraction"],
+            state["status"].reshape(-1),
+            state["boosts"].reshape(-1),
+            state["mega"],
+            state["bench_hp_fraction"],
+            state["fainted_count"],
+            state["weather"],
+            state["terrain"],
+            state["trick_room"],
+            state["side_conditions"],
+            state["turn"],
         ]
     ).astype(np.float32)
     return index_array, scalar_array

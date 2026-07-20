@@ -58,6 +58,20 @@ Every checkpoint saves its own `"heads"` tuple (`vgc.bc.train._checkpoint_payloa
 alongside the vocab lists, so `vgc.bc.policy.load_bc_policy` rebuilds the exact same head
 configuration a checkpoint was trained with -- a checkpoint saved before this feature
 (no `"heads"` key) is treated as `("move", "target")`, matching what it actually is.
+
+## `legacy_v2_layout` (compatibility with pre-v4 checkpoints)
+
+A checkpoint saved under `vgc.bc.encoding`'s pre-v4 layout (`"bc-encoding-v2"` --
+e.g. `bc_policy_v3.pt`/`bc_policy_v3sp.pt`) has NO preview-species embedding lookup or
+its mean-pooling in its trained weights at all -- the trunk's `nn.Linear` input width was
+computed without that term. `legacy_v2_layout=True` (default `False`, no behavior change
+for current/v4 checkpoints) makes `__init__` skip the preview-species contribution to
+`input_dim` entirely and makes `forward` read `index_array` at the OLDER, narrower
+`INDEX_*_SLICE_V2` offsets (`vgc.bc.encoding`) instead of the current ones -- the two
+layouts differ ONLY in whether the preview-species group exists at all, so this is the
+one flag needed to reproduce the exact pre-v4 architecture byte-for-byte.
+`vgc.bc.policy.load_bc_policy` sets this from the checkpoint's own saved
+`encoder_layout_version`, never from the running module's current version.
 """
 
 from __future__ import annotations
@@ -73,10 +87,15 @@ except ImportError as exc:  # pragma: no cover - exercised via test_bc.py's impo
 from vgc.bc.encoding import (
     ABILITY_VOCAB,
     INDEX_ABILITY_SLICE,
+    INDEX_ABILITY_SLICE_V2,
     INDEX_ITEM_SLICE,
+    INDEX_ITEM_SLICE_V2,
     INDEX_MOVES_SLICE,
+    INDEX_MOVES_SLICE_V2,
     INDEX_SPECIES_ACTIVE_SLICE,
+    INDEX_SPECIES_ACTIVE_SLICE_V2,
     INDEX_SPECIES_BENCH_SLICE,
+    INDEX_SPECIES_BENCH_SLICE_V2,
     INDEX_SPECIES_PREVIEW_SLICE,
     ITEM_VOCAB,
     MOVE_TO_IDX,
@@ -125,10 +144,18 @@ class BcPolicyNet(nn.Module):
         hidden_dim: int = HIDDEN_DIM,
         dropout: float = DROPOUT_P,
         heads: tuple[str, ...] = DEFAULT_HEADS,
+        legacy_v2_layout: bool = False,
     ) -> None:
         super().__init__()
         self.heads: tuple[str, ...] = tuple(heads)
-        # Shared across active, bench, AND (v4) previewed species -- see module docstring.
+        # See module docstring's "legacy_v2_layout" section: a pre-v4 checkpoint's
+        # trunk never had a preview-species term, and its index_array is the narrower
+        # `bc-encoding-v2` layout -- `scalar_dim` itself is NOT auto-derived from this
+        # flag (same as every other dim here, the caller -- vgc.bc.policy.load_bc_policy
+        # -- must pass the value matching whichever layout this checkpoint actually is).
+        self.legacy_v2_layout = legacy_v2_layout
+        # Shared across active, bench, AND (v4-only) previewed species -- see module
+        # docstring.
         self.species_embedding = nn.Embedding(species_vocab_size, species_embed_dim)
         self.item_embedding = nn.Embedding(item_vocab_size, item_embed_dim)
         self.ability_embedding = nn.Embedding(ability_vocab_size, ability_embed_dim)
@@ -136,7 +163,7 @@ class BcPolicyNet(nn.Module):
 
         input_dim = (
             (NUM_ACTIVE_SLOTS + NUM_BENCH_SLOTS) * species_embed_dim
-            + NUM_PREVIEW_SIDES * species_embed_dim  # v4: mean-pooled per side
+            + (0 if legacy_v2_layout else NUM_PREVIEW_SIDES * species_embed_dim)
             + NUM_ACTIVE_SLOTS * item_embed_dim
             + NUM_ACTIVE_SLOTS * ability_embed_dim
             + NUM_ACTIVE_SLOTS * move_embed_dim  # mean-pooled per slot, then concatenated
@@ -172,51 +199,59 @@ class BcPolicyNet(nn.Module):
         """
         batch_size = index_array.shape[0]
 
-        species_active = index_array[:, INDEX_SPECIES_ACTIVE_SLICE]
-        species_bench = index_array[:, INDEX_SPECIES_BENCH_SLICE]
-        species_preview = index_array[:, INDEX_SPECIES_PREVIEW_SLICE].reshape(
-            batch_size, NUM_PREVIEW_SIDES, NUM_PREVIEW_SLOTS_PER_SIDE
-        )
-        item_idx = index_array[:, INDEX_ITEM_SLICE]
-        ability_idx = index_array[:, INDEX_ABILITY_SLICE]
-        move_idx = index_array[:, INDEX_MOVES_SLICE].reshape(
-            batch_size, NUM_ACTIVE_SLOTS, MOVES_PER_SLOT
-        )
+        if self.legacy_v2_layout:
+            active_slice = INDEX_SPECIES_ACTIVE_SLICE_V2
+            bench_slice = INDEX_SPECIES_BENCH_SLICE_V2
+            item_slice = INDEX_ITEM_SLICE_V2
+            ability_slice = INDEX_ABILITY_SLICE_V2
+            moves_slice = INDEX_MOVES_SLICE_V2
+        else:
+            active_slice = INDEX_SPECIES_ACTIVE_SLICE
+            bench_slice = INDEX_SPECIES_BENCH_SLICE
+            item_slice = INDEX_ITEM_SLICE
+            ability_slice = INDEX_ABILITY_SLICE
+            moves_slice = INDEX_MOVES_SLICE
+
+        species_active = index_array[:, active_slice]
+        species_bench = index_array[:, bench_slice]
+        item_idx = index_array[:, item_slice]
+        ability_idx = index_array[:, ability_slice]
+        move_idx = index_array[:, moves_slice].reshape(batch_size, NUM_ACTIVE_SLOTS, MOVES_PER_SLOT)
 
         species_active_emb = self.species_embedding(species_active).reshape(batch_size, -1)
         species_bench_emb = self.species_embedding(species_bench).reshape(batch_size, -1)
         item_emb = self.item_embedding(item_idx).reshape(batch_size, -1)
         ability_emb = self.ability_embedding(ability_idx).reshape(batch_size, -1)
 
-        # v4: mean-pooled per SIDE (our-preview-mean, opp-preview-mean), "<pad>" masked
-        # out of the mean -- mirrors the revealed-moves pooling immediately below, just
-        # pooled over a side's 6 preview slots instead of a slot's 4 revealed moves.
-        preview_emb = self.species_embedding(species_preview)  # (batch, 2, 6, species_embed_dim)
-        preview_mask = (species_preview != _SPECIES_PAD_IDX).unsqueeze(-1).to(preview_emb.dtype)
-        preview_emb_sum = (preview_emb * preview_mask).sum(dim=2)  # (batch, 2, species_embed_dim)
-        preview_counts = preview_mask.sum(dim=2).clamp(min=1.0)  # (batch, 2, 1)
-        preview_emb_mean = preview_emb_sum / preview_counts  # all-pad side -> zeros
-        preview_emb_flat = preview_emb_mean.reshape(batch_size, -1)
+        feature_parts = [species_active_emb, species_bench_emb]
+        if not self.legacy_v2_layout:
+            # v4 only: mean-pooled per SIDE (our-preview-mean, opp-preview-mean),
+            # "<pad>" masked out of the mean -- mirrors the revealed-moves pooling
+            # below, just pooled over a side's 6 preview slots instead of a slot's 4
+            # revealed moves. A legacy_v2_layout checkpoint's trunk has no parameters
+            # for this term at all, so it must not be computed/concatenated here.
+            species_preview = index_array[:, INDEX_SPECIES_PREVIEW_SLICE].reshape(
+                batch_size, NUM_PREVIEW_SIDES, NUM_PREVIEW_SLOTS_PER_SIDE
+            )
+            preview_emb = self.species_embedding(species_preview)  # (batch,2,6,species_embed_dim)
+            preview_mask = (species_preview != _SPECIES_PAD_IDX).unsqueeze(-1).to(preview_emb.dtype)
+            preview_emb_sum = (preview_emb * preview_mask).sum(dim=2)  # (batch,2,species_embed_dim)
+            preview_counts = preview_mask.sum(dim=2).clamp(min=1.0)  # (batch, 2, 1)
+            preview_emb_mean = preview_emb_sum / preview_counts  # all-pad side -> zeros
+            feature_parts.append(preview_emb_mean.reshape(batch_size, -1))
+
+        feature_parts.append(item_emb)
+        feature_parts.append(ability_emb)
 
         move_emb = self.move_embedding(move_idx)  # (batch, 4, 4, move_embed_dim)
         move_mask = (move_idx != _MOVE_PAD_IDX).unsqueeze(-1).to(move_emb.dtype)  # (batch,4,4,1)
         move_emb_sum = (move_emb * move_mask).sum(dim=2)  # (batch, 4, move_embed_dim)
         move_counts = move_mask.sum(dim=2).clamp(min=1.0)  # (batch, 4, 1)
         move_emb_mean = move_emb_sum / move_counts  # all-pad slot -> 0/1 == 0 (zeros)
-        move_emb_flat = move_emb_mean.reshape(batch_size, -1)
+        feature_parts.append(move_emb_mean.reshape(batch_size, -1))
+        feature_parts.append(scalars)
 
-        features = torch.cat(
-            [
-                species_active_emb,
-                species_bench_emb,
-                preview_emb_flat,
-                item_emb,
-                ability_emb,
-                move_emb_flat,
-                scalars,
-            ],
-            dim=-1,
-        )
+        features = torch.cat(feature_parts, dim=-1)
         hidden = self.trunk(features)
         move_logits = self.move_head(hidden) if self.move_head is not None else None
         target_logits = self.target_head(hidden) if self.target_head is not None else None

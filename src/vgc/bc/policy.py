@@ -10,10 +10,28 @@ without crashing -- even when torch isn't installed, because `vgc.agent` imports
 unconditionally. Only `torch`/`vgc.bc.model.BcPolicyNet` themselves are guarded; anything
 that doesn't need a loaded model (`battle_state_record`, the token-mapping helpers) works
 identically either way. `load_bc_policy` degrades to returning `None` (never raises) when
-torch or the checkpoint file is missing, or when the checkpoint's saved
-`ENCODER_LAYOUT_VERSION` doesn't match the running encoder's -- callers (`score_orders`,
+torch or the checkpoint file is missing, or when the checkpoint's saved layout version is
+NEITHER the running encoder's current `ENCODER_LAYOUT_VERSION` NOR a recognized entry in
+`vgc.bc.encoding.LEGACY_ENCODER_LAYOUT_VERSIONS` -- callers (`score_orders`,
 `vgc.agent.VgcPlayer.decide()`) already treat a `None` policy as "BC reranking disabled,
 scores unchanged."
+
+## Serving a legacy (`bc-encoding-v2`) checkpoint
+
+A checkpoint like `bc_policy_v3.pt`/`bc_policy_v3sp.pt` was trained BEFORE `bc-encoding-
+v4`'s preview-context fields existed, but is NOT refused just because the running
+encoder has since moved to v4 (schema-4 replay/self-play data + `battle_state_record`/
+`exchange_state_record` always emit the FULL v4-shaped state regardless of which
+checkpoint is loaded -- the state producers never change). `load_bc_policy` sets
+`BcPolicy.legacy_v2_layout` from the checkpoint's own saved `encoder_layout_version`
+(never from the running module's current one), and every caller that turns a live/
+simulated state into model input (`score_orders`, `position_value`,
+`position_values_batch`) reads that flag via `_flatten_for_policy` to pick
+`vgc.bc.encoding.flatten_state_v2` (legacy) or `flatten_state` (current) -- the SAME
+`encode_state(record)` dict either way, just a different subset concatenated into the
+final tensors (see `flatten_state_v2`'s docstring for why this doesn't need a second
+`encode_state`). `vgc.bc.model.BcPolicyNet(legacy_v2_layout=True, ...)` mirrors this on
+the model side (skips the preview-species trunk input its weights never had).
 
 ## `battle_state_record(battle, config) -> dict`
 
@@ -80,7 +98,16 @@ from poke_env.battle.side_condition import SideCondition
 from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.actions import describe_order
-from vgc.bc.encoding import ENCODER_LAYOUT_VERSION, SLOT_FEATURE_DIM, encode_state, flatten_state
+from vgc.bc.encoding import (
+    ENCODER_LAYOUT_VERSION,
+    LEGACY_ENCODER_LAYOUT_VERSIONS,
+    SLOT_FEATURE_DIM,
+    STATE_SCALAR_DIM,
+    STATE_SCALAR_DIM_V2,
+    encode_state,
+    flatten_state,
+    flatten_state_v2,
+)
 from vgc.damage import PokemonState, to_id
 from vgc.data import load_moves
 from vgc.decision_trace import record_note
@@ -134,6 +161,11 @@ class BcPolicy:
     # `"heads"` key at all, treated as `("move", "target")` (see `load_bc_policy`), so
     # `has_value_head` correctly comes out False for it rather than guessing.
     heads: tuple[str, ...] = ("move", "target")
+    # True for a checkpoint saved under a `vgc.bc.encoding.LEGACY_ENCODER_LAYOUT_VERSIONS`
+    # entry (currently just `"bc-encoding-v2"`) -- see module docstring's "Serving a
+    # legacy checkpoint" section. `load_bc_policy` sets this from the checkpoint's OWN
+    # saved `encoder_layout_version`, never from the running encoder's current one.
+    legacy_v2_layout: bool = False
     move_to_idx: dict[str, int] = field(default_factory=dict)
     target_to_idx: dict[str, int] = field(default_factory=dict)
 
@@ -148,15 +180,32 @@ class BcPolicy:
         return "value" in self.heads
 
 
+def _flatten_for_policy(policy: "BcPolicy", record: dict) -> tuple[np.ndarray, np.ndarray]:
+    """`(index_array, scalar_array)` for `record` (a schema-4-shaped `{"state": {...}}`
+    dict, from `battle_state_record`/`exchange_state_record`), using WHICHEVER layout
+    `policy`'s checkpoint actually expects -- see module docstring's "Serving a legacy
+    checkpoint" section. Every caller that flattens live/simulated state for a forward
+    pass (`score_orders`, `position_value`, `position_values_batch`) goes through this
+    instead of calling `flatten_state` directly, so a legacy checkpoint's narrower
+    layout is never accidentally bypassed.
+    """
+    state = encode_state(record)
+    if policy.legacy_v2_layout:
+        return flatten_state_v2(state)
+    return flatten_state(state)
+
+
 _POLICY_CACHE: dict[str, BcPolicy | None] = {}
 
 
 def load_bc_policy(checkpoint_path: str | Path) -> BcPolicy | None:
     """Load (and cache, per resolved path string) a `BcPolicy` from `checkpoint_path`.
     Never raises: torch missing, the file missing, a corrupt/unreadable checkpoint, or a
-    saved `encoder_layout_version` that doesn't match this codebase's running
-    `ENCODER_LAYOUT_VERSION` all log ONE warning and return `None` -- callers treat that
-    identically to "BC reranking disabled."
+    saved layout version that's NEITHER the running encoder's current
+    `ENCODER_LAYOUT_VERSION` NOR a recognized `LEGACY_ENCODER_LAYOUT_VERSIONS` entry all
+    log ONE warning and return `None` -- callers treat that identically to "BC reranking
+    disabled." A recognized legacy version is served via `BcPolicy.legacy_v2_layout`
+    (see module docstring's "Serving a legacy checkpoint" section), not refused.
     """
     cache_key = str(checkpoint_path)
     if cache_key in _POLICY_CACHE:
@@ -187,21 +236,31 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
         return None
 
     saved_version = checkpoint.get("encoder_layout_version")
-    if saved_version != ENCODER_LAYOUT_VERSION:
+    is_legacy = saved_version in LEGACY_ENCODER_LAYOUT_VERSIONS
+    if saved_version != ENCODER_LAYOUT_VERSION and not is_legacy:
         _LOGGER.warning(
             "BC policy disabled: checkpoint layout version %r does not match the running "
-            "encoder's %r (checkpoint=%s) -- retrain or point bc_checkpoint_path at a "
-            "compatible checkpoint",
+            "encoder's %r (and isn't a recognized legacy version %r) (checkpoint=%s) -- "
+            "retrain or point bc_checkpoint_path at a compatible checkpoint",
             saved_version,
             ENCODER_LAYOUT_VERSION,
+            sorted(LEGACY_ENCODER_LAYOUT_VERSIONS),
             checkpoint_path,
         )
         return None
+    if is_legacy:
+        _LOGGER.info(
+            "BC policy: checkpoint %s uses legacy layout %r -- serving via "
+            "BcPolicyNet(legacy_v2_layout=True)/flatten_state_v2",
+            checkpoint_path,
+            saved_version,
+        )
 
     # Pre-value-head checkpoints (saved before this feature existed) have no "heads"
     # key at all -- treat that as exactly what it is, a move+target-only model, rather
     # than guessing it might have a value head it doesn't.
     heads = tuple(checkpoint.get("heads", ("move", "target")))
+    scalar_dim = (STATE_SCALAR_DIM_V2 if is_legacy else STATE_SCALAR_DIM) + SLOT_FEATURE_DIM
     try:
         model = BcPolicyNet(
             species_vocab_size=len(checkpoint["species_vocab"]),
@@ -209,6 +268,8 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
             ability_vocab_size=len(checkpoint["ability_vocab"]),
             move_vocab_size=len(checkpoint["move_vocab"]),
             target_vocab_size=len(checkpoint["target_vocab"]),
+            scalar_dim=scalar_dim,
+            legacy_v2_layout=is_legacy,
             heads=heads,
         )
         model.load_state_dict(checkpoint["state_dict"])
@@ -230,6 +291,7 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
         target_vocab=list(checkpoint["target_vocab"]),
         encoder_layout_version=saved_version,
         heads=heads,
+        legacy_v2_layout=is_legacy,
     )
 
 
@@ -487,7 +549,7 @@ def score_orders(
     tail = scored_orders[top_k:]
 
     record = battle_state_record(battle, config)
-    index_array, scalar_array = flatten_state(encode_state(record))
+    index_array, scalar_array = _flatten_for_policy(policy, record)
 
     # The board state (hence the model's raw per-slot output) is IDENTICAL across every
     # candidate in `head` -- only which action each candidate proposes for that slot
@@ -577,7 +639,7 @@ def position_value(policy: BcPolicy | None, record_like_state: dict) -> float | 
     """
     if policy is None or not policy.has_value_head:
         return None
-    index_array, scalar_array = flatten_state(encode_state(record_like_state))
+    index_array, scalar_array = _flatten_for_policy(policy, record_like_state)
     index_batch = np.tile(index_array, (2, 1))
     slot_onehots = np.eye(SLOT_FEATURE_DIM, dtype=np.float32)
     scalar_batch = np.concatenate([np.tile(scalar_array, (2, 1)), slot_onehots], axis=1)
@@ -614,7 +676,7 @@ def position_values_batch(
     index_arrays = []
     scalar_arrays = []
     for record in record_like_states:
-        index_array, scalar_array = flatten_state(encode_state(record))
+        index_array, scalar_array = _flatten_for_policy(policy, record)
         index_arrays.append(index_array)
         scalar_arrays.append(scalar_array)
     index_stack = np.stack(index_arrays)

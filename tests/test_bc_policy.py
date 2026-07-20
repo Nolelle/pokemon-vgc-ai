@@ -32,12 +32,15 @@ from vgc.bc.encoding import (
     ENCODER_LAYOUT_VERSION,
     ITEM_VOCAB,
     MOVE_VOCAB,
+    SLOT_FEATURE_DIM,
     SPECIES_VOCAB,
+    STATE_SCALAR_DIM_V2,
     TARGET_VOCAB,
     encode_state,
 )
 from vgc.bc.policy import (
     BcPolicy,
+    _flatten_for_policy,
     _order_tokens,
     _preview_species_for_opp_side,
     _preview_species_for_our_side,
@@ -589,6 +592,132 @@ def test_load_bc_policy_caches_per_path(tmp_path, monkeypatch) -> None:
 
     assert first is not None
     assert first is second  # same object -- cached, not reloaded
+
+
+# --- legacy `bc-encoding-v2` checkpoints (e.g. bc_policy_v3.pt/bc_policy_v3sp.pt) are
+# --- SERVED, not refused, by the running (bc-encoding-v4) encoder --------------------
+
+
+def _save_legacy_v2_checkpoint(torch_module, checkpoint_path, *, heads=("move", "target", "value")):
+    from vgc.bc.model import BcPolicyNet
+
+    model = BcPolicyNet(
+        scalar_dim=STATE_SCALAR_DIM_V2 + SLOT_FEATURE_DIM,
+        legacy_v2_layout=True,
+        heads=heads,
+    )
+    torch_module.save(
+        {
+            "state_dict": model.state_dict(),
+            "species_vocab": SPECIES_VOCAB,
+            "move_vocab": MOVE_VOCAB,
+            "item_vocab": ITEM_VOCAB,
+            "ability_vocab": ABILITY_VOCAB,
+            "target_vocab": TARGET_VOCAB,
+            "encoder_layout_version": "bc-encoding-v2",
+            "heads": heads,
+        },
+        checkpoint_path,
+    )
+    return model
+
+
+def test_load_bc_policy_serves_legacy_v2_checkpoint_instead_of_refusing(tmp_path) -> None:
+    torch = pytest.importorskip("torch")
+    import vgc.bc.policy as policy_module
+
+    checkpoint_path = tmp_path / "legacy.pt"
+    _save_legacy_v2_checkpoint(torch, checkpoint_path)
+    policy_module._POLICY_CACHE.clear()
+
+    policy = load_bc_policy(checkpoint_path)
+
+    assert policy is not None  # NOT refused, unlike a genuinely unrecognized version
+    assert policy.encoder_layout_version == "bc-encoding-v2"
+    assert policy.legacy_v2_layout is True
+    assert policy.has_value_head is True
+
+
+def test_flatten_for_policy_uses_v2_shapes_for_a_legacy_policy(tmp_path) -> None:
+    torch = pytest.importorskip("torch")
+    import vgc.bc.policy as policy_module
+    from vgc.bc.encoding import INDEX_DIM_V2
+
+    checkpoint_path = tmp_path / "legacy.pt"
+    _save_legacy_v2_checkpoint(torch, checkpoint_path)
+    policy_module._POLICY_CACHE.clear()
+    policy = load_bc_policy(checkpoint_path)
+
+    record = battle_state_record(_minimal_battle(), None)
+    index_array, scalar_array = _flatten_for_policy(policy, record)
+
+    assert index_array.shape == (INDEX_DIM_V2,)
+    assert scalar_array.shape == (STATE_SCALAR_DIM_V2,)
+
+
+def test_legacy_policy_position_value_forward_pass_succeeds(tmp_path) -> None:
+    """The actual compatibility proof: a legacy-layout checkpoint's value head must
+    produce a real forward pass (not a shape-mismatch crash) against CURRENT (v4-shaped)
+    live battle state -- this is the exact path `ladder/run_ladder.py --search --value`
+    exercises in production.
+    """
+    torch = pytest.importorskip("torch")
+    import vgc.bc.policy as policy_module
+
+    checkpoint_path = tmp_path / "legacy.pt"
+    _save_legacy_v2_checkpoint(torch, checkpoint_path, heads=("value",))
+    policy_module._POLICY_CACHE.clear()
+    policy = load_bc_policy(checkpoint_path)
+
+    record = battle_state_record(_minimal_battle(), None)
+    value = position_value(policy, record)
+
+    assert value is not None
+    assert 0.0 <= value <= 1.0
+
+
+def test_legacy_policy_score_orders_forward_pass_succeeds(tmp_path) -> None:
+    """Same compatibility proof for the move/target re-ranker path (`--bc`)."""
+    torch = pytest.importorskip("torch")
+    import vgc.bc.policy as policy_module
+
+    checkpoint_path = tmp_path / "legacy.pt"
+    _save_legacy_v2_checkpoint(torch, checkpoint_path, heads=("move", "target"))
+    policy_module._POLICY_CACHE.clear()
+    policy = load_bc_policy(checkpoint_path)
+
+    battle = _score_battle()
+    order = _fake_order(_fake_single("earthquake", move_target=0), _fake_single("protect"))
+    scored = [ScoredOrder(order=order, score=100.0)]
+
+    result = score_orders(
+        policy, battle, scored, PolicyConfig(bc_blend_weight=10.0, bc_rerank_top_k=10)
+    )
+
+    assert len(result) == 1
+    assert "bc_logprob" in result[0].breakdown
+
+
+def test_load_bc_policy_still_refuses_a_truly_unrecognized_legacy_version(
+    tmp_path, monkeypatch
+) -> None:
+    """bc-encoding-v1 predates even the legacy-supported v2 layout -- confirms the
+    legacy allowance doesn't silently swallow every old version, only the recognized
+    ones in vgc.bc.encoding.LEGACY_ENCODER_LAYOUT_VERSIONS.
+    """
+    pytest.importorskip("torch")
+    import vgc.bc.policy as policy_module
+
+    checkpoint_path = tmp_path / "ancient.pt"
+    checkpoint_path.write_bytes(b"placeholder")
+
+    def fake_load(path, map_location=None, weights_only=None):  # noqa: ARG001
+        return {"encoder_layout_version": "bc-encoding-v1"}
+
+    monkeypatch.setattr(policy_module.torch, "load", fake_load)
+    policy_module._POLICY_CACHE.clear()
+
+    assert load_bc_policy(checkpoint_path) is None
 
 
 # --- score_orders: blend math + top-K-only reranking invariant ----------------------
