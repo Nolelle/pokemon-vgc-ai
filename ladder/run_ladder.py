@@ -236,26 +236,19 @@ def _listener_stopped(player: Player) -> bool:
 async def _await_one_ladder_game(
     player: LadderPlayer,
     *,
-    battle_timeout_seconds: float,
     poll_seconds: float = LADDER_PROGRESS_POLL_SECONDS,
 ) -> None:
-    """Wait through matchmaking, then bound the duration of the actual battle.
+    """Wait through matchmaking and battle while the websocket listener is healthy.
 
-    Public ladder matchmaking can legitimately be quiet for longer than one battle's
-    timeout. Applying ``asyncio.wait_for`` to the whole ``player.ladder(1)`` call cancels
-    an in-flight search and can race a match that arrives at the deadline. Instead, wait
-    without a wall-clock limit while the websocket listener is healthy, and start the
-    timeout only when poke-env registers a new battle.
+    Neither public matchmaking nor an active timer-controlled Showdown battle has a safe
+    client-side wall-clock limit. Applying ``asyncio.wait_for`` to either can orphan a
+    search or disconnect a battle that the server still considers active. The websocket
+    listener exiting is the reconnect signal; Showdown's battle timer bounds actual play.
     """
 
-    if battle_timeout_seconds <= 0:
-        raise ValueError("battle_timeout_seconds must be positive")
     if poll_seconds <= 0:
         raise ValueError("poll_seconds must be positive")
 
-    known_battle_tags = set(player.battles)
-    battle_deadline: float | None = None
-    loop = asyncio.get_running_loop()
     ladder_task = asyncio.create_task(player.ladder(1))
     try:
         while True:
@@ -263,21 +256,10 @@ async def _await_one_ladder_game(
                 await ladder_task
                 return
 
-            new_battle_tags = set(player.battles) - known_battle_tags
-            if new_battle_tags and battle_deadline is None:
-                battle_deadline = loop.time() + battle_timeout_seconds
-
             if _listener_stopped(player):
                 raise ConnectionError("Showdown websocket listener stopped during ladder search")
 
-            wait_seconds = poll_seconds
-            if battle_deadline is not None:
-                remaining = battle_deadline - loop.time()
-                if remaining <= 0:
-                    raise TimeoutError(f"ladder battle exceeded {battle_timeout_seconds:g} seconds")
-                wait_seconds = min(wait_seconds, remaining)
-
-            await asyncio.wait({ladder_task}, timeout=wait_seconds)
+            await asyncio.wait({ladder_task}, timeout=poll_seconds)
     finally:
         if not ladder_task.done():
             ladder_task.cancel()
@@ -435,8 +417,9 @@ async def run_live_session(
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
-    ``game_timeout_seconds`` bounds an active battle, not matchmaking. A quiet public
-    queue is healthy; a stopped websocket listener is the reconnect signal while waiting.
+    ``game_timeout_seconds`` is retained for API/CLI compatibility but intentionally does
+    not bound a public search or battle. A quiet queue and a timer-controlled active game
+    are both healthy; a stopped websocket listener is the reconnect signal while waiting.
     """
 
     session_id = _session_id()
@@ -461,7 +444,7 @@ async def run_live_session(
                 )
             previous_finished = player.n_finished_battles
             try:
-                await _await_one_ladder_game(player, battle_timeout_seconds=game_timeout_seconds)
+                await _await_one_ladder_game(player)
                 await player.flush_finished_battles(delay_seconds=1.0)
                 if player.n_finished_battles <= previous_finished:
                     raise RuntimeError("ladder call returned without a completed battle")
@@ -533,7 +516,10 @@ def parse_args() -> argparse.Namespace:
         "--game-timeout",
         type=float,
         default=300.0,
-        help="seconds allowed after a battle starts; matchmaking itself has no timeout",
+        help=(
+            "local-smoke timeout in seconds; public ladder searches and timer-controlled "
+            "battles wait while their websocket is healthy"
+        ),
     )
     parser.add_argument(
         "--max-retries",

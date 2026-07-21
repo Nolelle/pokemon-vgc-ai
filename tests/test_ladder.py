@@ -263,34 +263,30 @@ def test_await_one_ladder_game_does_not_time_out_during_matchmaking() -> None:
     player = _WaitTestPlayer(_ladder)
 
     async def _run() -> None:
-        await run_ladder_module._await_one_ladder_game(
-            player, battle_timeout_seconds=0.01, poll_seconds=0.001
+        await asyncio.wait_for(
+            run_ladder_module._await_one_ladder_game(player, poll_seconds=0.001),
+            timeout=0.1,
         )
 
     asyncio.run(_run())
 
 
-def test_await_one_ladder_game_times_out_after_battle_starts() -> None:
-    cancelled = []
-
+def test_await_one_ladder_game_does_not_time_out_after_battle_starts() -> None:
     async def _ladder(player, _n_games: int) -> None:
         player.battles["battle-test-2"] = SimpleNamespace(finished=False)
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.append(True)
-            raise
+        # The old 300-second wall clock disconnected real timer-controlled battles.
+        # Sleeping here longer than the earlier unit-scale limit represents that case.
+        await asyncio.sleep(0.03)
 
     player = _WaitTestPlayer(_ladder)
 
     async def _run() -> None:
-        with pytest.raises(TimeoutError, match="battle exceeded"):
-            await run_ladder_module._await_one_ladder_game(
-                player, battle_timeout_seconds=0.01, poll_seconds=0.001
-            )
+        await asyncio.wait_for(
+            run_ladder_module._await_one_ladder_game(player, poll_seconds=0.001),
+            timeout=0.1,
+        )
 
     asyncio.run(_run())
-    assert cancelled == [True]
 
 
 def test_await_one_ladder_game_detects_stopped_listener_while_searching() -> None:
@@ -302,9 +298,7 @@ def test_await_one_ladder_game_detects_stopped_listener_while_searching() -> Non
 
     async def _run() -> None:
         with pytest.raises(ConnectionError, match="listener stopped"):
-            await run_ladder_module._await_one_ladder_game(
-                player, battle_timeout_seconds=1.0, poll_seconds=0.001
-            )
+            await run_ladder_module._await_one_ladder_game(player, poll_seconds=0.001)
 
     asyncio.run(_run())
 
