@@ -389,6 +389,11 @@ class ExchangeResult:
     damage past 0 doesn't inflate the total). `faints` counts mons that crossed from
     HP > 0 to HP <= 0 during this exchange.
 
+    ``faints`` is an expected count when a repeated Protect is involved (for example,
+    a lethal hit through a 1/3-success Protect contributes 2/3 of a faint). This keeps
+    the exchange value in the same expected-value currency as the evaluator's Protect
+    score instead of pretending every repeated Protect succeeds.
+
     `our_states`/`opp_states`/`weather` are the POST-exchange snapshot (copies -- see
     `resolve_exchange`'s "never mutate ctx" contract) -- only populated for
     `PolicyConfig.use_value_head`'s benefit (`vgc.bc.policy.exchange_state_record`
@@ -397,9 +402,9 @@ class ExchangeResult:
     """
 
     our_hp_lost_pct: float = 0.0
-    our_faints: int = 0
+    our_faints: float = 0.0
     opp_hp_lost_pct: float = 0.0
-    opp_faints: int = 0
+    opp_faints: float = 0.0
     our_states: list[PokemonState | None] = field(default_factory=list)
     opp_states: list[PokemonState | None] = field(default_factory=list)
     weather: str | None = None
@@ -423,6 +428,9 @@ class _Action:
     speed: float = 0.0  # filled in once the exchange's weather/mega state is settled
     utility_value: float = 0.0
     spread: bool = False
+    # Protect-family success probability for this turn. Fresh Protect is 1.0; repeated
+    # attempts use the same geometric decay as evaluator._score_protect.
+    success_prob: float = 1.0
 
 
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
@@ -471,6 +479,10 @@ def _build_our_actions(
                     weather_override = _ABILITY_WEATHER[our_states[slot].ability]
         if move_data["category"] == "Status":
             if move_id in _PROTECT_MOVES:
+                pokemon = ctx.our_pokemon[slot]
+                protect_counter = (
+                    getattr(pokemon, "protect_counter", 0) if pokemon is not None else 0
+                )
                 actions.append(
                     _Action(
                         side="our",
@@ -479,6 +491,11 @@ def _build_our_actions(
                         move_id=move_id,
                         targets=[],
                         priority=int(move_data.get("priority", 0)),
+                        success_prob=(
+                            config.protect_success_decay**protect_counter
+                            if config.search_respect_our_protect_odds
+                            else 1.0
+                        ),
                     )
                 )
             else:
@@ -613,8 +630,10 @@ def _apply_action(
     action: _Action,
     our_states: list[PokemonState | None],
     opp_states: list[PokemonState | None],
-    our_protected: list[bool],
-    opp_protected: list[bool],
+    our_protected: list[float],
+    opp_protected: list[float],
+    our_pre_protect_hp: list[float | None],
+    opp_pre_protect_hp: list[float | None],
     our_redirector: list[int | None],
     opp_redirector: list[int | None],
     weather_for_exchange: str | None,
@@ -628,7 +647,11 @@ def _apply_action(
 
     if action.kind == "protect":
         protected = our_protected if action.side == "our" else opp_protected
-        protected[action.slot] = True
+        pre_protect_hp = (
+            our_pre_protect_hp if action.side == "our" else opp_pre_protect_hp
+        )
+        protected[action.slot] = min(1.0, max(0.0, action.success_prob))
+        pre_protect_hp[action.slot] = actor_state.hp_or_max()
         return
     if action.kind == "utility":
         if action.side == "our":
@@ -669,24 +692,29 @@ def _apply_action(
         if defender_state is None or defender_state.hp_or_max() <= 0:
             continue  # already fainted earlier this exchange -- no damage to deal
         protected = our_protected if side == "our" else opp_protected
-        if protected[idx]:
-            continue  # Protect blanks single-target AND spread hits alike (v1 scope)
+        protect_success_prob = protected[idx]
+        if protect_success_prob >= 1.0:
+            continue  # A fresh Protect blanks single-target AND spread hits alike.
+        # For a repeated Protect, simulate the failure branch in the mutable state and
+        # weight its HP/faint cost by the chance that Protect fails. This preserves
+        # correlation across two incoming hits: both land in the same failure branch.
+        failure_prob = 1.0 - protect_success_prob
         field = field_vs_us if side == "our" else field_vs_opp
         damage_result = damage_range(actor_state, defender_state, action.move_id, field)
         before = defender_state.hp_or_max()
         actual_loss = min(damage_result.expected_damage, before)
         defender_state.current_hp = max(0.0, before - actual_loss)
         max_hp = defender_state.max_hp()
-        loss_pct = (actual_loss / max_hp * 100.0) if max_hp else 0.0
+        loss_pct = (actual_loss / max_hp * 100.0 * failure_prob) if max_hp else 0.0
         newly_fainted = before > 0 and defender_state.current_hp <= 0
         if side == "our":
             result.our_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.our_faints += 1
+                result.our_faints += failure_prob
         else:
             result.opp_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.opp_faints += 1
+                result.opp_faints += failure_prob
 
 
 def resolve_exchange(
@@ -697,10 +725,9 @@ def resolve_exchange(
     itself is never mutated, so the same `_Context` is reused across every candidate
     order and every opponent response in one `search_joint_orders` call.
 
-    ``config`` is accepted (per this module's documented entry-point signature) but not
-    read here -- every weight this function's OWN mechanics need (none; it just adds up
-    damage/faints) lives one level up in `_exchange_value`, matching how `damage_range`
-    itself doesn't take a `PolicyConfig` either.
+    Repeated Protect uses ``config.protect_success_decay`` just like the myopic
+    evaluator. The mutable state follows the failure branch while actions resolve, then
+    is blended back to expected HP for the value head after the turn.
     """
     our_states = [_copy_state(state) for state in ctx.our_states]
     opp_states = [_copy_state(state) for state in ctx.opp_states]
@@ -733,8 +760,10 @@ def resolve_exchange(
     all_actions.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
 
     result = ExchangeResult()
-    our_protected = [False, False]
-    opp_protected = [False, False]
+    our_protected = [0.0, 0.0]
+    opp_protected = [0.0, 0.0]
+    our_pre_protect_hp: list[float | None] = [None, None]
+    opp_pre_protect_hp: list[float | None] = [None, None]
     our_redirector: list[int | None] = [None]
     opp_redirector: list[int | None] = [None]
     for action in all_actions:
@@ -744,12 +773,29 @@ def resolve_exchange(
             opp_states,
             our_protected,
             opp_protected,
+            our_pre_protect_hp,
+            opp_pre_protect_hp,
             our_redirector,
             opp_redirector,
             weather_for_exchange,
             ctx,
             result,
         )
+
+    # `_apply_action` keeps each partially protected slot in the Protect-failure branch
+    # so multiple incoming hits remain correlated. Convert that branch to expected HP
+    # before exposing the post-exchange snapshot to the value model.
+    for states, protected, pre_protect_hp in (
+        (our_states, our_protected, our_pre_protect_hp),
+        (opp_states, opp_protected, opp_pre_protect_hp),
+    ):
+        for slot, success_prob in enumerate(protected):
+            base_hp = pre_protect_hp[slot]
+            state = states[slot]
+            if state is None or base_hp is None or not 0.0 < success_prob < 1.0:
+                continue
+            failure_hp = state.hp_or_max()
+            state.current_hp = success_prob * base_hp + (1.0 - success_prob) * failure_hp
     result.our_states = our_states
     result.opp_states = opp_states
     result.weather = weather_for_exchange

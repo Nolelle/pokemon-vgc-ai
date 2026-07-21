@@ -197,6 +197,61 @@ def test_protect_blocks_spread_hit_on_protector_but_not_the_other_slot() -> None
     assert result.opp_hp_lost_pct > 0.0  # but "other" still took its share of the spread
 
 
+def test_repeated_our_protect_uses_expected_failure_cost_in_exchange() -> None:
+    defender = _garchomp(current_hp=1)
+    attacker = _klefki()
+    ctx = _build_ctx(
+        our_states=[defender, None],
+        opp_states=[attacker, None],
+        our_pokemon=[_mon(moves={"protect": None}, protect_counter=1), None],
+        opp_pokemon=[_mon(moves={"bodyslam": None}), None],
+    )
+    our_order = _fake_order(_fake_single("protect"), None)
+    opp_response = OppResponse(
+        slot0=_OppSlotAction(kind="move", move_id="bodyslam", target_our_slot=0),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(our_order, opp_response, ctx, PolicyConfig())
+
+    success_prob = PolicyConfig().protect_success_decay
+    failure_prob = 1.0 - success_prob
+    assert result.our_faints == pytest.approx(failure_prob)
+    assert result.our_hp_lost_pct == pytest.approx(
+        100.0 / defender.max_hp() * failure_prob
+    )
+    assert result.our_states[0].hp_or_max() == pytest.approx(success_prob)
+    # The context remains immutable even though the returned state is the expected
+    # success/failure blend consumed by the value head.
+    assert ctx.our_states[0].current_hp == 1
+
+
+def test_repeated_our_protect_legacy_control_still_assumes_success() -> None:
+    defender = _garchomp(current_hp=1)
+    ctx = _build_ctx(
+        our_states=[defender, None],
+        opp_states=[_klefki(), None],
+        our_pokemon=[_mon(moves={"protect": None}, protect_counter=1), None],
+        opp_pokemon=[_mon(moves={"bodyslam": None}), None],
+    )
+    our_order = _fake_order(_fake_single("protect"), None)
+    opp_response = OppResponse(
+        slot0=_OppSlotAction(kind="move", move_id="bodyslam", target_our_slot=0),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(
+        our_order,
+        opp_response,
+        ctx,
+        PolicyConfig(search_respect_our_protect_odds=False),
+    )
+
+    assert result.our_faints == 0.0
+    assert result.our_hp_lost_pct == 0.0
+    assert result.our_states[0].hp_or_max() == 1
+
+
 def test_our_switch_replaces_slot_and_takes_no_action() -> None:
     opp_attacker = _klefki(current_hp=1)  # would guarantee-KO the outgoing mon's move
     switch_target = Pokemon(gen=9, species="klefki")

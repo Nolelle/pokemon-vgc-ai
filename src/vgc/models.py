@@ -331,6 +331,12 @@ class PolicyConfig:
     # Setting this to 0.0 disables the search's actual influence on ranking while still
     # paying its compute cost -- useful as an isolation test, not a recommended setting.
     search_position_weight: float = 1.0
+    # Make exchange search use the real geometric success odds for OUR repeated
+    # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
+    # myopic score decayed correctly but `resolve_exchange` still treated every repeat
+    # as guaranteed, which drove consecutive Protect attempts in 10/13 Block-7 losses.
+    # False exists only as the exact legacy-control path for same-session A/Bs.
+    search_respect_our_protect_odds: bool = True
     # Number of strategically distinct non-damaging opponent actions retained per slot
     # (setup, denial, speed control, redirection, screens). These sit alongside attacks
     # and Protect so the robust-play check cannot ignore a free Trick Room/Tailwind/setup.
