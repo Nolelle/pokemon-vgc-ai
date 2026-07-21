@@ -32,8 +32,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -70,6 +72,8 @@ DEFAULT_LOG_PATH = RUNS_DIR / "ladder.jsonl"
 # --log/--artifacts-dir.
 DEFAULT_LOCAL_SMOKE_ARTIFACTS_DIR = RUNS_DIR / "ladder-local-smoke"
 DEFAULT_LOCAL_SMOKE_LOG_PATH = RUNS_DIR / "ladder-local-smoke.jsonl"
+POKE_ENV_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LADDER_PROGRESS_POLL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,7 @@ class LadderPlayer(VgcPlayer):
         player_kwargs.setdefault("save_replays", str(self.replay_dir))
         player_kwargs.setdefault("start_timer_on_battle_start", True)
         super().__init__(**player_kwargs)
+        _deduplicate_poke_env_stream_handlers(self.logger)
 
     def _battle_finished_callback(self, battle: AbstractBattle) -> None:
         # Showdown can send rating updates immediately after the win/tie line that
@@ -198,6 +203,101 @@ async def _safe_stop_listening(player: Player, timeout_seconds: float = 15.0) ->
         player.logger.debug(
             "stop_listening during teardown failed; discarding client anyway", exc_info=True
         )
+
+
+def _deduplicate_poke_env_stream_handlers(logger: logging.Logger) -> None:
+    """Keep one copy of poke-env's console handler for a reused account logger.
+
+    ``PSClient`` adds a new ``StreamHandler`` every time a client is constructed, while
+    Python returns the same logger object for every reconnect under one username. Without
+    cleanup, the same network error is printed once per client created during the session.
+    Leave custom handlers alone; only collapse handlers with poke-env's exact formatter.
+    """
+
+    matching_handlers = [
+        handler
+        for handler in logger.handlers
+        if isinstance(handler, logging.StreamHandler)
+        and handler.formatter is not None
+        and handler.formatter._fmt == POKE_ENV_LOG_FORMAT
+    ]
+    for handler in matching_handlers[1:]:
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def _listener_stopped(player: Player) -> bool:
+    """Return whether poke-env's websocket listener has exited."""
+
+    listener = getattr(player.ps_client, "_listening_coroutine", None)
+    return listener is not None and listener.done()
+
+
+async def _await_one_ladder_game(
+    player: LadderPlayer,
+    *,
+    battle_timeout_seconds: float,
+    poll_seconds: float = LADDER_PROGRESS_POLL_SECONDS,
+) -> None:
+    """Wait through matchmaking, then bound the duration of the actual battle.
+
+    Public ladder matchmaking can legitimately be quiet for longer than one battle's
+    timeout. Applying ``asyncio.wait_for`` to the whole ``player.ladder(1)`` call cancels
+    an in-flight search and can race a match that arrives at the deadline. Instead, wait
+    without a wall-clock limit while the websocket listener is healthy, and start the
+    timeout only when poke-env registers a new battle.
+    """
+
+    if battle_timeout_seconds <= 0:
+        raise ValueError("battle_timeout_seconds must be positive")
+    if poll_seconds <= 0:
+        raise ValueError("poll_seconds must be positive")
+
+    known_battle_tags = set(player.battles)
+    battle_deadline: float | None = None
+    loop = asyncio.get_running_loop()
+    ladder_task = asyncio.create_task(player.ladder(1))
+    try:
+        while True:
+            if ladder_task.done():
+                await ladder_task
+                return
+
+            new_battle_tags = set(player.battles) - known_battle_tags
+            if new_battle_tags and battle_deadline is None:
+                battle_deadline = loop.time() + battle_timeout_seconds
+
+            if _listener_stopped(player):
+                raise ConnectionError("Showdown websocket listener stopped during ladder search")
+
+            wait_seconds = poll_seconds
+            if battle_deadline is not None:
+                remaining = battle_deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError(f"ladder battle exceeded {battle_timeout_seconds:g} seconds")
+                wait_seconds = min(wait_seconds, remaining)
+
+            await asyncio.wait({ladder_task}, timeout=wait_seconds)
+    finally:
+        if not ladder_task.done():
+            ladder_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ladder_task
+
+
+def _append_completed_records(records: list[dict[str, object]], player: LadderPlayer) -> int:
+    """Append each flushed battle record once and return the number added."""
+
+    seen_battle_tags = {record.get("battle_tag") for record in records}
+    added = 0
+    for record in player.completed_records:
+        battle_tag = record.get("battle_tag")
+        if battle_tag in seen_battle_tags:
+            continue
+        records.append(record)
+        seen_battle_tags.add(battle_tag)
+        added += 1
+    return added
 
 
 def resolve_output_paths(
@@ -333,7 +433,11 @@ async def run_live_session(
     game_timeout_seconds: float,
     max_retries: int,
 ) -> list[dict[str, object]]:
-    """Play one ladder game at a time, recreating the client after connection failures."""
+    """Play one ladder game at a time, recreating the client after connection failures.
+
+    ``game_timeout_seconds`` bounds an active battle, not matchmaking. A quiet public
+    queue is healthy; a stopped websocket listener is the reconnect signal while waiting.
+    """
 
     session_id = _session_id()
     records: list[dict[str, object]] = []
@@ -356,13 +460,12 @@ async def run_live_session(
                     server_configuration=ShowdownServerConfiguration,
                 )
             previous_finished = player.n_finished_battles
-            previous_records = len(player.completed_records)
             try:
-                await asyncio.wait_for(player.ladder(1), timeout=game_timeout_seconds)
+                await _await_one_ladder_game(player, battle_timeout_seconds=game_timeout_seconds)
                 await player.flush_finished_battles(delay_seconds=1.0)
                 if player.n_finished_battles <= previous_finished:
                     raise RuntimeError("ladder call returned without a completed battle")
-                records.extend(player.completed_records[previous_records:])
+                _append_completed_records(records, player)
                 consecutive_failures = 0
             except Exception:  # noqa: BLE001 - reconnect boundary for network failures
                 try:
@@ -373,18 +476,27 @@ async def run_live_session(
                     player.logger.debug(
                         "flush_finished_battles during teardown failed", exc_info=True
                     )
-                consecutive_failures += 1
-                player.logger.exception(
-                    "Ladder game failed; reconnecting (%d/%d)",
-                    consecutive_failures,
-                    max_retries,
-                )
+                recovered_records = _append_completed_records(records, player)
+                if recovered_records:
+                    consecutive_failures = 0
+                    player.logger.exception(
+                        "Ladder call failed after %d completed battle(s) were recovered; "
+                        "reconnecting",
+                        recovered_records,
+                    )
+                else:
+                    consecutive_failures += 1
+                    player.logger.exception(
+                        "Ladder game failed; reconnecting (%d/%d)",
+                        consecutive_failures,
+                        max_retries,
+                    )
                 dead_player = player
                 player = None  # discard BEFORE teardown -- a hung/raising
                 # stop_listening() on an already-dead connection must never leave
                 # `player` looking "still alive" to the retry loop above.
                 await _safe_stop_listening(dead_player)
-                if consecutive_failures > max_retries:
+                if not recovered_records and consecutive_failures > max_retries:
                     raise
     finally:
         if player is not None:
@@ -417,7 +529,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--credentials-file", type=Path, default=DEFAULT_CREDENTIALS_FILE)
-    parser.add_argument("--game-timeout", type=float, default=300.0)
+    parser.add_argument(
+        "--game-timeout",
+        type=float,
+        default=300.0,
+        help="seconds allowed after a battle starts; matchmaking itself has no timeout",
+    )
     parser.add_argument(
         "--max-retries",
         type=int,

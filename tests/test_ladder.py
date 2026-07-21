@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 import logging
 from pathlib import Path
@@ -238,6 +239,98 @@ def test_safe_stop_listening_passes_through_on_clean_close() -> None:
     assert calls == ["called"]
 
 
+# --- ladder wait/reconnect: quiet matchmaking is not a game timeout ----------------
+
+
+class _WaitTestPlayer:
+    def __init__(self, ladder_impl) -> None:
+        self.battles = {}
+        self._ladder_impl = ladder_impl
+        self.ps_client = SimpleNamespace(_listening_coroutine=concurrent.futures.Future())
+
+    async def ladder(self, n_games: int) -> None:
+        await self._ladder_impl(self, n_games)
+
+
+def test_await_one_ladder_game_does_not_time_out_during_matchmaking() -> None:
+    async def _ladder(player, _n_games: int) -> None:
+        # Stay in a healthy queue longer than the active-battle timeout. The clock must
+        # not start until the battle appears.
+        await asyncio.sleep(0.03)
+        player.battles["battle-test-1"] = SimpleNamespace(finished=False)
+        await asyncio.sleep(0.005)
+
+    player = _WaitTestPlayer(_ladder)
+
+    async def _run() -> None:
+        await run_ladder_module._await_one_ladder_game(
+            player, battle_timeout_seconds=0.01, poll_seconds=0.001
+        )
+
+    asyncio.run(_run())
+
+
+def test_await_one_ladder_game_times_out_after_battle_starts() -> None:
+    cancelled = []
+
+    async def _ladder(player, _n_games: int) -> None:
+        player.battles["battle-test-2"] = SimpleNamespace(finished=False)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    player = _WaitTestPlayer(_ladder)
+
+    async def _run() -> None:
+        with pytest.raises(TimeoutError, match="battle exceeded"):
+            await run_ladder_module._await_one_ladder_game(
+                player, battle_timeout_seconds=0.01, poll_seconds=0.001
+            )
+
+    asyncio.run(_run())
+    assert cancelled == [True]
+
+
+def test_await_one_ladder_game_detects_stopped_listener_while_searching() -> None:
+    async def _ladder(_player, _n_games: int) -> None:
+        await asyncio.Event().wait()
+
+    player = _WaitTestPlayer(_ladder)
+    player.ps_client._listening_coroutine.set_result(None)
+
+    async def _run() -> None:
+        with pytest.raises(ConnectionError, match="listener stopped"):
+            await run_ladder_module._await_one_ladder_game(
+                player, battle_timeout_seconds=1.0, poll_seconds=0.001
+            )
+
+    asyncio.run(_run())
+
+
+def test_deduplicate_poke_env_stream_handlers_preserves_custom_handlers() -> None:
+    logger = logging.getLogger("test-poke-env-handler-deduplication")
+    original_handlers = list(logger.handlers)
+    logger.handlers.clear()
+    try:
+        poke_handlers = [logging.StreamHandler(), logging.StreamHandler()]
+        for handler in poke_handlers:
+            handler.setFormatter(logging.Formatter(run_ladder_module.POKE_ENV_LOG_FORMAT))
+            logger.addHandler(handler)
+        custom_handler = logging.StreamHandler()
+        custom_handler.setFormatter(logging.Formatter("custom: %(message)s"))
+        logger.addHandler(custom_handler)
+
+        run_ladder_module._deduplicate_poke_env_stream_handlers(logger)
+
+        assert logger.handlers == [poke_handlers[0], custom_handler]
+    finally:
+        logger.handlers.clear()
+        for handler in original_handlers:
+            logger.addHandler(handler)
+
+
 # --- run_live_session: a teardown that raises must not abort the retry loop ---------
 
 
@@ -255,9 +348,13 @@ class _FakeLadderPlayer:
         self.config = kwargs.get("config")
         self.completed_records: list[dict[str, object]] = []
         self.n_finished_battles = 0
+        self.battles = {}
         self.logger = logging.getLogger("test-fake-ladder-player")
         self.logger.setLevel(logging.CRITICAL)  # keep the simulated failure quiet
-        self.ps_client = SimpleNamespace(stop_listening=self._stop_listening)
+        self.ps_client = SimpleNamespace(
+            stop_listening=self._stop_listening,
+            _listening_coroutine=concurrent.futures.Future(),
+        )
 
     async def ladder(self, _n: int) -> None:
         type(self).attempt_count += 1
@@ -304,3 +401,42 @@ def test_run_live_session_survives_a_teardown_that_raises(monkeypatch) -> None:
     assert len(records) == 1
     assert records[0]["won"] is True
     assert _FakeLadderPlayer.attempt_count == 2  # one simulated failure, one recovery
+
+
+class _FakeRecoveredRecordPlayer(_FakeLadderPlayer):
+    """Simulate the real race: a record is flushed before ``ladder()`` raises."""
+
+    attempt_count = 0
+
+    async def ladder(self, _n: int) -> None:
+        type(self).attempt_count += 1
+        self.n_finished_battles += 1
+        self.completed_records.append({"won": False, "battle_tag": "recovered-1"})
+        raise TimeoutError("simulated late ladder failure")
+
+
+def test_run_live_session_counts_record_recovered_during_failure(monkeypatch) -> None:
+    _FakeRecoveredRecordPlayer.attempt_count = 0
+    monkeypatch.setattr(run_ladder_module, "LadderPlayer", _FakeRecoveredRecordPlayer)
+    monkeypatch.setattr(
+        run_ladder_module,
+        "AccountConfiguration",
+        lambda username, password: SimpleNamespace(username=username, password=password),
+    )
+
+    async def _run():
+        return await run_ladder_module.run_live_session(
+            n_games=1,
+            team="fake-team",
+            credentials=Credentials(username="u", password="p"),
+            artifacts_dir=Path("/tmp/fake-artifacts"),
+            log_path=Path("/tmp/fake-log.jsonl"),
+            config=None,
+            game_timeout_seconds=5.0,
+            max_retries=0,
+        )
+
+    records = asyncio.run(_run())
+
+    assert records == [{"won": False, "battle_tag": "recovered-1"}]
+    assert _FakeRecoveredRecordPlayer.attempt_count == 1
