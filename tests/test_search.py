@@ -616,7 +616,11 @@ def test_search_position_weight_zero_matches_myopic_ranking_exactly(monkeypatch)
     )
 
     config = PolicyConfig(
-        search_position_weight=0.0, search_myopic_weight=1.0, search_our_candidates=10
+        search_position_weight=0.0,
+        search_myopic_weight=1.0,
+        search_our_candidates=10,
+        use_rolling_horizon=False,
+        search_diverse_candidates=False,
     )
     scored = search_module.search_joint_orders(object(), config)
 
@@ -650,7 +654,11 @@ def test_search_position_weight_zero_holds_for_searched_block_with_tail_below(mo
     )
 
     config = PolicyConfig(
-        search_position_weight=0.0, search_myopic_weight=1.0, search_our_candidates=3
+        search_position_weight=0.0,
+        search_myopic_weight=1.0,
+        search_our_candidates=3,
+        use_rolling_horizon=False,
+        search_diverse_candidates=False,
     )
     scored = search_module.search_joint_orders(object(), config)
 
@@ -698,7 +706,11 @@ def test_unsearched_tail_never_outranks_any_searched_order(monkeypatch) -> None:
         ),
     )
 
-    config = PolicyConfig(search_our_candidates=1)  # only the first myopic entry is searched
+    config = PolicyConfig(
+        search_our_candidates=1,
+        use_rolling_horizon=False,
+        search_diverse_candidates=False,
+    )  # only the first myopic entry is searched
     scored = search_module.search_joint_orders(object(), config)
 
     assert scored[0].order is order_searched
@@ -1030,7 +1042,9 @@ def test_rolling_horizon_has_no_ranking_effect_until_enabled(monkeypatch) -> Non
         )[1],
     )
 
-    control = search_module.search_joint_orders(object(), PolicyConfig())
+    control = search_module.search_joint_orders(
+        object(), PolicyConfig(use_rolling_horizon=False)
+    )
     enabled = search_module.search_joint_orders(
         object(), PolicyConfig(use_rolling_horizon=True)
     )

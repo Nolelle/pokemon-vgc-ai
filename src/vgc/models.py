@@ -349,10 +349,12 @@ class PolicyConfig:
     search_opp_utility_weight: float = 25.0
 
     # --- Phase 3b: persistent context + short rolling horizon --------------------------
-    # Opt-in until the offline and local-battle gates below pass. The ordinary exchange
-    # search remains the exact control path when False; battle memory is still recorded
-    # for diagnosis, but cannot alter a decision.
-    use_rolling_horizon: bool = False
+    # Master switch for the persistent-context future-position score. Promoted after
+    # 2026-07-22 local gates: 98/100 vs heuristic (Wilson low .930, threshold .65),
+    # 99/100 vs random (Wilson low .946, threshold .90), and a side-swapped 200-game
+    # mirror against the old shallow search was neutral (95/200, CI contains .5). False
+    # remains the exact shallow-search control path for future ladder A/Bs.
+    use_rolling_horizon: bool = True
     # Additional projected turns AFTER the normal searched exchange. Two is long enough
     # to recognize setup/payoff and looming traps without pretending our compact damage
     # model is a full Showdown simulator.
@@ -376,7 +378,7 @@ class PolicyConfig:
     battle_history_response_weight: float = 0.25
     # Search a strategically diverse top-K (best switch/control/non-Protect lines as well
     # as raw myopic leaders) so a setup line cannot be pruned before horizon evaluation.
-    search_diverse_candidates: bool = False
+    search_diverse_candidates: bool = True
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json

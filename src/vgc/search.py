@@ -1,5 +1,4 @@
-"""Phase 2c shallow 2-ply search: anticipates the opponent's best responses instead of
-scoring our move as if they stand still.
+"""Opponent-response search plus a persistent-context rolling position forecast.
 
 `search_joint_orders(battle, config)` is `vgc.evaluator.score_joint_orders`'s sibling
 entry point -- `vgc.agent.VgcPlayer.decide()` calls this one instead when
@@ -50,8 +49,13 @@ before it).
    default also dropped: the worst case is now a tail-risk hedge on top of an
    already-plausibility-weighted expectation, not the dominant term it was when the
    "expectation" term was a flat, unweighted mean.
-6. Final score = `search_myopic_weight * myopic_score + search_position_weight *
-   aggregated_exchange_value` -- but see `search_joint_orders`'s docstring for a
+6. When ``use_rolling_horizon`` is enabled, every post-response board projects two
+   additional joint attack exchanges. Both slots select targets together (with overkill
+   capped), and the forecast carries Speed order, Tailwind, Trick Room, screens, safe
+   switches, trap risk, and the battle memory's current win-condition plan.
+7. Final score = `search_myopic_weight * myopic_score + search_position_weight *
+   aggregated_exchange_value + rolling_horizon_weight * forecast_value` -- but see
+   `search_joint_orders`'s docstring for a
    ranking-safety fix on top of this: an unsearched (myopic-tail) order can never end up
    ranked above every searched order, regardless of what its bare myopic score is.
 
@@ -61,9 +65,11 @@ before it).
   bench states and weights them by pressure-derived switch probability. It cannot know
   which four were actually brought, and it does not predict the switch-in's following-
   turn move at this depth.
-- **Only ONE ply of opponent response** -- this is a 2-ply search (our move, then their
-  best response), not a full minimax tree. No modeling of what WE would do on the
-  following turn.
+- **Future turns use a compact damage-race rollout, not a full minimax tree.** The first
+  exchange models our chosen order against explicit opponent responses. Later projected
+  turns reselect both sides' damaging moves jointly, but do not branch over later
+  switches, Protects, or every status move. This is enough to value setup/payoff,
+  mobility, and looming traps without pretending to reproduce the full Showdown engine.
 - **No opponent mega evolution.** We don't know the opponent's revealed mega item is
   necessarily going to be used this exact turn, and modeling it would double the
   response-candidate space for a v1 feature; `vgc.evaluator.opp_threat_score` already
@@ -1514,6 +1520,12 @@ def _record_search_trace(scored: list[ScoredOrder], config: PolicyConfig) -> Non
                     else None
                 ),
                 "worst_response": entry.breakdown.get("worst_response"),
+                "rolling_horizon_value": (
+                    round(float(entry.breakdown["rolling_horizon_value"]), 3)
+                    if entry.breakdown.get("rolling_horizon_value") is not None
+                    else None
+                ),
+                "worst_forecast": entry.breakdown.get("worst_forecast"),
             }
             for entry in scored[:top_k]
         ],

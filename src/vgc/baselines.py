@@ -39,11 +39,23 @@ def _make_vgc(team: str, battle_format: str, **kwargs) -> Player:
     return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
 
 
+def _make_vgc_horizon(team: str, battle_format: str, **kwargs) -> Player:
+    """Explicit experimental baseline for rolling-horizon acceptance gates."""
+
+    config = kwargs.pop("config", None) or PolicyConfig(
+        format_id=battle_format,
+        use_rolling_horizon=True,
+        search_diverse_candidates=True,
+    )
+    return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
+
+
 BASELINES: dict[str, PlayerFactory] = {
     "random": _make_random,
     "maxpower": _make_maxpower,
     "heuristic": _make_heuristic,
     "vgc": _make_vgc,
+    "vgc_horizon": _make_vgc_horizon,
 }
 
 

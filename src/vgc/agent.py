@@ -154,8 +154,9 @@ class VgcPlayer(Player):
         return memory
 
     def decide(self, battle: AbstractBattle) -> BattleOrder:
-        """Choose a move: the argmax of `vgc.search.search_joint_orders` (Phase 2c's
-        shallow robust-response search) when `PolicyConfig.use_two_ply_search` is set
+        """Choose a move: the argmax of `vgc.search.search_joint_orders` (opponent
+        response search plus the gated rolling position forecast) when
+        `PolicyConfig.use_two_ply_search` is set
         (True by default; `ladder/run_ladder.py --myopic` is the diagnostic opt-out),
         falling back to the plain myopic
         `vgc.evaluator.score_joint_orders` when the search is disabled but the heuristic

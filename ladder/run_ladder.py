@@ -304,7 +304,9 @@ def resolve_output_paths(
     return resolved_artifacts_dir, resolved_log
 
 
-def session_config(search: bool = True, bc: bool = False, value: bool = False) -> PolicyConfig:
+def session_config(
+    search: bool = True, bc: bool = False, value: bool = False, horizon: bool = True
+) -> PolicyConfig:
     """The `PolicyConfig` for one ladder session (smoke or live): the default config
     (robust-response search), optionally changed to the diagnostic myopic path
     (`--myopic`) and composably extended with the BC v2 candidate re-ranker (`--bc`)
@@ -317,7 +319,12 @@ def session_config(search: bool = True, bc: bool = False, value: bool = False) -
     checkpoint at `bc_checkpoint_path` would make `--bc` itself a no-op the same way).
     Pure and argparse-free so it's directly unit-testable (see tests/test_ladder.py).
     """
-    config = replace(PolicyConfig(log_decisions=True), use_two_ply_search=search)
+    config = replace(
+        PolicyConfig(log_decisions=True),
+        use_two_ply_search=search,
+        use_rolling_horizon=search and horizon,
+        search_diverse_candidates=search and horizon,
+    )
     if bc:
         config = replace(config, use_bc_policy=True)
     if value:
@@ -336,6 +343,8 @@ def _policy_tag(config: PolicyConfig) -> str:
     parts = []
     if config.use_two_ply_search:
         parts.append("search")
+    if config.use_two_ply_search and config.use_rolling_horizon:
+        parts.append("horizon")
     if config.use_bc_policy:
         parts.append("bc")
     if config.use_value_head:
@@ -351,6 +360,8 @@ def policy_label(config: PolicyConfig) -> str:
     """
     base = "2-ply search" if config.use_two_ply_search else "myopic evaluator"
     extras = []
+    if config.use_two_ply_search and config.use_rolling_horizon:
+        extras.append("rolling horizon")
     if config.use_bc_policy:
         extras.append("BC re-rank")
     if config.use_value_head:
@@ -553,6 +564,18 @@ def parse_args() -> argparse.Namespace:
         help="diagnostic opt-out: use the old one-turn evaluator without response search",
     )
     parser.add_argument(
+        "--horizon",
+        action="store_true",
+        default=True,
+        help="use persistent battle context plus the rolling future-position forecast (default)",
+    )
+    parser.add_argument(
+        "--shallow-horizon",
+        action="store_false",
+        dest="horizon",
+        help="diagnostic opt-out: keep response search but disable future-position planning",
+    )
+    parser.add_argument(
         "--bc",
         action="store_true",
         help=(
@@ -579,7 +602,7 @@ def main() -> int:
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
-    config = session_config(args.search, args.bc, args.value)
+    config = session_config(args.search, args.bc, args.value, args.horizon)
     print(f"policy: {policy_label(config)}")
     team = args.team.read_text().strip()
     if args.local_smoke:
