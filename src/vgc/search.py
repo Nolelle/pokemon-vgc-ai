@@ -87,6 +87,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 from functools import cmp_to_key, partial
+from itertools import product
 
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.battle.move import Move
@@ -410,6 +411,39 @@ class ExchangeResult:
     weather: str | None = None
     our_utility_value: float = 0.0
     opp_utility_value: float = 0.0
+    our_tailwind: bool = False
+    opp_tailwind: bool = False
+    trick_room: bool = False
+    our_screens: frozenset[str] = frozenset()
+    opp_screens: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class PositionForecast:
+    """Traceable value of the board over the next few projected exchanges."""
+
+    score: float
+    our_hp_lost_pct: float
+    opp_hp_lost_pct: float
+    our_faints: int
+    opp_faints: int
+    our_safe_switches: int
+    opp_safe_switches: int
+    trapped_slots: int
+    plan_progress: float
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "score": round(self.score, 3),
+            "our_hp_lost_pct": round(self.our_hp_lost_pct, 3),
+            "opponent_hp_lost_pct": round(self.opp_hp_lost_pct, 3),
+            "our_faints": self.our_faints,
+            "opponent_faints": self.opp_faints,
+            "our_safe_switches": self.our_safe_switches,
+            "opponent_safe_switches": self.opp_safe_switches,
+            "trapped_slots": self.trapped_slots,
+            "plan_progress": round(self.plan_progress, 3),
+        }
 
 
 @dataclass
@@ -662,6 +696,21 @@ def _apply_action(
             result.opp_utility_value += action.utility_value
             if action.move_id in REDIRECTION_MOVES:
                 opp_redirector[0] = action.slot
+        # Preserve the subset of global setup effects the damage/speed engine can
+        # faithfully use on following turns. This is mechanical state, separate from
+        # the flat immediate utility proxy above.
+        if action.move_id == "tailwind":
+            if action.side == "our":
+                result.our_tailwind = True
+            else:
+                result.opp_tailwind = True
+        elif action.move_id == "trickroom":
+            result.trick_room = not result.trick_room
+        elif action.move_id in {"reflect", "lightscreen", "auroraveil"}:
+            if action.side == "our":
+                result.our_screens = result.our_screens | {action.move_id}
+            else:
+                result.opp_screens = result.opp_screens | {action.move_id}
         return
 
     num_targets = len(action.targets)
@@ -759,7 +808,13 @@ def resolve_exchange(
     all_actions = our_actions + opp_actions
     all_actions.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
 
-    result = ExchangeResult()
+    result = ExchangeResult(
+        our_tailwind=our_tailwind,
+        opp_tailwind=opp_tailwind,
+        trick_room=ctx.trick_room,
+        our_screens=ctx.our_side_screens,
+        opp_screens=ctx.opp_side_screens,
+    )
     our_protected = [0.0, 0.0]
     opp_protected = [0.0, 0.0]
     our_pre_protect_hp: list[float | None] = [None, None]
@@ -831,6 +886,13 @@ def _response_weights(
                 raw_weights[i] *= ctx.opp_protect_prob[slot_idx]
             elif slot_action.kind == "switch":
                 raw_weights[i] *= max(0.05, ctx.opp_switch_prob[slot_idx])
+            if config.use_rolling_horizon and slot_action.move_id:
+                memory = getattr(ctx.battle, "_vgc_battle_memory", None)
+                if memory is not None:
+                    raw_weights[i] *= 1.0 + (
+                        config.battle_history_response_weight
+                        * memory.move_frequency(slot_action.move_id)
+                    )
 
     total = sum(raw_weights)
     if total <= 0.0:
@@ -883,6 +945,318 @@ def _exchange_value(result: ExchangeResult, config: PolicyConfig) -> float:
     return opp_loss - our_loss + result.our_utility_value - result.opp_utility_value
 
 
+@dataclass(frozen=True)
+class _ForecastAttack:
+    side: str
+    slot: int
+    target: int
+    move_id: str
+    priority: int
+    speed: float
+
+
+def _matching_mon(state: PokemonState, mons: list[Pokemon]) -> Pokemon | None:
+    """Find the poke-env object carrying ``state``'s moves (Mega ids share a prefix)."""
+
+    for mon in mons:
+        species_id = to_id(getattr(mon, "species", None))
+        if species_id == state.species_id or state.species_id.startswith(species_id):
+            return mon
+    return None
+
+
+def _move_ids_for_state(
+    state: PokemonState, side: str, ctx: _Context, config: PolicyConfig
+) -> list[str]:
+    if side == "our":
+        mons = [mon for mon in ctx.our_pokemon if mon is not None]
+        mons += list((getattr(ctx.battle, "team", None) or {}).values())
+        mon = _matching_mon(state, mons)
+        return list(mon.moves.keys()) if mon is not None and mon.moves else []
+    preview = list(getattr(ctx.battle, "teampreview_opponent_team", None) or [])
+    known = list((getattr(ctx.battle, "opponent_team", None) or {}).values())
+    active = [mon for mon in ctx.opp_pokemon if mon is not None]
+    mon = _matching_mon(state, active + known + preview)
+    return opponent_move_ids(mon, priors=ctx.priors, config=config) if mon is not None else []
+
+
+def _forecast_field(
+    exchange: ExchangeResult, ctx: _Context, defender_side: str
+) -> FieldState:
+    return FieldState(
+        weather=exchange.weather,
+        terrain=ctx.terrain,
+        screens=(exchange.our_screens if defender_side == "our" else exchange.opp_screens),
+        trick_room=exchange.trick_room,
+        is_doubles=True,
+        num_targets=1,
+    )
+
+
+def _forecast_options(
+    side: str,
+    states: list[PokemonState | None],
+    defenders: list[PokemonState | None],
+    exchange: ExchangeResult,
+    ctx: _Context,
+    config: PolicyConfig,
+) -> list[list[_ForecastAttack | None]]:
+    options_by_slot: list[list[_ForecastAttack | None]] = []
+    tailwind = exchange.our_tailwind if side == "our" else exchange.opp_tailwind
+    defender_side = "opp" if side == "our" else "our"
+    field_state = _forecast_field(exchange, ctx, defender_side)
+    moves_data = load_moves()
+    for slot, state in enumerate(states):
+        if state is None or state.hp_or_max() <= 0:
+            options_by_slot.append([None])
+            continue
+        best_by_target: dict[int, tuple[float, str, int]] = {}
+        for move_id in _move_ids_for_state(state, side, ctx, config):
+            normalized = to_id(move_id)
+            data = moves_data.get(normalized)
+            if data is None or data["category"] == "Status":
+                continue
+            for target, defender in enumerate(defenders):
+                if defender is None or defender.hp_or_max() <= 0:
+                    continue
+                result = damage_range(state, defender, normalized, field_state)
+                if not result.breakdown["move_supported"] or result.breakdown["immune"]:
+                    continue
+                previous = best_by_target.get(target)
+                if previous is None or result.expected_damage > previous[0]:
+                    best_by_target[target] = (
+                        result.expected_damage,
+                        normalized,
+                        int(data.get("priority", 0)),
+                    )
+        speed = field_effective_speed(state, weather=exchange.weather, tailwind=tailwind)
+        options_by_slot.append(
+            [
+                _ForecastAttack(side, slot, target, move_id, priority, speed)
+                for target, (_damage, move_id, priority) in best_by_target.items()
+            ]
+            or [None]
+        )
+    return options_by_slot
+
+
+def _forecast_attack_cmp(a: _ForecastAttack, b: _ForecastAttack, trick_room: bool) -> int:
+    a_before = resolves_before(a.priority, a.speed, b.priority, b.speed, trick_room)
+    b_before = resolves_before(b.priority, b.speed, a.priority, a.speed, trick_room)
+    if a_before and not b_before:
+        return -1
+    if b_before and not a_before:
+        return 1
+    if a.side != b.side:
+        return -1 if a.side == "our" else 1
+    return 0
+
+
+def _best_joint_forecast_attacks(
+    side: str,
+    states: list[PokemonState | None],
+    defenders: list[PokemonState | None],
+    exchange: ExchangeResult,
+    ctx: _Context,
+    config: PolicyConfig,
+) -> list[_ForecastAttack]:
+    """Choose a PAIR of attacks together, with overkill capped at remaining HP."""
+
+    options = _forecast_options(side, states, defenders, exchange, ctx, config)
+    best: list[_ForecastAttack] = []
+    best_score = float("-inf")
+    defender_side = "opp" if side == "our" else "our"
+    field_state = _forecast_field(exchange, ctx, defender_side)
+    for pair in product(*options):
+        attacks = [attack for attack in pair if attack is not None]
+        remaining = [state.hp_or_max() if state is not None else 0.0 for state in defenders]
+        hp_lost_pct = 0.0
+        faints = 0
+        for attack in sorted(
+            attacks,
+            key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=exchange.trick_room)),
+        ):
+            actor = states[attack.slot]
+            defender = defenders[attack.target]
+            if actor is None or defender is None or remaining[attack.target] <= 0:
+                continue
+            result = damage_range(actor, defender, attack.move_id, field_state)
+            dealt = min(remaining[attack.target], result.expected_damage)
+            hp_lost_pct += dealt / defender.max_hp() * 100.0
+            remaining[attack.target] -= dealt
+            if remaining[attack.target] <= 0:
+                faints += 1
+        score = hp_lost_pct * config.search_hp_weight + faints * config.search_faint_weight
+        if score > best_score:
+            best_score = score
+            best = attacks
+    return best
+
+
+def _forecast_bench_states(side: str, ctx: _Context) -> list[PokemonState]:
+    active_ids = {
+        to_id(mon.species)
+        for mon in (ctx.our_pokemon if side == "our" else ctx.opp_pokemon)
+        if mon is not None
+    }
+    if side == "our":
+        mons = list((getattr(ctx.battle, "team", None) or {}).values())
+        selected = [
+            mon
+            for mon in mons
+            if getattr(mon, "selected_in_teampreview", False)
+            or getattr(mon, "_selected_in_teampreview", False)
+        ]
+        if selected:
+            mons = selected
+        return [
+            _our_pokemon_state(mon)
+            for mon in mons
+            if not mon.fainted and to_id(mon.species) not in active_ids
+        ][:2]
+    mons = list((getattr(ctx.battle, "opponent_team", None) or {}).values())
+    return [
+        opponent_state(mon)
+        for mon in mons
+        if not mon.fainted and to_id(mon.species) not in active_ids
+    ][:2]
+
+
+def _safe_switch_count(
+    side: str,
+    bench: list[PokemonState],
+    attackers: list[PokemonState | None],
+    exchange: ExchangeResult,
+    ctx: _Context,
+    config: PolicyConfig,
+) -> int:
+    attacker_side = "opp" if side == "our" else "our"
+    field_state = _forecast_field(exchange, ctx, side)
+    safe = 0
+    for defender in bench:
+        combined_pct = 0.0
+        for attacker in attackers:
+            if attacker is None or attacker.hp_or_max() <= 0:
+                continue
+            pct, _move_id, _priority = _best_attacking_move(
+                attacker,
+                _move_ids_for_state(attacker, attacker_side, ctx, config),
+                defender,
+                field_state,
+            )
+            combined_pct += pct
+        if combined_pct < config.rolling_safe_switch_damage_ceiling:
+            safe += 1
+    return safe
+
+
+def forecast_position(
+    exchange: ExchangeResult, ctx: _Context, config: PolicyConfig
+) -> PositionForecast:
+    """Project joint damage races and mobility from the post-exchange board.
+
+    This is intentionally a compact rolling horizon, not a claim to simulate all of
+    Showdown. It models the parts needed for setup decisions: both-slot targeting,
+    priority/Speed order, Tailwind, Trick Room, screens, HP/faints, safe pivots, and the
+    persistent win-condition plan. Each projected turn reselects both attacks jointly.
+    """
+
+    our_states = [_copy_state(state) for state in exchange.our_states]
+    opp_states = [_copy_state(state) for state in exchange.opp_states]
+    our_safe = _safe_switch_count(
+        "our", _forecast_bench_states("our", ctx), opp_states, exchange, ctx, config
+    )
+    opp_safe = _safe_switch_count(
+        "opp", _forecast_bench_states("opp", ctx), our_states, exchange, ctx, config
+    )
+    our_loss = opp_loss = 0.0
+    our_faints = opp_faints = 0
+    for _turn in range(max(0, config.rolling_horizon_turns)):
+        our_attacks = _best_joint_forecast_attacks(
+            "our", our_states, opp_states, exchange, ctx, config
+        )
+        opp_attacks = _best_joint_forecast_attacks(
+            "opp", opp_states, our_states, exchange, ctx, config
+        )
+        all_attacks = sorted(
+            our_attacks + opp_attacks,
+            key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=exchange.trick_room)),
+        )
+        for attack in all_attacks:
+            actors = our_states if attack.side == "our" else opp_states
+            defenders = opp_states if attack.side == "our" else our_states
+            actor = actors[attack.slot]
+            defender = defenders[attack.target]
+            if (
+                actor is None
+                or defender is None
+                or actor.hp_or_max() <= 0
+                or defender.hp_or_max() <= 0
+            ):
+                continue
+            defender_side = "opp" if attack.side == "our" else "our"
+            damage = damage_range(
+                actor,
+                defender,
+                attack.move_id,
+                _forecast_field(exchange, ctx, defender_side),
+            )
+            before = defender.hp_or_max()
+            dealt = min(before, damage.expected_damage)
+            defender.current_hp = max(0, round(before - dealt))
+            pct = dealt / defender.max_hp() * 100.0
+            if attack.side == "our":
+                opp_loss += pct
+                if before > 0 and defender.hp_or_max() <= 0:
+                    opp_faints += 1
+            else:
+                our_loss += pct
+                if before > 0 and defender.hp_or_max() <= 0:
+                    our_faints += 1
+
+    memory = getattr(ctx.battle, "_vgc_battle_memory", None)
+    plan_progress = 0.0
+    if memory is not None:
+        for before, after in zip(ctx.opp_states, opp_states, strict=True):
+            if (
+                before is not None
+                and after is not None
+                and before.species_id in memory.plan_breakers
+                and before.hp_or_max() > 0
+                and after.hp_or_max() <= 0
+            ):
+                plan_progress += 1.0
+        for before, after in zip(ctx.our_states, our_states, strict=True):
+            if (
+                before is not None
+                and after is not None
+                and before.species_id == memory.current_win_con
+                and before.hp_or_max() > 0
+                and after.hp_or_max() <= 0
+            ):
+                plan_progress -= 1.0
+
+    trapped = min(2, our_faints) if our_safe == 0 and opp_faints == 0 else 0
+    score = (
+        (opp_loss - our_loss) * config.search_hp_weight
+        + (opp_faints - our_faints) * config.search_faint_weight
+        + (our_safe - opp_safe) * config.rolling_safe_switch_bonus
+        - trapped * config.rolling_trap_penalty
+        + plan_progress * config.rolling_plan_progress_weight
+    )
+    return PositionForecast(
+        score=score,
+        our_hp_lost_pct=our_loss,
+        opp_hp_lost_pct=opp_loss,
+        our_faints=our_faints,
+        opp_faints=opp_faints,
+        our_safe_switches=our_safe,
+        opp_safe_switches=opp_safe,
+        trapped_slots=trapped,
+        plan_progress=plan_progress,
+    )
+
+
 def _value_head_delta(v_after: float | None, v_before: float | None, config: PolicyConfig) -> float:
     """`config.value_head_weight * 100 * (v_after - v_before)` -- the outcome value
     head's opinion of how much an exchange's resulting position improved/worsened our
@@ -901,6 +1275,75 @@ def _value_head_delta(v_after: float | None, v_before: float | None, config: Pol
     if v_after is None or v_before is None:
         return 0.0
     return config.value_head_weight * 100.0 * (v_after - v_before)
+
+
+def _order_tags(order: DoubleBattleOrder) -> frozenset[str]:
+    tags: set[str] = set()
+    moves: list[str] = []
+    for single in (order.first_order, order.second_order):
+        if single is None:
+            continue
+        target = single.order
+        if isinstance(target, Pokemon):
+            tags.add("switch")
+        elif isinstance(target, Move):
+            move_id = to_id(target.id)
+            moves.append(move_id)
+            kind = utility_kind(move_id)
+            if kind:
+                tags.add(kind)
+    if moves and not any(move_id in _PROTECT_MOVES for move_id in moves):
+        tags.add("non_protect")
+    if len(moves) == 2 and all(load_moves().get(move_id, {}).get("category") != "Status" for move_id in moves):
+        tags.add("double_attack")
+    return frozenset(tags)
+
+
+def _select_search_candidates(
+    myopic: list[ScoredOrder], config: PolicyConfig
+) -> tuple[list[ScoredOrder], list[ScoredOrder]]:
+    """Top-K pruning with opt-in strategic coverage beyond raw current-turn score."""
+
+    cutoff = min(len(myopic), max(1, config.search_our_candidates))
+    if not config.search_diverse_candidates or cutoff >= len(myopic):
+        return myopic[:cutoff], myopic[cutoff:]
+
+    # Keep half the budget for the literal myopic leaders. Use the other half to ensure
+    # the horizon sees at least one mobility, setup/control, all-out offense, and
+    # non-Protect line when those exist anywhere in the legal list.
+    selected = list(myopic[: max(1, cutoff // 2)])
+    desired = (
+        "switch",
+        "speed_control",
+        "setup",
+        "screen",
+        "action_denial",
+        "double_attack",
+        "non_protect",
+    )
+    for tag in desired:
+        if len(selected) >= cutoff:
+            break
+        if any(tag in _order_tags(entry.order) for entry in selected):
+            continue
+        candidate = next(
+            (
+                entry
+                for entry in myopic
+                if entry not in selected and tag in _order_tags(entry.order)
+            ),
+            None,
+        )
+        if candidate is not None:
+            selected.append(candidate)
+    for entry in myopic:
+        if len(selected) >= cutoff:
+            break
+        if entry not in selected:
+            selected.append(entry)
+    selected_ids = {id(entry) for entry in selected}
+    unsearched = [entry for entry in myopic if id(entry) not in selected_ids]
+    return selected, unsearched
 
 
 # --- top-level entry point ---------------------------------------------------------------
@@ -955,8 +1398,7 @@ def search_joint_orders(
                 exchange_state_record(ctx.our_states, ctx.opp_states, ctx, cache=record_cache),
             )
 
-    cutoff = max(1, config.search_our_candidates)
-    searched, unsearched = myopic[:cutoff], myopic[cutoff:]
+    searched, unsearched = _select_search_candidates(myopic, config)
 
     # Every (candidate, response) exchange is resolved FIRST, across the whole searched
     # block, so the value head (if active) can be scored in ONE batched forward pass
@@ -989,16 +1431,29 @@ def search_joint_orders(
     ):
         values: list[float] = []
         response_values: list[tuple[OppResponse, float]] = []
+        forecasts: list[PositionForecast | None] = []
+        forecast_values: list[float] = []
         for response, exchange, v_after in zip(responses, exchanges, v_afters, strict=True):
             value = _exchange_value(exchange, config) + _value_head_delta(v_after, v_before, config)
+            forecast = (
+                forecast_position(exchange, ctx, config) if config.use_rolling_horizon else None
+            )
+            if forecast is not None:
+                value += config.rolling_horizon_weight * forecast.score
+                forecast_values.append(forecast.score)
+            forecasts.append(forecast)
             values.append(value)
             response_values.append((response, value))
 
         aggregated = _aggregate_exchange_values(values, responses, ctx, config)
         if response_values:
-            worst_response, worst_value = min(response_values, key=lambda pair: pair[1])
+            worst_index, (worst_response, worst_value) = min(
+                enumerate(response_values), key=lambda indexed: indexed[1][1]
+            )
+            worst_forecast = forecasts[worst_index]
         else:
             worst_response, worst_value = None, 0.0
+            worst_forecast = None
 
         final_score = (
             config.search_myopic_weight * entry.score + config.search_position_weight * aggregated
@@ -1010,6 +1465,14 @@ def search_joint_orders(
             worst_response.describe() if worst_response is not None else None
         )
         breakdown["worst_response_value"] = worst_value
+        breakdown["rolling_horizon_value"] = (
+            _aggregate_exchange_values(forecast_values, responses, ctx, config)
+            if forecast_values
+            else None
+        )
+        breakdown["worst_forecast"] = (
+            worst_forecast.summary() if worst_forecast is not None else None
+        )
         breakdown["n_responses"] = len(responses)
         breakdown["searched"] = True
         scored.append(ScoredOrder(order=entry.order, score=final_score, breakdown=breakdown))

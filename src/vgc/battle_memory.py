@@ -182,6 +182,13 @@ class BattleMemory:
         total = sum(self.opponent_targets.values())
         return self.opponent_targets[to_id(species_id)] / total if total else 0.0
 
+    def move_frequency(self, move_id: str) -> float:
+        """Share of all observed opponent moves matching ``move_id``."""
+
+        total = sum(sum(counts.values()) for counts in self.opponent_moves.values())
+        count = sum(counts[to_id(move_id)] for counts in self.opponent_moves.values())
+        return count / total if total else 0.0
+
     def summary(self) -> dict[str, object]:
         return {
             "turns_observed": len(self.turns),

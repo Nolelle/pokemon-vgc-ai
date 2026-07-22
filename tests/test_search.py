@@ -22,6 +22,7 @@ from vgc.models import PolicyConfig
 from vgc.search import (
     ExchangeResult,
     OppResponse,
+    PositionForecast,
     _OppSlotAction,
     _aggregate_exchange_values,
     _enumerate_opp_responses,
@@ -921,3 +922,143 @@ def test_position_values_batch_none_when_no_value_head() -> None:
     assert position_values_batch(policy, records) == [None]
     assert position_values_batch(None, records) == [None]
     assert position_values_batch(policy, []) == []
+
+
+# --- persistent-context rolling horizon -----------------------------------------------
+
+
+def test_resolve_exchange_carries_setup_effects_into_future_position() -> None:
+    ctx = _build_ctx(
+        our_states=[_klefki(), None],
+        opp_states=[_garchomp(), None],
+        our_pokemon=[_mon(moves={"tailwind": None}, species="klefki"), None],
+        opp_pokemon=[_mon(species="garchomp"), None],
+    )
+    result = resolve_exchange(
+        _fake_order(_fake_single("tailwind"), None),
+        OppResponse(
+            slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+        ),
+        ctx,
+        PolicyConfig(),
+    )
+
+    assert result.our_tailwind is True
+    assert result.trick_room is False
+
+
+def test_joint_forecast_splits_attacks_when_second_hit_would_be_overkill() -> None:
+    our_states = [_garchomp(), _garchomp()]
+    opp_states = [_klefki(current_hp=1), _klefki()]
+    ctx = _build_ctx(
+        our_states=our_states,
+        opp_states=opp_states,
+        our_pokemon=[
+            _mon(moves={"bodyslam": None}, species="garchomp"),
+            _mon(moves={"bodyslam": None}, species="garchomp"),
+        ],
+        opp_pokemon=[_mon(species="klefki"), _mon(species="klefki")],
+    )
+    exchange = ExchangeResult(our_states=our_states, opp_states=opp_states)
+
+    attacks = search_module._best_joint_forecast_attacks(
+        "our", our_states, opp_states, exchange, ctx, PolicyConfig()
+    )
+
+    assert {attack.target for attack in attacks} == {0, 1}
+
+
+def test_forecast_marks_no_pivot_double_death_as_trapped_position() -> None:
+    our_states = [_klefki(current_hp=1), _klefki(current_hp=1)]
+    opp_states = [_garchomp(), _garchomp()]
+    ctx = _build_ctx(
+        our_states=our_states,
+        opp_states=opp_states,
+        our_pokemon=[
+            _mon(moves={"tackle": None}, species="klefki"),
+            _mon(moves={"tackle": None}, species="klefki"),
+        ],
+        opp_pokemon=[
+            _mon(moves={"earthquake": None}, species="garchomp"),
+            _mon(moves={"earthquake": None}, species="garchomp"),
+        ],
+    )
+    exchange = ExchangeResult(our_states=our_states, opp_states=opp_states)
+
+    forecast = search_module.forecast_position(
+        exchange, ctx, PolicyConfig(rolling_horizon_turns=1)
+    )
+
+    assert forecast.our_faints == 2
+    assert forecast.our_safe_switches == 0
+    assert forecast.trapped_slots == 2
+    assert forecast.score < 0
+
+
+def test_rolling_horizon_has_no_ranking_effect_until_enabled(monkeypatch) -> None:
+    order = _fake_order(_fake_single("bodyslam"), None)
+    response = OppResponse(
+        slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+    )
+    ctx = SimpleNamespace(
+        opp_protect_prob=[0.0, 0.0],
+        opp_switch_prob=[0.0, 0.0],
+        battle=SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        search_module,
+        "score_joint_orders",
+        lambda battle, config: [ScoredOrder(order=order, score=1.0, breakdown={})],
+    )
+    monkeypatch.setattr(search_module, "build_context", lambda battle, config: ctx)
+    monkeypatch.setattr(
+        search_module, "_enumerate_opp_responses", lambda context, config: [response]
+    )
+    monkeypatch.setattr(
+        search_module,
+        "resolve_exchange",
+        lambda our_order, opp_response, context, config: ExchangeResult(),
+    )
+    monkeypatch.setattr(search_module, "_record_search_trace", lambda scored, config: None)
+    forecast_calls: list[object] = []
+    monkeypatch.setattr(
+        search_module,
+        "forecast_position",
+        lambda exchange, context, config: (
+            forecast_calls.append(exchange),
+            PositionForecast(10.0, 0.0, 0.0, 0, 0, 0, 0, 0, 0.0),
+        )[1],
+    )
+
+    control = search_module.search_joint_orders(object(), PolicyConfig())
+    enabled = search_module.search_joint_orders(
+        object(), PolicyConfig(use_rolling_horizon=True)
+    )
+
+    assert len(forecast_calls) == 1
+    assert control[0].score == 1.0
+    assert enabled[0].score > control[0].score
+
+
+def test_diverse_candidate_pruning_keeps_a_switch_line() -> None:
+    attack = ScoredOrder(
+        order=_fake_order(_fake_single("bodyslam"), None), score=100.0, breakdown={}
+    )
+    protect = ScoredOrder(
+        order=_fake_order(_fake_single("protect"), None), score=90.0, breakdown={}
+    )
+    switch_target = Pokemon(gen=9, species="klefki")
+    switch = ScoredOrder(
+        order=_fake_order(SimpleNamespace(order=switch_target), None),
+        score=5.0,
+        breakdown={},
+    )
+
+    searched, unsearched = search_module._select_search_candidates(
+        [attack, protect, switch],
+        PolicyConfig(search_our_candidates=2, search_diverse_candidates=True),
+    )
+
+    assert attack in searched
+    assert switch in searched
+    assert protect in unsearched

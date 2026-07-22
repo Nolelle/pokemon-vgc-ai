@@ -348,6 +348,36 @@ class PolicyConfig:
     # non-damaging effect. Individual utility actions scale this shared currency.
     search_opp_utility_weight: float = 25.0
 
+    # --- Phase 3b: persistent context + short rolling horizon --------------------------
+    # Opt-in until the offline and local-battle gates below pass. The ordinary exchange
+    # search remains the exact control path when False; battle memory is still recorded
+    # for diagnosis, but cannot alter a decision.
+    use_rolling_horizon: bool = False
+    # Additional projected turns AFTER the normal searched exchange. Two is long enough
+    # to recognize setup/payoff and looming traps without pretending our compact damage
+    # model is a full Showdown simulator.
+    rolling_horizon_turns: int = 2
+    # Blend weight on the projected joint-position value. Kept below the immediate
+    # exchange's 1.0 weight because uncertainty grows each projected turn.
+    rolling_horizon_weight: float = 0.45
+    # A bench Pokemon is a safe pivot when the two opposing actives' combined best
+    # expected damage stays below this percent of its maximum HP.
+    rolling_safe_switch_damage_ceiling: float = 55.0
+    # Position-value bonus per safe pivot we retain relative to the opponent.
+    rolling_safe_switch_bonus: float = 12.0
+    # Penalty for each active slot projected to die with no safe pivot and no projected
+    # opposing removal -- the concrete "Protect will soon be the only good move" state.
+    rolling_trap_penalty: float = 45.0
+    # Reward/penalty for advancing or losing the battle's persistent win-condition plan
+    # (removing a plan-breaker or losing the planned closer).
+    rolling_plan_progress_weight: float = 25.0
+    # How strongly observed opponent move repetition biases otherwise-similar response
+    # likelihoods. 0 disables history's ranking effect while retaining its trace.
+    battle_history_response_weight: float = 0.25
+    # Search a strategically diverse top-K (best switch/control/non-Protect lines as well
+    # as raw myopic leaders) so a setup line cannot be pruned before horizon evaluation.
+    search_diverse_candidates: bool = False
+
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
     # (see tools/build_set_priors.py) -- Open Team Sheets essentially never triggers on
