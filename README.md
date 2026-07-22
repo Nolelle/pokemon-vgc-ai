@@ -4,6 +4,26 @@ A rules-first Pokémon Showdown bot for the Champions VGC 2026 Reg M-B doubles l
 It uses the Champions mod's exported data, a simulator-checked damage engine, and an
 explicit one-turn evaluator before any learned components are introduced.
 
+## Candidate-aware reinforcement learning
+
+The default ladder bot remains unchanged. An experimental, default-off PPO path under
+`vgc.rl` scores every complete legal doubles order, masks padded/illegal candidates,
+and learns a policy plus position value from final battle outcomes. Its state encoder
+can warm-start from the existing behavior-cloning checkpoint; the joint-action policy
+head itself starts new because the old model predicted each active slot independently.
+
+Run a one-battle end-to-end smoke (local Showdown battle, terminal reward, PPO update,
+checkpoint write) with:
+
+```bash
+.venv/bin/python selfplay/train_ppo.py --iterations 1 --games-per-iteration 1 \
+  --out-dir runs/ppo/smoke
+```
+
+Longer experiments use the same command with larger iteration/game counts. Checkpoints
+and JSONL metrics are written under `runs/ppo/` and are not used by the public ladder
+runner until an RL candidate passes separate offline and public-smoke gates.
+
 ## Local verification
 
 ```bash
