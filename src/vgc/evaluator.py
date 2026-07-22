@@ -797,6 +797,10 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             preferred_win_con_species=preferred_closer,
         )
         record_note("gameplan", gameplan.summary())
+        battle_memory = getattr(battle, "_vgc_battle_memory", None)
+        if battle_memory is not None:
+            battle_memory.update_strategy(gameplan)
+            record_note("battle_memory", battle_memory.summary())
 
     opp_signals = detect_team_signals(opp_team_full)
     enabler_species = {

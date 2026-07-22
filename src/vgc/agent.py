@@ -19,6 +19,7 @@ from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
 from vgc.actions import describe_order
+from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
 from vgc.decision_trace import (
     current_trace,
@@ -53,6 +54,7 @@ class VgcPlayer(Player):
         # wait forever for a `showteam` message that Showdown will never send.
         self._pending_ots_rejections: set[str] = set()
         self._resolved_ots_rejections: set[str] = set()
+        self._battle_memories: dict[str, BattleMemory] = {}
         self.decision_trace_history: list[dict[str, object]] = []
         player_kwargs.setdefault("battle_format", self.config.format_id)
         player_kwargs.setdefault("accept_open_team_sheet", self.config.accept_open_team_sheet)
@@ -71,6 +73,8 @@ class VgcPlayer(Player):
 
         room_marker = split_messages[0][0] if split_messages and split_messages[0] else ""
         battle_tag = room_marker[1:] if room_marker.startswith(">") else room_marker
+        if battle_tag:
+            self._memory_for_tag(battle_tag).observe_protocol(split_messages)
         rejection_was_pending = battle_tag in self._pending_ots_rejections
         rejection_positions: list[int] = []
         request_positions: list[int] = []
@@ -129,6 +133,26 @@ class VgcPlayer(Player):
 
     # --- overridable hooks --------------------------------------------------------
 
+    def _memory_for_tag(self, battle_tag: str) -> BattleMemory:
+        # Lazy initialization keeps tests that intentionally construct ``VgcPlayer``
+        # through ``__new__`` (without running ``__init__``) working.
+        memories = getattr(self, "_battle_memories", None)
+        if memories is None:
+            memories = {}
+            self._battle_memories = memories
+        if battle_tag not in memories:
+            memories[battle_tag] = BattleMemory(battle_tag=battle_tag)
+        return memories[battle_tag]
+
+    def _memory_for(self, battle: AbstractBattle) -> BattleMemory:
+        memory = self._memory_for_tag(battle.battle_tag)
+        memory.observe_battle(battle)
+        try:
+            setattr(battle, "_vgc_battle_memory", memory)
+        except (AttributeError, TypeError):
+            pass
+        return memory
+
     def decide(self, battle: AbstractBattle) -> BattleOrder:
         """Choose a move: the argmax of `vgc.search.search_joint_orders` (Phase 2c's
         shallow robust-response search) when `PolicyConfig.use_two_ply_search` is set
@@ -151,6 +175,7 @@ class VgcPlayer(Player):
         whole method's outer exception-safe wrapper (`choose_move`) already guarantees
         for any other failure here.
         """
+        memory = self._memory_for(battle)
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
             scored = search_joint_orders(battle, self.config)
@@ -162,7 +187,13 @@ class VgcPlayer(Player):
                 scored = score_orders(policy, battle, scored, self.config)
             if self.config.log_decisions:
                 record_note("chosen_order_score", round(scored[0].score, 3))
+            if isinstance(scored[0].order, DoubleBattleOrder):
+                memory.record_choice(
+                    int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
+                )
+            record_note("battle_memory", memory.summary())
             return scored[0].order
+        record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
 
     def decide_teampreview(self, battle: AbstractBattle) -> str:
