@@ -19,6 +19,7 @@ from vgc.rl.encoding import (
     encode_live_state,
     pad_candidate_features,
 )
+from vgc.rl.distill import teacher_action_index
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, RolloutStep, select_action
 
 
@@ -68,6 +69,11 @@ class PpoVgcPlayer(VgcPlayer):
             )
         action_index = int(actions.item())
         if self.rollout_buffer is not None:
+            teacher_index = (
+                teacher_action_index(battle, self.config, orders)
+                if self.ppo_config.teacher_anchor_weight > 0.0
+                else None
+            )
             self.rollout_buffer.add(
                 RolloutStep(
                     state_indices=np.array(state_indices, copy=True),
@@ -77,6 +83,7 @@ class PpoVgcPlayer(VgcPlayer):
                     action_index=action_index,
                     old_log_prob=float(log_probs.item()),
                     old_value=float(values.item()),
+                    teacher_action_index=teacher_index,
                 )
             )
             tag = battle.battle_tag

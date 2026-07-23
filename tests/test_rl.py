@@ -42,6 +42,7 @@ from vgc.rl.distill import (  # noqa: E402
     distill_policy,
     evaluate_agreement,
     split_samples_by_battle,
+    teacher_action_index,
 )
 from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
 from vgc.rl.opponents import (  # noqa: E402
@@ -259,6 +260,80 @@ def test_ppo_update_changes_parameters_and_returns_finite_metrics() -> None:
     assert any(
         not torch.equal(before[name], parameter) for name, parameter in model.named_parameters()
     )
+
+
+def test_teacher_anchor_increases_probability_of_search_action() -> None:
+    torch.manual_seed(4)
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-3)
+    buffer = RolloutBuffer()
+    indices, scalars = _state()
+    candidates = _distinct_candidates()
+
+    def teacher_probability() -> float:
+        moves, targets, species, flags, mask = pad_candidate_features([candidates])
+        with torch.no_grad():
+            logits, _value = model(
+                torch.as_tensor(indices[None, :]),
+                torch.as_tensor(scalars[None, :]),
+                torch.as_tensor(_history()[None, :]),
+                torch.as_tensor(moves),
+                torch.as_tensor(targets),
+                torch.as_tensor(species),
+                torch.as_tensor(flags),
+                torch.as_tensor(mask),
+            )
+        return float(logits.softmax(dim=-1)[0, 0])
+
+    for _ in range(16):
+        buffer.add(
+            RolloutStep(
+                state_indices=indices.copy(),
+                state_scalars=scalars.copy(),
+                history_scalars=_history(),
+                candidates=candidates,
+                action_index=1,
+                old_log_prob=-1.0,
+                old_value=0.0,
+                teacher_action_index=0,
+            )
+        )
+        buffer.finish_episode(0.0, PpoConfig())
+
+    before = teacher_probability()
+    metrics = ppo_update(
+        model,
+        optimizer,
+        buffer,
+        PpoConfig(
+            epochs=8,
+            minibatch_size=16,
+            value_loss_weight=0.0,
+            entropy_weight=0.0,
+            teacher_anchor_weight=1.0,
+        ),
+    )
+    after = teacher_probability()
+
+    assert after > before + 0.1
+    assert metrics["teacher_coverage"] == 1.0
+    assert metrics["teacher_anchor_loss"] > 0.0
+
+
+def test_teacher_action_index_matches_search_choice_to_network_candidates(monkeypatch) -> None:
+    protect = Move("protect", gen=9)
+    attack = Move("dragonclaw", gen=9)
+    orders = [
+        _joint(_single(protect), _single(protect)),
+        _joint(_single(attack, move_target=1), _single(protect)),
+    ]
+    monkeypatch.setattr(
+        "vgc.rl.distill.search_joint_orders",
+        lambda _battle, _config: [SimpleNamespace(order=orders[1])],
+    )
+    config = SimpleNamespace(use_two_ply_search=True, use_heuristic_evaluator=True)
+
+    assert teacher_action_index(SimpleNamespace(), config, orders) == 1
 
 
 def test_encode_battle_history_captures_longitudinal_signals() -> None:

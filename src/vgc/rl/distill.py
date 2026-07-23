@@ -99,6 +99,29 @@ class TeacherRecordingPlayer(VgcPlayer):
         return [sample for sample in self.distillation_samples if sample.battle_id in completed]
 
 
+def teacher_action_index(battle, config, orders) -> int | None:
+    """Return the existing policy's preferred action within ``orders``.
+
+    The network's candidate order is intentionally independent of the evaluator's
+    score order, so matching uses the complete Showdown order description, including
+    targets and transformation flags.
+    """
+
+    if config.use_two_ply_search:
+        scored = search_joint_orders(battle, config)
+    elif config.use_heuristic_evaluator:
+        scored = score_joint_orders(battle, config)
+    else:
+        return None
+    if not scored:
+        return None
+    teacher_description = describe_order(scored[0].order)
+    matches = [
+        index for index, order in enumerate(orders) if describe_order(order) == teacher_description
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def split_samples_by_battle(
     samples: list[DistillationSample],
     *,

@@ -581,6 +581,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument(
+        "--teacher-anchor-weight",
+        type=float,
+        default=0.05,
+        help="strength of the search-policy guardrail during PPO updates; 0 disables it",
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -661,6 +667,8 @@ def main() -> int:
         raise SystemExit("mirror-team-fraction must be between 0 and 1")
     if not 0.0 <= args.eval_mirror_team_fraction <= 1.0:
         raise SystemExit("eval-mirror-team-fraction must be between 0 and 1")
+    if args.teacher_anchor_weight < 0.0:
+        raise SystemExit("teacher-anchor-weight must be nonnegative")
     if not args.team.exists():
         raise SystemExit(f"team does not exist: {args.team}")
     torch.manual_seed(args.seed)
@@ -669,7 +677,7 @@ def main() -> int:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     last_iteration = 0
     games_seen = 0
-    ppo_config = PpoConfig()
+    ppo_config = PpoConfig(teacher_anchor_weight=args.teacher_anchor_weight)
     if args.resume is not None:
         if not args.resume.exists():
             raise SystemExit(f"resume checkpoint does not exist: {args.resume}")
@@ -685,6 +693,7 @@ def main() -> int:
         )
     else:
         print(f"BC warm-start skipped; checkpoint not found: {args.bc_checkpoint}")
+    print(f"teacher anchor weight: {ppo_config.teacher_anchor_weight}")
     team = args.team.read_text().strip()
     eval_jobs = args.eval_jobs or args.jobs
     diverse_teams = load_diverse_opponent_teams(

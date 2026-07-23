@@ -31,6 +31,9 @@ class PpoConfig:
     value_clip_ratio: float = 0.2
     value_loss_weight: float = 0.5
     entropy_weight: float = 0.01
+    # Small imitation guardrail: retain probability on the proven search action while
+    # PPO remains free to prefer a different action when win/loss evidence supports it.
+    teacher_anchor_weight: float = 0.05
     max_grad_norm: float = 0.5
     epochs: int = 4
     minibatch_size: int = 128
@@ -45,6 +48,7 @@ class RolloutStep:
     action_index: int
     old_log_prob: float
     old_value: float
+    teacher_action_index: int | None = None
     reward: float = 0.0
     done: bool = False
     advantage: float = 0.0
@@ -61,6 +65,10 @@ class RolloutBuffer:
     def add(self, step: RolloutStep) -> None:
         if step.action_index < 0 or step.action_index >= len(step.candidates):
             raise ValueError("action_index does not identify a legal candidate")
+        if step.teacher_action_index is not None and not (
+            0 <= step.teacher_action_index < len(step.candidates)
+        ):
+            raise ValueError("teacher_action_index does not identify a legal candidate")
         self.steps.append(step)
 
     def finish_episode(self, outcome: float, config: PpoConfig) -> None:
@@ -157,6 +165,14 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
         "actions": torch.as_tensor(
             [step.action_index for step in steps], dtype=torch.long, device=device
         ),
+        "teacher_actions": torch.as_tensor(
+            [
+                step.teacher_action_index if step.teacher_action_index is not None else -1
+                for step in steps
+            ],
+            dtype=torch.long,
+            device=device,
+        ),
         "old_log_probs": torch.as_tensor(
             [step.old_log_prob for step in steps], dtype=torch.float32, device=device
         ),
@@ -225,10 +241,31 @@ def ppo_update(
             value_clipped = (clipped_values - batch["returns"]).square()
             value_loss = 0.5 * torch.maximum(value_unclipped, value_clipped).mean()
             entropy = distribution.entropy().mean()
+            teacher_mask = batch["teacher_actions"] >= 0
+            if teacher_mask.any():
+                teacher_logits = logits[teacher_mask]
+                teacher_actions = batch["teacher_actions"][teacher_mask]
+                teacher_anchor_loss = nn.functional.cross_entropy(
+                    teacher_logits,
+                    teacher_actions,
+                )
+                teacher_probabilities = teacher_logits.softmax(dim=-1).gather(
+                    1,
+                    teacher_actions.unsqueeze(1),
+                )
+                teacher_probability = teacher_probabilities.mean()
+                teacher_agreement = (
+                    (teacher_logits.argmax(dim=-1) == teacher_actions).float().mean()
+                )
+            else:
+                teacher_anchor_loss = logits.sum() * 0.0
+                teacher_probability = logits.new_zeros(())
+                teacher_agreement = logits.new_zeros(())
             loss = (
                 policy_loss
                 + config.value_loss_weight * value_loss
                 - config.entropy_weight * entropy
+                + config.teacher_anchor_weight * teacher_anchor_loss
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -243,6 +280,10 @@ def ppo_update(
                     "policy_loss": float(policy_loss.detach()),
                     "value_loss": float(value_loss.detach()),
                     "entropy": float(entropy.detach()),
+                    "teacher_anchor_loss": float(teacher_anchor_loss.detach()),
+                    "teacher_probability": float(teacher_probability.detach()),
+                    "teacher_agreement": float(teacher_agreement.detach()),
+                    "teacher_coverage": float(teacher_mask.float().mean().detach()),
                     "approx_kl": float(approx_kl.detach()),
                     "clip_fraction": float(clip_fraction.detach()),
                     "grad_norm": float(grad_norm.detach()),

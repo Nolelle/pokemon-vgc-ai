@@ -32,7 +32,8 @@ the fixed VGC heuristic as an anchor:
 .venv/bin/python selfplay/train_ppo.py --bootstrap-games 32 --bootstrap-epochs 30 \
   --iterations 10 --games-per-iteration 32 --jobs 4 \
   --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25 \
-  --mirror-team-fraction 0.25 --eval-games 100 --eval-every-games 100 \
+  --mirror-team-fraction 0.25 --teacher-anchor-weight 0.05 \
+  --eval-games 100 --eval-every-games 100 \
   --eval-jobs 8 --eval-mirror-team-fraction 0.50
 ```
 
@@ -42,6 +43,11 @@ move becomes both the top choice often enough and receives enough actual probabi
 The second check matters because PPO samples actions while training—a move that barely
 ranks first among many near-ties is not yet a reliable learned policy.
 `runs/ppo/bootstrap.json` records that gate.
+
+The teacher anchor is a small stability guardrail during PPO updates. The network still
+learns from final wins and losses, but it is penalized for driving the existing search
+policy's preferred legal action toward zero probability. Set
+`--teacher-anchor-weight 0` only for an explicit unanchored comparison.
 
 `--eval-games` freezes the network, disables action sampling, swaps which side issues
 the challenge across workers, and measures it against the unchanged heuristic without
