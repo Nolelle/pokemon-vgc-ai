@@ -23,13 +23,17 @@ checkpoint write) with:
   --out-dir runs/ppo/smoke
 ```
 
-Longer experiments use multiple rollout workers and a bounded rotating pool of old
-policy snapshots, while retaining the fixed VGC heuristic as an anchor:
+Longer experiments keep the learner on `meta1`, but vary the opponent across the
+20-team self-play pool, `dev`, and occasional `meta1` mirrors. They also use multiple
+rollout workers and a bounded rotating pool of old policy snapshots, while retaining
+the fixed VGC heuristic as an anchor:
 
 ```bash
 .venv/bin/python selfplay/train_ppo.py --bootstrap-games 32 --bootstrap-epochs 30 \
   --iterations 10 --games-per-iteration 32 --jobs 4 \
-  --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25 --eval-games 100
+  --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25 \
+  --mirror-team-fraction 0.25 --eval-games 100 --eval-every-games 100 \
+  --eval-jobs 8 --eval-mirror-team-fraction 0.50
 ```
 
 The optional bootstrap first lets the new joint-action head watch the existing search
@@ -39,10 +43,13 @@ The second check matters because PPO samples actions while training—a move tha
 ranks first among many near-ties is not yet a reliable learned policy.
 `runs/ppo/bootstrap.json` records that gate.
 
-`--eval-games` freezes the final network, disables action sampling, swaps which side
-issues the challenge across workers, and measures it against the unchanged heuristic
-without further learning. This is the clean performance result; rollout win rates are
-training diagnostics.
+`--eval-games` freezes the network, disables action sampling, swaps which side issues
+the challenge across workers, and measures it against the unchanged heuristic without
+further learning. `--eval-every-games` repeats that clean test during a longer run and
+appends each result to `runs/ppo/evaluation_history.jsonl`. Mirror and varied-team
+results are reported separately. These frozen evaluations are the performance result;
+rollout win rates are training diagnostics. `best.pt` preserves the strongest frozen
+checkpoint even if later PPO updates make `latest.pt` worse.
 
 Resume an interrupted run with `--resume runs/ppo/latest.pt` and the same `--out-dir`.
 Checkpoints and JSONL metrics are written under `runs/ppo/` and are not used by the

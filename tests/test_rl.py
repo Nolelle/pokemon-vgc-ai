@@ -13,7 +13,10 @@ from poke_env.battle.move import Move  # noqa: E402
 from poke_env.battle.pokemon import Pokemon  # noqa: E402
 
 from selfplay.train_ppo import (  # noqa: E402
+    OpponentTeamChoice,
     allocate_games,
+    build_opponent_team_schedule,
+    load_diverse_opponent_teams,
     load_training_checkpoint,
     save_checkpoint,
 )
@@ -332,6 +335,58 @@ def test_allocate_games_is_balanced_exact_and_never_creates_empty_workers() -> N
     assert sum(allocate_games(17, 3)) == 17
     with pytest.raises(ValueError):
         allocate_games(0, 1)
+
+
+def test_opponent_team_schedule_is_exact_deterministic_and_can_pair_sides() -> None:
+    varied = [
+        OpponentTeamChoice(label=f"team-{index}", packed=f"packed-{index}", group="diverse")
+        for index in range(5)
+    ]
+    schedule = build_opponent_team_schedule(
+        4,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.25,
+        seed=7,
+    )
+    repeated = build_opponent_team_schedule(
+        4,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.25,
+        seed=7,
+    )
+    paired = build_opponent_team_schedule(
+        4,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.50,
+        seed=7,
+        pair_groups=True,
+    )
+
+    assert schedule == repeated
+    assert [choice.group for choice in schedule].count("mirror") == 1
+    assert [choice.group for choice in schedule].count("diverse") == 3
+    assert [choice.group for choice in paired] == ["mirror", "mirror", "diverse", "diverse"]
+
+
+def test_load_diverse_opponent_teams_reads_dev_and_sorted_pool(tmp_path) -> None:
+    dev = tmp_path / "dev.packed.txt"
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    dev.write_text("dev-team\n")
+    (pool / "team_01.packed.txt").write_text("team-one\n")
+    (pool / "team_00.packed.txt").write_text("team-zero\n")
+
+    choices = load_diverse_opponent_teams(pool, dev)
+
+    assert [choice.label for choice in choices] == [
+        "dev.packed",
+        "team_00.packed",
+        "team_01.packed",
+    ]
+    assert [choice.packed for choice in choices] == ["dev-team", "team-zero", "team-one"]
 
 
 def test_snapshot_pool_is_bounded_and_round_trips_model(tmp_path) -> None:

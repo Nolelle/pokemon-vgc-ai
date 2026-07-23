@@ -21,7 +21,7 @@ import random
 import secrets
 import sys
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +56,69 @@ from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update  # noqa: E402
 
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "ppo"
 DEFAULT_BC_CHECKPOINT = REPO_ROOT / "data" / "models" / "bc_policy_v4_selfplay.pt"
+DEFAULT_TEAM_POOL_DIR = REPO_ROOT / "data" / "selfplay" / "pool"
+DEFAULT_DEV_TEAM = TEAMS_DIR / "dev.packed.txt"
 WORKER_TIMEOUT_PER_GAME_SECONDS = 120.0
+
+
+@dataclass(frozen=True)
+class OpponentTeamChoice:
+    label: str
+    packed: str
+    group: str  # "mirror" or "diverse"
+
+
+def load_diverse_opponent_teams(pool_dir: Path, dev_team_path: Path) -> list[OpponentTeamChoice]:
+    paths = [dev_team_path]
+    if pool_dir.exists():
+        paths.extend(sorted(pool_dir.glob("*.packed.txt")))
+    choices: list[OpponentTeamChoice] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        packed = path.read_text().strip()
+        if packed:
+            choices.append(OpponentTeamChoice(label=path.stem, packed=packed, group="diverse"))
+    if not choices:
+        raise ValueError("no diverse opponent teams were found")
+    return choices
+
+
+def build_opponent_team_schedule(
+    worker_count: int,
+    *,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    mirror_fraction: float,
+    seed: int,
+    pair_groups: bool = False,
+) -> list[OpponentTeamChoice]:
+    """Exact mirror/diverse worker mix with deterministic diverse-team rotation."""
+
+    if worker_count <= 0:
+        raise ValueError("worker_count must be positive")
+    if not diverse_teams:
+        raise ValueError("diverse_teams must be non-empty")
+    if not 0.0 <= mirror_fraction <= 1.0:
+        raise ValueError("mirror_fraction must be between 0 and 1")
+    rng = random.Random(seed)
+    mirror_count = round(worker_count * mirror_fraction)
+    flags = [True] * mirror_count + [False] * (worker_count - mirror_count)
+    if not pair_groups:
+        rng.shuffle(flags)
+    diverse_order = list(diverse_teams)
+    rng.shuffle(diverse_order)
+    diverse_index = 0
+    schedule: list[OpponentTeamChoice] = []
+    for mirror in flags:
+        if mirror:
+            schedule.append(
+                OpponentTeamChoice(label="meta1-mirror", packed=learner_team, group="mirror")
+            )
+        else:
+            schedule.append(diverse_order[diverse_index % len(diverse_order)])
+            diverse_index += 1
+    return schedule
 
 
 def save_checkpoint(
@@ -113,7 +175,8 @@ async def _collect_worker(
     *,
     worker_id: int,
     games: int,
-    team: str,
+    learner_team: str,
+    opponent_team: OpponentTeamChoice,
     device: str,
     ppo_config: PpoConfig,
     opponent_spec: OpponentSpec,
@@ -131,7 +194,7 @@ async def _collect_worker(
         ppo_config=ppo_config,
         device=device,
         config=common_config,
-        team=team,
+        team=learner_team,
         battle_format=FORMAT_ID,
         account_configuration=AccountConfiguration(f"ppol{worker_id}-{token}", None),
     )
@@ -144,14 +207,14 @@ async def _collect_worker(
             device=device,
             deterministic=False,
             config=common_config,
-            team=team,
+            team=opponent_team.packed,
             battle_format=FORMAT_ID,
             account_configuration=AccountConfiguration(f"ppos{worker_id}-{token}", None),
         )
     else:
         opponent = VgcPlayer(
             config=common_config,
-            team=team,
+            team=opponent_team.packed,
             battle_format=FORMAT_ID,
             account_configuration=AccountConfiguration(f"ppoh{worker_id}-{token}", None),
         )
@@ -175,6 +238,8 @@ async def _collect_worker(
         "losses": learner.n_lost_battles,
         "steps": len(buffer),
         "opponent": opponent_spec.label,
+        "opponent_team": opponent_team.label,
+        "team_group": opponent_team.group,
         "error": error,
     }, buffer
 
@@ -183,7 +248,8 @@ async def _collect_teacher_worker(
     *,
     worker_id: int,
     games: int,
-    team: str,
+    learner_team: str,
+    opponent_team: OpponentTeamChoice,
 ) -> tuple[dict[str, object], list[DistillationSample]]:
     token = secrets.token_hex(3)
     teacher_config = replace(
@@ -193,13 +259,13 @@ async def _collect_teacher_worker(
     )
     teacher = TeacherRecordingPlayer(
         config=teacher_config,
-        team=team,
+        team=learner_team,
         battle_format=FORMAT_ID,
         account_configuration=AccountConfiguration(f"teach{worker_id}-{token}", None),
     )
     opponent = VgcPlayer(
         config=teacher_config,
-        team=team,
+        team=opponent_team.packed,
         battle_format=FORMAT_ID,
         account_configuration=AccountConfiguration(f"teachopp{worker_id}-{token}", None),
     )
@@ -220,6 +286,8 @@ async def _collect_teacher_worker(
         "requested": games,
         "games": teacher.n_finished_battles,
         "samples": len(samples),
+        "opponent_team": opponent_team.label,
+        "team_group": opponent_team.group,
         "error": error,
     }, samples
 
@@ -229,7 +297,8 @@ async def _evaluate_worker(
     *,
     worker_id: int,
     games: int,
-    team: str,
+    learner_team: str,
+    opponent_team: OpponentTeamChoice,
     device: str,
     learner_challenges: bool,
 ) -> dict[str, object]:
@@ -245,13 +314,13 @@ async def _evaluate_worker(
         device=device,
         deterministic=True,
         config=common_config,
-        team=team,
+        team=learner_team,
         battle_format=FORMAT_ID,
         account_configuration=AccountConfiguration(f"evalrl{worker_id}-{token}", None),
     )
     opponent = VgcPlayer(
         config=common_config,
-        team=team,
+        team=opponent_team.packed,
         battle_format=FORMAT_ID,
         account_configuration=AccountConfiguration(f"evalh{worker_id}-{token}", None),
     )
@@ -274,6 +343,8 @@ async def _evaluate_worker(
         "wins": learner.n_won_battles,
         "losses": learner.n_lost_battles,
         "side": "challenger" if learner_challenges else "receiver",
+        "opponent_team": opponent_team.label,
+        "team_group": opponent_team.group,
         "error": error,
     }
 
@@ -292,12 +363,27 @@ async def collect_teacher_samples(
     *,
     games: int,
     jobs: int,
-    team: str,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    mirror_fraction: float,
+    seed: int,
 ) -> tuple[list[DistillationSample], dict[str, object]]:
     allocations = allocate_games(games, jobs)
+    teams = build_opponent_team_schedule(
+        len(allocations),
+        learner_team=learner_team,
+        diverse_teams=diverse_teams,
+        mirror_fraction=mirror_fraction,
+        seed=seed,
+    )
     worker_results = await asyncio.gather(
         *(
-            _collect_teacher_worker(worker_id=worker_id, games=count, team=team)
+            _collect_teacher_worker(
+                worker_id=worker_id,
+                games=count,
+                learner_team=learner_team,
+                opponent_team=teams[worker_id],
+            )
             for worker_id, count in enumerate(allocations)
         )
     )
@@ -319,17 +405,29 @@ async def evaluate_frozen_policy(
     *,
     games: int,
     jobs: int,
-    team: str,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    mirror_fraction: float,
+    seed: int,
     device: str,
 ) -> dict[str, object]:
     allocations = allocate_games(games, jobs)
+    teams = build_opponent_team_schedule(
+        len(allocations),
+        learner_team=learner_team,
+        diverse_teams=diverse_teams,
+        mirror_fraction=mirror_fraction,
+        seed=seed,
+        pair_groups=True,
+    )
     rows = await asyncio.gather(
         *(
             _evaluate_worker(
                 model,
                 worker_id=worker_id,
                 games=count,
-                team=team,
+                learner_team=learner_team,
+                opponent_team=teams[worker_id],
                 device=device,
                 learner_challenges=worker_id % 2 == 0,
             )
@@ -339,6 +437,16 @@ async def evaluate_frozen_policy(
     completed = sum(int(row["games"]) for row in rows)
     wins = sum(int(row["wins"]) for row in rows)
     losses = sum(int(row["losses"]) for row in rows)
+    by_team_group: dict[str, dict[str, float | int]] = {}
+    for group in ("mirror", "diverse"):
+        group_rows = [row for row in rows if row["team_group"] == group]
+        group_games = sum(int(row["games"]) for row in group_rows)
+        group_wins = sum(int(row["wins"]) for row in group_rows)
+        by_team_group[group] = {
+            "games": group_games,
+            "wins": group_wins,
+            "win_rate": group_wins / group_games if group_games else 0.0,
+        }
     return {
         "games": completed,
         "wins": wins,
@@ -348,6 +456,7 @@ async def evaluate_frozen_policy(
         "worker_errors": sum(row["error"] is not None for row in rows),
         "deterministic": True,
         "opponent": "vgc-shallow-search",
+        "by_team_group": by_team_group,
         "workers": rows,
     }
 
@@ -358,7 +467,9 @@ async def collect_games(
     *,
     games: int,
     jobs: int,
-    team: str,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    mirror_fraction: float,
     device: str,
     ppo_config: PpoConfig,
     snapshots: list[Path],
@@ -366,6 +477,13 @@ async def collect_games(
     seed: int,
 ) -> dict[str, object]:
     allocations = allocate_games(games, jobs)
+    teams = build_opponent_team_schedule(
+        len(allocations),
+        learner_team=learner_team,
+        diverse_teams=diverse_teams,
+        mirror_fraction=mirror_fraction,
+        seed=seed + 50_000,
+    )
     specs = [
         choose_opponent(
             snapshots,
@@ -380,7 +498,8 @@ async def collect_games(
                 model,
                 worker_id=worker_id,
                 games=worker_games,
-                team=team,
+                learner_team=learner_team,
+                opponent_team=teams[worker_id],
                 device=device,
                 ppo_config=ppo_config,
                 opponent_spec=specs[worker_id],
@@ -390,11 +509,16 @@ async def collect_games(
     )
     rows: list[dict[str, object]] = []
     opponent_counts: dict[str, int] = {}
+    opponent_team_counts: dict[str, int] = {}
     for row, worker_buffer in worker_results:
         buffer.extend_finished(worker_buffer)
         rows.append(row)
         label = str(row["opponent"])
         opponent_counts[label] = opponent_counts.get(label, 0) + int(row["games"])
+        team_label = str(row["opponent_team"])
+        opponent_team_counts[team_label] = opponent_team_counts.get(team_label, 0) + int(
+            row["games"]
+        )
     return {
         "games": sum(int(row["games"]) for row in rows),
         "wins": sum(int(row["wins"]) for row in rows),
@@ -402,6 +526,7 @@ async def collect_games(
         "steps": len(buffer),
         "worker_errors": sum(row["error"] is not None for row in rows),
         "opponents": opponent_counts,
+        "opponent_teams": opponent_team_counts,
         "workers": rows,
     }
 
@@ -417,7 +542,43 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="frozen deterministic games vs the heuristic after training",
     )
+    parser.add_argument(
+        "--eval-every-games",
+        type=int,
+        default=0,
+        help="also run the frozen evaluation whenever this many training games are reached",
+    )
+    parser.add_argument(
+        "--eval-jobs",
+        type=int,
+        default=0,
+        help="parallel evaluation workers; defaults to --jobs",
+    )
     parser.add_argument("--team", type=Path, default=TEAMS_DIR / "meta1.packed.txt")
+    parser.add_argument(
+        "--opponent-team-pool",
+        type=Path,
+        default=DEFAULT_TEAM_POOL_DIR,
+        help="directory of varied packed teams used by training opponents",
+    )
+    parser.add_argument(
+        "--dev-opponent-team",
+        type=Path,
+        default=DEFAULT_DEV_TEAM,
+        help="additional varied opponent team",
+    )
+    parser.add_argument(
+        "--mirror-team-fraction",
+        type=float,
+        default=0.25,
+        help="worker fraction whose opponent uses the learner's team during training",
+    )
+    parser.add_argument(
+        "--eval-mirror-team-fraction",
+        type=float,
+        default=0.50,
+        help="worker fraction using the learner's team in frozen evaluation",
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--device", default="cpu")
@@ -470,8 +631,14 @@ def main() -> int:
     args = parse_args()
     if args.iterations < 0 or args.games_per_iteration <= 0 or args.jobs <= 0:
         raise SystemExit("iterations must be nonnegative; games-per-iteration/jobs positive")
-    if args.eval_games < 0 or (args.iterations == 0 and args.eval_games == 0):
+    if args.eval_games < 0 or args.eval_jobs < 0:
+        raise SystemExit("eval-games and eval-jobs must be nonnegative")
+    if args.iterations == 0 and args.eval_games == 0:
         raise SystemExit("eval-games must be nonnegative and some training/evaluation is required")
+    if args.eval_every_games < 0:
+        raise SystemExit("eval-every-games must be nonnegative")
+    if args.eval_every_games and not args.eval_games:
+        raise SystemExit("eval-every-games requires positive eval-games")
     if args.bootstrap_games < 0 or args.bootstrap_epochs <= 0 or args.bootstrap_lr <= 0:
         raise SystemExit(
             "bootstrap-games must be nonnegative; bootstrap-epochs/lr must be positive"
@@ -490,6 +657,10 @@ def main() -> int:
         raise SystemExit("snapshot-pool-size must be positive")
     if not 0.0 <= args.heuristic_opponent_fraction <= 1.0:
         raise SystemExit("heuristic-opponent-fraction must be between 0 and 1")
+    if not 0.0 <= args.mirror_team_fraction <= 1.0:
+        raise SystemExit("mirror-team-fraction must be between 0 and 1")
+    if not 0.0 <= args.eval_mirror_team_fraction <= 1.0:
+        raise SystemExit("eval-mirror-team-fraction must be between 0 and 1")
     if not args.team.exists():
         raise SystemExit(f"team does not exist: {args.team}")
     torch.manual_seed(args.seed)
@@ -515,11 +686,55 @@ def main() -> int:
     else:
         print(f"BC warm-start skipped; checkpoint not found: {args.bc_checkpoint}")
     team = args.team.read_text().strip()
+    eval_jobs = args.eval_jobs or args.jobs
+    diverse_teams = load_diverse_opponent_teams(
+        args.opponent_team_pool,
+        args.dev_opponent_team,
+    )
+    print(
+        f"opponent teams: {len(diverse_teams)} varied + "
+        f"{args.mirror_team_fraction:.0%} mirror workers"
+    )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = args.out_dir / "metrics.jsonl"
     bootstrap_path = args.out_dir / "bootstrap.json"
     evaluation_path = args.out_dir / "evaluation.json"
+    evaluation_history_path = args.out_dir / "evaluation_history.jsonl"
+    best_checkpoint_path = args.out_dir / "best.pt"
+    best_evaluation_path = args.out_dir / "best_evaluation.json"
     pool_dir = args.out_dir / "opponent_pool"
+    best_eval_win_rate = -1.0
+    if (
+        args.resume is not None
+        and evaluation_history_path.exists()
+        and best_checkpoint_path.exists()
+    ):
+        for line in evaluation_history_path.read_text().splitlines():
+            if line.strip():
+                best_eval_win_rate = max(
+                    best_eval_win_rate,
+                    float(json.loads(line)["win_rate"]),
+                )
+
+    def record_evaluation(evaluation: dict[str, object], *, iteration: int) -> bool:
+        nonlocal best_eval_win_rate
+        evaluation_path.write_text(json.dumps(evaluation, indent=2, sort_keys=True) + "\n")
+        with evaluation_history_path.open("a") as evaluation_history:
+            evaluation_history.write(json.dumps(evaluation, sort_keys=True) + "\n")
+        win_rate = float(evaluation["win_rate"])
+        improved = win_rate > best_eval_win_rate
+        if improved:
+            best_eval_win_rate = win_rate
+            best_evaluation_path.write_text(json.dumps(evaluation, indent=2, sort_keys=True) + "\n")
+            save_checkpoint(
+                best_checkpoint_path,
+                model,
+                optimizer,
+                iteration=iteration,
+                games_seen=int(evaluation["training_games"]),
+                ppo_config=ppo_config,
+            )
+        return improved
 
     server_process = None
     if not args.skip_server_start:
@@ -534,7 +749,10 @@ def main() -> int:
                 collect_teacher_samples(
                     games=args.bootstrap_games,
                     jobs=args.jobs,
-                    team=team,
+                    learner_team=team,
+                    diverse_teams=diverse_teams,
+                    mirror_fraction=args.mirror_team_fraction,
+                    seed=args.seed,
                 )
             )
             train_samples, val_samples = split_samples_by_battle(
@@ -608,6 +826,12 @@ def main() -> int:
                     f"teacher bootstrap gate failed; PPO was not started. See {bootstrap_path}"
                 )
 
+        next_eval_at = (
+            ((games_seen // args.eval_every_games) + 1) * args.eval_every_games
+            if args.eval_every_games
+            else None
+        )
+        last_evaluated_games: int | None = None
         for offset in range(1, args.iterations + 1):
             iteration = last_iteration + offset
             started = time.time()
@@ -625,7 +849,9 @@ def main() -> int:
                     buffer,
                     games=args.games_per_iteration,
                     jobs=args.jobs,
-                    team=team,
+                    learner_team=team,
+                    diverse_teams=diverse_teams,
+                    mirror_fraction=args.mirror_team_fraction,
                     device=args.device,
                     ppo_config=ppo_config,
                     snapshots=snapshots,
@@ -663,22 +889,54 @@ def main() -> int:
                 f"loss={update_metrics['loss']:.4f} entropy={update_metrics['entropy']:.4f}"
             )
 
-        if args.eval_games:
+            if next_eval_at is not None and games_seen >= next_eval_at:
+                evaluation = asyncio.run(
+                    evaluate_frozen_policy(
+                        model,
+                        games=args.eval_games,
+                        jobs=eval_jobs,
+                        learner_team=team,
+                        diverse_teams=diverse_teams,
+                        mirror_fraction=args.eval_mirror_team_fraction,
+                        seed=args.seed,
+                        device=args.device,
+                    )
+                )
+                evaluation["training_games"] = games_seen
+                improved = record_evaluation(evaluation, iteration=iteration)
+                last_evaluated_games = games_seen
+                print(
+                    f"frozen evaluation at {games_seen} games: "
+                    f"wins={evaluation['wins']}/{evaluation['games']} "
+                    f"win_rate={evaluation['win_rate']:.3f} "
+                    f"errors={evaluation['worker_errors']} best={improved}"
+                )
+                while next_eval_at <= games_seen:
+                    next_eval_at += args.eval_every_games
+
+        if args.eval_games and last_evaluated_games != games_seen:
             evaluation = asyncio.run(
                 evaluate_frozen_policy(
                     model,
                     games=args.eval_games,
-                    jobs=args.jobs,
-                    team=team,
+                    jobs=eval_jobs,
+                    learner_team=team,
+                    diverse_teams=diverse_teams,
+                    mirror_fraction=args.eval_mirror_team_fraction,
+                    seed=args.seed,
                     device=args.device,
                 )
             )
-            evaluation_path.write_text(json.dumps(evaluation, indent=2, sort_keys=True) + "\n")
+            evaluation["training_games"] = games_seen
+            improved = record_evaluation(
+                evaluation,
+                iteration=last_iteration + args.iterations,
+            )
             print(
                 "frozen evaluation: "
                 f"wins={evaluation['wins']}/{evaluation['games']} "
                 f"win_rate={evaluation['win_rate']:.3f} "
-                f"errors={evaluation['worker_errors']}"
+                f"errors={evaluation['worker_errors']} best={improved}"
             )
     finally:
         if server_process is not None:
@@ -691,6 +949,8 @@ def main() -> int:
         print(f"bootstrap: {bootstrap_path}")
     if args.eval_games:
         print(f"evaluation: {evaluation_path}")
+        print(f"evaluation history: {evaluation_history_path}")
+        print(f"best checkpoint: {best_checkpoint_path}")
     return 0
 
 
