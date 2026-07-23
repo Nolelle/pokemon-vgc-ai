@@ -11,9 +11,14 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
         "vgc.rl.player requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.actions import enumerate_joint_orders
+from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.agent import VgcPlayer
-from vgc.rl.encoding import encode_candidates, encode_live_state, pad_candidate_features
+from vgc.rl.encoding import (
+    encode_battle_history,
+    encode_candidates,
+    encode_live_state,
+    pad_candidate_features,
+)
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, RolloutStep, select_action
 
 
@@ -42,7 +47,9 @@ class PpoVgcPlayer(VgcPlayer):
         orders = enumerate_joint_orders(battle)
         if not orders:
             return self.choose_random_move(battle)
+        memory = self._memory_for(battle)
         state_indices, state_scalars = encode_live_state(battle, self.config)
+        history_scalars = encode_battle_history(memory)
         candidates = encode_candidates(orders)
         moves, targets, species, flags, mask = pad_candidate_features([candidates])
         self.model.eval()
@@ -51,6 +58,7 @@ class PpoVgcPlayer(VgcPlayer):
                 self.model,
                 torch.as_tensor(state_indices[None, :], dtype=torch.long, device=self.device),
                 torch.as_tensor(state_scalars[None, :], dtype=torch.float32, device=self.device),
+                torch.as_tensor(history_scalars[None, :], dtype=torch.float32, device=self.device),
                 torch.as_tensor(moves, dtype=torch.long, device=self.device),
                 torch.as_tensor(targets, dtype=torch.long, device=self.device),
                 torch.as_tensor(species, dtype=torch.long, device=self.device),
@@ -64,6 +72,7 @@ class PpoVgcPlayer(VgcPlayer):
                 RolloutStep(
                     state_indices=np.array(state_indices, copy=True),
                     state_scalars=np.array(state_scalars, copy=True),
+                    history_scalars=np.array(history_scalars, copy=True),
                     candidates=candidates,
                     action_index=action_index,
                     old_log_prob=float(log_probs.item()),
@@ -72,6 +81,9 @@ class PpoVgcPlayer(VgcPlayer):
             )
             tag = battle.battle_tag
             self._battle_step_counts[tag] = self._battle_step_counts.get(tag, 0) + 1
+        memory.record_choice(
+            int(getattr(battle, "turn", 0) or 0), describe_order(orders[action_index])
+        )
         return orders[action_index]
 
     def _battle_finished_callback(self, battle) -> None:

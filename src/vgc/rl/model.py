@@ -14,9 +14,11 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.bc.encoding import TARGET_VOCAB
 from vgc.bc.model import BcPolicyNet, HIDDEN_DIM
+from vgc.rl.encoding import HISTORY_SCALAR_DIM
 
 TARGET_EMBED_DIM = 8
 ACTION_HIDDEN_DIM = 128
+HISTORY_HIDDEN_DIM = 64
 NUM_ORDER_SLOTS = 2
 NUM_ACTION_FLAGS = 4
 
@@ -31,6 +33,16 @@ class CandidatePolicyValueNet(nn.Module):
         # rl.encoding.encode_live_state, so current BC trunks can warm-start it.
         self.state_encoder = BcPolicyNet(heads=(), dropout=dropout)
         self.target_embedding = nn.Embedding(len(TARGET_VOCAB), TARGET_EMBED_DIM)
+        self.history_encoder = nn.Sequential(
+            nn.Linear(HISTORY_SCALAR_DIM, HISTORY_HIDDEN_DIM),
+            nn.ReLU(),
+            nn.Linear(HISTORY_HIDDEN_DIM, HISTORY_HIDDEN_DIM),
+            nn.ReLU(),
+        )
+        self.context_encoder = nn.Sequential(
+            nn.Linear(HIDDEN_DIM + HISTORY_HIDDEN_DIM, HIDDEN_DIM),
+            nn.ReLU(),
+        )
         per_slot_dim = (
             self.state_encoder.move_embedding.embedding_dim
             + TARGET_EMBED_DIM
@@ -55,6 +67,7 @@ class CandidatePolicyValueNet(nn.Module):
         self,
         state_indices: torch.Tensor,
         state_scalars: torch.Tensor,
+        history_scalars: torch.Tensor,
         move_indices: torch.Tensor,
         target_indices: torch.Tensor,
         switch_species_indices: torch.Tensor,
@@ -65,6 +78,8 @@ class CandidatePolicyValueNet(nn.Module):
             raise ValueError("each batch row must contain at least one legal candidate")
 
         state_hidden = self.state_encoder.encode_hidden(state_indices, state_scalars)
+        history_hidden = self.history_encoder(history_scalars)
+        context_hidden = self.context_encoder(torch.cat((state_hidden, history_hidden), dim=-1))
         move_emb = self.state_encoder.move_embedding(move_indices)
         target_emb = self.target_embedding(target_indices)
         species_emb = self.state_encoder.species_embedding(switch_species_indices)
@@ -72,13 +87,13 @@ class CandidatePolicyValueNet(nn.Module):
         batch, candidates = action_input.shape[:2]
         action_hidden = self.action_encoder(action_input.reshape(batch, candidates, -1))
 
-        state_action = self.state_projection(state_hidden).unsqueeze(1).expand(-1, candidates, -1)
+        state_action = self.state_projection(context_hidden).unsqueeze(1).expand(-1, candidates, -1)
         policy_input = torch.cat(
             (state_action, action_hidden, state_action * action_hidden), dim=-1
         )
         logits = self.policy_head(policy_input).squeeze(-1)
         logits = logits.masked_fill(~candidate_mask.bool(), torch.finfo(logits.dtype).min)
-        values = self.value_head(state_hidden).squeeze(-1)
+        values = self.value_head(context_hidden).squeeze(-1)
         return logits, values
 
     def warm_start_state_encoder(self, checkpoint_path: str | Path) -> dict[str, int]:
@@ -88,7 +103,9 @@ class CandidatePolicyValueNet(nn.Module):
         source = checkpoint.get("model_state_dict", checkpoint.get("state_dict", checkpoint))
         target = self.state_encoder.state_dict()
         compatible = {
-            key: value for key, value in source.items() if key in target and target[key].shape == value.shape
+            key: value
+            for key, value in source.items()
+            if key in target and target[key].shape == value.shape
         }
         self.state_encoder.load_state_dict(compatible, strict=False)
         return {"loaded": len(compatible), "available": len(target)}

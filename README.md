@@ -8,9 +8,12 @@ explicit one-turn evaluator before any learned components are introduced.
 
 The default ladder bot remains unchanged. An experimental, default-off PPO path under
 `vgc.rl` scores every complete legal doubles order, masks padded/illegal candidates,
-and learns a policy plus position value from final battle outcomes. Its state encoder
-can warm-start from the existing behavior-cloning checkpoint; the joint-action policy
-head itself starts new because the old model predicted each active slot independently.
+and learns a policy plus position value from final battle outcomes. A separate history
+branch summarizes accumulated opponent move/Protect/switch/targeting patterns, repeated
+orders, weather changes, active turnover, and recent HP momentum. Its board-state
+encoder can warm-start from the existing behavior-cloning checkpoint; the joint-action
+policy and history heads start new because the old model predicted each active slot
+independently from only the current snapshot.
 
 Run a one-battle end-to-end smoke (local Showdown battle, terminal reward, PPO update,
 checkpoint write) with:
@@ -20,9 +23,18 @@ checkpoint write) with:
   --out-dir runs/ppo/smoke
 ```
 
-Longer experiments use the same command with larger iteration/game counts. Checkpoints
-and JSONL metrics are written under `runs/ppo/` and are not used by the public ladder
-runner until an RL candidate passes separate offline and public-smoke gates.
+Longer experiments use multiple rollout workers and a bounded rotating pool of old
+policy snapshots, while retaining the fixed VGC heuristic as an anchor:
+
+```bash
+.venv/bin/python selfplay/train_ppo.py --iterations 10 --games-per-iteration 32 \
+  --jobs 4 --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25
+```
+
+Resume an interrupted run with `--resume runs/ppo/latest.pt` and the same `--out-dir`.
+Checkpoints and JSONL metrics are written under `runs/ppo/` and are not used by the
+public ladder runner until an RL candidate passes separate offline and public-smoke
+gates.
 
 ## Local verification
 

@@ -25,9 +25,11 @@ from vgc.bc.encoding import (
 )
 from vgc.bc.policy import battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
+from vgc.battle_memory import BattleMemory
 
 NUM_ORDER_SLOTS = 2
 NUM_ACTION_FLAGS = 4  # mega, z-move, dynamax, tera
+HISTORY_SCALAR_DIM = 16
 
 
 @dataclass(frozen=True)
@@ -53,9 +55,83 @@ def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
 
     record = battle_state_record(battle, config)
     index_array, scalars = flatten_state(encode_state(record))
-    return index_array, np.concatenate(
-        (scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32))
+    return index_array, np.concatenate((scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)))
+
+
+def _mean_hp(values: dict[str, float]) -> float:
+    return sum(values.values()) / len(values) if values else 0.0
+
+
+def encode_battle_history(memory: BattleMemory) -> np.ndarray:
+    """Compact longitudinal context accumulated before the current decision.
+
+    Values are bounded to roughly ``[-1, 1]`` or ``[0, 1]`` so this branch can train
+    stably beside the existing normalized BC scalars. It captures sequence information
+    the current board alone cannot: repeated lines, observed opponent habits, target
+    preferences, recent HP momentum, weather changes, and active-slot turnover.
+    """
+
+    move_count = sum(sum(counts.values()) for counts in memory.opponent_moves.values())
+    unique_moves = len({move for counts in memory.opponent_moves.values() for move in counts})
+    protect_count = sum(memory.opponent_protects.values())
+    target_count = sum(memory.opponent_targets.values())
+    target_concentration = (
+        max(memory.opponent_targets.values(), default=0) / target_count if target_count else 0.0
     )
+    order_count = len(memory.our_orders)
+    unique_orders = len({order for _turn, order in memory.our_orders})
+    repeated_last_order = float(
+        order_count >= 2 and memory.our_orders[-1][1] == memory.our_orders[-2][1]
+    )
+    move_concentration = (
+        max(
+            (count for counts in memory.opponent_moves.values() for count in counts.values()),
+            default=0,
+        )
+        / move_count
+        if move_count
+        else 0.0
+    )
+    switch_count = sum(memory.opponent_switches.values())
+
+    weather_changes = 0
+    our_turnover = 0
+    opp_turnover = 0
+    for previous, current in zip(memory.turns, memory.turns[1:]):
+        weather_changes += int(previous.weather != current.weather)
+        our_turnover += len(set(previous.our_active) - set(current.our_active))
+        opp_turnover += len(set(previous.opponent_active) - set(current.opponent_active))
+
+    our_momentum = 0.0
+    opp_momentum = 0.0
+    if len(memory.turns) >= 2:
+        previous, current = memory.turns[-2], memory.turns[-1]
+        our_momentum = (_mean_hp(current.our_hp) - _mean_hp(previous.our_hp)) / 100.0
+        opp_momentum = (_mean_hp(current.opponent_hp) - _mean_hp(previous.opponent_hp)) / 100.0
+
+    values = np.asarray(
+        [
+            min(len(memory.turns), 20) / 20.0,
+            min(move_count, 24) / 24.0,
+            min(unique_moves, 16) / 16.0,
+            protect_count / move_count if move_count else 0.0,
+            min(switch_count, 12) / 12.0,
+            target_concentration,
+            min(order_count, 20) / 20.0,
+            repeated_last_order,
+            min(unique_orders, 12) / 12.0,
+            move_concentration,
+            min(len(memory.opponent_switches), 6) / 6.0,
+            min(len(memory.opponent_targets), 4) / 4.0,
+            min(weather_changes, 6) / 6.0,
+            min(our_turnover, 8) / 8.0,
+            min(opp_turnover, 8) / 8.0,
+            float(np.clip(opp_momentum - our_momentum, -1.0, 1.0)),
+        ],
+        dtype=np.float32,
+    )
+    assert values.shape == (HISTORY_SCALAR_DIM,)
+    return values
 
 
 def _single_features(single, action: dict[str, object]) -> tuple[int, int, int, list[float]]:
@@ -97,8 +173,7 @@ def encode_candidates(orders: Sequence[DoubleBattleOrder]) -> CandidateFeatures:
         action = order_to_action_dict(order)
         singles = (order.first_order, order.second_order)
         encoded = [
-            _single_features(single, action[f"slot{slot}"])
-            for slot, single in enumerate(singles)
+            _single_features(single, action[f"slot{slot}"]) for slot, single in enumerate(singles)
         ]
         move_rows.append([entry[0] for entry in encoded])
         target_rows.append([entry[1] for entry in encoded])
@@ -130,12 +205,8 @@ def pad_candidate_features(
     batch = len(candidates)
     width = max(len(entry) for entry in candidates)
     moves = np.full((batch, width, NUM_ORDER_SLOTS), MOVE_TO_IDX["<pass>"], dtype=np.int64)
-    targets = np.full(
-        (batch, width, NUM_ORDER_SLOTS), TARGET_TO_IDX["<none>"], dtype=np.int64
-    )
-    species = np.full(
-        (batch, width, NUM_ORDER_SLOTS), SPECIES_TO_IDX["<pad>"], dtype=np.int64
-    )
+    targets = np.full((batch, width, NUM_ORDER_SLOTS), TARGET_TO_IDX["<none>"], dtype=np.int64)
+    species = np.full((batch, width, NUM_ORDER_SLOTS), SPECIES_TO_IDX["<pad>"], dtype=np.int64)
     flags = np.zeros((batch, width, NUM_ORDER_SLOTS, NUM_ACTION_FLAGS), dtype=np.float32)
     mask = np.zeros((batch, width), dtype=bool)
     for row, entry in enumerate(candidates):

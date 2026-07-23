@@ -40,6 +40,7 @@ class PpoConfig:
 class RolloutStep:
     state_indices: np.ndarray
     state_scalars: np.ndarray
+    history_scalars: np.ndarray
     candidates: CandidateFeatures
     action_index: int
     old_log_prob: float
@@ -83,6 +84,21 @@ class RolloutBuffer:
         self.steps.clear()
         self._episode_start = 0
 
+    def discard_unfinished_episode(self) -> int:
+        """Drop only the in-flight tail after a failed/interrupted simulator game."""
+
+        discarded = len(self.steps) - self._episode_start
+        del self.steps[self._episode_start :]
+        return discarded
+
+    def extend_finished(self, other: "RolloutBuffer") -> None:
+        """Merge a worker buffer after verifying it has no partial episode."""
+
+        if other._episode_start != len(other.steps):
+            raise ValueError("cannot merge a rollout buffer with an unfinished episode")
+        self.steps.extend(other.steps)
+        self._episode_start = len(self.steps)
+
     def __len__(self) -> int:
         return len(self.steps)
 
@@ -91,6 +107,7 @@ def select_action(
     model: nn.Module,
     state_indices: torch.Tensor,
     state_scalars: torch.Tensor,
+    history_scalars: torch.Tensor,
     move_indices: torch.Tensor,
     target_indices: torch.Tensor,
     switch_species_indices: torch.Tensor,
@@ -104,6 +121,7 @@ def select_action(
     logits, values = model(
         state_indices,
         state_scalars,
+        history_scalars,
         move_indices,
         target_indices,
         switch_species_indices,
@@ -125,6 +143,11 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
         ),
         "state_scalars": torch.as_tensor(
             np.stack([step.state_scalars for step in steps]), dtype=torch.float32, device=device
+        ),
+        "history_scalars": torch.as_tensor(
+            np.stack([step.history_scalars for step in steps]),
+            dtype=torch.float32,
+            device=device,
         ),
         "move_indices": torch.as_tensor(moves, dtype=torch.long, device=device),
         "target_indices": torch.as_tensor(targets, dtype=torch.long, device=device),
@@ -181,6 +204,7 @@ def ppo_update(
             logits, values = model(
                 batch["state_indices"],
                 batch["state_scalars"],
+                batch["history_scalars"],
                 batch["move_indices"],
                 batch["target_indices"],
                 batch["switch_species_indices"],
@@ -194,9 +218,9 @@ def ppo_update(
             clipped = ratio.clamp(1.0 - config.clip_ratio, 1.0 + config.clip_ratio)
             policy_loss = -torch.minimum(unclipped, clipped * batch["advantages"]).mean()
 
-            clipped_values = batch["old_values"] + (
-                values - batch["old_values"]
-            ).clamp(-config.value_clip_ratio, config.value_clip_ratio)
+            clipped_values = batch["old_values"] + (values - batch["old_values"]).clamp(
+                -config.value_clip_ratio, config.value_clip_ratio
+            )
             value_unclipped = (values - batch["returns"]).square()
             value_clipped = (clipped_values - batch["returns"]).square()
             value_loss = 0.5 * torch.maximum(value_unclipped, value_clipped).mean()
@@ -226,6 +250,5 @@ def ppo_update(
             )
 
     return {
-        key: sum(row[key] for row in metric_rows) / len(metric_rows)
-        for key in metric_rows[0]
+        key: sum(row[key] for row in metric_rows) / len(metric_rows) for key in metric_rows[0]
     } | {"steps": float(len(buffer.steps))}
