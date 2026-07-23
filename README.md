@@ -27,9 +27,22 @@ Longer experiments use multiple rollout workers and a bounded rotating pool of o
 policy snapshots, while retaining the fixed VGC heuristic as an anchor:
 
 ```bash
-.venv/bin/python selfplay/train_ppo.py --iterations 10 --games-per-iteration 32 \
-  --jobs 4 --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25
+.venv/bin/python selfplay/train_ppo.py --bootstrap-games 32 --bootstrap-epochs 30 \
+  --iterations 10 --games-per-iteration 32 --jobs 4 \
+  --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25 --eval-games 100
 ```
+
+The optional bootstrap first lets the new joint-action head watch the existing search
+policy play. Training stops before PPO unless, on entirely held-out games, the teacher
+move becomes both the top choice often enough and receives enough actual probability.
+The second check matters because PPO samples actions while training—a move that barely
+ranks first among many near-ties is not yet a reliable learned policy.
+`runs/ppo/bootstrap.json` records that gate.
+
+`--eval-games` freezes the final network, disables action sampling, swaps which side
+issues the challenge across workers, and measures it against the unchanged heuristic
+without further learning. This is the clean performance result; rollout win rates are
+training diagnostics.
 
 Resume an interrupted run with `--resume runs/ppo/latest.pt` and the same `--out-dir`.
 Checkpoints and JSONL metrics are written under `runs/ppo/` and are not used by the

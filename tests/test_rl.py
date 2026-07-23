@@ -33,6 +33,13 @@ from vgc.rl.encoding import (  # noqa: E402
     encode_candidates,
     pad_candidate_features,
 )
+from vgc.rl.distill import (  # noqa: E402
+    DistillationConfig,
+    DistillationSample,
+    distill_policy,
+    evaluate_agreement,
+    split_samples_by_battle,
+)
 from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
 from vgc.rl.opponents import (  # noqa: E402
     choose_opponent,
@@ -70,6 +77,26 @@ def _candidate_features(count: int) -> CandidateFeatures:
         target_indices=np.full((count, 2), TARGET_TO_IDX["self_or_field"], dtype=np.int64),
         switch_species_indices=np.full((count, 2), SPECIES_TO_IDX["<pad>"], dtype=np.int64),
         flags=np.zeros((count, 2, 4), dtype=np.float32),
+    )
+
+
+def _distinct_candidates() -> CandidateFeatures:
+    moves = ("protect", "dragonclaw", "heatwave")
+    return CandidateFeatures(
+        move_indices=np.asarray(
+            [[MOVE_TO_IDX[move], MOVE_TO_IDX["protect"]] for move in moves],
+            dtype=np.int64,
+        ),
+        target_indices=np.asarray(
+            [
+                [TARGET_TO_IDX["self_or_field"], TARGET_TO_IDX["self_or_field"]],
+                [TARGET_TO_IDX["opp0"], TARGET_TO_IDX["self_or_field"]],
+                [TARGET_TO_IDX["spread"], TARGET_TO_IDX["self_or_field"]],
+            ],
+            dtype=np.int64,
+        ),
+        switch_species_indices=np.full((3, 2), SPECIES_TO_IDX["<pad>"], dtype=np.int64),
+        flags=np.zeros((3, 2, 4), dtype=np.float32),
     )
 
 
@@ -360,3 +387,61 @@ def test_training_checkpoint_restores_model_optimizer_and_progress(tmp_path) -> 
     assert restored_config == PpoConfig()
     for key, value in expected.items():
         assert torch.equal(value, model.state_dict()[key])
+
+
+def test_distillation_split_is_game_disjoint() -> None:
+    indices, scalars = _state()
+    samples = [
+        DistillationSample(
+            battle_id=f"battle-{battle}",
+            state_indices=indices,
+            state_scalars=scalars,
+            history_scalars=_history(),
+            candidates=_distinct_candidates(),
+            teacher_action_index=0,
+        )
+        for battle in range(5)
+        for _turn in range(3)
+    ]
+
+    train, val = split_samples_by_battle(samples, val_fraction=0.4, seed=3)
+
+    train_games = {sample.battle_id for sample in train}
+    val_games = {sample.battle_id for sample in val}
+    assert train_games.isdisjoint(val_games)
+    assert len(train_games) == 3
+    assert len(val_games) == 2
+
+
+def test_distillation_improves_teacher_agreement_on_held_out_games() -> None:
+    torch.manual_seed(2)
+    indices, scalars = _state()
+    samples = [
+        DistillationSample(
+            battle_id=f"battle-{battle}",
+            state_indices=indices.copy(),
+            state_scalars=scalars.copy(),
+            history_scalars=_history(),
+            candidates=_distinct_candidates(),
+            teacher_action_index=0,
+        )
+        for battle in range(6)
+        for _turn in range(4)
+    ]
+    train, val = split_samples_by_battle(samples, val_fraction=0.33, seed=0)
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
+    before = evaluate_agreement(model, val, batch_size=32, device="cpu")
+
+    metrics = distill_policy(
+        model,
+        optimizer,
+        train,
+        DistillationConfig(epochs=10, batch_size=32, seed=0),
+        device="cpu",
+    )
+    after = evaluate_agreement(model, val, batch_size=32, device="cpu")
+
+    assert metrics["loss"] >= 0.0
+    assert after["accuracy"] > before["accuracy"]
+    assert after["accuracy"] == 1.0
