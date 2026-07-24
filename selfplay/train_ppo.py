@@ -84,6 +84,36 @@ def load_diverse_opponent_teams(pool_dir: Path, dev_team_path: Path) -> list[Opp
     return choices
 
 
+def split_holdout_teams(
+    diverse_teams: list[OpponentTeamChoice],
+    *,
+    holdout_fraction: float,
+    seed: int,
+) -> tuple[list[OpponentTeamChoice], list[OpponentTeamChoice]]:
+    """Deterministically split ``diverse_teams`` into (train, held-out) subsets.
+
+    Held-out teams are never used as training opponents; evaluating separately
+    against seen vs. held-out teams measures whether the policy generalizes beyond
+    the specific opponent matchups it trained on. ``holdout_fraction == 0.0`` is a
+    no-op that preserves current behavior exactly (returns all teams as train, no
+    held-out teams).
+    """
+
+    if not 0.0 <= holdout_fraction < 1.0:
+        raise ValueError("holdout_fraction must be between 0.0 (inclusive) and 1.0 (exclusive)")
+    if holdout_fraction == 0.0:
+        return list(diverse_teams), []
+    if len(diverse_teams) < 2:
+        raise ValueError("need at least 2 diverse teams to hold any out")
+    shuffled = list(diverse_teams)
+    random.Random(seed).shuffle(shuffled)
+    holdout_count = round(holdout_fraction * len(shuffled))
+    holdout_count = min(max(holdout_count, 1), len(shuffled) - 1)
+    train_teams = shuffled[:-holdout_count]
+    holdout_teams = shuffled[-holdout_count:]
+    return train_teams, holdout_teams
+
+
 def build_opponent_team_schedule(
     worker_count: int,
     *,
@@ -461,6 +491,84 @@ async def evaluate_frozen_policy(
     }
 
 
+async def evaluate_with_generalization(
+    model: CandidatePolicyValueNet,
+    *,
+    eval_games: int,
+    eval_jobs: int,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    train_teams: list[OpponentTeamChoice],
+    holdout_teams: list[OpponentTeamChoice],
+    eval_mirror_fraction: float,
+    seed: int,
+    device: str,
+) -> dict[str, object]:
+    """Run the standard frozen evaluation, plus a seen-vs-held-out check.
+
+    The primary evaluation is unchanged (same ``diverse_teams``/``mirror_fraction`` as
+    before held-out support existed), so ``evaluation["win_rate"]``/structure stays
+    byte-for-byte identical when ``holdout_teams`` is empty. When teams are held out,
+    two extra diverse-only (``mirror_fraction=0.0``) evaluations run against the train
+    subset ("seen") and the held-out subset, and their win rates/gap are attached under
+    ``evaluation["generalization"]``. Factored out so the periodic (``--eval-every-
+    games``) and final evaluation call sites can't drift apart.
+    """
+
+    evaluation = await evaluate_frozen_policy(
+        model,
+        games=eval_games,
+        jobs=eval_jobs,
+        learner_team=learner_team,
+        diverse_teams=diverse_teams,
+        mirror_fraction=eval_mirror_fraction,
+        seed=seed,
+        device=device,
+    )
+    if not holdout_teams:
+        return evaluation
+    # Keep the generalization check cheap relative to the primary evaluation: it's a
+    # diagnostic, not the main eval signal, so it gets half of --eval-games (or
+    # --eval-jobs, whichever is larger, so every worker still gets at least one game)
+    # split across the seen and held-out arms rather than a full --eval-games budget
+    # for each.
+    generalization_budget = max(eval_jobs, eval_games // 2)
+    seen_games = max(1, generalization_budget // 2)
+    holdout_games = max(1, generalization_budget - seen_games)
+    seen_eval, holdout_eval = await asyncio.gather(
+        evaluate_frozen_policy(
+            model,
+            games=seen_games,
+            jobs=eval_jobs,
+            learner_team=learner_team,
+            diverse_teams=train_teams,
+            mirror_fraction=0.0,
+            seed=seed,
+            device=device,
+        ),
+        evaluate_frozen_policy(
+            model,
+            games=holdout_games,
+            jobs=eval_jobs,
+            learner_team=learner_team,
+            diverse_teams=holdout_teams,
+            mirror_fraction=0.0,
+            seed=seed,
+            device=device,
+        ),
+    )
+    evaluation["generalization"] = {
+        "seen_win_rate": seen_eval["win_rate"],
+        "holdout_win_rate": holdout_eval["win_rate"],
+        "generalization_gap": seen_eval["win_rate"] - holdout_eval["win_rate"],
+        "seen_games": seen_eval["games"],
+        "holdout_games": holdout_eval["games"],
+        "seen": seen_eval,
+        "holdout": holdout_eval,
+    }
+    return evaluation
+
+
 async def collect_games(
     model: CandidatePolicyValueNet,
     buffer: RolloutBuffer,
@@ -531,6 +639,33 @@ async def collect_games(
     }
 
 
+def _tracked_win_rate(evaluation: dict[str, object]) -> float:
+    """Win rate used for best-model tracking and resume recovery.
+
+    Prefers the held-out generalization win rate when a ``generalization`` block is
+    present (the honest measure of skill vs. unseen opponents), falling back to the
+    plain ``win_rate`` when held-out evaluation is disabled -- so behavior is unchanged
+    when ``--holdout-team-fraction`` is 0.0.
+    """
+
+    generalization = evaluation.get("generalization")
+    if generalization:
+        return float(generalization["holdout_win_rate"])
+    return float(evaluation["win_rate"])
+
+
+def _print_generalization(evaluation: dict[str, object]) -> None:
+    generalization = evaluation.get("generalization")
+    if not generalization:
+        return
+    print(
+        "  generalization: "
+        f"seen={generalization['seen_win_rate']:.3f} ({generalization['seen_games']} games) "
+        f"holdout={generalization['holdout_win_rate']:.3f} ({generalization['holdout_games']} games) "
+        f"gap={generalization['generalization_gap']:.3f}"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=10)
@@ -578,6 +713,15 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.50,
         help="worker fraction using the learner's team in frozen evaluation",
+    )
+    parser.add_argument(
+        "--holdout-team-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "fraction of the diverse opponent pool held out of training and evaluated "
+            "separately to measure generalization"
+        ),
     )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -667,6 +811,8 @@ def main() -> int:
         raise SystemExit("mirror-team-fraction must be between 0 and 1")
     if not 0.0 <= args.eval_mirror_team_fraction <= 1.0:
         raise SystemExit("eval-mirror-team-fraction must be between 0 and 1")
+    if not 0.0 <= args.holdout_team_fraction < 1.0:
+        raise SystemExit("holdout-team-fraction must be in [0.0, 1.0)")
     if args.teacher_anchor_weight < 0.0:
         raise SystemExit("teacher-anchor-weight must be nonnegative")
     if not args.team.exists():
@@ -704,6 +850,12 @@ def main() -> int:
         f"opponent teams: {len(diverse_teams)} varied + "
         f"{args.mirror_team_fraction:.0%} mirror workers"
     )
+    train_teams, holdout_teams = split_holdout_teams(
+        diverse_teams,
+        holdout_fraction=args.holdout_team_fraction,
+        seed=args.seed,
+    )
+    print(f"held-out split: {len(train_teams)} train / {len(holdout_teams)} held-out teams")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = args.out_dir / "metrics.jsonl"
     bootstrap_path = args.out_dir / "bootstrap.json"
@@ -722,7 +874,7 @@ def main() -> int:
             if line.strip():
                 best_eval_win_rate = max(
                     best_eval_win_rate,
-                    float(json.loads(line)["win_rate"]),
+                    _tracked_win_rate(json.loads(line)),
                 )
 
     def record_evaluation(evaluation: dict[str, object], *, iteration: int) -> bool:
@@ -730,7 +882,7 @@ def main() -> int:
         evaluation_path.write_text(json.dumps(evaluation, indent=2, sort_keys=True) + "\n")
         with evaluation_history_path.open("a") as evaluation_history:
             evaluation_history.write(json.dumps(evaluation, sort_keys=True) + "\n")
-        win_rate = float(evaluation["win_rate"])
+        win_rate = _tracked_win_rate(evaluation)
         improved = win_rate > best_eval_win_rate
         if improved:
             best_eval_win_rate = win_rate
@@ -759,7 +911,11 @@ def main() -> int:
                     games=args.bootstrap_games,
                     jobs=args.jobs,
                     learner_team=team,
-                    diverse_teams=diverse_teams,
+                    # Bootstrap is a training phase, so it must never touch held-out
+                    # teams -- otherwise the warm-started encoder has already adapted to
+                    # states arising from "unseen" opponents and the generalization gap
+                    # is contaminated. With held-out disabled, train_teams == diverse_teams.
+                    diverse_teams=train_teams,
                     mirror_fraction=args.mirror_team_fraction,
                     seed=args.seed,
                 )
@@ -859,7 +1015,7 @@ def main() -> int:
                     games=args.games_per_iteration,
                     jobs=args.jobs,
                     learner_team=team,
-                    diverse_teams=diverse_teams,
+                    diverse_teams=train_teams,
                     mirror_fraction=args.mirror_team_fraction,
                     device=args.device,
                     ppo_config=ppo_config,
@@ -900,13 +1056,15 @@ def main() -> int:
 
             if next_eval_at is not None and games_seen >= next_eval_at:
                 evaluation = asyncio.run(
-                    evaluate_frozen_policy(
+                    evaluate_with_generalization(
                         model,
-                        games=args.eval_games,
-                        jobs=eval_jobs,
+                        eval_games=args.eval_games,
+                        eval_jobs=eval_jobs,
                         learner_team=team,
                         diverse_teams=diverse_teams,
-                        mirror_fraction=args.eval_mirror_team_fraction,
+                        train_teams=train_teams,
+                        holdout_teams=holdout_teams,
+                        eval_mirror_fraction=args.eval_mirror_team_fraction,
                         seed=args.seed,
                         device=args.device,
                     )
@@ -920,18 +1078,21 @@ def main() -> int:
                     f"win_rate={evaluation['win_rate']:.3f} "
                     f"errors={evaluation['worker_errors']} best={improved}"
                 )
+                _print_generalization(evaluation)
                 while next_eval_at <= games_seen:
                     next_eval_at += args.eval_every_games
 
         if args.eval_games and last_evaluated_games != games_seen:
             evaluation = asyncio.run(
-                evaluate_frozen_policy(
+                evaluate_with_generalization(
                     model,
-                    games=args.eval_games,
-                    jobs=eval_jobs,
+                    eval_games=args.eval_games,
+                    eval_jobs=eval_jobs,
                     learner_team=team,
                     diverse_teams=diverse_teams,
-                    mirror_fraction=args.eval_mirror_team_fraction,
+                    train_teams=train_teams,
+                    holdout_teams=holdout_teams,
+                    eval_mirror_fraction=args.eval_mirror_team_fraction,
                     seed=args.seed,
                     device=args.device,
                 )
@@ -947,6 +1108,7 @@ def main() -> int:
                 f"win_rate={evaluation['win_rate']:.3f} "
                 f"errors={evaluation['worker_errors']} best={improved}"
             )
+            _print_generalization(evaluation)
     finally:
         if server_process is not None:
             server_process.kill()

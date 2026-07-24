@@ -19,6 +19,7 @@ from selfplay.train_ppo import (  # noqa: E402
     load_diverse_opponent_teams,
     load_training_checkpoint,
     save_checkpoint,
+    split_holdout_teams,
 )
 from vgc.bc.encoding import (  # noqa: E402
     MOVE_TO_IDX,
@@ -462,6 +463,61 @@ def test_load_diverse_opponent_teams_reads_dev_and_sorted_pool(tmp_path) -> None
         "team_01.packed",
     ]
     assert [choice.packed for choice in choices] == ["dev-team", "team-zero", "team-one"]
+
+
+def _teams(count: int) -> list[OpponentTeamChoice]:
+    return [
+        OpponentTeamChoice(label=f"team-{index}", packed=f"packed-{index}", group="diverse")
+        for index in range(count)
+    ]
+
+
+def test_split_holdout_teams_disabled_returns_all_train_no_holdout() -> None:
+    teams = _teams(6)
+
+    train_teams, holdout_teams = split_holdout_teams(teams, holdout_fraction=0.0, seed=1)
+
+    assert train_teams == teams
+    assert holdout_teams == []
+
+
+def test_split_holdout_teams_partitions_deterministically_and_disjointly() -> None:
+    teams = _teams(10)
+
+    train_teams, holdout_teams = split_holdout_teams(teams, holdout_fraction=0.3, seed=5)
+    repeated_train, repeated_holdout = split_holdout_teams(teams, holdout_fraction=0.3, seed=5)
+
+    assert train_teams == repeated_train
+    assert holdout_teams == repeated_holdout
+    assert set(train_teams).isdisjoint(holdout_teams)
+    assert sorted(train_teams + holdout_teams, key=lambda choice: choice.label) == sorted(
+        teams, key=lambda choice: choice.label
+    )
+    assert len(holdout_teams) == round(0.3 * 10)
+
+
+def test_split_holdout_teams_clamps_to_at_least_one_each_way() -> None:
+    teams = _teams(20)
+
+    # A fraction that rounds to 0 (0.5/20) still yields at least one held-out team.
+    train_teams, holdout_teams = split_holdout_teams(teams, holdout_fraction=0.02, seed=3)
+    assert len(holdout_teams) == 1
+    assert len(train_teams) == 19
+
+    # A tiny pool of 2 splits 1 train / 1 held-out even at a large fraction.
+    pair = _teams(2)
+    train_pair, holdout_pair = split_holdout_teams(pair, holdout_fraction=0.9, seed=3)
+    assert len(train_pair) == 1
+    assert len(holdout_pair) == 1
+
+
+def test_split_holdout_teams_rejects_undersized_pool_and_bad_fractions() -> None:
+    with pytest.raises(ValueError):
+        split_holdout_teams(_teams(1), holdout_fraction=0.5, seed=0)
+    with pytest.raises(ValueError):
+        split_holdout_teams(_teams(5), holdout_fraction=1.0, seed=0)
+    with pytest.raises(ValueError):
+        split_holdout_teams(_teams(5), holdout_fraction=-0.1, seed=0)
 
 
 def test_snapshot_pool_is_bounded_and_round_trips_model(tmp_path) -> None:
