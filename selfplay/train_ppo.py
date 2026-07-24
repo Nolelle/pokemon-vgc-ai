@@ -501,6 +501,7 @@ async def evaluate_with_generalization(
     train_teams: list[OpponentTeamChoice],
     holdout_teams: list[OpponentTeamChoice],
     eval_mirror_fraction: float,
+    generalization_games: int,
     seed: int,
     device: str,
 ) -> dict[str, object]:
@@ -527,14 +528,22 @@ async def evaluate_with_generalization(
     )
     if not holdout_teams:
         return evaluation
-    # Keep the generalization check cheap relative to the primary evaluation: it's a
-    # diagnostic, not the main eval signal, so it gets half of --eval-games (or
-    # --eval-jobs, whichever is larger, so every worker still gets at least one game)
-    # split across the seen and held-out arms rather than a full --eval-games budget
-    # for each.
-    generalization_budget = max(eval_jobs, eval_games // 2)
-    seen_games = max(1, generalization_budget // 2)
-    holdout_games = max(1, generalization_budget - seen_games)
+    if generalization_games:
+        # Explicit per-arm budget: the seen-vs-held-out gap is a difference of two win
+        # rates, so its noise is wider than either arm's. Sizing both arms directly is
+        # the only way to make the gap statistically meaningful (this repo measures
+        # +/-4-6 points of run-to-run variance at n=100-300 -- see CLAUDE.md).
+        seen_games = generalization_games
+        holdout_games = generalization_games
+    else:
+        # Keep the generalization check cheap relative to the primary evaluation: it's a
+        # diagnostic, not the main eval signal, so it gets half of --eval-games (or
+        # --eval-jobs, whichever is larger, so every worker still gets at least one game)
+        # split across the seen and held-out arms rather than a full --eval-games budget
+        # for each.
+        generalization_budget = max(eval_jobs, eval_games // 2)
+        seen_games = max(1, generalization_budget // 2)
+        holdout_games = max(1, generalization_budget - seen_games)
     seen_eval, holdout_eval = await asyncio.gather(
         evaluate_frozen_policy(
             model,
@@ -723,6 +732,15 @@ def parse_args() -> argparse.Namespace:
             "separately to measure generalization"
         ),
     )
+    parser.add_argument(
+        "--generalization-eval-games",
+        type=int,
+        default=0,
+        help=(
+            "games per arm (seen and held-out) for the generalization check; "
+            "0 derives a cheap budget from --eval-games"
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument(
@@ -813,6 +831,8 @@ def main() -> int:
         raise SystemExit("eval-mirror-team-fraction must be between 0 and 1")
     if not 0.0 <= args.holdout_team_fraction < 1.0:
         raise SystemExit("holdout-team-fraction must be in [0.0, 1.0)")
+    if args.generalization_eval_games < 0:
+        raise SystemExit("generalization-eval-games must be nonnegative")
     if args.teacher_anchor_weight < 0.0:
         raise SystemExit("teacher-anchor-weight must be nonnegative")
     if not args.team.exists():
@@ -1065,6 +1085,7 @@ def main() -> int:
                         train_teams=train_teams,
                         holdout_teams=holdout_teams,
                         eval_mirror_fraction=args.eval_mirror_team_fraction,
+                        generalization_games=args.generalization_eval_games,
                         seed=args.seed,
                         device=args.device,
                     )
@@ -1093,6 +1114,7 @@ def main() -> int:
                     train_teams=train_teams,
                     holdout_teams=holdout_teams,
                     eval_mirror_fraction=args.eval_mirror_team_fraction,
+                    generalization_games=args.generalization_eval_games,
                     seed=args.seed,
                     device=args.device,
                 )
