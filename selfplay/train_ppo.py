@@ -63,6 +63,9 @@ WORKER_TIMEOUT_PER_GAME_SECONDS = 120.0
 # Opt-in "archetype pool mode" defaults (see `--archetype-pool` below). Unrelated to
 # the flat `--holdout-team-fraction` path, which stays untouched.
 DEFAULT_HOLDOUT_TEAMS_PER_ARCHETYPE = 2
+# argparse dest names that feed PpoConfig. On --resume these may be explicitly re-passed
+# to override the checkpoint's saved config -- see parse_args' ppo_overrides.
+PPO_CONFIG_ARGS = ("teacher_anchor_weight", "reward_shaping_coef", "entropy_weight")
 # Default number of distinct (learner_team, opponent_team) matchups each evaluation
 # worker samples across its allocated games, instead of locking every worker to a
 # single matchup for ALL of its games. Without this, an N-game eval arm split across
@@ -1617,7 +1620,19 @@ def parse_args() -> argparse.Namespace:
             "A checkpoint's use_meta_features must match this flag on --resume."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Which PpoConfig-backed knobs the caller actually set on the command line. --resume
+    # restores the checkpoint's saved PpoConfig wholesale, which would otherwise silently
+    # discard an explicitly-passed flag (this really happened: a run asking for
+    # --reward-shaping-coef 0.3 trained with the checkpoint's 0.0 and the log gave no
+    # hint). A value equal to the parser default is treated as "not set" and continues to
+    # defer to the checkpoint.
+    args.ppo_overrides = tuple(
+        name
+        for name in PPO_CONFIG_ARGS
+        if getattr(args, name) != parser.get_default(name)
+    )
+    return args
 
 
 def teacher_anchor_weight_for_iteration(
@@ -1722,6 +1737,13 @@ def main() -> int:
             args.resume, model, optimizer, device=args.device
         )
         print(f"resumed {args.resume}: iteration={last_iteration} games_seen={games_seen}")
+        if args.ppo_overrides:
+            overrides = {name: getattr(args, name) for name in args.ppo_overrides}
+            ppo_config = replace(ppo_config, **overrides)
+            print(
+                "  CLI overrides applied over the checkpoint's saved PPO config: "
+                + ", ".join(f"{name}={value}" for name, value in sorted(overrides.items()))
+            )
     elif args.bc_checkpoint.exists():
         loaded = model.warm_start_state_encoder(args.bc_checkpoint)
         print(
