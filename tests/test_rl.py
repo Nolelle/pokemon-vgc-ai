@@ -9,8 +9,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from poke_env.battle.field import Field  # noqa: E402
 from poke_env.battle.move import Move  # noqa: E402
 from poke_env.battle.pokemon import Pokemon  # noqa: E402
+from poke_env.battle.side_condition import SideCondition  # noqa: E402
 
 from selfplay.train_ppo import (  # noqa: E402
     OpponentTeamChoice,
@@ -871,8 +873,13 @@ def test_board_potential_treats_unrevealed_opponents_as_full_hp() -> None:
         team={"our0": _stub_pokemon("pikachu")},
         opponent_active_pokemon=[None, None],
     )
-    # our=1.0, opp mean = (0.5 + 1.0 + 1.0) / 3 = 0.8333...
-    assert board_potential(battle) == pytest.approx(1.0 - (0.5 + 1.0 + 1.0) / 3)
+    # our=1.0, opp mean = (0.5 + 1.0 + 1.0) / 3 = 0.8333..., scaled by the HP term's
+    # weight in the weighted-sum potential (see vgc.rl.rewards._HP_WEIGHT) -- no
+    # strategic state is present here (no side conditions/fields/boosts on the stub),
+    # so the HP term is the only nonzero component.
+    from vgc.rl.rewards import _HP_WEIGHT
+
+    assert board_potential(battle) == pytest.approx(_HP_WEIGHT * (1.0 - (0.5 + 1.0 + 1.0) / 3))
 
 
 def test_board_potential_never_raises_on_empty_or_malformed_teams() -> None:
@@ -893,6 +900,196 @@ def test_board_potential_is_bounded() -> None:
     )
     potential = board_potential(battle)
     assert -1.0 <= potential <= 1.0
+
+
+# --- Strategic potential terms (vgc.rl.rewards._potential_components) ---------------
+
+
+def _active_stub(
+    species: str,
+    *,
+    boosts: dict[str, int] | None = None,
+    evs: list[int] | None = None,
+    nature: str | None = None,
+    current_hp_fraction: float = 1.0,
+) -> SimpleNamespace:
+    """A Pokemon-shaped stub with everything `_our_pokemon_state`/`opponent_state`
+    (used by the boost and Trick Room components) need to read: species, boosts,
+    status/item/ability, and (for our own side) evs/nature."""
+
+    return SimpleNamespace(
+        species=species,
+        moves={},
+        fainted=False,
+        boosts=boosts or {},
+        status=None,
+        item=None,
+        ability=None,
+        evs=evs,
+        nature=nature,
+        current_hp=100,
+        current_hp_fraction=current_hp_fraction,
+    )
+
+
+def _flat_board(*, side_conditions=None, opponent_side_conditions=None, fields=None) -> SimpleNamespace:
+    """An even-HP board (no HP-term contribution) with strategic state layered in, so
+    each strategic component's test isolates just that term."""
+
+    return SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("gyarados")],
+        opponent_team={"gyarados": _stub_pokemon("gyarados")},
+        team={"our0": _stub_pokemon("snorlax")},
+        active_pokemon=[_active_stub("snorlax")],
+        opponent_active_pokemon=[_active_stub("gyarados")],
+        side_conditions=side_conditions or {},
+        opponent_side_conditions=opponent_side_conditions or {},
+        fields=fields or {},
+    )
+
+
+def test_tailwind_on_our_side_raises_potential_and_on_theirs_lowers_it() -> None:
+    neutral = board_potential(_flat_board())
+    ours = board_potential(_flat_board(side_conditions={SideCondition.TAILWIND: 1}))
+    theirs = board_potential(_flat_board(opponent_side_conditions={SideCondition.TAILWIND: 1}))
+    both = board_potential(
+        _flat_board(
+            side_conditions={SideCondition.TAILWIND: 1},
+            opponent_side_conditions={SideCondition.TAILWIND: 1},
+        )
+    )
+    assert ours > neutral
+    assert theirs < neutral
+    assert both == pytest.approx(neutral)
+
+
+def test_screens_on_our_side_raise_potential_and_on_theirs_lower_it() -> None:
+    neutral = board_potential(_flat_board())
+    ours = board_potential(_flat_board(side_conditions={SideCondition.REFLECT: 1}))
+    theirs = board_potential(_flat_board(opponent_side_conditions={SideCondition.LIGHT_SCREEN: 1}))
+    assert ours > neutral
+    assert theirs < neutral
+
+
+def test_our_active_boost_raises_potential_and_opponents_lowers_it() -> None:
+    neutral = board_potential(_flat_board())
+
+    ours_boosted = _flat_board()
+    ours_boosted.active_pokemon = [_active_stub("snorlax", boosts={"atk": 2})]
+    assert board_potential(ours_boosted) > neutral
+
+    theirs_boosted = _flat_board()
+    theirs_boosted.opponent_active_pokemon = [_active_stub("gyarados", boosts={"atk": 2})]
+    assert board_potential(theirs_boosted) < neutral
+
+
+def test_trick_room_sign_depends_on_who_it_favors() -> None:
+    # Snorlax (base Speed 30) is much slower than Pikachu (base Speed 90), so with
+    # Trick Room up, "we" being Snorlax vs their Pikachu is a favorable Trick Room
+    # (we're slower); "we" being Pikachu vs their Snorlax is unfavorable.
+    slower_side_battle = SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("pikachu")],
+        opponent_team={"pikachu": _stub_pokemon("pikachu")},
+        team={"our0": _stub_pokemon("snorlax")},
+        active_pokemon=[_active_stub("snorlax")],
+        opponent_active_pokemon=[_active_stub("pikachu")],
+        side_conditions={},
+        opponent_side_conditions={},
+        fields={Field.TRICK_ROOM: 1},
+    )
+    faster_side_battle = SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("snorlax")],
+        opponent_team={"snorlax": _stub_pokemon("snorlax")},
+        team={"our0": _stub_pokemon("pikachu")},
+        active_pokemon=[_active_stub("pikachu")],
+        opponent_active_pokemon=[_active_stub("snorlax")],
+        side_conditions={},
+        opponent_side_conditions={},
+        fields={Field.TRICK_ROOM: 1},
+    )
+    no_trick_room = SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("pikachu")],
+        opponent_team={"pikachu": _stub_pokemon("pikachu")},
+        team={"our0": _stub_pokemon("snorlax")},
+        active_pokemon=[_active_stub("snorlax")],
+        opponent_active_pokemon=[_active_stub("pikachu")],
+        side_conditions={},
+        opponent_side_conditions={},
+        fields={},
+    )
+
+    from vgc.rl.rewards import _potential_components
+
+    slower_components = _potential_components(slower_side_battle)
+    faster_components = _potential_components(faster_side_battle)
+    off_components = _potential_components(no_trick_room)
+
+    assert slower_components["trick_room"] > 0.0
+    assert faster_components["trick_room"] < 0.0
+    assert off_components["trick_room"] == 0.0
+
+
+def test_trick_room_term_is_zero_when_speed_cannot_be_computed() -> None:
+    from vgc.rl.rewards import _potential_components
+
+    battle = SimpleNamespace(
+        teampreview_opponent_team=[],
+        opponent_team={},
+        team={},
+        active_pokemon=[None],
+        opponent_active_pokemon=[None],
+        side_conditions={},
+        opponent_side_conditions={},
+        fields={Field.TRICK_ROOM: 1},
+    )
+    assert _potential_components(battle)["trick_room"] == 0.0
+
+
+def test_board_potential_clamps_when_every_strategic_term_is_favorable() -> None:
+    # Boost only atk/def/spa/spd (not spe) so the boost term doesn't flip our Speed
+    # past the opponent's and invert the Trick Room term's sign -- this board is
+    # constructed so every one of the five components pushes positive.
+    battle = SimpleNamespace(
+        teampreview_opponent_team=[_fainted_pokemon("pikachu")],
+        opponent_team={"pikachu": _fainted_pokemon("pikachu")},
+        team={"our0": _stub_pokemon("snorlax")},
+        active_pokemon=[_active_stub("snorlax", boosts={"atk": 6, "def": 6, "spa": 6, "spd": 6})],
+        opponent_active_pokemon=[_active_stub("pikachu")],
+        side_conditions={
+            SideCondition.TAILWIND: 1,
+            SideCondition.REFLECT: 1,
+            SideCondition.LIGHT_SCREEN: 1,
+            SideCondition.AURORA_VEIL: 1,
+        },
+        opponent_side_conditions={},
+        fields={Field.TRICK_ROOM: 1},
+    )
+    potential = board_potential(battle)
+    assert potential > 0.9
+    assert potential <= 1.0
+
+
+def test_board_potential_clamps_when_every_strategic_term_is_unfavorable() -> None:
+    battle = SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("pikachu")],
+        opponent_team={"pikachu": _stub_pokemon("pikachu")},
+        team={"our0": _fainted_pokemon("snorlax")},
+        active_pokemon=[_active_stub("pikachu")],
+        opponent_active_pokemon=[
+            _active_stub("snorlax", boosts={"atk": 6, "def": 6, "spa": 6, "spd": 6})
+        ],
+        side_conditions={},
+        opponent_side_conditions={
+            SideCondition.TAILWIND: 1,
+            SideCondition.REFLECT: 1,
+            SideCondition.LIGHT_SCREEN: 1,
+            SideCondition.AURORA_VEIL: 1,
+        },
+        fields={Field.TRICK_ROOM: 1},
+    )
+    potential = board_potential(battle)
+    assert potential < -0.9
+    assert potential >= -1.0
 
 
 def _shaped_step(potential: float) -> RolloutStep:

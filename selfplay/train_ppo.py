@@ -1272,6 +1272,15 @@ def parse_args() -> argparse.Namespace:
         help="strength of the search-policy guardrail during PPO updates; 0 disables it",
     )
     parser.add_argument(
+        "--entropy-weight",
+        type=float,
+        default=PpoConfig().entropy_weight,
+        help=(
+            "exploration bonus during PPO updates; lower values make the policy commit "
+            "to its preferred action instead of staying diffuse"
+        ),
+    )
+    parser.add_argument(
         "--teacher-anchor-final-weight",
         type=float,
         default=None,
@@ -1440,6 +1449,8 @@ def main() -> int:
         raise SystemExit("generalization-eval-games must be nonnegative")
     if args.teacher_anchor_weight < 0.0:
         raise SystemExit("teacher-anchor-weight must be nonnegative")
+    if args.entropy_weight < 0.0:
+        raise SystemExit("entropy-weight must be nonnegative")
     if args.teacher_anchor_final_weight is not None and args.teacher_anchor_final_weight < 0.0:
         raise SystemExit("teacher-anchor-final-weight must be nonnegative")
     if args.reward_shaping_coef < 0.0:
@@ -1457,6 +1468,7 @@ def main() -> int:
     ppo_config = PpoConfig(
         teacher_anchor_weight=args.teacher_anchor_weight,
         reward_shaping_coef=args.reward_shaping_coef,
+        entropy_weight=args.entropy_weight,
     )
     if args.resume is not None:
         if not args.resume.exists():
