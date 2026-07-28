@@ -1271,6 +1271,28 @@ def parse_args() -> argparse.Namespace:
         default=0.05,
         help="strength of the search-policy guardrail during PPO updates; 0 disables it",
     )
+    parser.add_argument(
+        "--teacher-anchor-final-weight",
+        type=float,
+        default=None,
+        help=(
+            "if set, linearly anneal the teacher-anchor weight from --teacher-anchor-"
+            "weight (start) to this value (end) across the run's iterations, applied "
+            "to both that iteration's game collection (so the player's >0 gate matches) "
+            "and its ppo_update. Default (unset) keeps the weight constant at "
+            "--teacher-anchor-weight, current behavior."
+        ),
+    )
+    parser.add_argument(
+        "--reward-shaping-coef",
+        type=float,
+        default=0.0,
+        help=(
+            "potential-based reward-shaping coefficient added to the sparse terminal "
+            "outcome before GAE (see vgc.rl.rewards.board_potential); 0.0 (default) "
+            "disables shaping and leaves rewards/advantages byte-for-byte unchanged"
+        ),
+    )
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -1346,6 +1368,38 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def teacher_anchor_weight_for_iteration(
+    global_iteration: int,
+    *,
+    total_iterations: int,
+    start: float,
+    final: float | None,
+) -> float:
+    """Teacher-anchor weight for one training iteration under linear annealing.
+
+    `global_iteration` is the absolute, resume-aware iteration index (1-based:
+    `last_iteration + offset`, never just this invocation's `offset`), and
+    `total_iterations` is the absolute iteration index the FULL intended run reaches
+    (`last_iteration + args.iterations` -- last_iteration is 0 on a fresh run). This is
+    the resume-scheduling choice made here: each invocation's `--iterations` is treated
+    as "how many more iterations to run," and the anneal's total span is whatever that
+    adds up to including iterations already completed by prior --resume invocations, so
+    resuming continues the same start->final ramp instead of restarting it from
+    `start`. `start` should be `ppo_config.teacher_anchor_weight` (already resolved to
+    either `--teacher-anchor-weight` on a fresh run or the checkpoint's saved value on
+    `--resume`) so that `final=None` reproduces the exact pre-annealing constant-weight
+    behavior in both cases, byte-for-byte. `final=None` means annealing is off: always
+    return `start`. A single-iteration span (`total_iterations <= 1`, e.g. a fresh run
+    with `--iterations 1`) has nothing to interpolate over and always uses `start`.
+    """
+
+    if final is None or total_iterations <= 1:
+        return start
+    progress = (global_iteration - 1) / (total_iterations - 1)
+    progress = max(0.0, min(1.0, progress))
+    return start + (final - start) * progress
+
+
 def main() -> int:
     args = parse_args()
     if args.iterations < 0 or args.games_per_iteration <= 0 or args.jobs <= 0:
@@ -1386,6 +1440,10 @@ def main() -> int:
         raise SystemExit("generalization-eval-games must be nonnegative")
     if args.teacher_anchor_weight < 0.0:
         raise SystemExit("teacher-anchor-weight must be nonnegative")
+    if args.teacher_anchor_final_weight is not None and args.teacher_anchor_final_weight < 0.0:
+        raise SystemExit("teacher-anchor-final-weight must be nonnegative")
+    if args.reward_shaping_coef < 0.0:
+        raise SystemExit("reward-shaping-coef must be nonnegative")
     if args.archetype_pool is not None and args.holdout_teams_per_archetype < 0:
         raise SystemExit("holdout-teams-per-archetype must be nonnegative")
     if not args.team.exists():
@@ -1396,7 +1454,10 @@ def main() -> int:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     last_iteration = 0
     games_seen = 0
-    ppo_config = PpoConfig(teacher_anchor_weight=args.teacher_anchor_weight)
+    ppo_config = PpoConfig(
+        teacher_anchor_weight=args.teacher_anchor_weight,
+        reward_shaping_coef=args.reward_shaping_coef,
+    )
     if args.resume is not None:
         if not args.resume.exists():
             raise SystemExit(f"resume checkpoint does not exist: {args.resume}")
@@ -1412,7 +1473,15 @@ def main() -> int:
         )
     else:
         print(f"BC warm-start skipped; checkpoint not found: {args.bc_checkpoint}")
-    print(f"teacher anchor weight: {ppo_config.teacher_anchor_weight}")
+    print(
+        f"teacher anchor weight: {ppo_config.teacher_anchor_weight}"
+        + (
+            f" -> {args.teacher_anchor_final_weight} (annealed over the run)"
+            if args.teacher_anchor_final_weight is not None
+            else " (constant)"
+        )
+    )
+    print(f"reward shaping coef: {ppo_config.reward_shaping_coef}")
     team = args.team.read_text().strip()
     eval_jobs = args.eval_jobs or args.jobs
     diverse_teams = load_diverse_opponent_teams(
@@ -1646,8 +1715,18 @@ def main() -> int:
             else None
         )
         last_evaluated_games: int | None = None
+        total_planned_iterations = last_iteration + args.iterations
         for offset in range(1, args.iterations + 1):
             iteration = last_iteration + offset
+            current_teacher_anchor_weight = teacher_anchor_weight_for_iteration(
+                iteration,
+                total_iterations=total_planned_iterations,
+                start=ppo_config.teacher_anchor_weight,
+                final=args.teacher_anchor_final_weight,
+            )
+            iteration_ppo_config = replace(
+                ppo_config, teacher_anchor_weight=current_teacher_anchor_weight
+            )
             started = time.time()
             snapshot_path = save_snapshot(
                 pool_dir,
@@ -1666,7 +1745,7 @@ def main() -> int:
                     pool_teams=archetype_train_teams,
                     mirror_fraction=args.mirror_team_fraction,
                     device=args.device,
-                    ppo_config=ppo_config,
+                    ppo_config=iteration_ppo_config,
                     snapshots=snapshots,
                     heuristic_fraction=args.heuristic_opponent_fraction,
                     seed=args.seed + iteration * 10_000,
@@ -1681,7 +1760,7 @@ def main() -> int:
                     diverse_teams=train_teams,
                     mirror_fraction=args.mirror_team_fraction,
                     device=args.device,
-                    ppo_config=ppo_config,
+                    ppo_config=iteration_ppo_config,
                     snapshots=snapshots,
                     heuristic_fraction=args.heuristic_opponent_fraction,
                     seed=args.seed + iteration * 10_000,
@@ -1689,7 +1768,9 @@ def main() -> int:
             )
             if not buffer.steps:
                 raise RuntimeError("no PPO decisions were recorded from completed games")
-            update_metrics = ppo_update(model, optimizer, buffer, ppo_config, device=args.device)
+            update_metrics = ppo_update(
+                model, optimizer, buffer, iteration_ppo_config, device=args.device
+            )
             games_seen += result["games"]
             row = {
                 "iteration": iteration,
@@ -1714,7 +1795,8 @@ def main() -> int:
             print(
                 f"iteration {iteration} (+{offset}/{args.iterations} this run): "
                 f"games={result['games']} wins={result['wins']} steps={result['steps']} "
-                f"loss={update_metrics['loss']:.4f} entropy={update_metrics['entropy']:.4f}"
+                f"loss={update_metrics['loss']:.4f} entropy={update_metrics['entropy']:.4f} "
+                f"teacher_anchor_weight={current_teacher_anchor_weight:.4f}"
             )
 
             if next_eval_at is not None and games_seen >= next_eval_at:

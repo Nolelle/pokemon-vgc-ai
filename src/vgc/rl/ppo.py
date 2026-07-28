@@ -37,6 +37,10 @@ class PpoConfig:
     max_grad_norm: float = 0.5
     epochs: int = 4
     minibatch_size: int = 128
+    # Potential-based reward-shaping coefficient (see vgc.rl.rewards.board_potential
+    # and RolloutBuffer.finish_episode). 0.0 (default) disables shaping entirely --
+    # rewards/advantages are byte-for-byte identical to the sparse-only behavior.
+    reward_shaping_coef: float = 0.0
 
 
 @dataclass
@@ -57,6 +61,10 @@ class RolloutStep:
     done: bool = False
     advantage: float = 0.0
     return_value: float = 0.0
+    # Board potential Phi(s_t) at decision time (vgc.rl.rewards.board_potential),
+    # populated whenever PpoConfig.reward_shaping_coef > 0 and left at the default 0.0
+    # otherwise. Only ever consumed by finish_episode's shaping step.
+    state_potential: float = 0.0
 
 
 class RolloutBuffer:
@@ -75,11 +83,34 @@ class RolloutBuffer:
             raise ValueError("teacher_action_index does not identify a legal candidate")
         self.steps.append(step)
 
-    def finish_episode(self, outcome: float, config: PpoConfig) -> None:
+    def finish_episode(
+        self, outcome: float, config: PpoConfig, *, terminal_potential: float = 0.0
+    ) -> None:
         episode = self.steps[self._episode_start :]
         if not episode:
             return
-        episode[-1].reward = float(outcome)
+        if config.reward_shaping_coef > 0.0:
+            # Potential-based shaping (Ng, Harada & Russell 1999): adding
+            # coef * (gamma * Phi(s_{t+1}) - Phi(s_t)) to every step's reward
+            # telescopes to coef * (gamma * Phi(terminal) - Phi(s_0)) over the whole
+            # episode, so it densifies credit assignment without changing which
+            # policy is optimal. `terminal_potential` is Phi of the finished battle's
+            # final state, computed by the caller (see PpoVgcPlayer._battle_finished_
+            # callback) since this buffer has no battle object of its own.
+            last_index = len(episode) - 1
+            for index, step in enumerate(episode):
+                next_potential = (
+                    episode[index + 1].state_potential
+                    if index < last_index
+                    else terminal_potential
+                )
+                step.reward += config.reward_shaping_coef * (
+                    config.gamma * next_potential - step.state_potential
+                )
+        # When reward_shaping_coef == 0.0, every step's reward is still exactly 0.0
+        # here (the shaping loop above never ran), so this line is byte-for-byte the
+        # same assignment as before shaping existed.
+        episode[-1].reward += float(outcome)
         episode[-1].done = True
         gae = 0.0
         next_value = 0.0
@@ -273,7 +304,13 @@ def ppo_update(
                     (teacher_logits.argmax(dim=-1) == teacher_actions).float().mean()
                 )
             else:
-                teacher_anchor_loss = logits.sum() * 0.0
+                # A plain zero tensor, not `logits.sum() * 0.0` -- if `logits` were
+                # ever non-finite (model divergence), multiplying by zero would still
+                # propagate NaN/Inf (`0.0 * nan == nan` in IEEE 754) into `loss` below
+                # even though `config.teacher_anchor_weight` may itself be 0.0 (e.g.
+                # the end of a --teacher-anchor-final-weight anneal), silently
+                # corrupting an otherwise-unrelated update.
+                teacher_anchor_loss = logits.new_zeros(())
                 teacher_probability = logits.new_zeros(())
                 teacher_agreement = logits.new_zeros(())
             loss = (

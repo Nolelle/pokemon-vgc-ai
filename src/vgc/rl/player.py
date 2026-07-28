@@ -22,6 +22,7 @@ from vgc.rl.encoding import (
 )
 from vgc.rl.distill import teacher_action_index
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, RolloutStep, select_action
+from vgc.rl.rewards import board_potential
 
 
 class PpoVgcPlayer(VgcPlayer):
@@ -84,6 +85,12 @@ class PpoVgcPlayer(VgcPlayer):
                 if self.ppo_config.teacher_anchor_weight > 0.0
                 else None
             )
+            # Gate the compute (not just the use) on coef > 0 -- board_potential is
+            # cheap, but there is no reason to pay it every decision when reward
+            # shaping is off (the default).
+            state_potential = (
+                board_potential(battle) if self.ppo_config.reward_shaping_coef > 0.0 else 0.0
+            )
             self.rollout_buffer.add(
                 RolloutStep(
                     state_indices=np.array(state_indices, copy=True),
@@ -97,6 +104,7 @@ class PpoVgcPlayer(VgcPlayer):
                     meta_scalars=(
                         np.array(meta_scalars, copy=True) if meta_scalars is not None else None
                     ),
+                    state_potential=state_potential,
                 )
             )
             tag = battle.battle_tag
@@ -110,4 +118,9 @@ class PpoVgcPlayer(VgcPlayer):
         count = self._battle_step_counts.pop(battle.battle_tag, 0)
         if self.rollout_buffer is not None and count:
             outcome = 1.0 if battle.won else (-1.0 if battle.lost else 0.0)
-            self.rollout_buffer.finish_episode(outcome, self.ppo_config)
+            terminal_potential = (
+                board_potential(battle) if self.ppo_config.reward_shaping_coef > 0.0 else 0.0
+            )
+            self.rollout_buffer.finish_episode(
+                outcome, self.ppo_config, terminal_potential=terminal_potential
+            )

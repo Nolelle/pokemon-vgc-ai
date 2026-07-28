@@ -20,6 +20,7 @@ from selfplay.train_ppo import (  # noqa: E402
     load_training_checkpoint,
     save_checkpoint,
     split_holdout_teams,
+    teacher_anchor_weight_for_iteration,
 )
 from vgc.archetypes import ARCHETYPES  # noqa: E402
 from vgc.bc.encoding import (  # noqa: E402
@@ -64,6 +65,7 @@ from vgc.rl.ppo import (  # noqa: E402
     ppo_update,
     select_action,
 )
+from vgc.rl.rewards import board_potential  # noqa: E402
 
 
 def _single(target, *, move_target=0, mega=False):
@@ -816,3 +818,236 @@ def test_training_checkpoint_rejects_meta_features_mismatch(tmp_path) -> None:
         path, matching, matching_optimizer, device="cpu"
     )
     assert (iteration, games_seen) == (1, 4)
+
+
+# --- Dense potential-based reward shaping (vgc.rl.rewards.board_potential) -----------
+
+
+def test_board_potential_is_near_zero_when_both_sides_are_full_hp() -> None:
+    battle = _stub_battle(["snorlax", "gyarados"], ["pikachu", "eevee"])
+    assert board_potential(battle) == pytest.approx(0.0)
+
+
+def _fainted_pokemon(species: str) -> SimpleNamespace:
+    return SimpleNamespace(species=species, moves={}, fainted=True)
+
+
+def test_board_potential_is_positive_when_we_are_ahead() -> None:
+    opponent = [_fainted_pokemon("snorlax"), _stub_pokemon("gyarados")]
+    battle = SimpleNamespace(
+        teampreview_opponent_team=opponent,
+        opponent_team={pokemon.species: pokemon for pokemon in opponent},
+        team={"our0": _stub_pokemon("pikachu"), "our1": _stub_pokemon("eevee")},
+        opponent_active_pokemon=[None, None],
+    )
+    assert board_potential(battle) > 0.0
+
+
+def test_board_potential_is_negative_when_we_are_losing() -> None:
+    ours = [_fainted_pokemon("pikachu"), _stub_pokemon("eevee")]
+    battle = SimpleNamespace(
+        teampreview_opponent_team=[_stub_pokemon("snorlax"), _stub_pokemon("gyarados")],
+        opponent_team={
+            "snorlax": _stub_pokemon("snorlax"),
+            "gyarados": _stub_pokemon("gyarados"),
+        },
+        team={pokemon.species: pokemon for pokemon in ours},
+        opponent_active_pokemon=[None, None],
+    )
+    assert board_potential(battle) < 0.0
+
+
+def test_board_potential_treats_unrevealed_opponents_as_full_hp() -> None:
+    # Team preview saw 3 opponents; only 1 has been sent out and damaged so far. The
+    # other 2 must count as full HP, not be omitted or treated as 0 HP.
+    revealed = _stub_pokemon("snorlax", current_hp_fraction=0.5)
+    battle = SimpleNamespace(
+        teampreview_opponent_team=[
+            revealed,
+            _stub_pokemon("gyarados"),
+            _stub_pokemon("dragonite"),
+        ],
+        opponent_team={"snorlax": revealed},
+        team={"our0": _stub_pokemon("pikachu")},
+        opponent_active_pokemon=[None, None],
+    )
+    # our=1.0, opp mean = (0.5 + 1.0 + 1.0) / 3 = 0.8333...
+    assert board_potential(battle) == pytest.approx(1.0 - (0.5 + 1.0 + 1.0) / 3)
+
+
+def test_board_potential_never_raises_on_empty_or_malformed_teams() -> None:
+    assert board_potential(SimpleNamespace()) == 0.0
+    assert board_potential(SimpleNamespace(team=None, opponent_team=None)) == 0.0
+    assert board_potential(SimpleNamespace(team="not-a-dict", opponent_team=123)) == 0.0
+    assert board_potential(None) == 0.0
+
+
+def test_board_potential_is_bounded() -> None:
+    ours = {"our0": _fainted_pokemon("pikachu")}
+    opponent = [_stub_pokemon("snorlax")]
+    battle = SimpleNamespace(
+        teampreview_opponent_team=opponent,
+        opponent_team={pokemon.species: pokemon for pokemon in opponent},
+        team=ours,
+        opponent_active_pokemon=[None, None],
+    )
+    potential = board_potential(battle)
+    assert -1.0 <= potential <= 1.0
+
+
+def _shaped_step(potential: float) -> RolloutStep:
+    indices, scalars = _state()
+    return RolloutStep(
+        state_indices=indices,
+        state_scalars=scalars,
+        history_scalars=_history(),
+        candidates=_candidate_features(2),
+        action_index=0,
+        old_log_prob=-0.69,
+        old_value=0.0,
+        state_potential=potential,
+    )
+
+
+def test_finish_episode_with_zero_coef_is_unchanged_from_sparse_only_behavior() -> None:
+    buffer = RolloutBuffer()
+    for potential in (0.1, 0.4, -0.2):
+        buffer.add(_shaped_step(potential))
+    # reward_shaping_coef defaults to 0.0 -- the shaping loop must never run, and
+    # rewards/returns must match the pre-shaping sparse-only behavior exactly.
+    buffer.finish_episode(1.0, PpoConfig(gamma=1.0, gae_lambda=1.0), terminal_potential=0.9)
+    assert [step.reward for step in buffer.steps] == [0.0, 0.0, 1.0]
+    assert [step.return_value for step in buffer.steps] == pytest.approx([1.0, 1.0, 1.0])
+
+
+def test_finish_episode_shapes_rewards_and_still_applies_terminal_outcome() -> None:
+    buffer = RolloutBuffer()
+    potentials = [0.0, 0.5, 0.8]
+    for potential in potentials:
+        buffer.add(_shaped_step(potential))
+    coef = 0.2
+    gamma = 1.0
+    terminal_potential = 1.0
+    buffer.finish_episode(
+        1.0,
+        PpoConfig(gamma=gamma, gae_lambda=1.0, reward_shaping_coef=coef),
+        terminal_potential=terminal_potential,
+    )
+    expected_next = [potentials[1], potentials[2], terminal_potential]
+    expected_rewards = [
+        coef * (gamma * expected_next[i] - potentials[i]) for i in range(3)
+    ]
+    expected_rewards[-1] += 1.0
+    assert [step.reward for step in buffer.steps] == pytest.approx(expected_rewards)
+    assert buffer.steps[-1].done is True
+
+
+def test_finish_episode_shaping_telescopes_to_near_zero_net_when_potential_is_flat() -> None:
+    # A flat potential across the whole episode (no board change) must add ~0 net
+    # shaping beyond the terminal step's own (gamma*terminal - flat) term.
+    buffer = RolloutBuffer()
+    flat = 0.3
+    for _ in range(3):
+        buffer.add(_shaped_step(flat))
+    buffer.finish_episode(
+        0.0,
+        PpoConfig(gamma=1.0, gae_lambda=1.0, reward_shaping_coef=0.5),
+        terminal_potential=flat,
+    )
+    # Every non-terminal step's shaping term is coef*(gamma*flat - flat) == 0 when
+    # gamma == 1.0; the terminal step's is also 0 since terminal_potential == flat too.
+    assert [step.reward for step in buffer.steps] == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_ppo_config_round_trips_reward_shaping_coef_through_asdict() -> None:
+    from dataclasses import asdict
+
+    config = PpoConfig(reward_shaping_coef=0.35)
+    rebuilt = PpoConfig(**asdict(config))
+    assert rebuilt.reward_shaping_coef == pytest.approx(0.35)
+    assert rebuilt == config
+
+
+# --- Teacher-anchor annealing (selfplay.train_ppo.teacher_anchor_weight_for_iteration)
+
+
+def test_teacher_anchor_anneal_hits_start_at_first_and_final_at_last_iteration() -> None:
+    weights = [
+        teacher_anchor_weight_for_iteration(
+            iteration, total_iterations=5, start=0.2, final=0.0
+        )
+        for iteration in range(1, 6)
+    ]
+    assert weights[0] == pytest.approx(0.2)
+    assert weights[-1] == pytest.approx(0.0)
+    assert weights == sorted(weights, reverse=True)
+
+
+def test_teacher_anchor_anneal_is_constant_when_final_is_none() -> None:
+    for iteration in range(1, 6):
+        assert teacher_anchor_weight_for_iteration(
+            iteration, total_iterations=5, start=0.2, final=None
+        ) == pytest.approx(0.2)
+
+
+def test_teacher_anchor_anneal_handles_single_iteration_run() -> None:
+    assert teacher_anchor_weight_for_iteration(
+        1, total_iterations=1, start=0.2, final=0.0
+    ) == pytest.approx(0.2)
+
+
+def test_teacher_anchor_anneal_handles_equal_start_and_final() -> None:
+    for iteration in range(1, 4):
+        assert teacher_anchor_weight_for_iteration(
+            iteration, total_iterations=3, start=0.1, final=0.1
+        ) == pytest.approx(0.1)
+
+
+def test_teacher_anchor_anneal_supports_increasing_schedule() -> None:
+    weights = [
+        teacher_anchor_weight_for_iteration(
+            iteration, total_iterations=4, start=0.0, final=0.3
+        )
+        for iteration in range(1, 5)
+    ]
+    assert weights == sorted(weights)
+    assert weights[0] == pytest.approx(0.0)
+    assert weights[-1] == pytest.approx(0.3)
+
+
+def test_main_rejects_negative_teacher_anchor_final_weight(monkeypatch) -> None:
+    import selfplay.train_ppo as train_ppo_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train_ppo.py",
+            "--iterations",
+            "1",
+            "--eval-games",
+            "0",
+            "--teacher-anchor-final-weight",
+            "-0.1",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        train_ppo_module.main()
+
+
+def test_main_rejects_negative_reward_shaping_coef(monkeypatch) -> None:
+    import selfplay.train_ppo as train_ppo_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train_ppo.py",
+            "--iterations",
+            "1",
+            "--eval-games",
+            "0",
+            "--reward-shaping-coef",
+            "-0.1",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        train_ppo_module.main()
