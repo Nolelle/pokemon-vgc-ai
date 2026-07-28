@@ -26,10 +26,12 @@ from vgc.actions import describe_order
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
 from vgc.rl.encoding import (
+    META_SCALAR_DIM,
     CandidateFeatures,
     encode_battle_history,
     encode_candidates,
     encode_live_state,
+    encode_meta_context,
     pad_candidate_features,
 )
 from vgc.search import search_joint_orders
@@ -52,6 +54,10 @@ class DistillationSample:
     history_scalars: np.ndarray
     candidates: CandidateFeatures
     teacher_action_index: int
+    # Always recorded (regardless of whether the model being distilled uses meta
+    # features) -- cheap and lets --meta-features be combined with --bootstrap-games
+    # without needing a separate teacher-recording pass.
+    meta_scalars: np.ndarray | None = None
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -88,6 +94,7 @@ class TeacherRecordingPlayer(VgcPlayer):
                 history_scalars=np.array(history_scalars, copy=True),
                 candidates=encode_candidates(orders),
                 teacher_action_index=0,
+                meta_scalars=encode_meta_context(battle, self.config),
             )
         )
         chosen = orders[0]
@@ -174,6 +181,20 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
             dtype=torch.long,
             device=device,
         ),
+        # Hand-built samples (e.g. in tests) may not set meta_scalars -- fall back to a
+        # well-formed zero vector rather than requiring every caller to populate it.
+        "meta_scalars": torch.as_tensor(
+            np.stack(
+                [
+                    sample.meta_scalars
+                    if sample.meta_scalars is not None
+                    else np.zeros(META_SCALAR_DIM, dtype=np.float32)
+                    for sample in samples
+                ]
+            ),
+            dtype=torch.float32,
+            device=device,
+        ),
     }
 
 
@@ -205,6 +226,7 @@ def evaluate_agreement(
                 batch["switch_species_indices"],
                 batch["flags"],
                 batch["candidate_mask"],
+                meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
             )
             loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
             distribution = Categorical(logits=logits)
@@ -261,6 +283,7 @@ def distill_policy(
                 batch["switch_species_indices"],
                 batch["flags"],
                 batch["candidate_mask"],
+                meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
             )
             loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
             optimizer.zero_grad(set_to_none=True)

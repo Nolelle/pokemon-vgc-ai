@@ -17,6 +17,7 @@ from vgc.rl.encoding import (
     encode_battle_history,
     encode_candidates,
     encode_live_state,
+    encode_meta_context,
     pad_candidate_features,
 )
 from vgc.rl.distill import teacher_action_index
@@ -53,6 +54,14 @@ class PpoVgcPlayer(VgcPlayer):
         history_scalars = encode_battle_history(memory)
         candidates = encode_candidates(orders)
         moves, targets, species, flags, mask = pad_candidate_features([candidates])
+        meta_scalars = (
+            encode_meta_context(battle, self.config) if self.model.use_meta_features else None
+        )
+        meta_tensor = (
+            torch.as_tensor(meta_scalars[None, :], dtype=torch.float32, device=self.device)
+            if meta_scalars is not None
+            else None
+        )
         self.model.eval()
         with torch.no_grad():
             actions, log_probs, values = select_action(
@@ -66,6 +75,7 @@ class PpoVgcPlayer(VgcPlayer):
                 torch.as_tensor(flags, dtype=torch.float32, device=self.device),
                 torch.as_tensor(mask, dtype=torch.bool, device=self.device),
                 deterministic=self.deterministic,
+                meta_scalars=meta_tensor,
             )
         action_index = int(actions.item())
         if self.rollout_buffer is not None:
@@ -84,6 +94,9 @@ class PpoVgcPlayer(VgcPlayer):
                     old_log_prob=float(log_probs.item()),
                     old_value=float(values.item()),
                     teacher_action_index=teacher_index,
+                    meta_scalars=(
+                        np.array(meta_scalars, copy=True) if meta_scalars is not None else None
+                    ),
                 )
             )
             tag = battle.battle_tag

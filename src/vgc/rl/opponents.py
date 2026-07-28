@@ -15,7 +15,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.rl.model import CandidatePolicyValueNet
 
-RL_ARCHITECTURE_VERSION = "candidate-policy-value-v2-history"
+RL_ARCHITECTURE_VERSION = "candidate-policy-value-v3-meta"
 
 
 @dataclass(frozen=True)
@@ -64,6 +64,7 @@ def save_snapshot(
             "model_state_dict": model.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
             "generation": generation,
+            "use_meta_features": model.use_meta_features,
         },
         path,
     )
@@ -78,7 +79,8 @@ def load_snapshot(path: Path, *, device: str = "cpu") -> CandidatePolicyValueNet
             f"unsupported RL snapshot architecture {architecture!r} in {path}; "
             f"expected {RL_ARCHITECTURE_VERSION!r}"
         )
-    model = CandidatePolicyValueNet()
+    use_meta_features = bool(checkpoint.get("use_meta_features", False))
+    model = CandidatePolicyValueNet(use_meta_features=use_meta_features)
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.to(device)
     model.eval()

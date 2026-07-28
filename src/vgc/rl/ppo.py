@@ -49,6 +49,10 @@ class RolloutStep:
     old_log_prob: float
     old_value: float
     teacher_action_index: int | None = None
+    # Populated only when the model was built with use_meta_features=True (see
+    # vgc.rl.encoding.encode_meta_context); left None otherwise so non-meta training is
+    # byte-for-byte unaffected.
+    meta_scalars: np.ndarray | None = None
     reward: float = 0.0
     done: bool = False
     advantage: float = 0.0
@@ -123,6 +127,7 @@ def select_action(
     candidate_mask: torch.Tensor,
     *,
     deterministic: bool = False,
+    meta_scalars: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample (or greedily choose) only among the mask's legal candidates."""
 
@@ -135,6 +140,7 @@ def select_action(
         switch_species_indices,
         flags,
         candidate_mask,
+        meta_scalars=meta_scalars,
     )
     distribution = Categorical(logits=logits)
     actions = logits.argmax(dim=-1) if deterministic else distribution.sample()
@@ -145,7 +151,7 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
     moves, targets, species, flags, mask = pad_candidate_features(
         [step.candidates for step in steps]
     )
-    return {
+    batch = {
         "state_indices": torch.as_tensor(
             np.stack([step.state_indices for step in steps]), dtype=torch.long, device=device
         ),
@@ -186,6 +192,14 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
             [step.return_value for step in steps], dtype=torch.float32, device=device
         ),
     }
+    # meta_scalars is populated on every step when the model uses meta features (see
+    # PpoVgcPlayer.decide) and None on every step otherwise -- a batch is always
+    # homogeneous within one training run, so checking the first step is sufficient.
+    if steps[0].meta_scalars is not None:
+        batch["meta_scalars"] = torch.as_tensor(
+            np.stack([step.meta_scalars for step in steps]), dtype=torch.float32, device=device
+        )
+    return batch
 
 
 def ppo_update(
@@ -226,6 +240,7 @@ def ppo_update(
                 batch["switch_species_indices"],
                 batch["flags"],
                 batch["candidate_mask"],
+                meta_scalars=batch.get("meta_scalars"),
             )
             distribution = Categorical(logits=logits)
             log_probs = distribution.log_prob(batch["actions"])

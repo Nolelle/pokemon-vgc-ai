@@ -14,20 +14,25 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.bc.encoding import TARGET_VOCAB
 from vgc.bc.model import BcPolicyNet, HIDDEN_DIM
-from vgc.rl.encoding import HISTORY_SCALAR_DIM
+from vgc.rl.encoding import HISTORY_SCALAR_DIM, META_SCALAR_DIM
 
 TARGET_EMBED_DIM = 8
 ACTION_HIDDEN_DIM = 128
 HISTORY_HIDDEN_DIM = 64
 NUM_ORDER_SLOTS = 2
 NUM_ACTION_FLAGS = 4
+# Meta-features branch (opponent/our archetype + set-prior reveal scalars -- see
+# vgc.rl.encoding.encode_meta_context). Only built when use_meta_features=True, so the
+# default architecture is byte-for-byte unchanged.
+META_HIDDEN_DIM = 32
 
 
 class CandidatePolicyValueNet(nn.Module):
     """Score a padded set of legal joint actions and value the current position."""
 
-    def __init__(self, *, dropout: float = 0.0) -> None:
+    def __init__(self, *, dropout: float = 0.0, use_meta_features: bool = False) -> None:
         super().__init__()
+        self.use_meta_features = use_meta_features
         # heads=() makes this purely the shared state representation. Its scalar width
         # remains the BC default, including the two zero slot-marker values supplied by
         # rl.encoding.encode_live_state, so current BC trunks can warm-start it.
@@ -39,8 +44,19 @@ class CandidatePolicyValueNet(nn.Module):
             nn.Linear(HISTORY_HIDDEN_DIM, HISTORY_HIDDEN_DIM),
             nn.ReLU(),
         )
+        context_input_dim = HIDDEN_DIM + HISTORY_HIDDEN_DIM
+        if use_meta_features:
+            # A new parallel branch beside history_encoder -- never touches the
+            # warm-started state_encoder trunk (see warm_start_state_encoder).
+            self.meta_encoder = nn.Sequential(
+                nn.Linear(META_SCALAR_DIM, META_HIDDEN_DIM),
+                nn.ReLU(),
+                nn.Linear(META_HIDDEN_DIM, META_HIDDEN_DIM),
+                nn.ReLU(),
+            )
+            context_input_dim += META_HIDDEN_DIM
         self.context_encoder = nn.Sequential(
-            nn.Linear(HIDDEN_DIM + HISTORY_HIDDEN_DIM, HIDDEN_DIM),
+            nn.Linear(context_input_dim, HIDDEN_DIM),
             nn.ReLU(),
         )
         per_slot_dim = (
@@ -73,13 +89,22 @@ class CandidatePolicyValueNet(nn.Module):
         switch_species_indices: torch.Tensor,
         action_flags: torch.Tensor,
         candidate_mask: torch.Tensor,
+        meta_scalars: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if candidate_mask.ndim != 2 or not torch.all(candidate_mask.any(dim=1)):
             raise ValueError("each batch row must contain at least one legal candidate")
 
         state_hidden = self.state_encoder.encode_hidden(state_indices, state_scalars)
         history_hidden = self.history_encoder(history_scalars)
-        context_hidden = self.context_encoder(torch.cat((state_hidden, history_hidden), dim=-1))
+        if self.use_meta_features:
+            if meta_scalars is None:
+                raise ValueError("use_meta_features=True requires meta_scalars")
+            meta_hidden = self.meta_encoder(meta_scalars)
+            context_hidden = self.context_encoder(
+                torch.cat((state_hidden, history_hidden, meta_hidden), dim=-1)
+            )
+        else:
+            context_hidden = self.context_encoder(torch.cat((state_hidden, history_hidden), dim=-1))
         move_emb = self.state_encoder.move_embedding(move_indices)
         target_emb = self.target_embedding(target_indices)
         species_emb = self.state_encoder.species_embedding(switch_species_indices)

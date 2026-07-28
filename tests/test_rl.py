@@ -21,6 +21,7 @@ from selfplay.train_ppo import (  # noqa: E402
     save_checkpoint,
     split_holdout_teams,
 )
+from vgc.archetypes import ARCHETYPES  # noqa: E402
 from vgc.bc.encoding import (  # noqa: E402
     MOVE_TO_IDX,
     INDEX_DIM,
@@ -29,12 +30,16 @@ from vgc.bc.encoding import (  # noqa: E402
     STATE_SCALAR_DIM,
     TARGET_TO_IDX,
 )
+from vgc.bc.model import HIDDEN_DIM  # noqa: E402
 from vgc.battle_memory import BattleMemory, TurnMemory  # noqa: E402
 from vgc.rl.encoding import (  # noqa: E402
     CandidateFeatures,
     HISTORY_SCALAR_DIM,
+    META_ARCHETYPE_SLOTS,
+    META_SCALAR_DIM,
     encode_battle_history,
     encode_candidates,
+    encode_meta_context,
     pad_candidate_features,
 )
 from vgc.rl.distill import (  # noqa: E402
@@ -45,7 +50,7 @@ from vgc.rl.distill import (  # noqa: E402
     split_samples_by_battle,
     teacher_action_index,
 )
-from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
+from vgc.rl.model import CandidatePolicyValueNet, HISTORY_HIDDEN_DIM, META_HIDDEN_DIM  # noqa: E402
 from vgc.rl.opponents import (  # noqa: E402
     choose_opponent,
     discover_snapshots,
@@ -631,3 +636,183 @@ def test_distillation_improves_teacher_agreement_on_held_out_games() -> None:
     assert metrics["loss"] >= 0.0
     assert after["accuracy"] > before["accuracy"]
     assert after["accuracy"] == 1.0
+
+
+# --- Meta-aware state features (vgc.rl.encoding.encode_meta_context) -----------------
+
+
+def _stub_pokemon(species: str, *, moves=None, **extra) -> SimpleNamespace:
+    return SimpleNamespace(species=species, moves=moves or {}, fainted=False, **extra)
+
+
+def _stub_battle(
+    opponent_species: list[str],
+    our_species: list[str],
+    *,
+    active_opponents=None,
+    teampreview: bool = True,
+) -> SimpleNamespace:
+    opponent_pokemon = [_stub_pokemon(species) for species in opponent_species]
+    return SimpleNamespace(
+        teampreview_opponent_team=opponent_pokemon if teampreview else [],
+        opponent_team={pokemon.species: pokemon for pokemon in opponent_pokemon},
+        team={f"our{i}": _stub_pokemon(species) for i, species in enumerate(our_species)},
+        opponent_active_pokemon=active_opponents or [None, None],
+    )
+
+
+def test_encode_meta_context_returns_well_formed_vector_on_minimal_battle() -> None:
+    battle = _stub_battle(["pikachu", "eevee"], ["snorlax", "gyarados"])
+    vector = encode_meta_context(battle)
+    assert vector.shape == (META_SCALAR_DIM,)
+    assert vector.dtype == np.float32
+    assert np.all(np.isfinite(vector))
+
+
+def test_encode_meta_context_returns_unknown_vector_on_empty_battle() -> None:
+    vector = encode_meta_context(SimpleNamespace())
+    assert vector.shape == (META_SCALAR_DIM,)
+    assert vector.dtype == np.float32
+    # Both archetype blocks fall back to their trailing "unknown" slot.
+    assert vector[META_ARCHETYPE_SLOTS - 1] == 1.0
+    assert vector[2 * META_ARCHETYPE_SLOTS - 1] == 1.0
+    assert np.all(vector[2 * META_ARCHETYPE_SLOTS :] == 0.0)
+
+
+def test_encode_meta_context_never_raises_on_malformed_battle() -> None:
+    # Missing/wrong-shaped attributes must fall back to the zero/unknown vector, not
+    # propagate an exception into a live battle.
+    battle = SimpleNamespace(team=None, opponent_team=None, teampreview_opponent_team=None)
+    vector = encode_meta_context(battle)
+    assert vector.shape == (META_SCALAR_DIM,)
+
+
+def test_encode_meta_context_flags_opponent_archetype_from_previewed_core_species() -> None:
+    archetype = ARCHETYPES[0]
+    battle = _stub_battle(list(archetype.core_species), ["pikachu"])
+    vector = encode_meta_context(battle)
+    expected_index = [entry.label for entry in ARCHETYPES].index(archetype.label)
+    assert vector[expected_index] == 1.0
+    assert vector[META_ARCHETYPE_SLOTS - 1] == 0.0
+
+
+def test_encode_meta_context_ignores_ground_truth_hidden_information() -> None:
+    """Two battles identical in revealed/preview species but differing only in a
+    hidden field (e.g. a true Stat Point spread a real ladder opponent would never
+    reveal) must produce IDENTICAL meta vectors -- this is the deployment-available
+    guarantee the whole feature depends on.
+    """
+
+    opponent_species = ["charizard", "garchomp"]
+    our_species = ["pelipper", "archaludon"]
+    battle_a = _stub_battle(opponent_species, our_species)
+    battle_b = _stub_battle(opponent_species, our_species)
+    # Attach a hidden ground-truth field encode_meta_context must never read.
+    battle_a.hidden_sp_spread = {"hp": 31, "atk": 0, "spe": 32}
+    battle_b.hidden_sp_spread = {"hp": 0, "atk": 32, "spe": 4}
+
+    vector_a = encode_meta_context(battle_a)
+    vector_b = encode_meta_context(battle_b)
+    np.testing.assert_array_equal(vector_a, vector_b)
+
+
+# --- Meta-features model plumbing ----------------------------------------------------
+
+
+def test_meta_features_off_model_architecture_is_unchanged() -> None:
+    model = CandidatePolicyValueNet()
+    assert model.use_meta_features is False
+    assert not hasattr(model, "meta_encoder")
+    first_linear = model.context_encoder[0]
+    assert first_linear.in_features == HIDDEN_DIM + HISTORY_HIDDEN_DIM
+
+    indices, scalars = _state()
+    candidates = _candidate_features(2)
+    moves, targets, species, flags, mask = pad_candidate_features([candidates])
+    logits, values = model(
+        torch.as_tensor(indices[None, :]),
+        torch.as_tensor(scalars[None, :]),
+        torch.as_tensor(_history()[None, :]),
+        torch.as_tensor(moves),
+        torch.as_tensor(targets),
+        torch.as_tensor(species),
+        torch.as_tensor(flags),
+        torch.as_tensor(mask),
+    )
+    assert logits.shape == (1, 2)
+    assert values.shape == (1,)
+
+
+def test_meta_features_on_model_requires_meta_scalars_and_widens_context_encoder() -> None:
+    torch.manual_seed(0)
+    model = CandidatePolicyValueNet(use_meta_features=True)
+    assert hasattr(model, "meta_encoder")
+    first_linear = model.context_encoder[0]
+    assert first_linear.in_features == HIDDEN_DIM + HISTORY_HIDDEN_DIM + META_HIDDEN_DIM
+
+    indices, scalars = _state()
+    candidates = _candidate_features(2)
+    moves, targets, species, flags, mask = pad_candidate_features([candidates])
+    common = dict(
+        state_indices=torch.as_tensor(indices[None, :]),
+        state_scalars=torch.as_tensor(scalars[None, :]),
+        history_scalars=torch.as_tensor(_history()[None, :]),
+        move_indices=torch.as_tensor(moves),
+        target_indices=torch.as_tensor(targets),
+        switch_species_indices=torch.as_tensor(species),
+        action_flags=torch.as_tensor(flags),
+        candidate_mask=torch.as_tensor(mask),
+    )
+    with pytest.raises(ValueError, match="meta_scalars"):
+        model(**common)
+
+    meta_scalars = torch.zeros((1, META_SCALAR_DIM), dtype=torch.float32)
+    logits, values = model(**common, meta_scalars=meta_scalars)
+    assert logits.shape == (1, 2)
+    assert values.shape == (1,)
+
+
+def test_warm_start_state_encoder_loads_same_tensor_count_regardless_of_meta_features(
+    tmp_path,
+) -> None:
+    source = CandidatePolicyValueNet()
+    checkpoint_path = tmp_path / "bc.pt"
+    torch.save({"model_state_dict": source.state_encoder.state_dict()}, checkpoint_path)
+
+    off_result = CandidatePolicyValueNet(use_meta_features=False).warm_start_state_encoder(
+        checkpoint_path
+    )
+    on_result = CandidatePolicyValueNet(use_meta_features=True).warm_start_state_encoder(
+        checkpoint_path
+    )
+    assert off_result == on_result
+    assert off_result["loaded"] == off_result["available"] > 0
+
+
+def test_snapshot_round_trip_preserves_meta_features_flag(tmp_path) -> None:
+    on_model = CandidatePolicyValueNet(use_meta_features=True)
+    on_path = save_snapshot(tmp_path / "on", on_model, generation=0, max_snapshots=2)
+    assert load_snapshot(on_path).use_meta_features is True
+
+    off_model = CandidatePolicyValueNet(use_meta_features=False)
+    off_path = save_snapshot(tmp_path / "off", off_model, generation=0, max_snapshots=2)
+    assert load_snapshot(off_path).use_meta_features is False
+
+
+def test_training_checkpoint_rejects_meta_features_mismatch(tmp_path) -> None:
+    model_on = CandidatePolicyValueNet(use_meta_features=True)
+    optimizer_on = torch.optim.Adam(model_on.parameters(), lr=1e-3)
+    path = tmp_path / "meta_on.pt"
+    save_checkpoint(path, model_on, optimizer_on, iteration=1, games_seen=4, ppo_config=PpoConfig())
+
+    mismatched = CandidatePolicyValueNet(use_meta_features=False)
+    mismatched_optimizer = torch.optim.Adam(mismatched.parameters(), lr=1e-3)
+    with pytest.raises(ValueError, match="use_meta_features"):
+        load_training_checkpoint(path, mismatched, mismatched_optimizer, device="cpu")
+
+    matching = CandidatePolicyValueNet(use_meta_features=True)
+    matching_optimizer = torch.optim.Adam(matching.parameters(), lr=1e-3)
+    iteration, games_seen, _ = load_training_checkpoint(
+        path, matching, matching_optimizer, device="cpu"
+    )
+    assert (iteration, games_seen) == (1, 4)

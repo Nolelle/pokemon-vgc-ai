@@ -15,6 +15,7 @@ from typing import Sequence
 import numpy as np
 from poke_env.player.battle_order import DoubleBattleOrder
 
+from vgc.archetypes import ARCHETYPES, classify_team
 from vgc.bc.encoding import (
     MOVE_TO_IDX,
     SLOT_FEATURE_DIM,
@@ -26,10 +27,34 @@ from vgc.bc.encoding import (
 from vgc.bc.policy import battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
 from vgc.battle_memory import BattleMemory
+from vgc.damage import to_id
+from vgc.models import PolicyConfig
+from vgc.sets import load_set_priors, opponent_move_ids
 
 NUM_ORDER_SLOTS = 2
 NUM_ACTION_FLAGS = 4  # mega, z-move, dynamax, tera
 HISTORY_SCALAR_DIM = 16
+
+# --- Meta-aware context (deployment-available only -- see encode_meta_context below) --
+
+# One archetype-one-hot slot per label in vgc.archetypes.ARCHETYPES, plus one trailing
+# "unknown" slot for when classify_team can't match any archetype's defining core.
+_ARCHETYPE_LABELS: tuple[str, ...] = tuple(archetype.label for archetype in ARCHETYPES)
+_ARCHETYPE_LABEL_TO_INDEX: dict[str, int] = {
+    label: index for index, label in enumerate(_ARCHETYPE_LABELS)
+}
+META_ARCHETYPE_SLOTS = len(_ARCHETYPE_LABELS) + 1  # +1 unknown slot
+
+# Doubles: up to two opponent Pokemon are ever active at once.
+META_ACTIVE_SLOTS = 2
+# Per active opponent slot: (1) a presence flag (this slot has a live, known opponent
+# Pokemon -- 0.0 when fainted/absent/battle hasn't started), (2) the fraction of that
+# species' corpus set-prior move-frequency mass already covered by moves it has
+# actually REVEALED this battle, and (3) how many additional prior-likely moves
+# `vgc.sets.opponent_move_ids` would fill in beyond what's revealed, normalized by
+# `PolicyConfig.set_prior_max_moves` (a coarse "how much is still unknown" signal).
+META_PRIOR_SCALARS_PER_SLOT = 3
+META_SCALAR_DIM = META_ARCHETYPE_SLOTS * 2 + META_ACTIVE_SLOTS * META_PRIOR_SCALARS_PER_SLOT
 
 
 @dataclass(frozen=True)
@@ -132,6 +157,122 @@ def encode_battle_history(memory: BattleMemory) -> np.ndarray:
     )
     assert values.shape == (HISTORY_SCALAR_DIM,)
     return values
+
+
+def _archetype_one_hot(species_ids) -> np.ndarray:
+    """One-hot over `_ARCHETYPE_LABELS` + trailing unknown slot for `species_ids`."""
+
+    vector = np.zeros(META_ARCHETYPE_SLOTS, dtype=np.float32)
+    label = classify_team(species_ids)
+    vector[_ARCHETYPE_LABEL_TO_INDEX[label] if label in _ARCHETYPE_LABEL_TO_INDEX else -1] = 1.0
+    return vector
+
+
+def _opponent_species_ids(battle) -> list[str]:
+    """The opponent's species, deployment-available only.
+
+    Prefers the full previewed 6 (`battle.teampreview_opponent_team`, populated once
+    during team preview and never cleared -- see poke-env's
+    `AbstractBattle._register_teampreview_pokemon`), since all 6 species are visible at
+    team preview regardless of whether Open Team Sheets triggered. Falls back to
+    whatever is currently revealed mid-battle (`battle.opponent_team`) if team preview
+    data isn't available for some reason (e.g. a synthetic/stub battle in tests).
+    """
+
+    preview = list(getattr(battle, "teampreview_opponent_team", None) or [])
+    if preview:
+        return [pokemon.species for pokemon in preview if getattr(pokemon, "species", None)]
+    opponent_team = getattr(battle, "opponent_team", None) or {}
+    return [
+        pokemon.species for pokemon in opponent_team.values() if getattr(pokemon, "species", None)
+    ]
+
+
+def _our_species_ids(battle) -> list[str]:
+    """Our own team's species -- always fully known, we built the team."""
+
+    team = getattr(battle, "team", None) or {}
+    return [pokemon.species for pokemon in team.values() if getattr(pokemon, "species", None)]
+
+
+def _prior_scalars_for_active(
+    pokemon, priors: dict[str, object], config: PolicyConfig
+) -> tuple[float, float, float]:
+    """`(presence, revealed_fraction, remaining_normalized)` for one active opponent
+    Pokemon -- see `META_PRIOR_SCALARS_PER_SLOT`'s comment for what each means. Uses
+    only `pokemon.moves` (moves it has actually revealed by using/being tracked this
+    battle) and the corpus prior tables -- never a ground-truth hidden moveset.
+    """
+
+    if pokemon is None or getattr(pokemon, "fainted", False):
+        return 0.0, 0.0, 0.0
+
+    revealed = [move_id for move_id in (to_id(raw) for raw in (pokemon.moves or {})) if move_id]
+
+    # Reuses vgc.sets.opponent_move_ids (revealed + top corpus-prior moves filled in up
+    # to config.set_prior_max_moves) rather than reimplementing the ranking/threshold
+    # logic; the count it adds beyond what's actually revealed is "how many more moves
+    # the prior thinks are likely but we haven't seen yet".
+    filled = opponent_move_ids(pokemon, priors, config)
+    max_moves = max(config.set_prior_max_moves, 1)
+    remaining_normalized = min(1.0, max(0.0, (len(filled) - len(revealed)) / max_moves))
+
+    revealed_fraction = 0.0
+    species_id = to_id(pokemon.species)
+    entry = (priors.get("species") or {}).get(species_id) if priors else None
+    if entry and entry.get("appearances", 0) >= config.set_prior_min_games:
+        move_counts: dict[str, int] = entry.get("moves") or {}
+        total_mass = sum(move_counts.values())
+        if total_mass > 0:
+            revealed_mass = sum(move_counts.get(move_id, 0) for move_id in revealed)
+            revealed_fraction = revealed_mass / total_mass
+
+    return 1.0, revealed_fraction, remaining_normalized
+
+
+def _encode_meta_context(battle, config: PolicyConfig) -> np.ndarray:
+    opponent_archetype = _archetype_one_hot(_opponent_species_ids(battle))
+    our_archetype = _archetype_one_hot(_our_species_ids(battle))
+
+    priors = load_set_priors() if config.use_set_priors else {}
+    active_opponents = list(getattr(battle, "opponent_active_pokemon", None) or [])
+    active_opponents = (active_opponents + [None, None])[:META_ACTIVE_SLOTS]
+    prior_scalars: list[float] = []
+    for pokemon in active_opponents:
+        prior_scalars.extend(_prior_scalars_for_active(pokemon, priors, config))
+
+    vector = np.concatenate(
+        (
+            opponent_archetype,
+            our_archetype,
+            np.asarray(prior_scalars, dtype=np.float32),
+        )
+    ).astype(np.float32)
+    assert vector.shape == (META_SCALAR_DIM,)
+    return vector
+
+
+def encode_meta_context(battle, config: PolicyConfig | None = None) -> np.ndarray:
+    """Deployment-available meta context: opponent/our archetype one-hots plus a few
+    compact set-prior/reveal scalars for the currently active opponent Pokemon.
+
+    Every input is something a real ladder opponent would actually show us -- species
+    (team preview or in-battle reveals), our own team, revealed moves, and corpus
+    set-priors (`vgc.sets.load_set_priors`). Never touches ground-truth hidden Stat
+    Points, exact secret movesets, or anything else the sim knows but a real opponent
+    wouldn't reveal (see this module's and the RL meta-features design doc's warnings).
+
+    Guarded end-to-end: any missing/malformed battle data (a stub battle in tests, a
+    battle before team preview has populated anything, a species not in the archetype/
+    prior corpora) falls back to a well-formed all-zero/"unknown" vector rather than
+    raising -- this must never throw during a live battle.
+    """
+
+    config = config or PolicyConfig()
+    try:
+        return _encode_meta_context(battle, config)
+    except Exception:
+        return np.zeros(META_SCALAR_DIM, dtype=np.float32)
 
 
 def _single_features(single, action: dict[str, object]) -> tuple[int, int, int, list[float]]:

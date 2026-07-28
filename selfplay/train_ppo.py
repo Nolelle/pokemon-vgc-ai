@@ -360,6 +360,7 @@ def save_checkpoint(
             "games_seen": games_seen,
             "ppo_config": asdict(ppo_config),
             "architecture": RL_ARCHITECTURE_VERSION,
+            "use_meta_features": model.use_meta_features,
         },
         path,
     )
@@ -372,7 +373,13 @@ def load_training_checkpoint(
     *,
     device: str,
 ) -> tuple[int, int, PpoConfig]:
-    """Restore training state and return iteration, game count, and PPO settings."""
+    """Restore training state and return iteration, game count, and PPO settings.
+
+    Raises if the checkpoint's `use_meta_features` disagrees with `model`'s -- a
+    meta-on checkpoint must never be silently loaded into a meta-off model or vice
+    versa, since the two have different parameter shapes (`context_encoder`'s input
+    width, presence/absence of `meta_encoder`).
+    """
 
     checkpoint = torch.load(path, map_location=device, weights_only=False)
     architecture = checkpoint.get("architecture")
@@ -380,6 +387,13 @@ def load_training_checkpoint(
         raise ValueError(
             f"unsupported PPO checkpoint architecture {architecture!r}; "
             f"expected {RL_ARCHITECTURE_VERSION!r}"
+        )
+    checkpoint_use_meta = bool(checkpoint.get("use_meta_features", False))
+    if checkpoint_use_meta != model.use_meta_features:
+        raise ValueError(
+            f"checkpoint use_meta_features={checkpoint_use_meta} does not match "
+            f"requested model use_meta_features={model.use_meta_features}; pass/omit "
+            "--meta-features to match the checkpoint it was trained with"
         )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -1319,6 +1333,16 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_HOLDOUT_TEAMS_PER_ARCHETYPE,
         help="teams held out of training per archetype in --archetype-pool mode",
     )
+    parser.add_argument(
+        "--meta-features",
+        action="store_true",
+        help=(
+            "add the deployment-available meta-context branch (opponent/our archetype "
+            "+ set-prior reveal scalars, see vgc.rl.encoding.encode_meta_context) to "
+            "the network. Default off leaves the architecture byte-for-byte unchanged. "
+            "A checkpoint's use_meta_features must match this flag on --resume."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1368,7 +1392,7 @@ def main() -> int:
         raise SystemExit(f"team does not exist: {args.team}")
     torch.manual_seed(args.seed)
 
-    model = CandidatePolicyValueNet().to(args.device)
+    model = CandidatePolicyValueNet(use_meta_features=args.meta_features).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     last_iteration = 0
     games_seen = 0
