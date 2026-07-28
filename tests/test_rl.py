@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import numpy as np
@@ -14,10 +15,14 @@ from poke_env.battle.move import Move  # noqa: E402
 from poke_env.battle.pokemon import Pokemon  # noqa: E402
 from poke_env.battle.side_condition import SideCondition  # noqa: E402
 
+import selfplay.train_ppo as train_ppo  # noqa: E402
 from selfplay.train_ppo import (  # noqa: E402
     OpponentTeamChoice,
     allocate_games,
+    allocate_pairing_games,
     build_opponent_team_schedule,
+    build_opponent_team_schedule_groups,
+    evaluate_frozen_policy,
     load_diverse_opponent_teams,
     load_training_checkpoint,
     save_checkpoint,
@@ -454,6 +459,180 @@ def test_opponent_team_schedule_is_exact_deterministic_and_can_pair_sides() -> N
     assert [choice.group for choice in schedule].count("mirror") == 1
     assert [choice.group for choice in schedule].count("diverse") == 3
     assert [choice.group for choice in paired] == ["mirror", "mirror", "diverse", "diverse"]
+
+
+@pytest.mark.parametrize(
+    "games,jobs,pairings_per_worker",
+    [
+        (50, 8, 4),  # the real smoke-test shape
+        (10, 4, 1),
+        (17, 3, 5),
+        (2, 8, 4),  # games < jobs
+        (6, 3, 10),  # games-per-worker < pairings_per_worker
+        (1, 1, 4),
+    ],
+)
+def test_allocate_pairing_games_sums_to_the_requested_budget(
+    games: int, jobs: int, pairings_per_worker: int
+) -> None:
+    per_worker = allocate_pairing_games(games, jobs, pairings_per_worker)
+    assert sum(sum(pairing_games) for pairing_games in per_worker) == games
+    for pairing_games in per_worker:
+        # Every pairing must get at least 1 game -- allocate_games never creates an
+        # empty/zero-game chunk.
+        assert all(count > 0 for count in pairing_games)
+        assert len(pairing_games) <= pairings_per_worker
+
+
+def test_allocate_pairing_games_at_one_pairing_reproduces_allocate_games() -> None:
+    assert allocate_pairing_games(10, 4, 1) == [[count] for count in allocate_games(10, 4)]
+    assert allocate_pairing_games(2, 8, 1) == [[count] for count in allocate_games(2, 8)]
+
+
+def test_allocate_pairing_games_rejects_nonpositive_pairings_per_worker() -> None:
+    with pytest.raises(ValueError):
+        allocate_pairing_games(10, 4, 0)
+
+
+def test_opponent_team_schedule_groups_at_one_pairing_reproduces_the_flat_schedule() -> None:
+    varied = [
+        OpponentTeamChoice(label=f"team-{index}", packed=f"packed-{index}", group="diverse")
+        for index in range(5)
+    ]
+    flat = build_opponent_team_schedule(
+        4,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.25,
+        seed=7,
+        pair_groups=True,
+    )
+    grouped = build_opponent_team_schedule_groups(
+        4,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.25,
+        seed=7,
+        pairings_per_worker=1,
+        pair_groups=True,
+    )
+    assert grouped == [[choice] for choice in flat]
+
+
+def test_opponent_team_schedule_groups_sample_many_distinct_pairings() -> None:
+    varied = [
+        OpponentTeamChoice(label=f"team-{index}", packed=f"packed-{index}", group="diverse")
+        for index in range(20)
+    ]
+    groups = build_opponent_team_schedule_groups(
+        8,
+        learner_team="learner",
+        diverse_teams=varied,
+        mirror_fraction=0.25,
+        seed=7,
+        pairings_per_worker=4,
+        pair_groups=True,
+    )
+    assert len(groups) == 8
+    for group in groups:
+        assert len(group) == 4
+    distinct_labels = {choice.label for group in groups for choice in group}
+    # 8 workers x 4 pairings = 32 draws over 20 distinct teams -- substantially more
+    # than the 8 distinct matchups the pre-fix single-pairing-per-worker design gave.
+    assert len(distinct_labels) > 8
+
+
+async def _fake_evaluate_worker(
+    _model,
+    *,
+    worker_id: int,
+    pairings: list[tuple[str, OpponentTeamChoice]],
+    pairing_games: list[int],
+    device: str,
+    learner_challenges: bool,
+) -> dict[str, object]:
+    """Deterministic stand-in for ``_evaluate_worker`` (no poke-env players, no
+    server): every pairing "wins" all but its own index-mod-3 games, so
+    ``by_team_group``'s per-pairing totals are checkable by direct arithmetic. Used to
+    unit-test the caller's aggregation-over-pairings logic in isolation.
+    """
+
+    pairing_rows: list[dict[str, object]] = []
+    total_games = total_wins = total_losses = 0
+    for index, ((_learner_team, opponent_team), games) in enumerate(zip(pairings, pairing_games)):
+        losses = index % 3
+        losses = min(losses, games)
+        wins = games - losses
+        total_games += games
+        total_wins += wins
+        total_losses += losses
+        pairing_rows.append(
+            {
+                "requested": games,
+                "games": games,
+                "wins": wins,
+                "losses": losses,
+                "opponent_team": opponent_team.label,
+                "team_group": opponent_team.group,
+                "error": None,
+            }
+        )
+    return {
+        "worker": worker_id,
+        "requested": sum(pairing_games),
+        "games": total_games,
+        "wins": total_wins,
+        "losses": total_losses,
+        "side": "challenger" if learner_challenges else "receiver",
+        "error": None,
+        "pairings": pairing_rows,
+    }
+
+
+def test_evaluate_frozen_policy_aggregates_by_team_group_over_pairings(monkeypatch) -> None:
+    monkeypatch.setattr(train_ppo, "_evaluate_worker", _fake_evaluate_worker)
+    varied = [
+        OpponentTeamChoice(label=f"team-{index}", packed=f"packed-{index}", group="diverse")
+        for index in range(6)
+    ]
+
+    evaluation = asyncio.run(
+        evaluate_frozen_policy(
+            model=None,
+            games=50,
+            jobs=8,
+            learner_team="learner",
+            diverse_teams=varied,
+            mirror_fraction=0.5,
+            seed=3,
+            device="cpu",
+            pairings_per_worker=4,
+        )
+    )
+
+    assert evaluation["games"] == 50
+    assert evaluation["worker_errors"] == 0
+    # by_team_group must be computed over every PAIRING (a worker can hold pairings in
+    # both groups once pairings_per_worker > 1), so its totals must equal the sum of
+    # every pairing row across every worker, not the sum of one group_row per worker.
+    expected_group_games: dict[str, int] = {"mirror": 0, "diverse": 0}
+    expected_group_wins: dict[str, int] = {"mirror": 0, "diverse": 0}
+    total_pairings = 0
+    for row in evaluation["workers"]:
+        for pairing_row in row["pairings"]:
+            total_pairings += 1
+            expected_group_games[pairing_row["team_group"]] += pairing_row["games"]
+            expected_group_wins[pairing_row["team_group"]] += pairing_row["wins"]
+    # With pairings_per_worker=4 the arm should sample well over 8 distinct pairings.
+    assert total_pairings > 8
+    for group in ("mirror", "diverse"):
+        assert evaluation["by_team_group"][group]["games"] == expected_group_games[group]
+        assert evaluation["by_team_group"][group]["wins"] == expected_group_wins[group]
+    assert (
+        evaluation["by_team_group"]["mirror"]["games"]
+        + evaluation["by_team_group"]["diverse"]["games"]
+        == evaluation["games"]
+    )
 
 
 def test_load_diverse_opponent_teams_reads_dev_and_sorted_pool(tmp_path) -> None:

@@ -63,6 +63,14 @@ WORKER_TIMEOUT_PER_GAME_SECONDS = 120.0
 # Opt-in "archetype pool mode" defaults (see `--archetype-pool` below). Unrelated to
 # the flat `--holdout-team-fraction` path, which stays untouched.
 DEFAULT_HOLDOUT_TEAMS_PER_ARCHETYPE = 2
+# Default number of distinct (learner_team, opponent_team) matchups each evaluation
+# worker samples across its allocated games, instead of locking every worker to a
+# single matchup for ALL of its games. Without this, an N-game eval arm split across
+# `eval_jobs` workers is only ~`eval_jobs` distinct team-matchup samples, not N
+# independent ones -- team-matchup luck then dominates the measured win rate (see
+# CLAUDE.md's evaluation-methodology note). `1` reproduces the pre-fix
+# single-pairing-per-worker behavior exactly.
+DEFAULT_EVAL_PAIRINGS_PER_WORKER = 4
 
 
 @dataclass(frozen=True)
@@ -342,6 +350,118 @@ def build_same_archetype_pool_worker_assignments(
     return assignments
 
 
+def build_opponent_team_schedule_groups(
+    worker_count: int,
+    *,
+    learner_team: str,
+    diverse_teams: list[OpponentTeamChoice],
+    mirror_fraction: float,
+    seed: int,
+    pairings_per_worker: int,
+    pair_groups: bool = False,
+) -> list[list[OpponentTeamChoice]]:
+    """Non-pool analogue of the pool pairing-groups builders below: returns
+    ``pairings_per_worker`` distinct opponent-team choices per worker (the learner's
+    own team is fixed and unchanged across pairings; the caller pairs it back in)
+    instead of one choice per worker. Built by asking ``build_opponent_team_schedule``
+    for ``worker_count * pairings_per_worker`` entries and chunking them worker-major,
+    so ``pairings_per_worker=1`` reproduces ``build_opponent_team_schedule(worker_count,
+    ...)`` byte-for-byte (identical total count, chunk size 1).
+    """
+
+    if worker_count <= 0:
+        raise ValueError("worker_count must be positive")
+    if pairings_per_worker <= 0:
+        raise ValueError("pairings_per_worker must be positive")
+    schedule = build_opponent_team_schedule(
+        worker_count * pairings_per_worker,
+        learner_team=learner_team,
+        diverse_teams=diverse_teams,
+        mirror_fraction=mirror_fraction,
+        seed=seed,
+        pair_groups=pair_groups,
+    )
+    return [
+        schedule[index * pairings_per_worker : (index + 1) * pairings_per_worker]
+        for index in range(worker_count)
+    ]
+
+
+def build_pool_worker_pairing_groups(
+    worker_count: int,
+    pool_teams: list[PoolTeam],
+    *,
+    mirror_fraction: float,
+    seed: int,
+    pairings_per_worker: int,
+) -> list[list[tuple[PoolTeam, OpponentTeamChoice]]]:
+    """Pool analogue of ``build_opponent_team_schedule_groups``: ``pairings_per_worker``
+    independent ``sample_learner_and_opponent`` draws per worker (both learner and
+    opponent vary draw-to-draw, same as the single-pairing-per-worker path), all fed
+    from one seeded ``random.Random`` in worker-major order so ``pairings_per_worker=1``
+    draws in the exact same sequence as ``build_pool_worker_assignments`` and
+    reproduces it byte-for-byte.
+    """
+
+    if worker_count <= 0:
+        raise ValueError("worker_count must be positive")
+    if pairings_per_worker <= 0:
+        raise ValueError("pairings_per_worker must be positive")
+    if not pool_teams:
+        raise ValueError("pool_teams must be non-empty")
+    rng = random.Random(seed)
+    return [
+        [
+            sample_learner_and_opponent(pool_teams, rng=rng, mirror_fraction=mirror_fraction)
+            for _ in range(pairings_per_worker)
+        ]
+        for _ in range(worker_count)
+    ]
+
+
+def build_same_archetype_pool_worker_pairing_groups(
+    worker_count: int,
+    pool_teams: list[PoolTeam],
+    *,
+    mirror_fraction: float,
+    seed: int,
+    pairings_per_worker: int,
+) -> list[list[tuple[PoolTeam, OpponentTeamChoice]]]:
+    """Same-archetype analogue of ``build_pool_worker_pairing_groups``: every one of a
+    worker's ``pairings_per_worker`` draws comes from that worker's single assigned
+    archetype (round-robin across workers, same assignment as
+    ``build_same_archetype_pool_worker_assignments``), so the ``by_archetype``
+    breakdown stays meaningful (all of one worker's pairings attribute to one
+    archetype) even with multiple pairings per worker. ``pairings_per_worker=1``
+    reproduces ``build_same_archetype_pool_worker_assignments`` byte-for-byte (same
+    per-worker archetype, same single draw per worker in the same order).
+    """
+
+    if worker_count <= 0:
+        raise ValueError("worker_count must be positive")
+    if pairings_per_worker <= 0:
+        raise ValueError("pairings_per_worker must be positive")
+    if not pool_teams:
+        raise ValueError("pool_teams must be non-empty")
+    by_archetype: dict[str, list[PoolTeam]] = {}
+    for team in pool_teams:
+        by_archetype.setdefault(team.archetype, []).append(team)
+    archetype_labels = sorted(by_archetype)
+    rng = random.Random(seed)
+    groups: list[list[tuple[PoolTeam, OpponentTeamChoice]]] = []
+    for worker_id in range(worker_count):
+        archetype = archetype_labels[worker_id % len(archetype_labels)]
+        groups.append(
+            [
+                sample_learner_and_opponent(
+                    by_archetype[archetype], rng=rng, mirror_fraction=mirror_fraction
+                )
+                for _ in range(pairings_per_worker)
+            ]
+        )
+    return groups
+
+
 def save_checkpoint(
     path: Path,
     model: CandidatePolicyValueNet,
@@ -531,56 +651,98 @@ async def _evaluate_worker(
     model: CandidatePolicyValueNet,
     *,
     worker_id: int,
-    games: int,
-    learner_team: str,
-    opponent_team: OpponentTeamChoice,
+    pairings: list[tuple[str, OpponentTeamChoice]],
+    pairing_games: list[int],
     device: str,
     learner_challenges: bool,
 ) -> dict[str, object]:
-    token = secrets.token_hex(3)
+    """Play ``worker_id``'s allocated games split across ``pairings`` distinct
+    (learner_team, opponent_team) matchups instead of one fixed matchup for all of a
+    worker's games. ``pairing_games[i]`` is how many of this worker's games go to
+    ``pairings[i]``. Because poke-env players hold one fixed team each, a fresh
+    learner/opponent player pair is created per pairing, with a distinct
+    account-name suffix (worker id + pairing index + a fresh token) so concurrent/stale
+    sessions never collide. One pairing's exception is caught and recorded without
+    discarding the worker's other pairings' results (same guard the single-pairing
+    path used, just applied per pairing now), and both players are always stopped via
+    a per-pairing try/finally so no websocket clients leak across the many more
+    clients this now creates.
+    """
+
     common_config = replace(
         PolicyConfig(),
         accept_open_team_sheet=False,
         use_rolling_horizon=False,
     )
-    learner = PpoVgcPlayer(
-        model=model,
-        rollout_buffer=None,
-        device=device,
-        deterministic=True,
-        config=common_config,
-        team=learner_team,
-        battle_format=FORMAT_ID,
-        account_configuration=AccountConfiguration(f"evalrl{worker_id}-{token}", None),
-    )
-    opponent = VgcPlayer(
-        config=common_config,
-        team=opponent_team.packed,
-        battle_format=FORMAT_ID,
-        account_configuration=AccountConfiguration(f"evalh{worker_id}-{token}", None),
-    )
-    error: str | None = None
-    try:
-        challenger, receiver = (learner, opponent) if learner_challenges else (opponent, learner)
-        await asyncio.wait_for(
-            challenger.battle_against(receiver, n_battles=games),
-            timeout=max(1, games) * WORKER_TIMEOUT_PER_GAME_SECONDS,
+    pairing_rows: list[dict[str, object]] = []
+    total_games = 0
+    total_wins = 0
+    total_losses = 0
+    for pairing_index, ((learner_team, opponent_team), games) in enumerate(
+        zip(pairings, pairing_games)
+    ):
+        token = secrets.token_hex(3)
+        learner = PpoVgcPlayer(
+            model=model,
+            rollout_buffer=None,
+            device=device,
+            deterministic=True,
+            config=common_config,
+            team=learner_team,
+            battle_format=FORMAT_ID,
+            account_configuration=AccountConfiguration(
+                f"evalrl{worker_id}-{pairing_index}-{token}", None
+            ),
         )
-    except Exception as exc:  # noqa: BLE001 - other evaluation workers remain useful
-        error = f"{type(exc).__name__}: {exc}"
-    finally:
-        await _safe_stop_listening(learner)
-        await _safe_stop_listening(opponent)
+        opponent = VgcPlayer(
+            config=common_config,
+            team=opponent_team.packed,
+            battle_format=FORMAT_ID,
+            account_configuration=AccountConfiguration(
+                f"evalh{worker_id}-{pairing_index}-{token}", None
+            ),
+        )
+        error: str | None = None
+        try:
+            challenger, receiver = (
+                (learner, opponent) if learner_challenges else (opponent, learner)
+            )
+            await asyncio.wait_for(
+                challenger.battle_against(receiver, n_battles=games),
+                timeout=max(1, games) * WORKER_TIMEOUT_PER_GAME_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 - other pairings must remain useful
+            error = f"{type(exc).__name__}: {exc}"
+        finally:
+            await _safe_stop_listening(learner)
+            await _safe_stop_listening(opponent)
+        pairing_games_played = learner.n_finished_battles
+        pairing_wins = learner.n_won_battles
+        pairing_losses = learner.n_lost_battles
+        total_games += pairing_games_played
+        total_wins += pairing_wins
+        total_losses += pairing_losses
+        pairing_rows.append(
+            {
+                "requested": games,
+                "games": pairing_games_played,
+                "wins": pairing_wins,
+                "losses": pairing_losses,
+                "opponent_team": opponent_team.label,
+                "team_group": opponent_team.group,
+                "error": error,
+            }
+        )
+    errors = [row["error"] for row in pairing_rows if row["error"] is not None]
     return {
         "worker": worker_id,
-        "requested": games,
-        "games": learner.n_finished_battles,
-        "wins": learner.n_won_battles,
-        "losses": learner.n_lost_battles,
+        "requested": sum(pairing_games),
+        "games": total_games,
+        "wins": total_wins,
+        "losses": total_losses,
         "side": "challenger" if learner_challenges else "receiver",
-        "opponent_team": opponent_team.label,
-        "team_group": opponent_team.group,
-        "error": error,
+        "error": "; ".join(errors) if errors else None,
+        "pairings": pairing_rows,
     }
 
 
@@ -592,6 +754,25 @@ def allocate_games(games: int, jobs: int) -> list[int]:
     worker_count = min(games, jobs)
     base, remainder = divmod(games, worker_count)
     return [base + int(index < remainder) for index in range(worker_count)]
+
+
+def allocate_pairing_games(games: int, jobs: int, pairings_per_worker: int) -> list[list[int]]:
+    """Split ``games`` across ``jobs`` workers, then split each worker's own share
+    again across ``min(worker_games, pairings_per_worker)`` distinct pairings --
+    ``pairings_per_worker`` never creates a pairing with 0 games, since a worker with
+    fewer allocated games than ``pairings_per_worker`` simply uses fewer pairings (one
+    game each, at minimum). Returns one per-pairing game-count list per worker; each
+    worker's list length is that worker's actual pairing count (``<=
+    pairings_per_worker``), and every value in every sublist sums to exactly
+    ``games``. ``pairings_per_worker=1`` returns exactly ``[[count] for count in
+    allocate_games(games, jobs)]`` -- the pre-fix one-pairing-per-worker split,
+    unchanged.
+    """
+
+    if pairings_per_worker <= 0:
+        raise ValueError("pairings_per_worker must be positive")
+    worker_games = allocate_games(games, jobs)
+    return [allocate_games(count, min(count, pairings_per_worker)) for count in worker_games]
 
 
 async def collect_teacher_samples(
@@ -691,43 +872,57 @@ async def evaluate_frozen_policy(
     mirror_fraction: float,
     seed: int,
     device: str,
+    pairings_per_worker: int = 1,
 ) -> dict[str, object]:
-    allocations = allocate_games(games, jobs)
-    teams = build_opponent_team_schedule(
-        len(allocations),
+    worker_pairing_games = allocate_pairing_games(games, jobs, pairings_per_worker)
+    worker_count = len(worker_pairing_games)
+    pairing_groups = build_opponent_team_schedule_groups(
+        worker_count,
         learner_team=learner_team,
         diverse_teams=diverse_teams,
         mirror_fraction=mirror_fraction,
         seed=seed,
+        pairings_per_worker=pairings_per_worker,
         pair_groups=True,
     )
+    worker_pairings: list[list[tuple[str, OpponentTeamChoice]]] = [
+        [(learner_team, choice) for choice in opponent_choices[: len(pairing_games)]]
+        for pairing_games, opponent_choices in zip(worker_pairing_games, pairing_groups)
+    ]
     rows = await asyncio.gather(
         *(
             _evaluate_worker(
                 model,
                 worker_id=worker_id,
-                games=count,
-                learner_team=learner_team,
-                opponent_team=teams[worker_id],
+                pairings=worker_pairings[worker_id],
+                pairing_games=worker_pairing_games[worker_id],
                 device=device,
                 learner_challenges=worker_id % 2 == 0,
             )
-            for worker_id, count in enumerate(allocations)
+            for worker_id in range(worker_count)
         )
     )
     completed = sum(int(row["games"]) for row in rows)
     wins = sum(int(row["wins"]) for row in rows)
     losses = sum(int(row["losses"]) for row in rows)
-    by_team_group: dict[str, dict[str, float | int]] = {}
-    for group in ("mirror", "diverse"):
-        group_rows = [row for row in rows if row["team_group"] == group]
-        group_games = sum(int(row["games"]) for row in group_rows)
-        group_wins = sum(int(row["wins"]) for row in group_rows)
-        by_team_group[group] = {
-            "games": group_games,
-            "wins": group_wins,
-            "win_rate": group_wins / group_games if group_games else 0.0,
-        }
+    # Aggregated over PAIRINGS, not workers -- a worker whose pairings span both the
+    # mirror and diverse groups (possible once `pairings_per_worker > 1`) is counted
+    # correctly since each pairing is attributed to its own group.
+    by_team_group: dict[str, dict[str, float | int]] = {
+        group: {"games": 0, "wins": 0} for group in ("mirror", "diverse")
+    }
+    for row in rows:
+        for pairing_row in row["pairings"]:
+            group = str(pairing_row["team_group"])
+            by_team_group[group]["games"] = int(by_team_group[group]["games"]) + int(
+                pairing_row["games"]
+            )
+            by_team_group[group]["wins"] = int(by_team_group[group]["wins"]) + int(
+                pairing_row["wins"]
+            )
+    for stats in by_team_group.values():
+        group_games = int(stats["games"])
+        stats["win_rate"] = int(stats["wins"]) / group_games if group_games else 0.0
     return {
         "games": completed,
         "wins": wins,
@@ -752,6 +947,7 @@ async def evaluate_pool_policy(
     seed: int,
     device: str,
     same_archetype_pairing: bool = False,
+    pairings_per_worker: int = 1,
 ) -> dict[str, object]:
     """Archetype-pool analogue of ``evaluate_frozen_policy``: each worker's learner AND
     opponent team are BOTH drawn from ``pool_teams`` (see
@@ -760,63 +956,92 @@ async def evaluate_pool_policy(
 
     When ``same_archetype_pairing`` is True, each worker draws both teams from a
     single archetype's subset of ``pool_teams`` (round-robin across workers -- see
-    ``build_same_archetype_pool_worker_assignments``), which is what makes the
+    ``build_same_archetype_pool_worker_pairing_groups``), which is what makes the
     returned ``by_archetype`` breakdown meaningful; the held-out arm of
     ``evaluate_with_generalization_by_archetype`` uses this so a low/high win rate can
     be attributed to a specific archetype instead of averaged across an arbitrary
-    cross-archetype matchup.
+    cross-archetype matchup. Each worker now draws ``pairings_per_worker`` such
+    (learner, opponent) pairs instead of one; every pairing stays within the same
+    worker's archetype when ``same_archetype_pairing`` is True.
     """
 
-    allocations = allocate_games(games, jobs)
+    worker_pairing_games = allocate_pairing_games(games, jobs, pairings_per_worker)
+    worker_count = len(worker_pairing_games)
     if same_archetype_pairing:
-        assignments = build_same_archetype_pool_worker_assignments(
-            len(allocations), pool_teams, mirror_fraction=mirror_fraction, seed=seed
+        pairing_groups = build_same_archetype_pool_worker_pairing_groups(
+            worker_count,
+            pool_teams,
+            mirror_fraction=mirror_fraction,
+            seed=seed,
+            pairings_per_worker=pairings_per_worker,
         )
     else:
-        assignments = build_pool_worker_assignments(
-            len(allocations), pool_teams, mirror_fraction=mirror_fraction, seed=seed
+        pairing_groups = build_pool_worker_pairing_groups(
+            worker_count,
+            pool_teams,
+            mirror_fraction=mirror_fraction,
+            seed=seed,
+            pairings_per_worker=pairings_per_worker,
         )
+    worker_pairings: list[list[tuple[str, OpponentTeamChoice]]] = []
+    worker_pairing_learners: list[list[PoolTeam]] = []
+    for pairing_games, assignment_group in zip(worker_pairing_games, pairing_groups):
+        # Never create a pairing with 0 games: `allocate_pairing_games` already sized
+        # this worker's pairing count to `len(pairing_games)` (<= pairings_per_worker).
+        trimmed = assignment_group[: len(pairing_games)]
+        worker_pairings.append([(learner.packed, opponent) for learner, opponent in trimmed])
+        worker_pairing_learners.append([learner for learner, _opponent in trimmed])
     rows = await asyncio.gather(
         *(
             _evaluate_worker(
                 model,
                 worker_id=worker_id,
-                games=count,
-                learner_team=learner.packed,
-                opponent_team=opponent,
+                pairings=worker_pairings[worker_id],
+                pairing_games=worker_pairing_games[worker_id],
                 device=device,
                 learner_challenges=worker_id % 2 == 0,
             )
-            for worker_id, (count, (learner, opponent)) in enumerate(
-                zip(allocations, assignments)
-            )
+            for worker_id in range(worker_count)
         )
     )
     enriched_rows: list[dict[str, object]] = []
     by_archetype: dict[str, dict[str, float | int]] = {}
-    for row, (learner, _opponent) in zip(rows, assignments):
-        enriched_rows.append(
-            {**row, "learner_team": learner.label, "learner_archetype": learner.archetype}
-        )
-        entry = by_archetype.setdefault(learner.archetype, {"games": 0, "wins": 0})
-        entry["games"] = int(entry["games"]) + int(row["games"])
-        entry["wins"] = int(entry["wins"]) + int(row["wins"])
+    # Aggregated over PAIRINGS, not workers -- see `evaluate_frozen_policy`'s matching
+    # comment. `same_archetype_pairing=True` guarantees every pairing in a worker's
+    # list shares one archetype, so per-pairing attribution here is always correct.
+    by_team_group: dict[str, dict[str, float | int]] = {
+        group: {"games": 0, "wins": 0} for group in ("mirror", "diverse")
+    }
+    for row, learners in zip(rows, worker_pairing_learners):
+        enriched_pairings: list[dict[str, object]] = []
+        for pairing_row, learner in zip(row["pairings"], learners):
+            enriched_pairings.append(
+                {
+                    **pairing_row,
+                    "learner_team": learner.label,
+                    "learner_archetype": learner.archetype,
+                }
+            )
+            group = str(pairing_row["team_group"])
+            by_team_group[group]["games"] = int(by_team_group[group]["games"]) + int(
+                pairing_row["games"]
+            )
+            by_team_group[group]["wins"] = int(by_team_group[group]["wins"]) + int(
+                pairing_row["wins"]
+            )
+            entry = by_archetype.setdefault(learner.archetype, {"games": 0, "wins": 0})
+            entry["games"] = int(entry["games"]) + int(pairing_row["games"])
+            entry["wins"] = int(entry["wins"]) + int(pairing_row["wins"])
+        enriched_rows.append({**row, "pairings": enriched_pairings})
     for entry in by_archetype.values():
         games_played = int(entry["games"])
         entry["win_rate"] = entry["wins"] / games_played if games_played else 0.0
+    for stats in by_team_group.values():
+        group_games = int(stats["games"])
+        stats["win_rate"] = int(stats["wins"]) / group_games if group_games else 0.0
     completed = sum(int(row["games"]) for row in rows)
     wins = sum(int(row["wins"]) for row in rows)
     losses = sum(int(row["losses"]) for row in rows)
-    by_team_group: dict[str, dict[str, float | int]] = {}
-    for group in ("mirror", "diverse"):
-        group_rows = [row for row in rows if row["team_group"] == group]
-        group_games = sum(int(row["games"]) for row in group_rows)
-        group_wins = sum(int(row["wins"]) for row in group_rows)
-        by_team_group[group] = {
-            "games": group_games,
-            "wins": group_wins,
-            "win_rate": group_wins / group_games if group_games else 0.0,
-        }
     return {
         "games": completed,
         "wins": wins,
@@ -845,6 +1070,7 @@ async def evaluate_with_generalization(
     generalization_games: int,
     seed: int,
     device: str,
+    pairings_per_worker: int = 1,
 ) -> dict[str, object]:
     """Run the standard frozen evaluation, plus a seen-vs-held-out check.
 
@@ -866,6 +1092,7 @@ async def evaluate_with_generalization(
         mirror_fraction=eval_mirror_fraction,
         seed=seed,
         device=device,
+        pairings_per_worker=pairings_per_worker,
     )
     if not holdout_teams:
         return evaluation
@@ -895,6 +1122,7 @@ async def evaluate_with_generalization(
             mirror_fraction=0.0,
             seed=seed,
             device=device,
+            pairings_per_worker=pairings_per_worker,
         ),
         evaluate_frozen_policy(
             model,
@@ -905,6 +1133,7 @@ async def evaluate_with_generalization(
             mirror_fraction=0.0,
             seed=seed,
             device=device,
+            pairings_per_worker=pairings_per_worker,
         ),
     )
     evaluation["generalization"] = {
@@ -930,6 +1159,7 @@ async def evaluate_with_generalization_by_archetype(
     generalization_games: int,
     seed: int,
     device: str,
+    pairings_per_worker: int = 1,
 ) -> dict[str, object]:
     """Archetype-pool analogue of ``evaluate_with_generalization``.
 
@@ -958,6 +1188,7 @@ async def evaluate_with_generalization_by_archetype(
         mirror_fraction=eval_mirror_fraction,
         seed=seed,
         device=device,
+        pairings_per_worker=pairings_per_worker,
     )
     if not holdout_pool_teams:
         return evaluation
@@ -983,6 +1214,7 @@ async def evaluate_with_generalization_by_archetype(
             # the holdout arm paired within-archetype, the gap would also reflect the
             # difference in matchup structure, not just memorization.
             same_archetype_pairing=True,
+            pairings_per_worker=pairings_per_worker,
         ),
         evaluate_pool_policy(
             model,
@@ -993,6 +1225,7 @@ async def evaluate_with_generalization_by_archetype(
             seed=seed,
             device=device,
             same_archetype_pairing=True,
+            pairings_per_worker=pairings_per_worker,
         ),
     )
     evaluation["generalization"] = {
@@ -1263,6 +1496,16 @@ def parse_args() -> argparse.Namespace:
             "0 derives a cheap budget from --eval-games"
         ),
     )
+    parser.add_argument(
+        "--eval-pairings-per-worker",
+        type=int,
+        default=DEFAULT_EVAL_PAIRINGS_PER_WORKER,
+        help=(
+            "distinct (learner_team, opponent_team) matchups each evaluation worker "
+            "samples across its allocated games, instead of one fixed matchup for all "
+            "of a worker's games; 1 reproduces the pre-fix behavior exactly"
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument(
@@ -1447,6 +1690,8 @@ def main() -> int:
         raise SystemExit("holdout-team-fraction must be in [0.0, 1.0)")
     if args.generalization_eval_games < 0:
         raise SystemExit("generalization-eval-games must be nonnegative")
+    if args.eval_pairings_per_worker <= 0:
+        raise SystemExit("eval-pairings-per-worker must be positive")
     if args.teacher_anchor_weight < 0.0:
         raise SystemExit("teacher-anchor-weight must be nonnegative")
     if args.entropy_weight < 0.0:
@@ -1596,6 +1841,7 @@ def main() -> int:
                     generalization_games=args.generalization_eval_games,
                     seed=args.seed,
                     device=args.device,
+                    pairings_per_worker=args.eval_pairings_per_worker,
                 )
             )
         return asyncio.run(
@@ -1611,6 +1857,7 @@ def main() -> int:
                 generalization_games=args.generalization_eval_games,
                 seed=args.seed,
                 device=args.device,
+                pairings_per_worker=args.eval_pairings_per_worker,
             )
         )
 

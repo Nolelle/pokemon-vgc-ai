@@ -8,6 +8,7 @@ pool" work: `tools/build_archetype_pool.py` writes the real
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 
@@ -15,11 +16,15 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+import selfplay.train_ppo as train_ppo  # noqa: E402
 from selfplay.train_ppo import (  # noqa: E402
     OpponentTeamChoice,
     PoolTeam,
     build_pool_worker_assignments,
+    build_pool_worker_pairing_groups,
     build_same_archetype_pool_worker_assignments,
+    build_same_archetype_pool_worker_pairing_groups,
+    evaluate_pool_policy,
     load_archetype_pool,
     load_diverse_opponent_teams,
     sample_learner_and_opponent,
@@ -271,6 +276,151 @@ def test_build_same_archetype_pool_worker_assignments_pairs_within_archetype() -
         # learner's own archetype (the whole point of same-archetype pairing).
         opponent_archetype = opponent.label.split(":", 1)[0]
         assert opponent_archetype == learner.archetype
+
+
+def test_build_pool_worker_pairing_groups_at_one_pairing_reproduces_flat_assignments() -> None:
+    teams = _pool_teams({"sun": 4, "rain": 4})
+
+    flat = build_pool_worker_assignments(6, teams, mirror_fraction=0.3, seed=5)
+    grouped = build_pool_worker_pairing_groups(
+        6, teams, mirror_fraction=0.3, seed=5, pairings_per_worker=1
+    )
+
+    assert grouped == [[pair] for pair in flat]
+
+
+def test_build_pool_worker_pairing_groups_sample_many_distinct_pairings() -> None:
+    teams = _pool_teams({"sun": 10, "rain": 10})
+
+    groups = build_pool_worker_pairing_groups(
+        8, teams, mirror_fraction=0.0, seed=5, pairings_per_worker=4
+    )
+
+    assert len(groups) == 8
+    for group in groups:
+        assert len(group) == 4
+    distinct_pairings = {
+        (learner.label, opponent.label) for group in groups for learner, opponent in group
+    }
+    # 8 workers x 4 pairings = 32 draws -- substantially more distinct (learner,
+    # opponent) matchups than the 8 the pre-fix one-pairing-per-worker design gave.
+    assert len(distinct_pairings) > 8
+
+
+def test_build_same_archetype_pool_worker_pairing_groups_at_one_pairing_reproduces_flat() -> None:
+    teams = _pool_teams({"sun": 4, "rain": 4, "sand": 4})
+
+    flat = build_same_archetype_pool_worker_assignments(6, teams, mirror_fraction=0.0, seed=1)
+    grouped = build_same_archetype_pool_worker_pairing_groups(
+        6, teams, mirror_fraction=0.0, seed=1, pairings_per_worker=1
+    )
+
+    assert grouped == [[pair] for pair in flat]
+
+
+def test_build_same_archetype_pool_worker_pairing_groups_stays_within_one_archetype_per_worker() -> (
+    None
+):
+    teams = _pool_teams({"sun": 6, "rain": 6, "sand": 6})
+
+    groups = build_same_archetype_pool_worker_pairing_groups(
+        6, teams, mirror_fraction=0.0, seed=1, pairings_per_worker=4
+    )
+
+    assert len(groups) == 6
+    for group in groups:
+        assert len(group) == 4
+        archetypes = {learner.archetype for learner, _opponent in group}
+        opponent_archetypes = {
+            opponent.label.split(":", 1)[0] for _learner, opponent in group
+        }
+        # Every pairing belonging to one worker -- both learner and opponent -- stays
+        # within a single archetype, so `by_archetype` attribution remains valid.
+        assert len(archetypes) == 1
+        assert opponent_archetypes == archetypes
+
+
+async def _fake_evaluate_worker(
+    _model,
+    *,
+    worker_id: int,
+    pairings: list[tuple[str, OpponentTeamChoice]],
+    pairing_games: list[int],
+    device: str,
+    learner_challenges: bool,
+) -> dict[str, object]:
+    """Deterministic ``_evaluate_worker`` stand-in (no poke-env players, no server) for
+    unit-testing ``evaluate_pool_policy``'s by_archetype aggregation in isolation."""
+
+    pairing_rows: list[dict[str, object]] = []
+    total_games = total_wins = total_losses = 0
+    for index, ((_learner_team, opponent_team), games) in enumerate(zip(pairings, pairing_games)):
+        losses = min(index % 3, games)
+        wins = games - losses
+        total_games += games
+        total_wins += wins
+        total_losses += losses
+        pairing_rows.append(
+            {
+                "requested": games,
+                "games": games,
+                "wins": wins,
+                "losses": losses,
+                "opponent_team": opponent_team.label,
+                "team_group": opponent_team.group,
+                "error": None,
+            }
+        )
+    return {
+        "worker": worker_id,
+        "requested": sum(pairing_games),
+        "games": total_games,
+        "wins": total_wins,
+        "losses": total_losses,
+        "side": "challenger" if learner_challenges else "receiver",
+        "error": None,
+        "pairings": pairing_rows,
+    }
+
+
+def test_evaluate_pool_policy_aggregates_by_archetype_over_pairings(monkeypatch) -> None:
+    monkeypatch.setattr(train_ppo, "_evaluate_worker", _fake_evaluate_worker)
+    teams = _pool_teams({"sun": 10, "rain": 10, "sand": 10})
+
+    evaluation = asyncio.run(
+        evaluate_pool_policy(
+            model=None,
+            games=50,
+            jobs=8,
+            pool_teams=teams,
+            mirror_fraction=0.25,
+            seed=9,
+            device="cpu",
+            same_archetype_pairing=True,
+            pairings_per_worker=4,
+        )
+    )
+
+    assert evaluation["games"] == 50
+    assert evaluation["worker_errors"] == 0
+    # by_archetype must sum over every PAIRING (a worker's learner/opponent teams vary
+    # pairing-to-pairing even within one archetype), not just one entry per worker.
+    expected_games: dict[str, int] = {}
+    expected_wins: dict[str, int] = {}
+    total_pairings = 0
+    for row in evaluation["workers"]:
+        for pairing_row in row["pairings"]:
+            total_pairings += 1
+            archetype = pairing_row["learner_archetype"]
+            expected_games[archetype] = expected_games.get(archetype, 0) + pairing_row["games"]
+            expected_wins[archetype] = expected_wins.get(archetype, 0) + pairing_row["wins"]
+    assert total_pairings > 8
+    for archetype, games in expected_games.items():
+        assert evaluation["by_archetype"][archetype]["games"] == games
+        assert evaluation["by_archetype"][archetype]["wins"] == expected_wins[archetype]
+    assert sum(entry["games"] for entry in evaluation["by_archetype"].values()) == evaluation[
+        "games"
+    ]
 
 
 def test_default_mode_unaffected_split_holdout_teams_and_schedule_still_work() -> None:
