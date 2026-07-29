@@ -74,6 +74,30 @@ PPO_CONFIG_ARGS = ("teacher_anchor_weight", "reward_shaping_coef", "entropy_weig
 # CLAUDE.md's evaluation-methodology note). `1` reproduces the pre-fix
 # single-pairing-per-worker behavior exactly.
 DEFAULT_EVAL_PAIRINGS_PER_WORKER = 4
+# Seed offset for the fresh --bootstrap-val-games validation collection, so it draws an
+# independently sampled team-pairing/rollout stream from the training collection
+# (args.seed) rather than reusing/overlapping it. See the CRITICAL-bug note below.
+BOOTSTRAP_VAL_SEED_OFFSET = 777_000
+# CRITICAL measurement bug (fixed by --bootstrap-val-games, see main()'s bootstrap
+# block): gating the teacher-bootstrap on split_samples_by_battle(samples, ...) splits
+# the TRAINING collection itself. Because the reachable state space is small (a fixed
+# team pool, near-deterministic teacher), that "held-out" split overlaps the training
+# state distribution and massively overstates agreement -- measured case: a reported
+# val_after.accuracy of 0.955 corresponded to only 0.217 accuracy / 0.220
+# teacher_probability on 235 freshly collected samples (24 games, a different seed, via
+# the same collect_teacher_samples_from_pool path); at 120 games, 24.2% of collected
+# states were exact duplicates and 28.5% of the "validation" states also appeared in
+# training. Pass --bootstrap-val-games N to gate on an honestly separate fresh set
+# instead.
+BOOTSTRAP_SPLIT_VALIDATION_WARNING = (
+    "WARNING: teacher-bootstrap gate is validating on split_samples_by_battle(samples, "
+    "...), a split of the TRAINING collection, NOT a separately collected fresh set. "
+    "This is known to massively OVERSTATE agreement (measured: reported val_after."
+    "accuracy 0.955 vs. only 0.217 accuracy / 0.220 teacher_probability on 235 freshly "
+    "collected samples from the same path; 24.2% exact-duplicate states and 28.5% "
+    "train/val state overlap at 120 games). Pass --bootstrap-val-games N for an honest, "
+    "independently seeded validation set."
+)
 
 
 @dataclass(frozen=True)
@@ -1433,6 +1457,88 @@ def _print_generalization(evaluation: dict[str, object]) -> None:
         print(f"  holdout by archetype: {breakdown}")
 
 
+def bootstrap_validation_seed(seed: int) -> int:
+    """Seed for the fresh ``--bootstrap-val-games`` validation collection.
+
+    Offset from the training collection's seed (``BOOTSTRAP_VAL_SEED_OFFSET``) so team
+    pairings/rollouts for the "held-out" set are independently sampled from training,
+    instead of reusing the exact same seed (which would just reproduce the training
+    collection's games) -- see the CRITICAL-bug note on ``BOOTSTRAP_VAL_SEED_OFFSET``.
+    """
+
+    return seed + BOOTSTRAP_VAL_SEED_OFFSET
+
+
+def build_bootstrap_artifact(
+    *,
+    validation_source: str,
+    collection: dict[str, object],
+    fresh_collection: dict[str, object] | None,
+    train_battles: int,
+    val_battles: int,
+    train_samples: int,
+    val_samples: int,
+    before: dict[str, float],
+    training: dict[str, float],
+    train_after: dict[str, float],
+    val_after: dict[str, float],
+    min_val_accuracy: float,
+    min_improvement: float,
+    min_teacher_probability: float,
+    elapsed_seconds: float,
+) -> dict[str, object]:
+    """Assemble ``bootstrap.json``'s payload and evaluate the pass/fail gate.
+
+    ``val_after`` (and ``before``, computed on the same set) must already be the
+    metrics for the AUTHORITATIVE validation set: the freshly collected set when
+    ``validation_source == "fresh_collection"``, else the training-split set when
+    ``"training_split"``. This function doesn't choose which samples were evaluated --
+    it only picks which of the two already-computed results is authoritative for the
+    gate/artifact and records that choice explicitly, so a reader of ``bootstrap.json``
+    never has to guess whether ``val_after`` overlapped training.
+
+    ``train_after`` is always recorded too (agreement on the training samples) so the
+    train-vs-authoritative-val memorization gap is visible in the artifact -- on the
+    fresh path, that gap is the whole diagnostic point of collecting a separate set.
+    """
+
+    if validation_source not in ("fresh_collection", "training_split"):
+        raise ValueError(f"unknown validation_source: {validation_source!r}")
+    if (fresh_collection is not None) != (validation_source == "fresh_collection"):
+        raise ValueError("fresh_collection must be provided iff validation_source is fresh")
+
+    improvement = val_after["accuracy"] - before["accuracy"]
+    passed = (
+        val_after["accuracy"] >= min_val_accuracy
+        and improvement >= min_improvement
+        and val_after["teacher_probability"] >= min_teacher_probability
+    )
+    result: dict[str, object] = {
+        "validation_source": validation_source,
+        "collection": collection,
+        "train_battles": train_battles,
+        "val_battles": val_battles,
+        "train_samples": train_samples,
+        "val_samples": val_samples,
+        "before": before,
+        "training": training,
+        "train_after": train_after,
+        "val_after": val_after,
+        "val_accuracy_improvement": improvement,
+        "min_val_accuracy": min_val_accuracy,
+        "min_improvement": min_improvement,
+        "min_teacher_probability": min_teacher_probability,
+        "passed": passed,
+        "elapsed_seconds": elapsed_seconds,
+    }
+    if fresh_collection is not None:
+        result["fresh_collection"] = fresh_collection
+        result["train_vs_fresh_val_accuracy_gap"] = (
+            train_after["accuracy"] - val_after["accuracy"]
+        )
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=10)
@@ -1558,7 +1664,34 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--bootstrap-epochs", type=int, default=30)
     parser.add_argument("--bootstrap-lr", type=float, default=1e-3)
-    parser.add_argument("--bootstrap-val-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--bootstrap-val-fraction",
+        type=float,
+        default=0.2,
+        help=(
+            "fraction of --bootstrap-games held out via split_samples_by_battle for "
+            "the LEGACY validation path (--bootstrap-val-games 0, the default). This "
+            "split overlaps the training state distribution and is known to overstate "
+            "agreement -- see BOOTSTRAP_SPLIT_VALIDATION_WARNING. Unused whenever "
+            "--bootstrap-val-games > 0: that path trains on ALL collected samples and "
+            "gates on a separately, freshly collected validation set instead."
+        ),
+    )
+    parser.add_argument(
+        "--bootstrap-val-games",
+        type=int,
+        default=0,
+        help=(
+            "when > 0, collect this many ADDITIONAL teacher games (via a seed offset "
+            "by BOOTSTRAP_VAL_SEED_OFFSET from --seed, so team pairings/rollouts are "
+            "independently sampled from --bootstrap-games) to form the authoritative, "
+            "honestly held-out validation set that gates the bootstrap -- fixes the "
+            "training-split path's measured leakage (see "
+            "BOOTSTRAP_SPLIT_VALIDATION_WARNING). Training then uses ALL of "
+            "--bootstrap-games' samples (--bootstrap-val-fraction becomes unused). "
+            "Default 0 keeps the legacy split-based validation path unchanged."
+        ),
+    )
     parser.add_argument("--bootstrap-min-val-accuracy", type=float, default=0.40)
     parser.add_argument("--bootstrap-min-improvement", type=float, default=0.10)
     parser.add_argument("--bootstrap-min-teacher-probability", type=float, default=0.20)
@@ -1685,6 +1818,8 @@ def main() -> int:
         )
     if not 0.0 < args.bootstrap_val_fraction < 1.0:
         raise SystemExit("bootstrap-val-fraction must be between 0 and 1")
+    if args.bootstrap_val_games < 0:
+        raise SystemExit("bootstrap-val-games must be nonnegative")
     if not 0.0 <= args.bootstrap_min_val_accuracy <= 1.0:
         raise SystemExit("bootstrap-min-val-accuracy must be between 0 and 1")
     if not 0.0 <= args.bootstrap_min_improvement <= 1.0:
@@ -1919,16 +2054,57 @@ def main() -> int:
                         seed=args.seed,
                     )
                 )
-            train_samples, val_samples = split_samples_by_battle(
-                samples,
-                val_fraction=args.bootstrap_val_fraction,
-                seed=args.seed,
-            )
+
+            fresh_collection: dict[str, object] | None = None
+            if args.bootstrap_val_games:
+                # Honest path: gate on a SEPARATELY collected fresh set, seeded off
+                # args.seed so its team pairings/rollouts don't overlap the training
+                # collection above. Train on ALL of `samples` -- no split needed.
+                val_seed = bootstrap_validation_seed(args.seed)
+                if args.archetype_pool is not None:
+                    val_samples, fresh_collection = asyncio.run(
+                        collect_teacher_samples_from_pool(
+                            games=args.bootstrap_val_games,
+                            jobs=args.jobs,
+                            # Never the holdout pool -- the fresh validation set must
+                            # stay as train-team-only as the training collection so
+                            # held-out teams remain untouched by bootstrap entirely.
+                            pool_teams=archetype_train_teams,
+                            mirror_fraction=args.mirror_team_fraction,
+                            seed=val_seed,
+                        )
+                    )
+                else:
+                    val_samples, fresh_collection = asyncio.run(
+                        collect_teacher_samples(
+                            games=args.bootstrap_val_games,
+                            jobs=args.jobs,
+                            learner_team=team,
+                            diverse_teams=train_teams,
+                            mirror_fraction=args.mirror_team_fraction,
+                            seed=val_seed,
+                        )
+                    )
+                train_samples = samples
+                validation_source = "fresh_collection"
+            else:
+                # Legacy path: validate on a split of the training collection itself.
+                print(BOOTSTRAP_SPLIT_VALIDATION_WARNING)
+                train_samples, val_samples = split_samples_by_battle(
+                    samples,
+                    val_fraction=args.bootstrap_val_fraction,
+                    seed=args.seed,
+                )
+                validation_source = "training_split"
+
             distill_config = DistillationConfig(
                 epochs=args.bootstrap_epochs,
                 val_fraction=args.bootstrap_val_fraction,
                 seed=args.seed,
             )
+            # `before`/`val_after` are always computed on the authoritative set (fresh
+            # when collected above, else the training split) so the improvement delta
+            # stays apples-to-apples with whichever set gates the run.
             before = evaluate_agreement(
                 model,
                 val_samples,
@@ -1954,37 +2130,39 @@ def main() -> int:
                 batch_size=distill_config.batch_size,
                 device=args.device,
             )
-            improvement = val_after["accuracy"] - before["accuracy"]
-            passed = (
-                val_after["accuracy"] >= args.bootstrap_min_val_accuracy
-                and improvement >= args.bootstrap_min_improvement
-                and val_after["teacher_probability"] >= args.bootstrap_min_teacher_probability
+            bootstrap_result = build_bootstrap_artifact(
+                validation_source=validation_source,
+                collection=collection,
+                fresh_collection=fresh_collection,
+                train_battles=len({sample.battle_id for sample in train_samples}),
+                val_battles=len({sample.battle_id for sample in val_samples}),
+                train_samples=len(train_samples),
+                val_samples=len(val_samples),
+                before=before,
+                training=training,
+                train_after=train_after,
+                val_after=val_after,
+                min_val_accuracy=args.bootstrap_min_val_accuracy,
+                min_improvement=args.bootstrap_min_improvement,
+                min_teacher_probability=args.bootstrap_min_teacher_probability,
+                elapsed_seconds=time.time() - bootstrap_started,
             )
-            bootstrap_result = {
-                "collection": collection,
-                "train_battles": len({sample.battle_id for sample in train_samples}),
-                "val_battles": len({sample.battle_id for sample in val_samples}),
-                "train_samples": len(train_samples),
-                "val_samples": len(val_samples),
-                "before": before,
-                "training": training,
-                "train_after": train_after,
-                "val_after": val_after,
-                "val_accuracy_improvement": improvement,
-                "min_val_accuracy": args.bootstrap_min_val_accuracy,
-                "min_improvement": args.bootstrap_min_improvement,
-                "min_teacher_probability": args.bootstrap_min_teacher_probability,
-                "passed": passed,
-                "elapsed_seconds": time.time() - bootstrap_started,
-            }
+            passed = bootstrap_result["passed"]
             bootstrap_path.write_text(json.dumps(bootstrap_result, indent=2, sort_keys=True) + "\n")
-            print(
+            summary_line = (
                 "teacher bootstrap: "
+                f"source={validation_source} "
                 f"games={collection['games']} samples={len(samples)} "
                 f"val_agreement={before['accuracy']:.3f}->{val_after['accuracy']:.3f} "
                 f"teacher_prob={val_after['teacher_probability']:.3f} "
                 f"passed={passed}"
             )
+            if validation_source == "fresh_collection":
+                summary_line += (
+                    f" train_after={train_after['accuracy']:.3f} "
+                    f"train_vs_fresh_gap={bootstrap_result['train_vs_fresh_val_accuracy_gap']:.3f}"
+                )
+            print(summary_line)
             if not passed:
                 raise RuntimeError(
                     f"teacher bootstrap gate failed; PPO was not started. See {bootstrap_path}"
