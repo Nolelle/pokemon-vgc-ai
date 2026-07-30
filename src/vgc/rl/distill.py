@@ -44,6 +44,11 @@ class DistillationConfig:
     max_grad_norm: float = 1.0
     val_fraction: float = 0.2
     seed: int = 0
+    # Consecutive epochs with no improvement in validation accuracy (only checked when
+    # distill_policy is called with val_samples) before training stops early. 0 (the
+    # default) disables early stopping entirely -- distill_policy always runs the full
+    # `epochs` and never restores a "best" checkpoint, current behavior byte-for-byte.
+    early_stopping_patience: int = 0
 
 
 @dataclass(frozen=True)
@@ -262,13 +267,32 @@ def distill_policy(
     config: DistillationConfig,
     *,
     device: str,
+    val_samples: list[DistillationSample] | None = None,
 ) -> dict[str, float]:
+    """Train `model` to imitate the teacher for `config.epochs` epochs.
+
+    When `val_samples` is given, evaluates honest validation agreement after EVERY
+    epoch, tracks the best epoch by validation accuracy, and restores that best
+    state_dict into `model` before returning -- this is the early-stopping / best-
+    epoch-selection lever described in the module docstring's overfitting rationale.
+    `config.early_stopping_patience > 0` additionally stops training once that many
+    consecutive epochs pass with no improvement over the best. When `val_samples` is
+    None (the default caller shape), behavior is exactly as before this argument
+    existed: fixed `config.epochs`, no extra evaluation cost, no restore.
+    """
+
     if not train_samples:
         raise ValueError("cannot train from an empty distillation sample set")
     rng = np.random.default_rng(config.seed)
     losses: list[float] = []
     grad_norms: list[float] = []
-    for _epoch in range(config.epochs):
+    best_epoch = 0
+    best_val_accuracy = -1.0
+    best_state_dict: dict[str, torch.Tensor] | None = None
+    epochs_since_improvement = 0
+    val_history: list[dict[str, float]] = []
+    epochs_run = 0
+    for epoch in range(1, config.epochs + 1):
         indices = rng.permutation(len(train_samples))
         model.train()
         for start in range(0, len(indices), config.batch_size):
@@ -292,9 +316,50 @@ def distill_policy(
             optimizer.step()
             losses.append(float(loss.detach()))
             grad_norms.append(float(grad_norm.detach()))
-    return {
+        epochs_run = epoch
+
+        if val_samples is not None:
+            # evaluate_agreement puts the model in eval mode internally; return to
+            # train mode afterward so the next epoch's dropout/BN behavior is
+            # unaffected by having just evaluated.
+            epoch_metrics = evaluate_agreement(
+                model, val_samples, batch_size=config.batch_size, device=device
+            )
+            model.train()
+            val_history.append(
+                {
+                    "epoch": float(epoch),
+                    "accuracy": epoch_metrics["accuracy"],
+                    "teacher_probability": epoch_metrics["teacher_probability"],
+                    "loss": epoch_metrics["loss"],
+                }
+            )
+            if epoch_metrics["accuracy"] > best_val_accuracy:
+                best_val_accuracy = epoch_metrics["accuracy"]
+                best_epoch = epoch
+                best_state_dict = {
+                    key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+                }
+                epochs_since_improvement = 0
+            else:
+                epochs_since_improvement += 1
+                if (
+                    config.early_stopping_patience > 0
+                    and epochs_since_improvement >= config.early_stopping_patience
+                ):
+                    break
+
+    result: dict[str, float] = {
         "loss": sum(losses) / len(losses),
         "grad_norm": sum(grad_norms) / len(grad_norms),
         "samples": float(len(train_samples)),
         "epochs": float(config.epochs),
     }
+    if val_samples is not None:
+        assert best_state_dict is not None  # at least one epoch always runs
+        model.load_state_dict(best_state_dict)
+        result["best_epoch"] = float(best_epoch)
+        result["best_val_accuracy"] = best_val_accuracy
+        result["epochs_run"] = float(epochs_run)
+        result["val_history"] = val_history
+    return result

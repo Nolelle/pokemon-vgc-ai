@@ -6,6 +6,7 @@ from pathlib import Path
 
 try:
     import torch
+    import torch.nn.functional as F
     from torch import nn
 except ImportError as exc:  # pragma: no cover - train extra is optional
     raise ImportError(
@@ -30,9 +31,22 @@ META_HIDDEN_DIM = 32
 class CandidatePolicyValueNet(nn.Module):
     """Score a padded set of legal joint actions and value the current position."""
 
-    def __init__(self, *, dropout: float = 0.0, use_meta_features: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        dropout: float = 0.0,
+        use_meta_features: bool = False,
+        head_dropout: float = 0.0,
+    ) -> None:
         super().__init__()
         self.use_meta_features = use_meta_features
+        # Applied functionally in forward() (see there) rather than as nn.Dropout
+        # modules inserted into the existing nn.Sequential stacks -- inserting modules
+        # would shift child indices (action_encoder.0/.2, ...) and break every existing
+        # checkpoint's state_dict keys. head_dropout=0.0 (the default) makes
+        # F.dropout(..., p=0.0) an exact no-op, so this is byte-for-byte unchanged from
+        # before this argument existed.
+        self.head_dropout_p = float(head_dropout)
         # heads=() makes this purely the shared state representation. Its scalar width
         # remains the BC default, including the two zero slot-marker values supplied by
         # rl.encoding.encode_live_state, so current BC trunks can warm-start it.
@@ -105,14 +119,27 @@ class CandidatePolicyValueNet(nn.Module):
             )
         else:
             context_hidden = self.context_encoder(torch.cat((state_hidden, history_hidden), dim=-1))
+        # head_dropout applies only to the randomly-initialised action-scoring path --
+        # the part of the network that overfits fastest on a small teacher-distillation
+        # sample set. `action_context` is a dropped-out COPY of context_hidden used only
+        # to build state_action below; `context_hidden` itself is left untouched so that
+        # value_head's input (below) is never affected -- value learning shouldn't be
+        # destabilized by a regularizer aimed at the policy's action-scoring path.
+        # action_hidden (the per-candidate action encoding) also gets dropout, for the
+        # same overfitting-prone-path reason. Neither `logits` nor `candidate_mask`
+        # handling gets dropout applied. Functional (not nn.Dropout modules) so this
+        # never touches state_dict keys; p=0.0 (the default) makes F.dropout an exact
+        # no-op and eval mode (training=False) never drops anything either way.
+        action_context = F.dropout(context_hidden, p=self.head_dropout_p, training=self.training)
         move_emb = self.state_encoder.move_embedding(move_indices)
         target_emb = self.target_embedding(target_indices)
         species_emb = self.state_encoder.species_embedding(switch_species_indices)
         action_input = torch.cat((move_emb, target_emb, species_emb, action_flags), dim=-1)
         batch, candidates = action_input.shape[:2]
         action_hidden = self.action_encoder(action_input.reshape(batch, candidates, -1))
+        action_hidden = F.dropout(action_hidden, p=self.head_dropout_p, training=self.training)
 
-        state_action = self.state_projection(context_hidden).unsqueeze(1).expand(-1, candidates, -1)
+        state_action = self.state_projection(action_context).unsqueeze(1).expand(-1, candidates, -1)
         policy_input = torch.cat(
             (state_action, action_hidden, state_action * action_hidden), dim=-1
         )

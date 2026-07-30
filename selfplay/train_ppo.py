@@ -508,6 +508,7 @@ def save_checkpoint(
             "ppo_config": asdict(ppo_config),
             "architecture": RL_ARCHITECTURE_VERSION,
             "use_meta_features": model.use_meta_features,
+            "head_dropout": model.head_dropout_p,
         },
         path,
     )
@@ -526,6 +527,14 @@ def load_training_checkpoint(
     meta-on checkpoint must never be silently loaded into a meta-off model or vice
     versa, since the two have different parameter shapes (`context_encoder`'s input
     width, presence/absence of `meta_encoder`).
+
+    Also restores `head_dropout` from the checkpoint onto `model`, overriding whatever
+    it was constructed with. Unlike `use_meta_features`, a mismatch here is NOT fatal
+    (head_dropout never changes parameter shapes -- it's applied functionally, see
+    `CandidatePolicyValueNet.forward`), but it must still be restored so a resumed run
+    keeps the same regularization the checkpoint was trained/last-updated with; a
+    mismatch (if `--head-dropout` was passed differently on `--resume`) is printed so
+    it's never silently ignored.
     """
 
     checkpoint = torch.load(path, map_location=device, weights_only=False)
@@ -543,6 +552,13 @@ def load_training_checkpoint(
             "--meta-features to match the checkpoint it was trained with"
         )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    checkpoint_head_dropout = float(checkpoint.get("head_dropout", 0.0))
+    if checkpoint_head_dropout != model.head_dropout_p:
+        print(
+            f"  resume: overriding requested head_dropout={model.head_dropout_p} with "
+            f"checkpoint's head_dropout={checkpoint_head_dropout}"
+        )
+    model.head_dropout_p = checkpoint_head_dropout
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     saved_ppo_config = PpoConfig(**checkpoint.get("ppo_config", {}))
     return (
@@ -1486,6 +1502,8 @@ def build_bootstrap_artifact(
     min_improvement: float,
     min_teacher_probability: float,
     elapsed_seconds: float,
+    head_dropout: float = 0.0,
+    early_stopping_patience: int = 0,
 ) -> dict[str, object]:
     """Assemble ``bootstrap.json``'s payload and evaluate the pass/fail gate.
 
@@ -1500,6 +1518,13 @@ def build_bootstrap_artifact(
     ``train_after`` is always recorded too (agreement on the training samples) so the
     train-vs-authoritative-val memorization gap is visible in the artifact -- on the
     fresh path, that gap is the whole diagnostic point of collecting a separate set.
+
+    ``training`` (the ``distill_policy`` return dict) carries ``best_epoch``,
+    ``best_val_accuracy``, ``epochs_run``, and ``val_history`` whenever early
+    stopping/best-epoch selection ran (i.e. ``val_samples`` was passed to
+    ``distill_policy``); those are surfaced at the top level of the artifact too, for
+    easy reading, alongside the ``head_dropout``/``early_stopping_patience`` knobs used
+    for this bootstrap.
     """
 
     if validation_source not in ("fresh_collection", "training_split"):
@@ -1530,12 +1555,19 @@ def build_bootstrap_artifact(
         "min_teacher_probability": min_teacher_probability,
         "passed": passed,
         "elapsed_seconds": elapsed_seconds,
+        "head_dropout": head_dropout,
+        "early_stopping_patience": early_stopping_patience,
     }
     if fresh_collection is not None:
         result["fresh_collection"] = fresh_collection
         result["train_vs_fresh_val_accuracy_gap"] = (
             train_after["accuracy"] - val_after["accuracy"]
         )
+    if "best_epoch" in training:
+        result["best_epoch"] = training["best_epoch"]
+        result["best_val_accuracy"] = training["best_val_accuracy"]
+        result["epochs_run"] = training["epochs_run"]
+        result["val_history"] = training["val_history"]
     return result
 
 
@@ -1696,6 +1728,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap-min-improvement", type=float, default=0.10)
     parser.add_argument("--bootstrap-min-teacher-probability", type=float, default=0.20)
     parser.add_argument(
+        "--bootstrap-early-stopping-patience",
+        type=int,
+        default=0,
+        help=(
+            "stop teacher-distillation once this many consecutive epochs pass with no "
+            "improvement in validation accuracy (evaluated each epoch against the "
+            "authoritative validation set -- the fresh --bootstrap-val-games collection "
+            "when set, else the split val set), and restore the best-epoch weights. "
+            "0 (default) disables early stopping and keeps the fixed-epochs, no-restore "
+            "behavior unchanged."
+        ),
+    )
+    parser.add_argument(
         "--resume",
         type=Path,
         default=None,
@@ -1751,6 +1796,20 @@ def parse_args() -> argparse.Namespace:
             "+ set-prior reveal scalars, see vgc.rl.encoding.encode_meta_context) to "
             "the network. Default off leaves the architecture byte-for-byte unchanged. "
             "A checkpoint's use_meta_features must match this flag on --resume."
+        ),
+    )
+    parser.add_argument(
+        "--head-dropout",
+        type=float,
+        default=0.0,
+        help=(
+            "dropout probability applied functionally (no state_dict impact) to the "
+            "action-scoring path's hidden representations (context_hidden, "
+            "action_hidden -- see CandidatePolicyValueNet.forward), the part of the "
+            "network that overfits fastest during teacher distillation. Also affects "
+            "PPO updates (ppo_update calls model.train()), which is intended -- it is "
+            "not limited to the bootstrap phase. 0.0 (default) is an exact no-op, "
+            "byte-for-byte unchanged behavior."
         ),
     )
     args = parser.parse_args()
@@ -1826,6 +1885,10 @@ def main() -> int:
         raise SystemExit("bootstrap-min-improvement must be between 0 and 1")
     if not 0.0 <= args.bootstrap_min_teacher_probability <= 1.0:
         raise SystemExit("bootstrap-min-teacher-probability must be between 0 and 1")
+    if args.bootstrap_early_stopping_patience < 0:
+        raise SystemExit("bootstrap-early-stopping-patience must be nonnegative")
+    if not 0.0 <= args.head_dropout < 1.0:
+        raise SystemExit("head-dropout must be in [0.0, 1.0)")
     if args.resume is not None and args.bootstrap_games:
         raise SystemExit("bootstrap-games cannot be combined with --resume")
     if args.snapshot_pool_size <= 0:
@@ -1856,7 +1919,9 @@ def main() -> int:
         raise SystemExit(f"team does not exist: {args.team}")
     torch.manual_seed(args.seed)
 
-    model = CandidatePolicyValueNet(use_meta_features=args.meta_features).to(args.device)
+    model = CandidatePolicyValueNet(
+        use_meta_features=args.meta_features, head_dropout=args.head_dropout
+    ).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     last_iteration = 0
     games_seen = 0
@@ -1896,6 +1961,7 @@ def main() -> int:
         )
     )
     print(f"reward shaping coef: {ppo_config.reward_shaping_coef}")
+    print(f"head dropout: {model.head_dropout_p}")
     team = args.team.read_text().strip()
     eval_jobs = args.eval_jobs or args.jobs
     diverse_teams = load_diverse_opponent_teams(
@@ -2101,6 +2167,7 @@ def main() -> int:
                 epochs=args.bootstrap_epochs,
                 val_fraction=args.bootstrap_val_fraction,
                 seed=args.seed,
+                early_stopping_patience=args.bootstrap_early_stopping_patience,
             )
             # `before`/`val_after` are always computed on the authoritative set (fresh
             # when collected above, else the training split) so the improvement delta
@@ -2111,12 +2178,17 @@ def main() -> int:
                 batch_size=distill_config.batch_size,
                 device=args.device,
             )
+            # Pass the SAME authoritative validation set into distill_policy for
+            # per-epoch early-stopping/best-epoch selection -- the fresh collection
+            # when --bootstrap-val-games > 0, else the (already-flagged-unreliable)
+            # split val set, matching whichever set gates the run below.
             training = distill_policy(
                 model,
                 torch.optim.Adam(model.parameters(), lr=args.bootstrap_lr),
                 train_samples,
                 distill_config,
                 device=args.device,
+                val_samples=val_samples,
             )
             train_after = evaluate_agreement(
                 model,
@@ -2146,6 +2218,8 @@ def main() -> int:
                 min_improvement=args.bootstrap_min_improvement,
                 min_teacher_probability=args.bootstrap_min_teacher_probability,
                 elapsed_seconds=time.time() - bootstrap_started,
+                head_dropout=args.head_dropout,
+                early_stopping_patience=args.bootstrap_early_stopping_patience,
             )
             passed = bootstrap_result["passed"]
             bootstrap_path.write_text(json.dumps(bootstrap_result, indent=2, sort_keys=True) + "\n")
@@ -2161,6 +2235,11 @@ def main() -> int:
                 summary_line += (
                     f" train_after={train_after['accuracy']:.3f} "
                     f"train_vs_fresh_gap={bootstrap_result['train_vs_fresh_val_accuracy_gap']:.3f}"
+                )
+            if "best_epoch" in training:
+                summary_line += (
+                    f" best_epoch={int(training['best_epoch'])}/{int(training['epochs_run'])} "
+                    f"best_val_accuracy={training['best_val_accuracy']:.3f}"
                 )
             print(summary_line)
             if not passed:

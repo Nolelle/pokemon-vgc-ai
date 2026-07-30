@@ -1427,3 +1427,214 @@ def test_main_rejects_negative_reward_shaping_coef(monkeypatch) -> None:
     )
     with pytest.raises(SystemExit):
         train_ppo_module.main()
+
+
+def test_main_rejects_negative_bootstrap_early_stopping_patience(monkeypatch) -> None:
+    import selfplay.train_ppo as train_ppo_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train_ppo.py",
+            "--iterations",
+            "1",
+            "--eval-games",
+            "0",
+            "--bootstrap-early-stopping-patience",
+            "-1",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        train_ppo_module.main()
+
+
+@pytest.mark.parametrize("bad_value", ["-0.1", "1.0", "1.5"])
+def test_main_rejects_out_of_range_head_dropout(monkeypatch, bad_value: str) -> None:
+    import selfplay.train_ppo as train_ppo_module
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "train_ppo.py",
+            "--iterations",
+            "1",
+            "--eval-games",
+            "0",
+            "--head-dropout",
+            bad_value,
+        ],
+    )
+    with pytest.raises(SystemExit):
+        train_ppo_module.main()
+
+
+# --- head_dropout (action-scoring path regularization, see CandidatePolicyValueNet) --
+
+
+def _forward_once(model: "CandidatePolicyValueNet") -> tuple[torch.Tensor, torch.Tensor]:
+    state_indices, state_scalars = _state()
+    moves, targets, species, flags, mask = pad_candidate_features([_distinct_candidates()])
+    return model(
+        torch.as_tensor(state_indices[None, :]),
+        torch.as_tensor(state_scalars[None, :]),
+        torch.as_tensor(_history()[None, :]),
+        torch.as_tensor(moves),
+        torch.as_tensor(targets),
+        torch.as_tensor(species),
+        torch.as_tensor(flags),
+        torch.as_tensor(mask),
+    )
+
+
+def test_head_dropout_does_not_change_state_dict_keys() -> None:
+    base = CandidatePolicyValueNet()
+    with_head_dropout = CandidatePolicyValueNet(head_dropout=0.5)
+    assert set(base.state_dict().keys()) == set(with_head_dropout.state_dict().keys())
+
+
+def test_head_dropout_is_inactive_in_eval_mode() -> None:
+    torch.manual_seed(11)
+    model = CandidatePolicyValueNet(head_dropout=0.0)
+    model.eval()
+    logits_zero, values_zero = _forward_once(model)
+
+    # Same weights, only head_dropout_p changes -- eval mode must make this a no-op.
+    model.head_dropout_p = 0.5
+    logits_half, values_half = _forward_once(model)
+
+    assert torch.equal(logits_zero, logits_half)
+    assert torch.equal(values_zero, values_half)
+
+
+def test_head_dropout_is_active_in_train_mode_but_zero_stays_deterministic() -> None:
+    torch.manual_seed(12)
+    model = CandidatePolicyValueNet(head_dropout=0.5)
+    model.train()
+    torch.manual_seed(100)
+    logits_a, _values_a = _forward_once(model)
+    torch.manual_seed(200)
+    logits_b, _values_b = _forward_once(model)
+    assert not torch.equal(logits_a, logits_b)
+
+    model.head_dropout_p = 0.0
+    torch.manual_seed(100)
+    logits_c, _values_c = _forward_once(model)
+    torch.manual_seed(200)
+    logits_d, _values_d = _forward_once(model)
+    assert torch.equal(logits_c, logits_d)
+
+
+# --- distill_policy early stopping / best-epoch selection ---------------------------
+
+
+def _val_samples_for_early_stopping() -> list[DistillationSample]:
+    indices, scalars = _state()
+    return [
+        DistillationSample(
+            battle_id=f"battle-{battle}",
+            state_indices=indices.copy(),
+            state_scalars=scalars.copy(),
+            history_scalars=_history(),
+            candidates=_distinct_candidates(),
+            teacher_action_index=0,
+        )
+        for battle in range(4)
+        for _turn in range(2)
+    ]
+
+
+def test_distill_policy_restores_best_epoch_weights_and_reports_val_history(monkeypatch) -> None:
+    import vgc.rl.distill as distill_module
+
+    torch.manual_seed(5)
+    samples = _val_samples_for_early_stopping()
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    scripted_accuracies = [0.4, 0.9, 0.5, 0.5]
+    snapshots: list[dict[str, torch.Tensor]] = []
+
+    def fake_evaluate_agreement(m, _samples, *, batch_size, device):
+        snapshots.append({key: value.detach().clone() for key, value in m.state_dict().items()})
+        accuracy = scripted_accuracies[len(snapshots) - 1]
+        return {
+            "accuracy": accuracy,
+            "teacher_probability": 0.5,
+            "loss": 1.0,
+            "top3_accuracy": 1.0,
+            "entropy": 0.1,
+            "samples": float(len(samples)),
+        }
+
+    monkeypatch.setattr(distill_module, "evaluate_agreement", fake_evaluate_agreement)
+
+    config = DistillationConfig(epochs=4, batch_size=8, seed=0)
+    metrics = distill_module.distill_policy(
+        model, optimizer, samples, config, device="cpu", val_samples=samples
+    )
+
+    assert metrics["best_epoch"] == 2
+    assert metrics["best_val_accuracy"] == pytest.approx(0.9)
+    assert metrics["epochs_run"] == 4
+    assert len(metrics["val_history"]) == 4
+    assert [entry["epoch"] for entry in metrics["val_history"]] == [1.0, 2.0, 3.0, 4.0]
+
+    best_snapshot = snapshots[1]  # epoch 2, 0-indexed
+    for key, value in model.state_dict().items():
+        assert torch.equal(value, best_snapshot[key])
+
+
+def test_distill_policy_early_stopping_patience_stops_before_all_epochs(monkeypatch) -> None:
+    import vgc.rl.distill as distill_module
+
+    torch.manual_seed(6)
+    samples = _val_samples_for_early_stopping()
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    scripted_accuracies = [0.6, 0.9, 0.85, 0.8, 0.5]
+    call_count = {"n": 0}
+
+    def fake_evaluate_agreement(m, _samples, *, batch_size, device):
+        accuracy = scripted_accuracies[call_count["n"]]
+        call_count["n"] += 1
+        return {
+            "accuracy": accuracy,
+            "teacher_probability": 0.5,
+            "loss": 1.0,
+            "top3_accuracy": 1.0,
+            "entropy": 0.1,
+            "samples": float(len(samples)),
+        }
+
+    monkeypatch.setattr(distill_module, "evaluate_agreement", fake_evaluate_agreement)
+
+    config = DistillationConfig(epochs=5, batch_size=8, seed=0, early_stopping_patience=2)
+    metrics = distill_module.distill_policy(
+        model, optimizer, samples, config, device="cpu", val_samples=samples
+    )
+
+    assert metrics["best_epoch"] == 2
+    assert metrics["best_val_accuracy"] == pytest.approx(0.9)
+    assert metrics["epochs_run"] == 4
+    assert metrics["epochs_run"] < config.epochs
+    assert len(metrics["val_history"]) == 4
+
+
+def test_distill_policy_without_val_samples_runs_full_epochs_and_keeps_existing_keys() -> None:
+    torch.manual_seed(7)
+    samples = _val_samples_for_early_stopping()
+    train, val = split_samples_by_battle(samples, val_fraction=0.5, seed=0)
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+    config = DistillationConfig(epochs=3, batch_size=8, seed=0)
+    metrics = distill_policy(model, optimizer, train, config, device="cpu")
+
+    assert metrics["epochs"] == 3.0
+    assert "samples" in metrics and "loss" in metrics and "grad_norm" in metrics
+    assert "best_epoch" not in metrics
+    assert "val_history" not in metrics
+    # val is unused here (val_samples not passed) -- keep the split alive only so
+    # this test documents the "legacy, no honest gating" call shape it's guarding.
+    assert val
