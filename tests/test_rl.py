@@ -1345,6 +1345,81 @@ def test_ppo_config_round_trips_reward_shaping_coef_through_asdict() -> None:
     assert rebuilt == config
 
 
+# --- Seeded policy sampling (vgc.rl.ppo.select_action's `generator`) ------------------
+
+
+def _uniform_select_args(candidates: int = 6):
+    """Model + inputs whose logits are whatever an untrained net produces."""
+
+    torch.manual_seed(0)
+    model = CandidatePolicyValueNet()
+    model.eval()
+    return model, (
+        torch.zeros(1, INDEX_DIM, dtype=torch.long),
+        torch.zeros(1, STATE_SCALAR_DIM + SLOT_FEATURE_DIM),
+        torch.zeros(1, HISTORY_SCALAR_DIM),
+        torch.zeros(1, candidates, 2, dtype=torch.long),
+        torch.zeros(1, candidates, 2, dtype=torch.long),
+        torch.zeros(1, candidates, 2, dtype=torch.long),
+        torch.zeros(1, candidates, 2, 4),
+        torch.ones(1, candidates, dtype=torch.bool),
+    )
+
+
+def _seeded_draws(model, args, seed: int, count: int = 40) -> list[int]:
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    with torch.no_grad():
+        return [int(select_action(model, *args, generator=generator)[0]) for _ in range(count)]
+
+
+def test_select_action_generator_makes_sampling_reproducible() -> None:
+    model, args = _uniform_select_args()
+    first = _seeded_draws(model, args, seed=1)
+    assert first == _seeded_draws(model, args, seed=1)
+    assert first != _seeded_draws(model, args, seed=2)
+    # Guard against "reproducible" because it collapsed onto one action.
+    assert len(set(first)) > 1
+
+
+def test_select_action_generator_does_not_disturb_the_global_torch_rng() -> None:
+    # The point of a private generator: seeding a player's sampling must not perturb
+    # dropout, initialisation, or data shuffling elsewhere in the process.
+    model, args = _uniform_select_args()
+    torch.manual_seed(123)
+    expected = torch.rand(4)
+    torch.manual_seed(123)
+    _seeded_draws(model, args, seed=99, count=5)
+    assert torch.equal(torch.rand(4), expected)
+
+
+def test_select_action_without_a_generator_is_unchanged() -> None:
+    model, args = _uniform_select_args()
+    torch.manual_seed(5)
+    with torch.no_grad():
+        baseline = [int(select_action(model, *args)[0]) for _ in range(20)]
+    torch.manual_seed(5)
+    with torch.no_grad():
+        assert [int(select_action(model, *args)[0]) for _ in range(20)] == baseline
+
+
+def test_select_action_generator_never_picks_a_masked_candidate() -> None:
+    model, args = _uniform_select_args(candidates=6)
+    mask = torch.zeros(1, 6, dtype=torch.bool)
+    mask[0, 2] = True
+    masked_args = (*args[:-1], mask)
+    assert set(_seeded_draws(model, masked_args, seed=4, count=50)) == {2}
+
+
+def test_ppo_player_policy_seed_builds_a_private_generator() -> None:
+    model = CandidatePolicyValueNet()
+    unseeded = PpoVgcPlayer(model=model, start_listening=False)
+    assert unseeded.policy_generator is None
+    seeded = PpoVgcPlayer(model=model, policy_seed=7, start_listening=False)
+    assert seeded.policy_generator is not None
+    assert seeded.policy_generator.initial_seed() == 7
+
+
 # --- Terminal potential / policy invariance (vgc.rl.player._battle_finished_callback) -
 
 

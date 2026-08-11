@@ -36,6 +36,7 @@ class PpoVgcPlayer(VgcPlayer):
         ppo_config: PpoConfig = PpoConfig(),
         device: str = "cpu",
         deterministic: bool = False,
+        policy_seed: int | None = None,
         **player_kwargs,
     ) -> None:
         self.model = model.to(device)
@@ -43,6 +44,13 @@ class PpoVgcPlayer(VgcPlayer):
         self.ppo_config = ppo_config
         self.device = device
         self.deterministic = deterministic
+        # A private sampling stream, so one player's action draws are reproducible and
+        # independent of anything else that touches torch's global RNG (data shuffling,
+        # dropout, another player in the same process). None keeps the global RNG.
+        self.policy_generator: torch.Generator | None = None
+        if policy_seed is not None:
+            self.policy_generator = torch.Generator(device=device)
+            self.policy_generator.manual_seed(int(policy_seed))
         self._battle_step_counts: dict[str, int] = {}
         super().__init__(**player_kwargs)
 
@@ -77,6 +85,7 @@ class PpoVgcPlayer(VgcPlayer):
                 torch.as_tensor(mask, dtype=torch.bool, device=self.device),
                 deterministic=self.deterministic,
                 meta_scalars=meta_tensor,
+                generator=self.policy_generator,
             )
         action_index = int(actions.item())
         if self.rollout_buffer is not None:

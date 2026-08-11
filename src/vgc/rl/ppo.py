@@ -159,8 +159,15 @@ def select_action(
     *,
     deterministic: bool = False,
     meta_scalars: torch.Tensor | None = None,
+    generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Sample (or greedily choose) only among the mask's legal candidates."""
+    """Sample (or greedily choose) only among the mask's legal candidates.
+
+    `generator` makes the SAMPLING reproducible without touching torch's global RNG,
+    which is what `docs/rl_roadmap.md`'s deterministic-replay criterion needs: the
+    simulator seed alone does not pin an episode, because the policy is stochastic by
+    design. Leaving it None keeps the previous global-RNG behavior byte for byte.
+    """
 
     logits, values = model(
         state_indices,
@@ -174,7 +181,15 @@ def select_action(
         meta_scalars=meta_scalars,
     )
     distribution = Categorical(logits=logits)
-    actions = logits.argmax(dim=-1) if deterministic else distribution.sample()
+    if deterministic:
+        actions = logits.argmax(dim=-1)
+    elif generator is None:
+        actions = distribution.sample()
+    else:
+        # Categorical.sample() takes no generator, so draw from its own normalized
+        # probs -- identical distribution, just from a stream we control. Masked
+        # candidates carry ~0 probability here exactly as they do in .sample().
+        actions = torch.multinomial(distribution.probs, 1, generator=generator).squeeze(-1)
     return actions, distribution.log_prob(actions), values
 
 
