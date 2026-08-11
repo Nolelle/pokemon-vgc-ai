@@ -13,8 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from vgc.rl.agents import DirectAgent, make_direct_agent
-from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, SimWorker
+from vgc.rl.agents import PHASE2_PREVIEW_ORDER, DirectAgent, make_direct_agent
+from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
 from vgc.rl.match import BattleOutcome, play_battle, run_series, summarize
 
 TEAM_PATH = Path(__file__).resolve().parents[1] / "teams" / "meta1.packed.txt"
@@ -118,6 +118,52 @@ def test_run_series_gives_each_agent_the_p1_seat_exactly_half_the_time(
     )
     assert len(outcomes) == games
     assert sum(1 for o in outcomes if o.agent_sides["random-a"] == "p1") == games // 2
+
+
+@pytest.mark.integration
+def test_the_phase2_mirror_always_brings_the_same_four_in_the_same_slots(worker) -> None:
+    """Phase 2's fixed mirror (`docs/rl_roadmap.md`).
+
+    The format requires SIX Pokemon on the roster -- `validate-team` rejects a four-mon
+    team outright -- so the pick is pinned with a hardcoded preview order instead, over a
+    roster ordered so that order string brings the intended four. Letting the heuristic
+    preview choose would hand the agent a different four-of-six per matchup, which is the
+    non-stationarity Phase 2 exists to remove.
+    """
+
+    mirror_team = (TEAM_PATH.parent / "phase2_mirror.packed.txt").read_text().strip()
+    leads: set[tuple] = set()
+    rosters: set[tuple] = set()
+    for index in range(4):
+        agents = {}
+        for side, label in (("p1", "a"), ("p2", "b")):
+            agent = make_direct_agent(
+                "random", mirror_team, preview_order=PHASE2_PREVIEW_ORDER
+            )
+            agent.name = label
+            agents[side] = agent
+        battle = DirectBattle.start(
+            worker, f"mirror-{index}", mirror_team, mirror_team, seed=[index + 1] * 4
+        )
+        battle.step({side: agents[side].choose(battle.battles[side]) for side in ("p1", "p2")})
+        for side in ("p1", "p2"):
+            parsed = battle.battles[side]
+            leads.add(tuple(m.species for m in parsed.active_pokemon))
+            rosters.add(tuple(sorted(p.species for p in parsed.team.values())))
+        battle.close()
+
+    assert len(leads) == 1, f"lead pair varied across battles/sides: {leads}"
+    assert leads == {("charizard", "venusaur")}
+    assert len(rosters) == 1, f"picked roster varied: {rosters}"
+
+
+def test_preview_order_overrides_the_players_own_team_preview() -> None:
+    class _Player:
+        def teampreview(self, _battle):
+            raise AssertionError("the player's own preview must not be consulted")
+
+    agent = DirectAgent(_Player(), name="fixed", preview_order=PHASE2_PREVIEW_ORDER)
+    assert agent.choose(SimpleNamespace(teampreview=True)) == "team 1234"
 
 
 @pytest.mark.integration

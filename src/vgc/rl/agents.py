@@ -36,12 +36,35 @@ from vgc.config import FORMAT_ID
 from vgc.rl.env import choice_string
 
 
-class DirectAgent:
-    """One side's decision-maker, wrapping a non-listening `poke_env` `Player`."""
+# Phase 2's hardcoded team-preview order (`docs/rl_roadmap.md`). The format REQUIRES six
+# Pokemon on the roster -- a four-mon team is rejected outright by `validate-team` ("You
+# must bring at least 6") -- so the mirror is pinned the other way: `teams/
+# phase2_mirror.packed.txt` is ordered such that this literal order string brings the
+# intended four in the intended slots, and slots 5/6 are never picked.
+#
+# Pinning this matters more than it looks. Leaving preview to the heuristic hands the
+# agent a DIFFERENT four-of-six per matchup, which makes its state distribution
+# non-stationary -- the exact confound Phase 2 exists to remove.
+PHASE2_PREVIEW_ORDER = "team 1234"
 
-    def __init__(self, player: Player, *, name: str | None = None) -> None:
+
+class DirectAgent:
+    """One side's decision-maker, wrapping a non-listening `poke_env` `Player`.
+
+    `preview_order`, when set, replaces the player's own team-preview decision with a
+    fixed order string. The battle policy stays the only thing that varies.
+    """
+
+    def __init__(
+        self,
+        player: Player,
+        *,
+        name: str | None = None,
+        preview_order: str | None = None,
+    ) -> None:
         self.player = player
         self.name = name or type(player).__name__
+        self.preview_order = preview_order
 
     def observe(self, battle_tag: str, lines: Sequence[str]) -> None:
         """Feed this step's protocol lines to the player's `BattleMemory`, if it has one.
@@ -63,6 +86,8 @@ class DirectAgent:
         """
 
         if battle.teampreview:
+            if self.preview_order is not None:
+                return choice_string(self.preview_order)
             return choice_string(self.player.teampreview(battle))
         return choice_string(self.player.choose_move(battle))
 
@@ -84,13 +109,19 @@ def make_direct_agent(
     team: str,
     *,
     battle_format: str = FORMAT_ID,
+    preview_order: str | None = None,
     **kwargs,
 ) -> DirectAgent:
     """Build a `DirectAgent` for a registered `vgc.baselines` name.
 
     Same names and semantics as `vgc.baselines.make_player` -- `start_listening=False`
-    is forced, since the whole point is a player that never touches the network.
+    is forced, since the whole point is a player that never touches the network. Pass
+    `preview_order=PHASE2_PREVIEW_ORDER` for the fixed mirror.
     """
 
     kwargs["start_listening"] = False
-    return DirectAgent(make_player(name, team, battle_format, **kwargs), name=name)
+    return DirectAgent(
+        make_player(name, team, battle_format, **kwargs),
+        name=name,
+        preview_order=preview_order,
+    )
