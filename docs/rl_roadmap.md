@@ -169,10 +169,14 @@ experiment cost.
    The network forward pass and the trajectory storage are both negligible beside it,
    and potential-based shaping is free.
 
-   That reframes the July runs: at 1.6 games/sec, the `honest-8000` run spent most of
-   its wall clock inside the search teacher rather than collecting experience. Decide
-   the anchor's weight on its training value, knowing it costs 16x, rather than leaving
-   it on by default.
+   Decide the anchor's weight on its training value, knowing it costs 16x, rather than
+   leaving it on by default.
+
+   Resist reading July's failure into this number. `honest-8000` recorded 2,500 s of
+   wall clock, which is FASTER than 8,000 battles at 1.6 games/sec would allow, so those
+   runs were not paying this cost at this rate -- bootstrap distillation is a different
+   loop from PPO collection. The measurement here says the anchor is expensive going
+   forward; it does not diagnose the old runs, and nothing in this repo currently can.
 3. **`TPS_eval(opponent)`** -- benchmarked separately per ladder rung. `vgc-shallow-search`
    and `vgc` do real search; they can dominate evaluation wall clock no matter how fast
    the simulator is. Requirement is not a number: 500-1000 game evaluations must be
