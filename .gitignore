@@ -9,3 +9,4 @@ __pycache__/
 .ruff_cache/
 .showdown-credentials.json
 .DS_Store
+.zshrc
