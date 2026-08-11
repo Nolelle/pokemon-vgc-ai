@@ -22,6 +22,8 @@ from vgc.rl.env import (
     InvalidChoice,
     SimWorker,
     choice_string,
+    start_many,
+    step_many,
 )
 
 TEAM_PATH = Path(__file__).resolve().parents[1] / "teams" / "meta1.packed.txt"
@@ -283,6 +285,78 @@ def test_an_illegal_choice_raises_instead_of_silently_retrying(worker, team: str
     with pytest.raises(InvalidChoice):
         battle.step({side: "move 1 1, move 1 2" for side in battle.sides_to_move()})
     battle.close()
+
+
+@pytest.mark.integration
+def test_batched_battles_produce_the_same_games_as_stepping_them_one_at_a_time(
+    worker, team: str
+) -> None:
+    """Batching is a throughput change and must not be a behaviour change.
+
+    Same seeds and same scripted choices, run both ways: the per-battle protocol streams
+    have to come out identical, or the concurrent settles in the worker's `handleBatch`
+    are letting battles observe each other.
+    """
+
+    seeds = [[i + 1, 2, 3, 4] for i in range(4)]
+
+    def scripted(battle, step_index: int) -> str:
+        # Deterministic without an RNG, so the two runs are comparable by construction.
+        if battle.teampreview:
+            return "team 1234"
+        orders = enumerate_joint_orders(battle)
+        return choice_string(orders[step_index % len(orders)]) if orders else "default"
+
+    sequential = []
+    for index, seed in enumerate(seeds):
+        battle = DirectBattle.start(worker, f"seq-{index}", team, team, seed=seed)
+        steps = 0
+        while not battle.ended:
+            battle.step(
+                {side: scripted(battle.battles[side], steps) for side in battle.sides_to_move()}
+            )
+            steps += 1
+        sequential.append((battle.winner, battle.battles["p1"]._replay_data))
+        battle.close()
+
+    live = start_many(
+        worker, [(f"bat-{i}", team, team) for i in range(len(seeds))], seeds=seeds
+    )
+    tracked = {battle.battle_id: battle for battle in live}
+    steps = 0
+    while live:
+        step_many(
+            worker,
+            [
+                (b, {side: scripted(b.battles[side], steps) for side in b.sides_to_move()})
+                for b in live
+            ],
+        )
+        steps += 1
+        live = [b for b in live if not b.ended]
+    batched = [
+        (tracked[f"bat-{i}"].winner, tracked[f"bat-{i}"].battles["p1"]._replay_data)
+        for i in range(len(seeds))
+    ]
+    for battle in tracked.values():
+        battle.close()
+
+    assert [w for w, _ in batched] == [w for w, _ in sequential]
+    assert [t for _, t in batched] == [t for _, t in sequential]
+
+
+@pytest.mark.integration
+def test_a_batch_reports_one_failure_without_failing_its_siblings(worker, team: str) -> None:
+    good = DirectBattle.start(worker, "batch-ok", team, team, seed=[1, 1, 1, 1])
+    results = worker.batch(
+        [
+            good.step_payload({side: "team 1234" for side in good.sides_to_move()}),
+            {"cmd": "choose", "id": "no-such-battle", "p1": "team 1234"},
+        ]
+    )
+    assert "error" not in results[0]
+    assert "unknown battle id" in results[1]["error"]
+    good.close()
 
 
 @pytest.mark.integration

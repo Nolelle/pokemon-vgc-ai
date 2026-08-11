@@ -41,6 +41,13 @@
 //   -> {"cmd":"close","id":"b0"}            <- {"rid":...,"id":"b0","closed":true}
 //   -> {"cmd":"ping"}                       <- {"rid":...,"pong":true}
 //
+//   -> {"cmd":"batch","items":[{"cmd":"choose","id":"b0",...},{"cmd":"choose","id":"b1",...}]}
+//   <- {"rid":...,"results":[<one response per item, positionally>]}
+//       Advances many INDEPENDENT battles per round trip; see handleBatch for why this
+//       is a latency win rather than a serialization one. At most one command per battle
+//       id per batch. A failing item yields {"id":...,"error":...} in its slot instead of
+//       failing the whole batch.
+//
 // Errors come back as {"rid":...,"id":...,"error":"<message>"} and never kill the
 // process: one malformed battle must not take down a worker hosting dozens of others.
 //
@@ -234,6 +241,42 @@ async function handleClose(msg) {
 	return { id: msg.id, closed: true };
 }
 
+// Advance many INDEPENDENT battles in one round trip.
+//
+// This is where the throughput is, and the reason is latency, not JSON size: `settle`
+// (above) spends many event-loop ticks per step waiting for the sim to come to rest, and
+// serially that cost is paid once per battle per decision. Promise.all lets every
+// battle's settle overlap on the shared event loop, so N battles cost roughly one
+// settle instead of N.
+//
+// Safety rests on each entry being self-contained -- its own stream, buffers, and
+// lineCount -- so concurrent settles cannot observe or drain each other's state. Two
+// commands for the SAME battle in one batch would break that, hence the duplicate check.
+async function handleBatch(msg) {
+	const items = Array.isArray(msg.items) ? msg.items : [];
+	const seen = new Set();
+	for (const item of items) {
+		if (item && item.id !== undefined) {
+			if (seen.has(item.id)) {
+				throw new Error(`batch contains two commands for battle ${item.id}`);
+			}
+			seen.add(item.id);
+		}
+	}
+	const results = await Promise.all(
+		items.map(async (item) => {
+			try {
+				return await dispatch(item);
+			} catch (err) {
+				// One bad battle must not fail the whole batch -- the caller matches
+				// results positionally and can handle this entry alone.
+				return { id: item && item.id, error: err.message };
+			}
+		}),
+	);
+	return { results };
+}
+
 async function dispatch(msg) {
 	switch (msg.cmd) {
 		case "start":
@@ -242,6 +285,8 @@ async function dispatch(msg) {
 			return handleChoose(msg);
 		case "close":
 			return handleClose(msg);
+		case "batch":
+			return handleBatch(msg);
 		case "ping":
 			return { pong: true, battles: battles.size };
 		default:

@@ -142,6 +142,26 @@ class SimWorker:
             raise SimWorkerError(response["error"])
         return response
 
+    def batch(self, payloads: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Run one command per battle in a single round trip, results positional.
+
+        The win here is latency, not message size: the worker spends event-loop ticks per
+        step waiting for the simulator to come to rest, and a batch lets those waits
+        overlap across independent battles. Errors are returned in place rather than
+        raised, so one broken battle does not abort the rest of the batch -- callers
+        decide per entry (`DirectBattle` raises when it applies one).
+        """
+
+        if not payloads:
+            return []
+        response = self.request({"cmd": "batch", "items": list(payloads)})
+        results = response.get("results") or []
+        if len(results) != len(payloads):
+            raise SimWorkerError(
+                f"batch returned {len(results)} results for {len(payloads)} items"
+            )
+        return results
+
     def close(self) -> None:
         if self._process.poll() is None:
             try:
@@ -251,24 +271,36 @@ class DirectBattle:
         heuristic opponent weaker here than on the poke-env path.
         """
 
-        usernames = usernames or {"p1": "p1", "p2": "p2"}
-        battle = cls(worker, battle_id, usernames=usernames)
+        battle = cls.prepare(worker, battle_id, p1_team, p2_team, usernames=usernames)
+        payload = battle.start_payload(
+            p1_team, p2_team, battle_format=battle_format, seed=seed
+        )
+        battle._apply(worker.request(payload))
+        return battle
+
+    @classmethod
+    def prepare(
+        cls,
+        worker: SimWorker,
+        battle_id: str,
+        p1_team: str,
+        p2_team: str,
+        *,
+        usernames: dict[str, str] | None = None,
+    ) -> DirectBattle:
+        """Build the object without creating the battle in the worker yet.
+
+        Split out of `start` so `start_many` can prepare a whole batch and then create
+        them all in one round trip.
+        """
+
+        battle = cls(worker, battle_id, usernames=usernames or {"p1": "p1", "p2": "p2"})
         teams = {"p1": p1_team, "p2": p2_team}
         for side in SIDES:
             battle._teambuilder[side] = {
                 entry.nickname or entry.species or "": entry
                 for entry in Teambuilder.parse_packed_team(teams[side])
             }
-        payload: dict[str, Any] = {
-            "cmd": "start",
-            "id": battle_id,
-            "format": battle_format,
-            "p1": {"name": usernames["p1"], "team": p1_team},
-            "p2": {"name": usernames["p2"], "team": p2_team},
-        }
-        if seed is not None:
-            payload["seed"] = list(seed)
-        battle._apply(worker.request(payload))
         return battle
 
     def sides_to_move(self) -> list[str]:
@@ -286,6 +318,11 @@ class DirectBattle:
     def step(self, choices: dict[str, str]) -> StepResult:
         """Submit one choice per side that owes one and advance the battle."""
 
+        return self._apply(self.worker.request(self.step_payload(choices)))
+
+    def step_payload(self, choices: dict[str, str]) -> dict[str, Any]:
+        """The `choose` command for `choices`, for `step` or for `step_many`'s batch."""
+
         expected = set(self.sides_to_move())
         given = {side for side, value in choices.items() if value is not None}
         if given != expected:
@@ -296,7 +333,14 @@ class DirectBattle:
         payload: dict[str, Any] = {"cmd": "choose", "id": self.battle_id}
         for side in SIDES:
             payload[side] = choices.get(side)
-        return self._apply(self.worker.request(payload))
+        return payload
+
+    def apply_response(self, response: dict[str, Any]) -> StepResult:
+        """Apply a worker response obtained out of band (i.e. from a batch)."""
+
+        if "error" in response:
+            raise SimWorkerError(f"battle {self.battle_id}: {response['error']}")
+        return self._apply(response)
 
     def close(self) -> None:
         try:
@@ -331,6 +375,27 @@ class DirectBattle:
             winner=self.winner,
             lines=lines,
         )
+
+    def start_payload(
+        self,
+        p1_team: str,
+        p2_team: str,
+        *,
+        battle_format: str = DEFAULT_FORMAT,
+        seed: Sequence[int] | None = None,
+    ) -> dict[str, Any]:
+        """The `start` command for this battle, for `start` or `start_many`'s batch."""
+
+        payload: dict[str, Any] = {
+            "cmd": "start",
+            "id": self.battle_id,
+            "format": battle_format,
+            "p1": {"name": self.usernames["p1"], "team": p1_team},
+            "p2": {"name": self.usernames["p2"], "team": p2_team},
+        }
+        if seed is not None:
+            payload["seed"] = list(seed)
+        return payload
 
     def _apply_own_spreads(self, side: str) -> None:
         """Copy our own Stat Points/nature onto our own team from the packed team.
@@ -398,3 +463,58 @@ class DirectBattle:
             # No new request for this side this step means the simulator is not waiting
             # on it (it is mid-resolution, or the battle just ended).
             self._waiting[side] = True
+
+
+# --- batched operation ------------------------------------------------------------------
+#
+# One round trip advances many battles. See `SimWorker.batch` and the worker's
+# `handleBatch` for why this is a latency win: the simulator settle waits overlap instead
+# of being paid serially per battle.
+
+
+def start_many(
+    worker: SimWorker,
+    specs: Sequence[tuple[str, str, str]],
+    *,
+    battle_format: str = DEFAULT_FORMAT,
+    seeds: Sequence[Sequence[int] | None] | None = None,
+    usernames: dict[str, str] | None = None,
+) -> list[DirectBattle]:
+    """Create many battles in one round trip. `specs` is `(battle_id, p1_team, p2_team)`."""
+
+    battles = [
+        DirectBattle.prepare(worker, battle_id, p1_team, p2_team, usernames=usernames)
+        for battle_id, p1_team, p2_team in specs
+    ]
+    payloads = [
+        battle.start_payload(
+            p1_team,
+            p2_team,
+            battle_format=battle_format,
+            seed=None if seeds is None else seeds[index],
+        )
+        for index, (battle, (_id, p1_team, p2_team)) in enumerate(zip(battles, specs))
+    ]
+    for battle, response in zip(battles, worker.batch(payloads)):
+        battle.apply_response(response)
+    return battles
+
+
+def step_many(
+    worker: SimWorker,
+    pending: Sequence[tuple[DirectBattle, dict[str, str]]],
+) -> list[StepResult]:
+    """Advance many battles in one round trip, `(battle, choices)` pairs.
+
+    Battles that have already ended must not be included -- the worker rejects a choose
+    for a finished battle, and a caller stepping a dead battle is a bug worth surfacing.
+    """
+
+    if not pending:
+        return []
+    payloads = [battle.step_payload(choices) for battle, choices in pending]
+    responses = worker.batch(payloads)
+    return [
+        battle.apply_response(response)
+        for (battle, _choices), response in zip(pending, responses)
+    ]
