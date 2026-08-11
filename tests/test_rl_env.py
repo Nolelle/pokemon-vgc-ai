@@ -159,6 +159,124 @@ def test_same_sim_and_policy_seeds_reproduce_the_battle_exactly(worker, team: st
         battle.close()
 
 
+def _battle_snapshot(battle) -> dict:
+    """Every observable property of a parsed battle, for the equivalence test."""
+
+    def mon(pokemon) -> tuple:
+        return (
+            pokemon.species,
+            pokemon.current_hp,
+            pokemon.max_hp,
+            str(pokemon.status),
+            sorted(pokemon.moves),
+            pokemon.item,
+            pokemon.ability,
+            tuple(sorted((pokemon.boosts or {}).items())),
+            pokemon.fainted,
+            pokemon.active,
+            pokemon.level,
+        )
+
+    return {
+        "turn": battle.turn,
+        "won": battle.won,
+        "lost": battle.lost,
+        "finished": battle.finished,
+        "player_role": battle.player_role,
+        "teampreview": battle.teampreview,
+        "force_switch": tuple(battle.force_switch),
+        "maybe_trapped": tuple(battle.maybe_trapped),
+        "team": {key: mon(value) for key, value in sorted(battle.team.items())},
+        "opponent_team": {
+            key: mon(value) for key, value in sorted(battle.opponent_team.items())
+        },
+        "side_conditions": dict(battle.side_conditions),
+        "opponent_side_conditions": dict(battle.opponent_side_conditions),
+        "weather": dict(battle.weather),
+        "fields": dict(battle.fields),
+        "active": tuple(m.species if m else None for m in battle.active_pokemon),
+        "opponent_active": tuple(
+            m.species if m else None for m in battle.opponent_active_pokemon
+        ),
+        "teampreview_opponent_team": tuple(
+            m.species for m in battle.teampreview_opponent_team
+        ),
+    }
+
+
+def _replay_through_poke_env(battle_tag: str, bursts: list[list[str]], team: str):
+    """Feed the same protocol lines through poke-env's own message pump.
+
+    This is the reference implementation `vgc.rl.env._ingest` has to match. Both sides
+    of the comparison are driven by the SAME simulator output, so any difference is
+    ours: which tags we route to `parse_message` vs `parse_request`, and which we skip.
+
+    Two bits of poke-env plumbing have to be neutralised, neither of which touches
+    parsing: its team-preview handling tries to SEND a reply (no websocket here), and
+    `_create_battle` puts onto a bounded queue that the terminal `|win|` later drains.
+    """
+
+    import asyncio
+
+    from poke_env.ps_client.account_configuration import AccountConfiguration
+
+    from vgc.baselines import make_player
+
+    player = make_player(
+        "random",
+        team,
+        start_listening=False,
+        account_configuration=AccountConfiguration("alpha", None),
+    )
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    player.ps_client.send_message = _noop
+
+    async def feed() -> None:
+        for index, lines in enumerate(bursts):
+            messages: list[list[str]] = [[f">{battle_tag}"]]
+            if index == 0:
+                messages.append(["", "init", "battle"])
+            messages.extend(line.split("|") for line in lines)
+            await player._handle_battle_message(messages)
+
+    asyncio.run(asyncio.wait_for(feed(), timeout=60))
+    return player._battles[battle_tag]
+
+
+@pytest.mark.integration
+def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, team: str) -> None:
+    """The protocol-equivalence criterion in `docs/rl_roadmap.md`'s Phase 1."""
+
+    tag = "battle-gen9championsvgc2026regmb-1"
+    rng = random.Random(0)
+    battle = DirectBattle.start(
+        worker, tag, team, team, seed=[4, 4, 4, 4], usernames={"p1": "alpha", "p2": "beta"}
+    )
+    bursts = [list(battle.last_lines["p1"])]
+    while not battle.ended:
+        choices = {
+            side: _random_choice(battle.battles[side], rng) for side in battle.sides_to_move()
+        }
+        bursts.append(list(battle.step(choices).lines["p1"]))
+    battle.close()
+
+    ours = battle.battles["p1"]
+    theirs = _replay_through_poke_env(tag, bursts, team)
+
+    assert ours.finished and ours.turn > 1, "battle too trivial to be a real comparison"
+    assert _battle_snapshot(ours) == _battle_snapshot(theirs)
+
+    # The ONE intended divergence, asserted rather than ignored: poke-env only learns our
+    # own Stat Points from an Open Team Sheets |showteam|, so on this path it never does.
+    # vgc.rl.env fills them in (see _apply_own_spreads); that is an improvement, and it
+    # is why evs/nature are excluded from the snapshot above.
+    assert all(pokemon.evs is None for pokemon in theirs.team.values())
+    assert all(pokemon.evs is not None for pokemon in ours.team.values())
+
+
 @pytest.mark.integration
 def test_an_illegal_choice_raises_instead_of_silently_retrying(worker, team: str) -> None:
     battle = DirectBattle.start(worker, "t-illegal", team, team, seed=[2, 2, 2, 2])
