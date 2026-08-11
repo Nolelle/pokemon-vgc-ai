@@ -26,6 +26,29 @@ class PolicyConfig:
     # before team preview) -- poke-env auto-rejects OTS unless this is True, and rejecting
     # it would throw away free information the ladder format hands us.
     accept_open_team_sheet: bool = True
+    # Fill in our OWN Stat Points/nature from the team file when no Open Team Sheets
+    # `showteam` arrives (see `vgc.own_team`). poke-env otherwise leaves `Pokemon.evs`
+    # None for our own team on ~99.8% of ladder games, so the evaluator guesses our own
+    # spread with `default_opponent_spread` -- off by up to 35.6% on meta1, and
+    # underestimating Speed on all six.
+    #
+    # DEFAULT OFF, against intuition, because a same-session mirror A/B says turning it
+    # on makes the heuristic bot WORSE: identical `vgc` bots, one knowing its own spread
+    # and one guessing, alternating seats, n=500 -> the knowing bot won 200/500 = 40.0%
+    # (95% CI [0.358, 0.444]; 50% excluded, so this is a real effect, not noise).
+    #
+    # The likely mechanism is consistency, not accuracy. The evaluator compares OUR speed
+    # against the opponent's ESTIMATED speed, and that estimate uses the same
+    # usage/default spreads. Guessing both sides keeps the comparison like-for-like;
+    # correcting only our side makes us believe we outspeed opponents we do not, and the
+    # bot plays too aggressively as a result. Fixing our half of a two-sided comparison
+    # made the comparison worse.
+    #
+    # Do not flip this without rerunning that A/B plus the follow-up it implies: give the
+    # bot the opponent's TRUE spread as well (the OTS configuration) and see whether
+    # accurate-both beats guessed-both. If it does, the work belongs in the opponent
+    # estimator, and this knob comes along for free.
+    use_own_team_spreads: bool = False
     # Emit one log line per `decide()` exception (see vgc.agent.VgcPlayer) so a battle that
     # silently fell back to random play is visible instead of just... quietly losing.
     log_decisions: bool = False

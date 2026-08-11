@@ -31,6 +31,7 @@ from vgc.decision_trace import (
 )
 from vgc.evaluator import score_joint_orders
 from vgc.models import PolicyConfig
+from vgc.own_team import apply_own_spreads
 from vgc.search import search_joint_orders
 from vgc.team_preview import build_team_order
 
@@ -93,6 +94,22 @@ class VgcPlayer(Player):
             self._pending_ots_rejections.add(battle_tag)
 
         await super()._handle_battle_message(split_messages)
+
+        # Fill in our OWN Stat Points/nature from the team we supplied. poke-env only
+        # ever learns them from an Open Team Sheets `showteam`, which on the public
+        # ladder essentially never arrives (~0.2% of replays), leaving the evaluator to
+        # guess our own spread with `default_opponent_spread` -- off by up to 35.6% and
+        # underestimating Speed on every Pokemon. See `vgc.own_team`. Must run BEFORE
+        # the OTS early-return below, since the no-OTS case is exactly the one that
+        # needs it. A no-op when a showteam did arrive and poke-env already filled them.
+        #
+        # Gated OFF by default: a n=500 mirror A/B says this makes the heuristic bot
+        # WORSE (40.0%, CI [0.358, 0.444]) because it corrects only our half of a
+        # comparison whose other half is still estimated. See PolicyConfig.
+        if battle_tag and self.config.use_own_team_spreads:
+            own_battle = self._battles.get(battle_tag)
+            if own_battle is not None:
+                apply_own_spreads(own_battle)
 
         if not self.accept_open_team_sheet or battle_tag in self._resolved_ots_rejections:
             return

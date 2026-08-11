@@ -191,3 +191,52 @@ def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) 
     trace_files = list((artifacts / "traces").glob("*.json"))
     assert len(trace_files) == 2
     assert all(json.loads(path.read_text()) for path in trace_files)
+
+
+def test_own_stat_points_are_known_even_when_open_team_sheets_never_fire(
+    local_server, dev_team
+) -> None:
+    """The ladder case: no OTS, so poke-env never sends us our own spread.
+
+    `Player._handle_battle_message`'s `showteam` branch is the ONLY thing that calls
+    `apply_teambuilder_team`, and on the public ladder that message arrives in ~0.2% of
+    games. Before `vgc.own_team`, that left `Pokemon.evs is None` for our OWN team and
+    `vgc.evaluator._our_pokemon_state` fell back to `default_opponent_spread` -- the
+    guess intended for unknown opponents, off by up to 35.6% on this team and
+    underestimating Speed on every Pokemon.
+    """
+
+    async def _run() -> list[dict]:
+        config = PolicyConfig(
+            format_id=FORMAT_ID, accept_open_team_sheet=False, use_own_team_spreads=True
+        )
+        ours = make_player(
+            "vgc", dev_team, FORMAT_ID, config=config, accept_open_team_sheet=False
+        )
+        opponent = make_player("random", dev_team, FORMAT_ID)
+        assert ours.accept_open_team_sheet is False
+        try:
+            await asyncio.wait_for(ours.battle_against(opponent, n_battles=1), timeout=30)
+        finally:
+            await ours.ps_client.stop_listening()
+            await opponent.ps_client.stop_listening()
+        return [
+            {
+                "species": pokemon.species,
+                "evs": pokemon.evs,
+                "nature": pokemon.nature,
+                "opponent_evs": [p.evs for p in battle.opponent_team.values()],
+            }
+            for battle in ours.battles.values()
+            for pokemon in battle.team.values()
+        ]
+
+    entries = asyncio.run(_run())
+    assert entries, "no battle state captured"
+    assert all(entry["evs"] is not None for entry in entries), (
+        "our own Stat Points are unknown without OTS -- vgc.own_team did not fire"
+    )
+    assert all(entry["nature"] is not None for entry in entries)
+    # Symmetrically: this must NOT leak the opponent's spread, which we genuinely do not
+    # know without a showteam.
+    assert all(evs is None for entry in entries for evs in entry["opponent_evs"])

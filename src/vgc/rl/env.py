@@ -53,9 +53,9 @@ from typing import Any, Iterable, Sequence
 
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import DoubleBattleOrder
-from poke_env.teambuilder.teambuilder import Teambuilder
 
 from vgc.node import find_node
+from vgc.own_team import apply_own_spreads, index_from_packed
 
 DEFAULT_FORMAT = "gen9championsvgc2026regmb"
 DEFAULT_SHOWDOWN_REPO = Path.home() / "code" / "projects" / "pokemon-showdown"
@@ -225,10 +225,15 @@ class DirectBattle:
         *,
         usernames: dict[str, str],
         gen: int = 9,
+        own_team_spreads: bool = False,
     ) -> None:
         self.worker = worker
         self.battle_id = battle_id
         self.usernames = usernames
+        # See PolicyConfig.use_own_team_spreads -- default OFF because a n=500 mirror A/B
+        # says filling our own spread while the opponent's is still estimated makes the
+        # heuristic bot measurably worse.
+        self.own_team_spreads = own_team_spreads
         self.battles: dict[str, DoubleBattle] = {
             side: DoubleBattle(
                 battle_tag=battle_id,
@@ -246,7 +251,7 @@ class DirectBattle:
         # `start`, which has no StepResult of its own to hand back.
         self.last_lines: dict[str, list[str]] = {side: [] for side in SIDES}
         self._waiting: dict[str, bool] = {side: True for side in SIDES}
-        # side -> {nickname: TeambuilderPokemon}, consumed by _apply_own_spreads.
+        # side -> {nickname: TeambuilderPokemon}, consumed by vgc.own_team.
         self._teambuilder: dict[str, dict[str, Any]] = {side: {} for side in SIDES}
 
     @classmethod
@@ -260,6 +265,7 @@ class DirectBattle:
         battle_format: str = DEFAULT_FORMAT,
         seed: Sequence[int] | None = None,
         usernames: dict[str, str] | None = None,
+        own_team_spreads: bool = False,
     ) -> DirectBattle:
         """Create the battle in the worker and parse both sides up to the first request.
 
@@ -271,7 +277,14 @@ class DirectBattle:
         heuristic opponent weaker here than on the poke-env path.
         """
 
-        battle = cls.prepare(worker, battle_id, p1_team, p2_team, usernames=usernames)
+        battle = cls.prepare(
+            worker,
+            battle_id,
+            p1_team,
+            p2_team,
+            usernames=usernames,
+            own_team_spreads=own_team_spreads,
+        )
         payload = battle.start_payload(
             p1_team, p2_team, battle_format=battle_format, seed=seed
         )
@@ -287,6 +300,7 @@ class DirectBattle:
         p2_team: str,
         *,
         usernames: dict[str, str] | None = None,
+        own_team_spreads: bool = False,
     ) -> DirectBattle:
         """Build the object without creating the battle in the worker yet.
 
@@ -294,13 +308,15 @@ class DirectBattle:
         them all in one round trip.
         """
 
-        battle = cls(worker, battle_id, usernames=usernames or {"p1": "p1", "p2": "p2"})
+        battle = cls(
+            worker,
+            battle_id,
+            usernames=usernames or {"p1": "p1", "p2": "p2"},
+            own_team_spreads=own_team_spreads,
+        )
         teams = {"p1": p1_team, "p2": p2_team}
         for side in SIDES:
-            battle._teambuilder[side] = {
-                entry.nickname or entry.species or "": entry
-                for entry in Teambuilder.parse_packed_team(teams[side])
-            }
+            battle._teambuilder[side] = index_from_packed(teams[side])
         return battle
 
     def sides_to_move(self) -> list[str]:
@@ -397,39 +413,6 @@ class DirectBattle:
             payload["seed"] = list(seed)
         return payload
 
-    def _apply_own_spreads(self, side: str) -> None:
-        """Copy our own Stat Points/nature onto our own team from the packed team.
-
-        Needed because poke-env only learns our spread from an Open Team Sheets
-        `|showteam|` message (`Player._handle_battle_message`), and OTS never fires here.
-        Without this, `vgc.evaluator._our_pokemon_state` finds `Pokemon.evs is None` and
-        falls back to `vgc.stats.default_opponent_spread` -- i.e. every heuristic agent
-        would play its OWN team off a guessed spread, and direct-env results would not
-        line up with the poke-env gate path.
-
-        Deliberately NOT `AbstractBattle.apply_teambuilder_team`, which routes through
-        `Pokemon._update_from_teambuilder` and recomputes `_stats` with poke-env's
-        VANILLA gen-9 EV formula. The champions mod is linear in Stat Points
-        (`HP = base + SP + 75`; see CLAUDE.md and `vgc/stats.py`), and the sim's own
-        request already carried the mod-correct stats, so overwriting them with vanilla
-        numbers would replace right answers with wrong ones. Only the three fields the
-        request genuinely cannot tell us are set here; item/ability/moves/stats come
-        from the request as before.
-        """
-
-        teambuilder = self._teambuilder[side]
-        if not teambuilder:
-            return
-        for ident, pokemon in self.battles[side].team.items():
-            if pokemon.evs is not None:
-                continue
-            entry = teambuilder.get(ident.split(": ", 1)[-1])
-            if entry is None:
-                continue
-            pokemon._evs = entry.evs
-            pokemon._ivs = entry.ivs
-            pokemon._nature = (entry.nature or "serious").lower()
-
     def _ingest(self, side: str, lines: Iterable[str]) -> None:
         battle = self.battles[side]
         saw_request = False
@@ -446,7 +429,8 @@ class DirectBattle:
                     continue
                 request = json.loads(payload)
                 battle.parse_request(request)
-                self._apply_own_spreads(side)
+                if self.own_team_spreads:
+                    apply_own_spreads(self.battles[side], self._teambuilder[side])
                 self._waiting[side] = bool(battle._wait)
                 saw_request = True
             elif tag == "win":
