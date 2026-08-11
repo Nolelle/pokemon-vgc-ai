@@ -221,6 +221,10 @@ class DirectBattle:
         self.request_state: str = ""
         self.ended: bool = False
         self.winner: str | None = None
+        # Protocol lines each side received in the most recent worker response. Kept so
+        # callers can feed BattleMemory (see vgc.rl.agents.DirectAgent.observe) after
+        # `start`, which has no StepResult of its own to hand back.
+        self.last_lines: dict[str, list[str]] = {side: [] for side in SIDES}
         self._waiting: dict[str, bool] = {side: True for side in SIDES}
         # side -> {nickname: TeambuilderPokemon}, consumed by _apply_own_spreads.
         self._teambuilder: dict[str, dict[str, Any]] = {side: {} for side in SIDES}
@@ -316,6 +320,7 @@ class DirectBattle:
         self.ended = bool(response.get("ended"))
         self.winner = response.get("winner")
         lines = {side: list(response.get(side) or []) for side in SIDES}
+        self.last_lines = lines
         for side in SIDES:
             self._ingest(side, lines[side])
         if self.ended:

@@ -146,13 +146,30 @@ experiment cost.
    the simulator is. Requirement is not a number: 500-1000 game evaluations must be
    operationally practical.
 
-#### Deterministic replay needs TWO seeds
+   **Measured, and the warning was right.** On the direct env: `maxpower` vs `random`
+   runs at ~75 games/sec, while anything involving `vgc` runs at ~2.9-3.2 games/sec --
+   i.e. roughly what the OLD websocket path managed. For search-heavy opponents the
+   simulator was never the bottleneck, so the direct env buys the RL loop ~25x and buys
+   a `vgc` gate almost nothing. Making n=1000 gates against `vgc` practical is a
+   separate problem (parallel workers, or a cheaper rung), not something Phase 1's
+   transport change solves.
 
-`sim_worker.mjs` already accepts a sim `seed` (damage rolls, accuracy, crits, speed
-ties). That alone does not reproduce an episode, because the policy SAMPLES from
-`pi(a|o)`. Exact replay requires `(seed_sim, seed_policy)` propagated end to end: given
-the same initial state, sim seed, policy seed, and weights, the full trajectory must be
-reproducible. Needed for PPO failure debugging, regression tests, and paired A/Bs.
+#### Deterministic replay needs THREE seeds
+
+`sim_worker.mjs` accepts a sim `seed` (damage rolls, accuracy, crits, speed ties). That
+alone does not reproduce an episode, because the policy SAMPLES from `pi(a|o)`. So the
+roadmap originally called for `(seed_sim, seed_policy)`. Building it turned up a third:
+
+1. **`seed_sim`** -- `DirectBattle.start(..., seed=[...])`.
+2. **`seed_policy`** -- `PpoVgcPlayer(policy_seed=...)`, a private `torch.Generator` so
+   it cannot be perturbed by dropout or shuffling elsewhere in the process.
+3. **Python's global `random`** -- poke-env's `RandomPlayer` (and anything else built on
+   `Player.choose_random_move`) draws from the MODULE-level RNG. An unseeded opponent
+   desynchronises the replay even when both of ours are pinned; observed directly, the
+   trajectory matched for 6 decisions and then diverged.
+
+`test_a_full_episode_replays_exactly_under_sim_policy_and_opponent_seeds` pins all three
+and asserts each one independently changes the episode, so none is dead weight.
 
 **Phase 1 certification checklist:**
 
@@ -167,34 +184,32 @@ reproducible. Needed for PPO failure debugging, regression tests, and paired A/B
 [ ] fixed team / leads / ordering never vary (see Phase 2)
 [x] sim seed reproduces simulator randomness
 [x] policy seed reproduces sampled actions
-[~] combined seeds reproduce an exact complete episode
-    (proven for a random policy; the neural-policy loop needs the agent adapter
-     below)
+[x] combined seeds reproduce an exact complete episode
+    (with a real CandidatePolicyValueNet; needs all THREE seeds -- see above)
 [x] potential-shaping terminal state uses Phi = 0 (see "Reward" below)
 [ ] training uses the direct environment
-[ ] evaluation uses the direct environment
+[x] evaluation uses the direct environment
+    (offline/run_matches.py --direct; the default is still the websocket path
+     until the equivalence test below backs the switch)
 [~] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
-    (TPS_sim only: ~76 games/sec, ~1730 decisions/sec warm, sequential,
-     random policy, one battle in flight -- pre-batching)
+    (TPS_sim ~76 games/sec, ~1730 decisions/sec warm, sequential, random policy,
+     one battle in flight -- pre-batching. TPS_eval measured per rung, see above.
+     TPS_train not yet measured.)
 ```
 
-#### The agent adapter (blocks steps 4 and 6)
+#### The agent adapter
 
-Every baseline in `vgc.baselines` is a factory for a networked `poke_env` `Player`, so
-none of them can be pointed at `vgc.rl.env` as-is. What the direct env needs is a
-`(DoubleBattle) -> order` callable per opponent. Two useful facts found while building
-the driver:
+`vgc.rl.agents.DirectAgent` wraps a `poke_env` `Player` built with
+`start_listening=False`, which turned out to construct fine and never touch the network.
+So the direct path runs the SAME decision code as the websocket path -- byte for byte,
+including `VgcPlayer`'s exception-safe wrappers and decision traces -- instead of a
+reimplementation that could quietly disagree. A migration whose purpose is to stop
+maintaining two execution paths should not start by creating a third.
 
-- `vgc.evaluator.score_joint_orders` and `vgc.search.search_joint_orders` take only
-  `(battle, config)`. The `vgc`/`heuristic` rungs need no `Player` at all.
-- `BattleMemory` is the exception: it is fed by `VgcPlayer._handle_battle_message`, which
-  the direct env replaces. The RL path needs it (`vgc.rl.encoding.encode_battle_history`)
-  and so does decision-trace output. `StepResult.lines` already carries the raw protocol
-  lines, so the env can feed `BattleMemory.observe_protocol` directly -- it just does not
-  do so yet.
-
-Once that adapter exists, step 4 is a runner swap and step 6 is the existing seeded-replay
-test with a `CandidatePolicyValueNet` in place of `random.Random`.
+`BattleMemory` was the one thing that needed wiring: `VgcPlayer` normally accumulates it
+in `_handle_battle_message`, the transport hook the direct env replaces, so
+`DirectAgent.observe` feeds it from the protocol lines the env already carries, in the
+same observe-then-decide order as the live path.
 
 ### Phase 2 -- fixed four-Pokemon mirror, fogged observations
 
@@ -357,17 +372,19 @@ Do not tune PPO. Execute in this order:
  1. fix terminal_potential = 0.0                          [done]
  2. add the shaping-invariance regression test            [done]
  3. Python DoubleBattle direct driver on sim_worker.mjs   [done] vgc/rl/env.py
- 3b. agent adapter: (battle) -> order per opponent,       <-- next, blocks 4 and 6
-     plus BattleMemory fed from StepResult.lines
- 4. move the evaluation harness onto the direct env
+ 3b. agent adapter + BattleMemory feeding                 [done] vgc/rl/agents.py
+ 4. move the evaluation harness onto the direct env       [done] vgc/rl/match.py,
+     offline/run_matches.py --direct (opt-in; see 4b)         
+ 4b. protocol-equivalence test, then make --direct the    <-- next
+     default and retire the websocket path
  5. policy-sampling RNG seeding                           [done]
- 6. deterministic exact-episode replay test               [partial: random policy]
+ 6. deterministic exact-episode replay test               [done]
  7. validate the fixed 4-mon team
  8. hardcode leads/ordering on both sides
  9. per-battle-id concurrent stepping in the worker
-10. benchmark TPS_sim
+10. benchmark TPS_sim                                     [done] ~76 games/sec
 11. benchmark TPS_train (real policy in the loop)
-12. benchmark TPS_eval per ladder rung
+12. benchmark TPS_eval per ladder rung                    [done] see "Throughput"
 13. run the Phase 1 certification checklist
 14. begin the first controlled RL experiment
 ```
