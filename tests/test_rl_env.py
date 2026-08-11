@@ -129,9 +129,12 @@ def test_each_side_sees_its_own_team_exactly_and_the_opponent_only_fogged(
 @pytest.mark.integration
 def test_our_own_stat_points_and_nature_come_from_the_packed_team(worker, team: str) -> None:
     # Regression: poke-env only learns our spread from an Open Team Sheets |showteam|,
-    # which never fires here, so vgc.rl.env fills it in itself. Without this the
-    # evaluator silently falls back to default_opponent_spread for our OWN team.
-    battle = DirectBattle.start(worker, "t-spread", team, team, seed=[5, 5, 5, 5])
+    # which never fires here. Exercise DirectBattle's explicit transport-level
+    # compatibility flag; normal direct policy evaluation applies this per agent from
+    # PolicyConfig in DirectAgent.choose().
+    battle = DirectBattle.start(
+        worker, "t-spread", team, team, seed=[5, 5, 5, 5], own_team_spreads=True
+    )
     battle.step({side: "team 1234" for side in battle.sides_to_move()})
     charizard = battle.battles["p1"].team["p1: Charizard"]
     assert charizard.evs == [10, 0, 0, 32, 0, 24]
@@ -271,12 +274,11 @@ def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, te
     assert ours.finished and ours.turn > 1, "battle too trivial to be a real comparison"
     assert _battle_snapshot(ours) == _battle_snapshot(theirs)
 
-    # The ONE intended divergence, asserted rather than ignored: poke-env only learns our
-    # own Stat Points from an Open Team Sheets |showteam|, so on this path it never does.
-    # vgc.rl.env fills them in (see _apply_own_spreads); that is an improvement, and it
-    # is why evs/nature are excluded from the snapshot above.
+    # DirectBattle is the raw transport parser, so it matches poke-env's no-OTS state.
+    # Policy-owned enrichment happens in DirectAgent.choose(), where each side's
+    # PolicyConfig can independently select true or fallback spreads.
     assert all(pokemon.evs is None for pokemon in theirs.team.values())
-    assert all(pokemon.evs is not None for pokemon in ours.team.values())
+    assert all(pokemon.evs is None for pokemon in ours.team.values())
 
 
 @pytest.mark.integration

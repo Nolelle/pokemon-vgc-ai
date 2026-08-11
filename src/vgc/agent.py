@@ -103,9 +103,9 @@ class VgcPlayer(Player):
         # the OTS early-return below, since the no-OTS case is exactly the one that
         # needs it. A no-op when a showteam did arrive and poke-env already filled them.
         #
-        # Gated OFF by default: a n=500 mirror A/B says this makes the heuristic bot
-        # WORSE (40.0%, CI [0.358, 0.444]) because it corrects only our half of a
-        # comparison whose other half is still estimated. See PolicyConfig.
+        # Accurate self-knowledge exposed an old Protect miscalibration; that weight has
+        # since been retuned and confirmed above 50% against the legacy fake-spread
+        # policy. See PolicyConfig for the screen and held-out confirmation numbers.
         if battle_tag and self.config.use_own_team_spreads:
             own_battle = self._battles.get(battle_tag)
             if own_battle is not None:

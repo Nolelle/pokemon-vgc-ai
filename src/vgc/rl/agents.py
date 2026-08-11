@@ -33,6 +33,7 @@ from poke_env.player.player import Player
 
 from vgc.baselines import make_player
 from vgc.config import FORMAT_ID
+from vgc.own_team import apply_own_spreads
 from vgc.rl.env import choice_string
 
 
@@ -84,6 +85,15 @@ class DirectAgent:
         Routes team preview to `teampreview` and everything else to `choose_move`, the
         same split `Player._handle_battle_request` makes.
         """
+
+        # The live VgcPlayer fills its known team spread in the transport message hook.
+        # DirectAgent replaces that hook, so reproduce the policy-owned behavior here
+        # instead of making DirectBattle enrich both sides globally. This is deliberately
+        # per agent: controlled true-spread vs fake-spread mirrors depend on the two
+        # PolicyConfigs seeing different self-knowledge in the same battle.
+        config = getattr(self.player, "config", None)
+        if config is not None and getattr(config, "use_own_team_spreads", False):
+            apply_own_spreads(battle)
 
         if battle.teampreview:
             if self.preview_order is not None:

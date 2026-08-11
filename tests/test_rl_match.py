@@ -166,6 +166,27 @@ def test_preview_order_overrides_the_players_own_team_preview() -> None:
     assert agent.choose(SimpleNamespace(teampreview=True)) == "team 1234"
 
 
+def test_direct_agent_applies_own_spreads_only_when_its_policy_enables_them(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    class _Player:
+        def __init__(self, enabled: bool) -> None:
+            self.config = SimpleNamespace(use_own_team_spreads=enabled)
+
+        def teampreview(self, _battle):
+            return "team 1234"
+
+    monkeypatch.setattr("vgc.rl.agents.apply_own_spreads", calls.append)
+    battle = SimpleNamespace(teampreview=True)
+
+    DirectAgent(_Player(True)).choose(battle)
+    DirectAgent(_Player(False)).choose(battle)
+
+    assert calls == [battle]
+
+
 @pytest.mark.integration
 def test_battle_memory_accumulates_from_the_protocol_lines(worker, team: str) -> None:
     # BattleMemory is normally filled by VgcPlayer._handle_battle_message, the transport

@@ -39,20 +39,25 @@ class PolicyConfig:
     # 35.6% (Incineroar Atk 135 -> 183), underestimating Speed on all six Pokemon and
     # overestimating HP on all six.
     #
-    # KNOWN COST, not yet recovered. A same-session mirror A/B (identical vgc bots,
-    # alternating seats, n=500) has the knowing bot at 200/500 = 40.0%, 95% CI
-    # [0.358, 0.444]. A decision-level diagnostic explains why: correct spreads change
-    # 26% of choices, and the shift is systematic -- the bot Protects MORE and switches
-    # LESS, because it now correctly sees itself as frail rather than believing it has 32
-    # HP points. Note this is NOT a symmetric-error story: the OPPONENT's spread comes
-    # from usage data (vgc.sets.load_usage_spreads) and is already reasonable, so nothing
-    # here was cancelling out.
+    # The initial cost has been recovered. Before retuning, a same-session mirror A/B
+    # (identical vgc bots, alternating seats, n=500) put the knowing bot at 200/500 =
+    # 40.0%, 95% CI [0.358, 0.444]. A decision-level diagnostic explained why: correct
+    # spreads changed 26% of choices, systematically toward MORE Protect and fewer
+    # switches because the bot correctly saw itself as frail rather than believing it had
+    # 32 HP points. Note this was NOT symmetric-error cancellation: the OPPONENT's spread
+    # comes from usage data (vgc.sets.load_usage_spreads) and was already reasonable.
     #
-    # The regression therefore locates a real miscalibration: the Protect/switch weights
-    # below were tuned while the evaluator believed its own team was bulkier and slower
-    # than it is. Retuning them against accurate self-knowledge is the work that recovers
-    # the points, and it belongs in these weights -- not in feeding the evaluator data we
-    # know to be false.
+    # A held-out n=500 confirmation recovered practical strength by changing only
+    # protect_threat_weight from 0.8 to 0.6: the retuned true-spread candidate went
+    # 305/500 = 61.0%, 95% CI [0.567, 0.652], against the LEGACY fake-spread policy at
+    # weight 0.8. The untuned true-spread policy was 259/500 = 51.8%, CI [0.474, 0.561],
+    # on the same seed stream. Switch-weight changes added no measurable benefit in the
+    # preceding screen, so they stayed put.
+    #
+    # Important causal caveat: a separate equal-weight 0.6-vs-0.6 mirror put true spreads
+    # at 246/500 = 49.2%, CI [0.448, 0.536]. Thus the RETUNED accurate bot beats the old
+    # fake-spread bot, but accurate self-knowledge alone is not proven better when both
+    # sides share the retuned weight. This mirror result is team-specific either way.
     use_own_team_spreads: bool = True
     # Emit one log line per `decide()` exception (see vgc.agent.VgcPlayer) so a battle that
     # silently fell back to random play is visible instead of just... quietly losing.
@@ -134,7 +139,7 @@ class PolicyConfig:
     # -- Defense/utility: Protect --------------------------------------------------------
     # Points per 1% of estimated incoming damage (from the opponent's best revealed move
     # onto this slot) that choosing Protect this turn avoids.
-    protect_threat_weight: float = 0.8
+    protect_threat_weight: float = 0.6
     # SUPERSEDED by `protect_success_decay` (below): `_score_protect` used to subtract
     # this flat penalty once `protect_counter >= 1` instead of actually modeling Gen 9's
     # real geometric success-rate falloff. Kept (unread) rather than deleted so any
