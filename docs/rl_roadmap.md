@@ -166,7 +166,7 @@ reproducible. Needed for PPO failure debugging, regression tests, and paired A/B
 [ ] sim seed reproduces simulator randomness
 [ ] policy seed reproduces sampled actions
 [ ] combined seeds reproduce an exact complete episode
-[ ] potential-shaping terminal state uses Phi = 0 (see "Reward" below)
+[x] potential-shaping terminal state uses Phi = 0 (see "Reward" below)
 [ ] training uses the direct environment
 [ ] evaluation uses the direct environment
 [ ] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
@@ -289,19 +289,23 @@ shaping destroys that interpretation -- another reason to keep the baseline clea
 ### Known bug: terminal potential breaks policy invariance
 
 `vgc/rl/rewards.py` is theoretically correct -- potential-based shaping
-(Ng, Harada & Russell 1999) adds `coef * (gamma * Phi(s') - Phi(s))`, which telescopes to
-zero and provably cannot change the optimal policy. But that result requires
-`Phi(absorbing) = 0`, and `src/vgc/rl/player.py:121-125` passes
+(Ng, Harada & Russell 1999) adds `coef * (gamma * Phi(s') - Phi(s))`, which telescopes
+over an episode to `coef * (gamma * Phi(s_T) - Phi(s_0))` and provably cannot change the
+optimal policy. Note that sum is NOT zero; it is harmless because it is
+policy-INDEPENDENT, which requires `Phi(s_T)` to be the same constant (conventionally 0)
+for every terminal state. `src/vgc/rl/player.py:121-125` instead passed
 `terminal_potential=board_potential(battle)` -- the actual potential of the finished
-board. The episode return therefore picks up a residual
-`coef * (gamma * Phi(s_T) - Phi(s_0))`, which at the documented
-`--reward-shaping-coef 0.3` is up to ~30% of the terminal signal and encodes a preference
-for winning with HP/board resources intact. It correlates with winning, which is why it
-hasn't obviously hurt, but it is not the specified objective.
+board. `Phi(s_T)` then varied with HOW we won -- more HP and more surviving Pokemon meant
+more shaped return -- so the episode total was policy-dependent and shaping was quietly
+optimizing "win cleanly" alongside "win". Measured on the regression test: at
+`coef = 0.5` a blowout win collected `0.325` of shaping against `0.075` for a narrow win
+from the same opening board, a `0.25` spread on a `+/-1` terminal signal.
 
-**Fix before any Phase 3 scaling:** pass `terminal_potential=0.0`
-(`src/vgc/rl/ppo.py:86` already defaults to it) and add a regression test asserting the
-shaping term telescopes to zero over a full episode.
+**FIXED** (`src/vgc/rl/player.py`, this branch): the callback passes
+`terminal_potential=0.0`. Guarded by
+`test_battle_finished_callback_shaping_is_independent_of_how_cleanly_we_won`, which
+asserts the property that matters -- two wins from the same start state get identical
+shaping regardless of the final board -- rather than a specific number.
 
 ## Discount factor
 
@@ -326,9 +330,9 @@ this as a modeling decision, not a PPO convention inherited from Atari.
 Do not tune PPO. Execute in this order:
 
 ```
- 1. fix terminal_potential = 0.0
- 2. add the shaping-invariance regression test
- 3. Python DoubleBattle direct driver on sim_worker.mjs
+ 1. fix terminal_potential = 0.0                          [done]
+ 2. add the shaping-invariance regression test            [done]
+ 3. Python DoubleBattle direct driver on sim_worker.mjs   <-- next
  4. move the evaluation harness onto the direct env
  5. policy-sampling RNG seeding
  6. deterministic exact-episode replay test

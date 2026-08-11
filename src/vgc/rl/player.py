@@ -118,9 +118,16 @@ class PpoVgcPlayer(VgcPlayer):
         count = self._battle_step_counts.pop(battle.battle_tag, 0)
         if self.rollout_buffer is not None and count:
             outcome = 1.0 if battle.won else (-1.0 if battle.lost else 0.0)
-            terminal_potential = (
-                board_potential(battle) if self.ppo_config.reward_shaping_coef > 0.0 else 0.0
-            )
-            self.rollout_buffer.finish_episode(
-                outcome, self.ppo_config, terminal_potential=terminal_potential
-            )
+            # Phi(absorbing terminal state) MUST be 0, not board_potential(battle).
+            #
+            # Ng, Harada & Russell's policy-invariance result holds for an arbitrary
+            # Phi only because the shaping telescopes to gamma*Phi(s_T) - Phi(s_0), and
+            # that is policy-independent (hence harmless) ONLY when Phi(s_T) is a
+            # constant -- conventionally 0 -- for every terminal state. Passing the
+            # finished board's potential instead makes the episode's total shaping
+            # depend on HOW we won: coef * gamma * Phi(final board) is larger for a win
+            # with more HP/board resources left. At the documented
+            # --reward-shaping-coef 0.3 that is up to ~30% of the terminal signal
+            # quietly optimizing "win cleanly" rather than "win", which is exactly the
+            # reward misspecification shaping is supposed to avoid.
+            self.rollout_buffer.finish_episode(outcome, self.ppo_config, terminal_potential=0.0)

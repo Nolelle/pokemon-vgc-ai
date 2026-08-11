@@ -65,6 +65,7 @@ from vgc.rl.opponents import (  # noqa: E402
     load_snapshot,
     save_snapshot,
 )
+from vgc.rl.player import PpoVgcPlayer  # noqa: E402
 from vgc.rl.ppo import (  # noqa: E402
     PpoConfig,
     RolloutBuffer,
@@ -1342,6 +1343,86 @@ def test_ppo_config_round_trips_reward_shaping_coef_through_asdict() -> None:
     rebuilt = PpoConfig(**asdict(config))
     assert rebuilt.reward_shaping_coef == pytest.approx(0.35)
     assert rebuilt == config
+
+
+# --- Terminal potential / policy invariance (vgc.rl.player._battle_finished_callback) -
+
+
+def _finished_player(buffer: RolloutBuffer, coef: float) -> PpoVgcPlayer:
+    """A `PpoVgcPlayer` with only the finish-episode attributes set.
+
+    `object.__new__` skips poke-env's `Player.__init__` (accounts, websocket, asyncio),
+    none of which `_battle_finished_callback` touches -- it reads exactly the three
+    attributes set here.
+    """
+
+    player = object.__new__(PpoVgcPlayer)
+    player.rollout_buffer = buffer
+    player.ppo_config = PpoConfig(gamma=1.0, gae_lambda=1.0, reward_shaping_coef=coef)
+    player._battle_step_counts = {"battle-tag": 1}
+    return player
+
+
+def _won_battle(*, opponent_fainted: int) -> SimpleNamespace:
+    """A finished, WON battle whose board potential grows with `opponent_fainted`."""
+
+    opponent = [_fainted_pokemon(f"opp{index}") for index in range(opponent_fainted)]
+    opponent += [_stub_pokemon(f"opp{index}") for index in range(opponent_fainted, 3)]
+    return SimpleNamespace(
+        battle_tag="battle-tag",
+        won=True,
+        lost=False,
+        teampreview_opponent_team=opponent,
+        opponent_team={pokemon.species: pokemon for pokemon in opponent},
+        team={"our0": _stub_pokemon("pikachu"), "our1": _stub_pokemon("eevee")},
+        opponent_active_pokemon=[None, None],
+    )
+
+
+def test_battle_finished_callback_uses_zero_terminal_potential_not_the_final_board() -> None:
+    # Regression: the callback used to pass board_potential(battle), which made the
+    # episode's shaped return depend on how much HP we had left when we won.
+    coef = 0.5
+    start_potential = 0.2
+    buffer = RolloutBuffer()
+    buffer.add(_shaped_step(start_potential))
+    battle = _won_battle(opponent_fainted=3)
+    assert board_potential(battle) > 0.0  # the value the old code would have passed
+
+    _finished_player(buffer, coef)._battle_finished_callback(battle)
+
+    # One step, so its shaping term is coef * (gamma * Phi(s_T) - Phi(s_0)) with
+    # gamma == 1.0, plus the +1 win. Phi(s_T) must be 0, NOT board_potential(battle).
+    assert buffer.steps[0].reward == pytest.approx(1.0 + coef * (0.0 - start_potential))
+
+
+def test_battle_finished_callback_shaping_is_independent_of_how_cleanly_we_won() -> None:
+    # The property that actually matters: with Phi(terminal) == 0, an episode's total
+    # shaping is coef * (-Phi(s_0)) -- a function of the START state only. Two wins from
+    # the same opening board must therefore receive identical shaping no matter how
+    # lopsided the final board is, so shaping cannot smuggle in a "win cleanly"
+    # objective alongside "win".
+    def total_shaping(opponent_fainted: int) -> float:
+        buffer = RolloutBuffer()
+        for potential in (0.1, 0.4, -0.2):
+            buffer.add(_shaped_step(potential))
+        player = _finished_player(buffer, coef=0.5)
+        player._battle_finished_callback(_won_battle(opponent_fainted=opponent_fainted))
+        # Subtract the terminal outcome to isolate the shaping contribution.
+        return sum(step.reward for step in buffer.steps) - 1.0
+
+    narrow_win = total_shaping(opponent_fainted=1)
+    blowout_win = total_shaping(opponent_fainted=3)
+    assert narrow_win == pytest.approx(blowout_win)
+    assert narrow_win == pytest.approx(0.5 * -0.1)  # coef * (gamma*0 - Phi(s_0))
+
+
+def test_battle_finished_callback_leaves_rewards_sparse_when_shaping_is_off() -> None:
+    buffer = RolloutBuffer()
+    for potential in (0.1, 0.4, -0.2):
+        buffer.add(_shaped_step(potential))
+    _finished_player(buffer, coef=0.0)._battle_finished_callback(_won_battle(opponent_fainted=3))
+    assert [step.reward for step in buffer.steps] == [0.0, 0.0, 1.0]
 
 
 # --- Teacher-anchor annealing (selfplay.train_ppo.teacher_anchor_weight_for_iteration)
