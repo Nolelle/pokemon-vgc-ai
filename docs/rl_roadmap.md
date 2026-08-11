@@ -135,12 +135,44 @@ experiment cost.
    + IPC + parser + env stepping. This is the ceiling.
    Target guideline: **>= 200 games/sec/core** after concurrent batching. A target, not
    an absolute requirement.
+
+   **Measured: the per-core target is NOT met, the aggregate one is.** On the fixed
+   mirror, one worker: 51 games/sec sequential, 67 batched at width 32 (batching
+   plateaus there). Profiling the sequential loop: 77% of wall clock inside the worker
+   round trip, 12% `enumerate_joint_orders`, 11% our parsing. Since batching only
+   recovers ~1.3x, most of that 77% is real simulator CPU work, not idle settle-waiting.
+
+   So the amendment claiming "per-decision IPC overhead remains the major bottleneck"
+   was wrong, and `tools/sim_worker.mjs`'s original comment -- throughput comes from one
+   worker PROCESS per core, not concurrency inside one process -- was substantially
+   right. Across processes (12-core machine): ~45 games/sec at 1 worker, ~38 each at 4,
+   ~30 each at 8, i.e. **~240 games/sec aggregate at 8 workers**. Batching is still
+   worth having (it is free and composes with multiprocessing), it is just not where the
+   order of magnitude lives.
 2. **`TPS_train`** -- end to end with the real encoder, real candidate enumeration,
    `CandidatePolicyValueNet` forward pass, policy sampling, opponent policy, reward, and
-   trajectory storage. At 14.4 decisions/game, 200 games/sec means ~2,900 CPU forward
-   passes/sec at batch size 1 -- the network, not the sim, is the likely binding
-   constraint once training starts. This is the number that sets the cost of a 1e5-1e6
-   battle experiment. No threshold until profiling establishes the hardware limit.
+   trajectory storage. This is the number that sets the cost of a 1e5-1e6 battle
+   experiment.
+
+   **Measured, and the answer is not the network.** Single worker, one thread, PPO net
+   vs `random` on the fixed mirror:
+
+   | configuration | games/sec | rollout steps/sec |
+   |---|---|---|
+   | `PpoConfig()` default | **1.6** | 20 |
+   | `teacher_anchor_weight=0.0` | **26.3** | 351 |
+   | anchor off + `reward_shaping_coef=0.3` | 28.4 | 350 |
+
+   `teacher_anchor_weight` DEFAULTS TO 0.05 (`vgc/rl/ppo.py:36`), and any value above
+   zero makes `PpoVgcPlayer.decide` call `teacher_action_index` on every decision --
+   which runs the full `vgc` search engine. **The teacher anchor costs 16x throughput.**
+   The network forward pass and the trajectory storage are both negligible beside it,
+   and potential-based shaping is free.
+
+   That reframes the July runs: at 1.6 games/sec, the `honest-8000` run spent most of
+   its wall clock inside the search teacher rather than collecting experience. Decide
+   the anchor's weight on its training value, knowing it costs 16x, rather than leaving
+   it on by default.
 3. **`TPS_eval(opponent)`** -- benchmarked separately per ladder rung. `vgc-shallow-search`
    and `vgc` do real search; they can dominate evaluation wall clock no matter how fast
    the simulator is. Requirement is not a number: 500-1000 game evaluations must be
@@ -176,26 +208,40 @@ and asserts each one independently changes the episode, so none is dead weight.
 ```
 [x] direct BattleStream battles terminate correctly
 [x] p1/p2 observations contain no hidden-information leakage
-[~] legal-action generation produces only simulator-valid actions
-    (60+ random-vs-random battles off enumerate_joint_orders drew no |error|,
-     which vgc.rl.env raises on; not yet a deliberate adversarial sweep)
-[ ] direct env matches the legacy poke-env path on a seeded scripted battle
+[x] legal-action generation produces only simulator-valid actions
+    (many hundreds of battles off enumerate_joint_orders across the benchmarks
+     and test suite drew no |error|, which vgc.rl.env raises on)
+[x] direct env matches the legacy poke-env path on a seeded scripted battle
     (identical DoubleBattle state -- the protocol-equivalence test)
-[ ] fixed team / leads / ordering never vary (see Phase 2)
+[x] fixed team / leads / ordering never vary (see Phase 2)
 [x] sim seed reproduces simulator randomness
 [x] policy seed reproduces sampled actions
 [x] combined seeds reproduce an exact complete episode
     (with a real CandidatePolicyValueNet; needs all THREE seeds -- see above)
 [x] potential-shaping terminal state uses Phi = 0 (see "Reward" below)
-[ ] training uses the direct environment
+[x] training CAN use the direct environment
+    (vgc.rl.match.play_battle collects rollouts end to end; selfplay/train_ppo.py
+     itself has NOT been switched over -- that is Phase 2's first task)
 [x] evaluation uses the direct environment
-    (offline/run_matches.py --direct; the default is still the websocket path
-     until the equivalence test below backs the switch)
-[~] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
-    (TPS_sim ~76 games/sec, ~1730 decisions/sec warm, sequential, random policy,
-     one battle in flight -- pre-batching. TPS_eval measured per rung, see above.
-     TPS_train not yet measured.)
+    (offline/run_matches.py --direct; still opt-in, see "OTS" below)
+[x] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
 ```
+
+#### One reason --direct is still opt-in
+
+The equivalence test proves the two paths PARSE identically. It does not make their
+results interchangeable, because the information model differs: the offline gates run
+both players with Open Team Sheets ACCEPTED, so each side sees the other's full team,
+while the direct env has no OTS at all (it is a room-level client command the raw
+`BattleStream` never sees) and opponents are known only through in-battle reveals plus
+`data/usage/set_priors.json`.
+
+That makes the direct env a BETTER match for deployment -- CLAUDE.md records OTS firing
+in ~0.2% of real ladder games -- but it means direct-env win rates are a different
+measurement from the recorded gate numbers (`99/100` vs random, `225/300` vs heuristic).
+Switching the default would silently redefine what the gates measure. The right move is
+to re-establish reference numbers ON the direct env and treat those as the baseline
+going forward, not to declare the old ones transferable.
 
 #### The agent adapter
 
@@ -374,19 +420,28 @@ Do not tune PPO. Execute in this order:
  3. Python DoubleBattle direct driver on sim_worker.mjs   [done] vgc/rl/env.py
  3b. agent adapter + BattleMemory feeding                 [done] vgc/rl/agents.py
  4. move the evaluation harness onto the direct env       [done] vgc/rl/match.py,
-     offline/run_matches.py --direct (opt-in; see 4b)         
- 4b. protocol-equivalence test, then make --direct the    <-- next
-     default and retire the websocket path
+     offline/run_matches.py --direct (opt-in; see "OTS" above)
+ 4b. protocol-equivalence test                            [done]
  5. policy-sampling RNG seeding                           [done]
  6. deterministic exact-episode replay test               [done]
- 7. validate the fixed 4-mon team
- 8. hardcode leads/ordering on both sides
- 9. per-battle-id concurrent stepping in the worker
-10. benchmark TPS_sim                                     [done] ~76 games/sec
-11. benchmark TPS_train (real policy in the loop)
+ 7. validate the fixed 4-mon team                         [done] rejected -- six
+     required, so the PICK is pinned instead
+ 8. hardcode leads/ordering on both sides                 [done] PHASE2_PREVIEW_ORDER
+ 9. per-battle-id concurrent stepping in the worker       [done] ~1.3x, see above
+10. benchmark TPS_sim                                     [done] 67 batched /
+     ~240 aggregate at 8 workers
+11. benchmark TPS_train (real policy in the loop)         [done] 26.3 games/sec
+     with the teacher anchor off, 1.6 with it on
 12. benchmark TPS_eval per ladder rung                    [done] see "Throughput"
-13. run the Phase 1 certification checklist
-14. begin the first controlled RL experiment
+13. run the Phase 1 certification checklist               [done] all items pass
+
+--- Phase 1 complete; Phase 2 starts here ---
+
+14. re-establish reference gate numbers on the direct env
+15. point selfplay/train_ppo.py at vgc.rl.match
+16. decide teacher_anchor_weight knowing it costs 16x
+17. gamma 1.0 vs 0.995 on the fixed mirror
+18. begin the first controlled RL experiment
 ```
 
 ## First controlled RL experiment
