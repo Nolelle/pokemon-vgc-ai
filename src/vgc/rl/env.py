@@ -225,14 +225,15 @@ class DirectBattle:
         *,
         usernames: dict[str, str],
         gen: int = 9,
-        own_team_spreads: bool = False,
+        own_team_spreads: bool = True,
     ) -> None:
         self.worker = worker
         self.battle_id = battle_id
         self.usernames = usernames
-        # See PolicyConfig.use_own_team_spreads -- default OFF because a n=500 mirror A/B
-        # says filling our own spread while the opponent's is still estimated makes the
-        # heuristic bot measurably worse.
+        # See PolicyConfig.use_own_team_spreads. ON by default: our own team sheet is
+        # not hidden information, so the policy should never guess it. There is a known,
+        # documented strength cost attached (that comment has the numbers) which belongs
+        # to the evaluator's Protect/switch calibration, not to this data.
         self.own_team_spreads = own_team_spreads
         self.battles: dict[str, DoubleBattle] = {
             side: DoubleBattle(
@@ -265,7 +266,7 @@ class DirectBattle:
         battle_format: str = DEFAULT_FORMAT,
         seed: Sequence[int] | None = None,
         usernames: dict[str, str] | None = None,
-        own_team_spreads: bool = False,
+        own_team_spreads: bool = True,
     ) -> DirectBattle:
         """Create the battle in the worker and parse both sides up to the first request.
 
@@ -300,7 +301,7 @@ class DirectBattle:
         p2_team: str,
         *,
         usernames: dict[str, str] | None = None,
-        own_team_spreads: bool = False,
+        own_team_spreads: bool = True,
     ) -> DirectBattle:
         """Build the object without creating the battle in the worker yet.
 

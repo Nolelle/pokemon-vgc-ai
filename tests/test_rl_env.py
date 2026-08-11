@@ -131,9 +131,7 @@ def test_our_own_stat_points_and_nature_come_from_the_packed_team(worker, team: 
     # Regression: poke-env only learns our spread from an Open Team Sheets |showteam|,
     # which never fires here, so vgc.rl.env fills it in itself. Without this the
     # evaluator silently falls back to default_opponent_spread for our OWN team.
-    battle = DirectBattle.start(
-        worker, "t-spread", team, team, seed=[5, 5, 5, 5], own_team_spreads=True
-    )
+    battle = DirectBattle.start(worker, "t-spread", team, team, seed=[5, 5, 5, 5])
     battle.step({side: "team 1234" for side in battle.sides_to_move()})
     charizard = battle.battles["p1"].team["p1: Charizard"]
     assert charizard.evs == [10, 0, 0, 32, 0, 24]
@@ -278,9 +276,7 @@ def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, te
     # vgc.rl.env fills them in (see _apply_own_spreads); that is an improvement, and it
     # is why evs/nature are excluded from the snapshot above.
     assert all(pokemon.evs is None for pokemon in theirs.team.values())
-    # ours matches, because own_team_spreads defaults OFF (see PolicyConfig) -- the two
-    # paths agree on this too, which is what makes the snapshot comparison above total.
-    assert all(pokemon.evs is None for pokemon in ours.team.values())
+    assert all(pokemon.evs is not None for pokemon in ours.team.values())
 
 
 @pytest.mark.integration

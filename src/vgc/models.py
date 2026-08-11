@@ -28,27 +28,32 @@ class PolicyConfig:
     accept_open_team_sheet: bool = True
     # Fill in our OWN Stat Points/nature from the team file when no Open Team Sheets
     # `showteam` arrives (see `vgc.own_team`). poke-env otherwise leaves `Pokemon.evs`
-    # None for our own team on ~99.8% of ladder games, so the evaluator guesses our own
-    # spread with `default_opponent_spread` -- off by up to 35.6% on meta1, and
-    # underestimating Speed on all six.
+    # None for our own team on ~99.8% of ladder games, and the evaluator then falls back
+    # to `default_opponent_spread` -- the guess meant for UNKNOWN opponents, applied to
+    # the team we built ourselves.
     #
-    # DEFAULT OFF, against intuition, because a same-session mirror A/B says turning it
-    # on makes the heuristic bot WORSE: identical `vgc` bots, one knowing its own spread
-    # and one guessing, alternating seats, n=500 -> the knowing bot won 200/500 = 40.0%
-    # (95% CI [0.358, 0.444]; 50% excluded, so this is a real effect, not noise).
+    # ON, because our own team sheet is not hidden information and a policy should never
+    # guess a fact it holds. That fallback is also a bad guess specifically: it assigns 2
+    # of 66 Stat Points to Speed, where the real ladder spreads in data/usage/spreads.json
+    # put 32 into Speed for Charizard, Venusaur and Garchomp. On meta1 it misses by up to
+    # 35.6% (Incineroar Atk 135 -> 183), underestimating Speed on all six Pokemon and
+    # overestimating HP on all six.
     #
-    # The likely mechanism is consistency, not accuracy. The evaluator compares OUR speed
-    # against the opponent's ESTIMATED speed, and that estimate uses the same
-    # usage/default spreads. Guessing both sides keeps the comparison like-for-like;
-    # correcting only our side makes us believe we outspeed opponents we do not, and the
-    # bot plays too aggressively as a result. Fixing our half of a two-sided comparison
-    # made the comparison worse.
+    # KNOWN COST, not yet recovered. A same-session mirror A/B (identical vgc bots,
+    # alternating seats, n=500) has the knowing bot at 200/500 = 40.0%, 95% CI
+    # [0.358, 0.444]. A decision-level diagnostic explains why: correct spreads change
+    # 26% of choices, and the shift is systematic -- the bot Protects MORE and switches
+    # LESS, because it now correctly sees itself as frail rather than believing it has 32
+    # HP points. Note this is NOT a symmetric-error story: the OPPONENT's spread comes
+    # from usage data (vgc.sets.load_usage_spreads) and is already reasonable, so nothing
+    # here was cancelling out.
     #
-    # Do not flip this without rerunning that A/B plus the follow-up it implies: give the
-    # bot the opponent's TRUE spread as well (the OTS configuration) and see whether
-    # accurate-both beats guessed-both. If it does, the work belongs in the opponent
-    # estimator, and this knob comes along for free.
-    use_own_team_spreads: bool = False
+    # The regression therefore locates a real miscalibration: the Protect/switch weights
+    # below were tuned while the evaluator believed its own team was bulkier and slower
+    # than it is. Retuning them against accurate self-knowledge is the work that recovers
+    # the points, and it belongs in these weights -- not in feeding the evaluator data we
+    # know to be false.
+    use_own_team_spreads: bool = True
     # Emit one log line per `decide()` exception (see vgc.agent.VgcPlayer) so a battle that
     # silently fell back to random play is visible instead of just... quietly losing.
     log_decisions: bool = False

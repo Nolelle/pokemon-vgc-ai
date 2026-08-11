@@ -207,12 +207,7 @@ def test_own_stat_points_are_known_even_when_open_team_sheets_never_fire(
     """
 
     async def _run() -> list[dict]:
-        config = PolicyConfig(
-            format_id=FORMAT_ID, accept_open_team_sheet=False, use_own_team_spreads=True
-        )
-        ours = make_player(
-            "vgc", dev_team, FORMAT_ID, config=config, accept_open_team_sheet=False
-        )
+        ours = make_player("vgc", dev_team, FORMAT_ID, accept_open_team_sheet=False)
         opponent = make_player("random", dev_team, FORMAT_ID)
         assert ours.accept_open_team_sheet is False
         try:
