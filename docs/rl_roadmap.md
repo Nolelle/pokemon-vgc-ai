@@ -157,20 +157,44 @@ reproducible. Needed for PPO failure debugging, regression tests, and paired A/B
 **Phase 1 certification checklist:**
 
 ```
-[ ] direct BattleStream battles terminate correctly
-[ ] p1/p2 observations contain no hidden-information leakage
-[ ] legal-action generation produces only simulator-valid actions
+[x] direct BattleStream battles terminate correctly
+[x] p1/p2 observations contain no hidden-information leakage
+[~] legal-action generation produces only simulator-valid actions
+    (60+ random-vs-random battles off enumerate_joint_orders drew no |error|,
+     which vgc.rl.env raises on; not yet a deliberate adversarial sweep)
 [ ] direct env matches the legacy poke-env path on a seeded scripted battle
     (identical DoubleBattle state -- the protocol-equivalence test)
 [ ] fixed team / leads / ordering never vary (see Phase 2)
-[ ] sim seed reproduces simulator randomness
-[ ] policy seed reproduces sampled actions
-[ ] combined seeds reproduce an exact complete episode
+[x] sim seed reproduces simulator randomness
+[x] policy seed reproduces sampled actions
+[~] combined seeds reproduce an exact complete episode
+    (proven for a random policy; the neural-policy loop needs the agent adapter
+     below)
 [x] potential-shaping terminal state uses Phi = 0 (see "Reward" below)
 [ ] training uses the direct environment
 [ ] evaluation uses the direct environment
-[ ] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
+[~] TPS_sim / TPS_train / TPS_eval(rung) all measured and recorded
+    (TPS_sim only: ~76 games/sec, ~1730 decisions/sec warm, sequential,
+     random policy, one battle in flight -- pre-batching)
 ```
+
+#### The agent adapter (blocks steps 4 and 6)
+
+Every baseline in `vgc.baselines` is a factory for a networked `poke_env` `Player`, so
+none of them can be pointed at `vgc.rl.env` as-is. What the direct env needs is a
+`(DoubleBattle) -> order` callable per opponent. Two useful facts found while building
+the driver:
+
+- `vgc.evaluator.score_joint_orders` and `vgc.search.search_joint_orders` take only
+  `(battle, config)`. The `vgc`/`heuristic` rungs need no `Player` at all.
+- `BattleMemory` is the exception: it is fed by `VgcPlayer._handle_battle_message`, which
+  the direct env replaces. The RL path needs it (`vgc.rl.encoding.encode_battle_history`)
+  and so does decision-trace output. `StepResult.lines` already carries the raw protocol
+  lines, so the env can feed `BattleMemory.observe_protocol` directly -- it just does not
+  do so yet.
+
+Once that adapter exists, step 4 is a runner swap and step 6 is the existing seeded-replay
+test with a `CandidatePolicyValueNet` in place of `random.Random`.
 
 ### Phase 2 -- fixed four-Pokemon mirror, fogged observations
 
@@ -332,10 +356,12 @@ Do not tune PPO. Execute in this order:
 ```
  1. fix terminal_potential = 0.0                          [done]
  2. add the shaping-invariance regression test            [done]
- 3. Python DoubleBattle direct driver on sim_worker.mjs   <-- next
+ 3. Python DoubleBattle direct driver on sim_worker.mjs   [done] vgc/rl/env.py
+ 3b. agent adapter: (battle) -> order per opponent,       <-- next, blocks 4 and 6
+     plus BattleMemory fed from StepResult.lines
  4. move the evaluation harness onto the direct env
- 5. policy-sampling RNG seeding
- 6. deterministic exact-episode replay test
+ 5. policy-sampling RNG seeding                           [done]
+ 6. deterministic exact-episode replay test               [partial: random policy]
  7. validate the fixed 4-mon team
  8. hardcode leads/ordering on both sides
  9. per-battle-id concurrent stepping in the worker
