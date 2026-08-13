@@ -212,7 +212,9 @@ post-fix rerun of the same comparison gave 51.8%, and the A/A null test gives 53
 zero) against the A/B gate's 0.106 (above the 99th percentile of the null), which is how
 we know the +/-10-point team-to-team spread under A/B is a real property of the policy
 change rather than noise. The 160-team confirmation measured the same spread (tau 0.114)
-around a 49.5% mean, so the heterogeneity is real and the overall edge is not.
+around a 49.5% mean, so the heterogeneity is real and the overall edge is not. A 160-team
+A/A (seed 20260903, n=2880) came back 1434/2880 = 49.8%, cluster-robust CI [0.481, 0.515],
+team-effect SD 0.000 -- 50% inside, no seat bias.
 
 ## Commands
 
@@ -252,6 +254,16 @@ cat teams/dev.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026
 .venv/bin/python offline/evaluate_own_spread_pool.py \
     --manifest data/selfplay/archetype_pool_150/manifest.json --workers 10 \
     --output runs/eval/own_spread_pool160_gate.json
+
+# First controlled RL experiment (fixed team, fixed leads, fogged, terminal ±1,
+# gamma=1.0). Heuristic weights stay frozen; this is the learning-curve run.
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent random \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_random
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent maxpower \
+    --init-from runs/ppo/fixed_mirror_vs_random/latest.pt \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_maxpower
 
 # The two Phase 2b acceptance gates (meta1 team mirror on both sides -- see "gate
 # results" in the Phase 2b experiment log, runs/experiments.jsonl, for the latest run):
@@ -299,6 +311,9 @@ node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario
 - `PolicyConfig` (`vgc/models.py`) is the single frozen-dataclass gate for behavior
   changes -- new strategic knobs go there, individually commented, not as bare
   literals in the decision code. Mirrors `~/code/projects/pokemon-tcg-ai`'s pattern.
+  Heuristic weights themselves are frozen as of 2026-08-12 (the Protect retune did
+  not generalize). Treat the shipped heuristic as a benchmark, not something to
+  keep optimizing.
 - `VgcPlayer.decide()` / `decide_teampreview()` (`vgc/agent.py`) are the only methods
   subclasses should override; `choose_move`/`teampreview` themselves exist only to wrap
   those hooks in an exception-safe fallback (random move / `/team 1234`) so a bug in

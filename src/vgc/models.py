@@ -15,8 +15,12 @@ from vgc.config import FORMAT_ID
 
 @dataclass(frozen=True)
 class PolicyConfig:
-    """Knobs for `vgc.agent.VgcPlayer`. Phase 1 scaffold only -- no real evaluator yet
-    (that's Phase 2), so most of this is placeholder plumbing that Phase 2 will read.
+    """Knobs for `vgc.agent.VgcPlayer`.
+
+    Heuristic weights are FROZEN as of 2026-08-12. The Protect/own-spread retune did not
+    generalize off the team it was tuned on (160-team confirmation: 49.5%, CI includes
+    50%). Do not change evaluator, search, or preview weights unless a future experiment
+    gives strong evidence. This config is a benchmark for RL, not a tuning surface.
     """
 
     # Which Showdown format this policy plays. Always the Champions-mod Reg M-B doubles

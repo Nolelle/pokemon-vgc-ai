@@ -442,10 +442,16 @@ Do not tune PPO. Execute in this order:
 --- Phase 1 complete; Phase 2 starts here ---
 
 14. re-establish reference gate numbers on the direct env
-15. point selfplay/train_ppo.py at vgc.rl.match
-16. decide teacher_anchor_weight knowing it costs 16x
-17. gamma 1.0 vs 0.995 on the fixed mirror
-18. begin the first controlled RL experiment
+15. point training at vgc.rl.match (fixed-mirror script; leave the
+    websocket train_ppo.py paths flagged off rather than rewriting them)
+16. teacher_anchor_weight = 0.0 for the first experiment (16x cost, and we
+    need to know whether RL works without an imitation crutch)
+17. gamma = 1.0 for the first experiment (winning, not winning quickly)
+18. begin the first controlled RL experiment: one fixed-team PPO agent,
+    capability ladder starting at random, reproducible learning curve
+
+Heuristic PolicyConfig weights are frozen (2026-08-12). Do not retune Protect
+or other evaluator knobs as part of this phase.
 ```
 
 ## First controlled RL experiment

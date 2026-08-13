@@ -50,12 +50,36 @@ def _make_vgc_horizon(team: str, battle_format: str, **kwargs) -> Player:
     return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
 
 
+def _make_vgc_myopic(team: str, battle_format: str, **kwargs) -> Player:
+    """1-turn evaluator only -- no 2-ply search, no rolling horizon."""
+
+    config = kwargs.pop("config", None) or PolicyConfig(
+        format_id=battle_format,
+        use_two_ply_search=False,
+        use_rolling_horizon=False,
+    )
+    return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
+
+
+def _make_vgc_shallow(team: str, battle_format: str, **kwargs) -> Player:
+    """2-ply search without the rolling-horizon position forecast."""
+
+    config = kwargs.pop("config", None) or PolicyConfig(
+        format_id=battle_format,
+        use_two_ply_search=True,
+        use_rolling_horizon=False,
+    )
+    return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
+
+
 BASELINES: dict[str, PlayerFactory] = {
     "random": _make_random,
     "maxpower": _make_maxpower,
     "heuristic": _make_heuristic,
     "vgc": _make_vgc,
     "vgc_horizon": _make_vgc_horizon,
+    "vgc_myopic": _make_vgc_myopic,
+    "vgc_shallow": _make_vgc_shallow,
 }
 
 
@@ -64,7 +88,8 @@ def make_player(
 ) -> Player:
     """Construct a registered baseline player by name.
 
-    :param name: one of BASELINES' keys ("random", "maxpower", "heuristic", "vgc").
+    :param name: one of BASELINES' keys (random, maxpower, heuristic, vgc,
+        vgc_horizon, vgc_myopic, vgc_shallow).
     :param team: packed or paste-format Showdown team string.
     :param battle_format: Showdown format id; defaults to this project's target format.
     """
