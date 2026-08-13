@@ -39,25 +39,36 @@ class PolicyConfig:
     # 35.6% (Incineroar Atk 135 -> 183), underestimating Speed on all six Pokemon and
     # overestimating HP on all six.
     #
-    # The initial cost has been recovered. Before retuning, a same-session mirror A/B
-    # (identical vgc bots, alternating seats, n=500) put the knowing bot at 200/500 =
-    # 40.0%, 95% CI [0.358, 0.444]. A decision-level diagnostic explained why: correct
-    # spreads changed 26% of choices, systematically toward MORE Protect and fewer
-    # switches because the bot correctly saw itself as frail rather than believing it had
-    # 32 HP points. Note this was NOT symmetric-error cancellation: the OPPONENT's spread
-    # comes from usage data (vgc.sets.load_usage_spreads) and was already reasonable.
+    # RETRACTED: this comment used to report a mirror A/B putting the knowing bot at
+    # 200/500 = 40.0%, CI [0.358, 0.444], and to justify the Protect retune below as
+    # recovering that loss. That measurement was an instrumentation artifact and no part
+    # of it should be relied on. This flag has only ever had two consumers -- the live
+    # path in `vgc.agent.VgcPlayer` and the direct-env path in `vgc.rl.agents.DirectAgent`
+    # -- and the direct-env one did not exist until commit e8417bd. The 40.0% run predates
+    # it, so `DirectBattle` was still enriching BOTH sides globally and the two seats had
+    # identical self-knowledge; the run could not have measured what it claimed. Note also
+    # that `vgc.evaluator._our_pokemon_state` never reads this flag, it just reads whatever
+    # `Pokemon.evs` holds, so there is no second path that could have made it work.
     #
-    # A held-out n=500 confirmation recovered practical strength by changing only
-    # protect_threat_weight from 0.8 to 0.6: the retuned true-spread candidate went
-    # 305/500 = 61.0%, 95% CI [0.567, 0.652], against the LEGACY fake-spread policy at
-    # weight 0.8. The untuned true-spread policy was 259/500 = 51.8%, CI [0.474, 0.561],
-    # on the same seed stream. Switch-weight changes added no measurable benefit in the
-    # preceding screen, so they stayed put.
+    # Re-run after the fix, the same comparison (both sides at the legacy weight 0.8, only
+    # self-knowledge differing) came out 259/500 = 51.8%, CI [0.474, 0.561] -- consistent
+    # with no effect. The two runs disagree by z = 3.77 (p ~ 0.0002), which is why the
+    # earlier one is treated as broken rather than as unlucky.
     #
-    # Important causal caveat: a separate equal-weight 0.6-vs-0.6 mirror put true spreads
-    # at 246/500 = 49.2%, CI [0.448, 0.536]. Thus the RETUNED accurate bot beats the old
-    # fake-spread bot, but accurate self-knowledge alone is not proven better when both
-    # sides share the retuned weight. This mirror result is team-specific either way.
+    # What still stands, on its own evidence:
+    #   * The principle. Our own team sheet is not hidden information and a policy should
+    #     never guess a fact it holds. That is the reason this is ON.
+    #   * The decision-level diagnostic (258 decisions): correct spreads change 26% of
+    #     chosen joint orders, toward more Protect and fewer switches, because the bot
+    #     correctly sees itself as frail. This was NOT symmetric-error cancellation -- the
+    #     OPPONENT's spread comes from usage data (vgc.sets.load_usage_spreads) and was
+    #     already reasonable.
+    #
+    # What is NOT established: that accurate self-knowledge measurably wins. The
+    # equal-weight 0.6-vs-0.6 mirror put it at 246/500 = 49.2%, CI [0.448, 0.536]. Neither
+    # the 58-team pool (50.7%) nor the 160-team confirmation (1426/2880 = 49.5%,
+    # cluster-robust CI [0.470, 0.520]; see `protect_threat_weight`) could certify the
+    # shipped combination. Ship it because it is correct, not because it is stronger.
     use_own_team_spreads: bool = True
     # Emit one log line per `decide()` exception (see vgc.agent.VgcPlayer) so a battle that
     # silently fell back to random play is visible instead of just... quietly losing.
@@ -139,6 +150,23 @@ class PolicyConfig:
     # -- Defense/utility: Protect --------------------------------------------------------
     # Points per 1% of estimated incoming damage (from the opponent's best revealed move
     # onto this slot) that choosing Protect this turn avoids.
+    #
+    # 0.6 rather than the older 0.8, but hold this loosely -- it is NOT a certified win.
+    # The screen that chose it ran 80 games per candidate on ONE team (teams/phase2_mirror)
+    # and read 0.8 -> 47/80, 0.7 -> 48/80, 0.6 -> 53/80, 0.5 -> 53/80. The SE of a
+    # difference between two of those candidates is 7.7 points and best-minus-worst is 7.5,
+    # so the four are statistically indistinguishable and picking 0.6 over 0.7 was a coin
+    # flip -- with the usual winner's curse on top, since the best of four noisy candidates
+    # is biased high. The n=500 "held-out confirmation" that read 61.0% held out the SEED
+    # but reused the TEAM, so it did not test generalization.
+    #
+    # The varied-team gate did: on the 58-team archetype pool the same policy measured
+    # 529/1044 = 50.7%, cluster-robust CI [0.466, 0.547] -- a 10-point drop from the
+    # single-team number. The 160-team confirmation (seed 20260902, 18 games/team, n=2880)
+    # was 1426/2880 = 49.5%, cluster-robust CI [0.470, 0.520], floor +1.8pts -- still a
+    # wash, now with an interval tight enough that a real +3pt edge would have cleared.
+    # So 0.6 is kept as a wash that is no worse and marginally better-motivated, NOT as a
+    # demonstrated gain. Do not retune this on a single team again.
     protect_threat_weight: float = 0.6
     # SUPERSEDED by `protect_success_decay` (below): `_score_protect` used to subtract
     # this flat penalty once `protect_counter >= 1` instead of actually modeling Gen 9's

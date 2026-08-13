@@ -176,6 +176,47 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
 - `vgc.node.find_node` selects Node 22 even when an older Node is first on PATH. Override
   discovery with `VGC_NODE` if necessary.
 
+## Multi-team gates: cluster by team, and check your power first
+
+`offline/evaluate_own_spread_pool.py` plays a change against MANY teams
+(`data/selfplay/archetype_pool*/manifest.json`, built by `tools/build_archetype_pool.py`).
+Four rules learned the hard way on 2026-08-11/12, all now enforced in code:
+
+- **Never tune on one team and confirm on the same team.** A held-out SEED is not a
+  held-out TEAM. `protect_threat_weight=0.6` read 61.0% on `teams/phase2_mirror` (n=500,
+  fresh seed) and 50.7% on the 58-team pool -- a 10-point overfit. The screen that picked
+  it also had a 7.7-point SE on differences between candidates that spanned 7.5 points,
+  i.e. it was choosing between four indistinguishable options.
+- **Pool win rates need a cluster-robust interval, not Wilson.** Games are clustered in
+  teams and teams genuinely differ, which inflated the variance 1.76x on the real gate
+  and made the reported `[0.476, 0.537]` really `[0.466, 0.547]`. Use
+  `vgc.evaluation.clustered_interval` / `variance_components`; `wilson_interval` is only
+  correct for a single fixed matchup.
+- **Check the pool's power floor BEFORE running.** Between-team variance divides by the
+  number of TEAMS, so a pool of K teams has an irreducible SE floor of `sqrt(tau^2 / K)`
+  that more games per team cannot lower. The 58-team pool could never certify an edge
+  below ~+2.8 points at any game count. The 160-team pool
+  (`data/selfplay/archetype_pool_150/`, 25 variants/archetype, 0 validation failures)
+  ran the same A/B at 1426/2880 = 49.5%, cluster-robust CI [0.470, 0.520], floor +1.8pts
+  -- still a wash, now tight enough that a real +3pt edge would have cleared. Use this
+  pool for anything that needs to resolve below ~+3 points. The gate prints both numbers.
+- **Subgroup checks need a family-wise correction.** Six uncorrected per-archetype 95%
+  checks trip on noise ~14% of runs. `gardevoir_maushold` was flagged at 40.7%, a policy
+  change was built to chase it, and it measured 54.9% on the next seed. The guardrail is
+  now a one-sided cluster-robust test per archetype, Holm-corrected.
+
+**Run `--null-test` (A/A: both arms identical) whenever the harness changes.** It must
+return 50%. This is what retired the phantom "accurate own spreads cost 10 points"
+result: that 200/500 = 40.0% run predates commit `e8417bd`, before which `DirectBattle`
+enriched both sides globally and `PolicyConfig.use_own_team_spreads` had no per-agent
+effect in the direct env at all, so the two seats had identical self-knowledge. The
+post-fix rerun of the same comparison gave 51.8%, and the A/A null test gives 537/1044 =
+51.4%, CI [0.483, 0.546]. The A/A run also has team-effect SD 0.029 (consistent with
+zero) against the A/B gate's 0.106 (above the 99th percentile of the null), which is how
+we know the +/-10-point team-to-team spread under A/B is a real property of the policy
+change rather than noise. The 160-team confirmation measured the same spread (tau 0.114)
+around a 49.5% mean, so the heterogeneity is real and the overall edge is not.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -203,6 +244,17 @@ cat teams/dev.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026
 # Acceptance gate (Wilson-CI lower bound over a threshold)
 .venv/bin/python offline/run_gates.py --candidate vgc --incumbent random --n 100 \
     --threshold 0.55 --team teams/dev.packed.txt
+
+# Varied-team gate (see "Multi-team gates" above). Build the pool once, then A/A the
+# harness, then run the A/B. --null-test MUST come back at 50% or the A/B means nothing.
+.venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25 \
+    --seed 20260901 --out data/selfplay/archetype_pool_150
+.venv/bin/python offline/evaluate_own_spread_pool.py --null-test \
+    --manifest data/selfplay/archetype_pool_150/manifest.json \
+    --output runs/eval/pool_null_test.json
+.venv/bin/python offline/evaluate_own_spread_pool.py \
+    --manifest data/selfplay/archetype_pool_150/manifest.json --workers 10 \
+    --output runs/eval/own_spread_pool160_gate.json
 
 # The two Phase 2b acceptance gates (meta1 team mirror on both sides -- see "gate
 # results" in the Phase 2b experiment log, runs/experiments.jsonl, for the latest run):
