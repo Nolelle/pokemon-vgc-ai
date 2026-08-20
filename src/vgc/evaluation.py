@@ -264,3 +264,117 @@ def holm_rejections(pvalues: Sequence[float], alpha: float = 0.05) -> list[bool]
         else:
             break
     return rejected
+
+
+ValueCluster = tuple[str, Sequence[float]]
+"""One sampling unit of a continuous clustered comparison: `(label, per-item values)`."""
+
+
+@dataclass(frozen=True)
+class ClusteredMean:
+    """A clustered mean of continuous per-item values, plus where its error comes from.
+
+    `clustered_interval`/`variance_components` above answer the same questions for
+    win/loss counts. This is their continuous twin, for a per-position quantity such as
+    "how much value did this policy give up versus the best action available" -- the
+    counterfactual Q work compares policies that way, and the values are means of +/-1
+    continuations rather than wins, so the binary versions do not apply.
+
+    The design consequence carries over unchanged and is the reason this exists: `tau`
+    (real between-cluster SD) does not shrink with more items per cluster, so K clusters
+    impose an irreducible SE floor of `sqrt(tau^2 / K)`. Past that, only MORE CLUSTERS
+    help. Read a small `tau` as "no evidence of a cluster effect" rather than a measured
+    one -- the truncation at zero biases it upward, exactly as documented for the
+    binary estimator.
+    """
+
+    clusters: int
+    items: int
+    mean: float
+    tau: float
+    within_sd: float
+    naive_se: float
+    clustered_se: float
+    se_floor: float
+
+    @property
+    def design_effect(self) -> float:
+        return (self.clustered_se / self.naive_se) ** 2 if self.naive_se > 0 else 1.0
+
+    def interval(self, z: float = 1.96) -> tuple[float, float]:
+        return self.mean - z * self.clustered_se, self.mean + z * self.clustered_se
+
+    @property
+    def minimum_detectable_effect(self) -> float:
+        """Smallest true effect this run could certify (95% interval clear of zero)."""
+
+        return 1.96 * self.clustered_se
+
+    @property
+    def floor_detectable_effect(self) -> float:
+        """Smallest effect THIS cluster pool could ever certify, at any item count."""
+
+        return 1.96 * self.se_floor
+
+    def clusters_needed(self, effect: float, items_per_cluster: int) -> int:
+        """Clusters required to certify `effect` at `items_per_cluster` items each."""
+
+        target_se = effect / 1.96
+        if target_se <= 0:
+            return 0
+        per_cluster = self.tau**2 + self.within_sd**2 / max(items_per_cluster, 1)
+        return math.ceil(per_cluster / target_se**2)
+
+
+def clustered_mean(clusters: Sequence[ValueCluster]) -> ClusteredMean:
+    """Cluster-robust mean of continuous values, with a one-way random-effects split.
+
+    `tau^2` uses the same ANOVA moment estimator as `variance_components`, truncated at
+    zero, so the two report the between-cluster spread on a consistent basis.
+    """
+
+    usable = [(str(label), [float(value) for value in values]) for label, values in clusters]
+    usable = [(label, values) for label, values in usable if values]
+    k = len(usable)
+    total = sum(len(values) for _label, values in usable)
+    if total == 0 or k == 0:
+        return ClusteredMean(0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    flat = [value for _label, values in usable for value in values]
+    mean = sum(flat) / total
+    naive_sd = (
+        math.sqrt(sum((value - mean) ** 2 for value in flat) / (total - 1)) if total > 1 else 0.0
+    )
+    naive_se = naive_sd / math.sqrt(total) if total > 0 else 0.0
+    if k < 2:
+        return ClusteredMean(k, total, mean, 0.0, naive_sd, naive_se, naive_se, 0.0)
+    # Sandwich SE for the ratio estimator sum(values) / sum(counts), clustering by label.
+    residual = sum((sum(values) - mean * len(values)) ** 2 for _label, values in usable)
+    clustered_se = math.sqrt(k / ((k - 1) * total**2) * residual)
+    cluster_means = [sum(values) / len(values) for _label, values in usable]
+    between = sum(
+        len(values) * (cluster_mean - mean) ** 2
+        for (_label, values), cluster_mean in zip(usable, cluster_means)
+    ) / (k - 1)
+    within_df = total - k
+    within = (
+        sum(
+            (value - cluster_mean) ** 2
+            for (_label, values), cluster_mean in zip(usable, cluster_means)
+            for value in values
+        )
+        / within_df
+        if within_df > 0
+        else 0.0
+    )
+    scale = (total - sum(len(values) ** 2 for _label, values in usable) / total) / (k - 1)
+    tau2 = max((between - within) / scale, 0.0) if scale > 0 else 0.0
+    return ClusteredMean(
+        clusters=k,
+        items=total,
+        mean=mean,
+        tau=math.sqrt(tau2),
+        within_sd=math.sqrt(within),
+        naive_se=naive_se,
+        clustered_se=clustered_se,
+        se_floor=math.sqrt(tau2 / k),
+    )

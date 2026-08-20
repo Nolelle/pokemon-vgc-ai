@@ -216,6 +216,39 @@ around a 49.5% mean, so the heterogeneity is real and the overall edge is not. A
 A/A (seed 20260903, n=2880) came back 1434/2880 = 49.8%, cluster-robust CI [0.481, 0.515],
 team-effect SD 0.000 -- 50% inside, no seat bias.
 
+## Counterfactual Q / search integration: closed, do not resume without a new hypothesis
+
+Learned Q(o, a, b) was evaluated against the engineered search evaluator on a powered,
+team-separated test set (768 roots, 192 teams, 424 matchups --
+`data/selfplay/counterfactual_q_powered_validation_pool`, declared in
+`data/meta/counterfactual_q_powered_validation_split.json`). **No variant showed a
+reproducible advantage.** Nine configurations -- frozen backbone, and trainable backbone
+at lr 1e-5 and 1e-4, three seeds each -- gave `search - model` differences scattered
+around zero (+0.0085, -0.0046, +0.0068, -0.0098, -0.0055, +0.0042, +0.0072, +0.0049,
+-0.0150); none significant, none surviving Holm. Unfreezing the shared encoder tested and
+**rejected** the last live hypothesis (that features fitted for policy/value lacked what Q
+needs): it widened the train-validation gap from 0.032 to 0.053-0.056 and did not
+generalize better. Opponent-response weighting was closed separately -- noise-corrected
+headroom +0.0011 +/- 0.0013 over the collected top-two responses, with 92.3% of roots
+having exactly zero at any weight.
+
+Consequences, in order of how much time they save:
+
+- **Do not add learned Q, an opponent-response model, or learned-value blending to the
+  playing agent** on current evidence. Engineered search stays the reasoning engine. This
+  is a measured dead end, not an unexplored one -- reopening it needs a materially
+  different hypothesis, not another seed or another learning rate.
+- **This says nothing about the RL policy work**, which measured a large reproducible
+  win and is unaffected. "Can the RL policy approach or beat engineered search?" is still
+  the open benchmark; "can learned Q improve search?" is not.
+- **The earlier "best run" was an artifact of an underpowered test set**, and this is the
+  reusable lesson: 120 roots drawn from only 24 teams had a cluster-robust SE floor of
+  0.035 against a ~0.015 effect, so it ranked seeds by noise. Cluster by team and check
+  the power floor BEFORE running -- same rule as the multi-team gates above.
+  `vgc.evaluation.clustered_mean` is the continuous-value counterpart of
+  `clustered_interval`/`variance_components` for per-position quantities like regret;
+  `offline/evaluate_q_vs_search_powered.py` is the worked example.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
