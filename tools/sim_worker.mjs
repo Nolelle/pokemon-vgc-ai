@@ -57,6 +57,7 @@
 //
 // Usage:
 //   node tools/sim_worker.mjs <path-to-pokemon-showdown-repo>
+import crypto from "node:crypto";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -76,9 +77,9 @@ if (!fs.existsSync(simIndexPath)) {
 
 const simModule = await import(pathToFileURL(simIndexPath).href);
 const Sim = simModule.BattleStream ? simModule : simModule.default;
-const { BattleStream, getPlayerStreams, Teams } = Sim;
+const { Battle, BattleStream, getPlayerStreams, PRNG, Teams } = Sim;
 
-/** @type {Map<string, {stream: any, streams: any, buffers: {p1: string[], p2: string[]}, winner: string|null, ended: boolean}>} */
+/** @type {Map<string, {stream: any, streams: any, buffers: {p1: string[], p2: string[]}, transcript: {p1: string[], p2: string[]}, winner: string|null, ended: boolean}>} */
 const battles = new Map();
 
 // Yield to the event loop so the async-iterator drains below can run. BattleStream
@@ -93,6 +94,7 @@ function attachDrain(entry, side) {
 			for (const line of chunk.split("\n")) {
 				if (line) {
 					entry.buffers[side].push(line);
+					entry.transcript[side].push(line);
 					entry.lineCount++;
 				}
 			}
@@ -120,6 +122,39 @@ function attachOmniscient(entry) {
 			}
 		}
 	})().catch(() => {});
+}
+
+function makeEntry(stream, transcript = { p1: [], p2: [] }) {
+	const streams = getPlayerStreams(stream);
+	const entry = {
+		stream,
+		streams,
+		buffers: { p1: [], p2: [] },
+		transcript: { p1: [...transcript.p1], p2: [...transcript.p2] },
+		winner: null,
+		ended: false,
+		lineCount: 0,
+	};
+	attachDrain(entry, "p1");
+	attachDrain(entry, "p2");
+	attachOmniscient(entry);
+	return entry;
+}
+
+function normalizeState(state) {
+	const normalized = structuredClone(state);
+	if (Array.isArray(normalized.log)) {
+		normalized.log = normalized.log.map((line) => line.startsWith("|t:|") ? "|t:|" : line);
+	}
+	return normalized;
+}
+
+function stateHash(entry) {
+	const battle = entry.stream.battle;
+	if (!battle) throw new Error("battle has not started");
+	return crypto.createHash("sha256")
+		.update(JSON.stringify(normalizeState(battle.toJSON())))
+		.digest("hex");
 }
 
 // Settle: wait until the sim has (a) actually emitted output for the write we just made,
@@ -171,21 +206,8 @@ async function handleStart(msg) {
 	if (battles.has(msg.id)) throw new Error(`battle id ${msg.id} already exists`);
 
 	const stream = new BattleStream({ debug: false });
-	const streams = getPlayerStreams(stream);
-	const entry = {
-		stream,
-		streams,
-		buffers: { p1: [], p2: [] },
-		winner: null,
-		ended: false,
-		lineCount: 0,
-	};
+	const entry = makeEntry(stream);
 	battles.set(msg.id, entry);
-
-	// Attach readers BEFORE writing -- BattleStream pushes output as input is processed.
-	attachDrain(entry, "p1");
-	attachDrain(entry, "p2");
-	attachOmniscient(entry);
 
 	const startSpec = { formatid: msg.format };
 	if (msg.seed) startSpec.seed = msg.seed;
@@ -195,9 +217,65 @@ async function handleStart(msg) {
 		`>player p1 ${JSON.stringify({ name: msg.p1.name || "p1", team: packTeam(msg.p1.team) })}`,
 		`>player p2 ${JSON.stringify({ name: msg.p2.name || "p2", team: packTeam(msg.p2.team) })}`,
 	];
-	void streams.omniscient.write(lines.join("\n"));
+	void entry.streams.omniscient.write(lines.join("\n"));
 	await settle(entry);
 	return respond(msg, entry);
+}
+
+async function handleClone(msg) {
+	if (battles.has(msg.id)) throw new Error(`battle id ${msg.id} already exists`);
+	const source = battles.get(msg.source);
+	if (!source) throw new Error(`unknown source battle id ${msg.source}`);
+	const sourceBattle = source.stream.battle;
+	if (!sourceBattle) throw new Error(`source battle ${msg.source} has not started`);
+
+	const stream = new BattleStream({ debug: false });
+	const entry = makeEntry(stream, source.transcript);
+	// `toJSON()` is serializable but may still contain live nested object references.
+	// Round-trip through JSON so sibling clones cannot share mutable Pokemon/set state.
+	const serialized = JSON.parse(JSON.stringify(sourceBattle.toJSON()));
+	stream.battle = Battle.fromJSON(serialized);
+	stream.battle.restart((type, data) => {
+		if (Array.isArray(data)) data = data.join("\n");
+		stream.pushMessage(type, data);
+		if (type === "end" && !stream.keepAlive) stream.pushEnd();
+	});
+	if (msg.seed) {
+		// Change only FUTURE mechanics randomness. Direct assignment avoids adding a
+		// user-visible "RNG was reset" protocol line to an otherwise exact clone.
+		stream.battle.prng = new PRNG(msg.seed);
+	}
+	entry.ended = Boolean(stream.battle.ended);
+	entry.winner = entry.ended ? source.winner : null;
+	battles.set(msg.id, entry);
+
+	return {
+		id: msg.id,
+		p1: [...source.transcript.p1],
+		p2: [...source.transcript.p2],
+		requestState: stream.battle.requestState,
+		ended: entry.ended,
+		winner: entry.winner,
+		stateHash: stateHash(entry),
+	};
+}
+
+function handleInspect(msg) {
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	const battle = entry.stream.battle;
+	return {
+		id: msg.id,
+		requestState: battle ? battle.requestState : "",
+		ended: entry.ended || Boolean(battle && battle.ended),
+		winner: entry.winner,
+		stateHash: stateHash(entry),
+		prngSeed: battle.prng.getSeed(),
+		transcriptLines: {
+			p1: entry.transcript.p1.length,
+			p2: entry.transcript.p2.length,
+		},
+	};
 }
 
 async function handleChoose(msg) {
@@ -281,8 +359,12 @@ async function dispatch(msg) {
 	switch (msg.cmd) {
 		case "start":
 			return handleStart(msg);
+		case "clone":
+			return handleClone(msg);
 		case "choose":
 			return handleChoose(msg);
+		case "inspect":
+			return handleInspect(msg);
 		case "close":
 			return handleClose(msg);
 		case "batch":

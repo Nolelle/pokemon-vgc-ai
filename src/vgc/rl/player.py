@@ -16,9 +16,11 @@ from vgc.agent import VgcPlayer
 from vgc.rl.encoding import (
     encode_battle_history,
     encode_candidates,
+    encode_information_context,
     encode_live_state,
     encode_meta_context,
     pad_candidate_features,
+    pad_candidate_tactical_features,
 )
 from vgc.rl.distill import teacher_action_index
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, RolloutStep, select_action
@@ -61,14 +63,39 @@ class PpoVgcPlayer(VgcPlayer):
         memory = self._memory_for(battle)
         state_indices, state_scalars = encode_live_state(battle, self.config)
         history_scalars = encode_battle_history(memory)
-        candidates = encode_candidates(orders)
+        candidates = encode_candidates(
+            orders,
+            battle=battle if self.model.use_tactical_features else None,
+            memory=memory if self.model.use_tactical_features else None,
+            config=self.config,
+        )
         moves, targets, species, flags, mask = pad_candidate_features([candidates])
+        tactical = pad_candidate_tactical_features([candidates])
         meta_scalars = (
             encode_meta_context(battle, self.config) if self.model.use_meta_features else None
         )
         meta_tensor = (
             torch.as_tensor(meta_scalars[None, :], dtype=torch.float32, device=self.device)
             if meta_scalars is not None
+            else None
+        )
+        information = (
+            encode_information_context(battle, memory, self.config)
+            if self.model.use_information_features
+            else None
+        )
+        information_indices = (
+            torch.as_tensor(
+                information.indices[None, :], dtype=torch.long, device=self.device
+            )
+            if information is not None
+            else None
+        )
+        information_scalars = (
+            torch.as_tensor(
+                information.scalars[None, :], dtype=torch.float32, device=self.device
+            )
+            if information is not None
             else None
         )
         self.model.eval()
@@ -85,6 +112,13 @@ class PpoVgcPlayer(VgcPlayer):
                 torch.as_tensor(mask, dtype=torch.bool, device=self.device),
                 deterministic=self.deterministic,
                 meta_scalars=meta_tensor,
+                information_indices=information_indices,
+                information_scalars=information_scalars,
+                tactical_features=(
+                    torch.as_tensor(tactical, dtype=torch.float32, device=self.device)
+                    if self.model.use_tactical_features
+                    else None
+                ),
                 generator=self.policy_generator,
             )
         action_index = int(actions.item())
@@ -113,6 +147,7 @@ class PpoVgcPlayer(VgcPlayer):
                     meta_scalars=(
                         np.array(meta_scalars, copy=True) if meta_scalars is not None else None
                     ),
+                    information=information,
                     state_potential=state_potential,
                 )
             )

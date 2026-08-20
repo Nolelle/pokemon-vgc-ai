@@ -15,7 +15,15 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.bc.encoding import TARGET_VOCAB
 from vgc.bc.model import BcPolicyNet, HIDDEN_DIM
-from vgc.rl.encoding import HISTORY_SCALAR_DIM, META_SCALAR_DIM
+from vgc.rl.encoding import (
+    HISTORY_SCALAR_DIM,
+    INFORMATION_MOVES_PER_MON,
+    INFORMATION_TEAM_SLOTS,
+    META_SCALAR_DIM,
+    OPP_SCALARS_PER_MON,
+    OWN_SCALARS_PER_MON,
+    TACTICAL_FEATURE_DIM,
+)
 
 TARGET_EMBED_DIM = 8
 ACTION_HIDDEN_DIM = 128
@@ -26,6 +34,9 @@ NUM_ACTION_FLAGS = 4
 # vgc.rl.encoding.encode_meta_context). Only built when use_meta_features=True, so the
 # default architecture is byte-for-byte unchanged.
 META_HIDDEN_DIM = 32
+INFORMATION_MON_HIDDEN_DIM = 64
+INFORMATION_HIDDEN_DIM = 128
+TACTICAL_HIDDEN_DIM = 64
 
 
 class CandidatePolicyValueNet(nn.Module):
@@ -36,10 +47,18 @@ class CandidatePolicyValueNet(nn.Module):
         *,
         dropout: float = 0.0,
         use_meta_features: bool = False,
+        use_information_features: bool = False,
+        use_tactical_features: bool = False,
         head_dropout: float = 0.0,
+        value_output_transform: str = "identity",
     ) -> None:
         super().__init__()
+        if value_output_transform not in ("identity", "tanh"):
+            raise ValueError("value_output_transform must be 'identity' or 'tanh'")
         self.use_meta_features = use_meta_features
+        self.use_information_features = use_information_features
+        self.use_tactical_features = use_tactical_features
+        self.value_output_transform = value_output_transform
         # Applied functionally in forward() (see there) rather than as nn.Dropout
         # modules inserted into the existing nn.Sequential stacks -- inserting modules
         # would shift child indices (action_encoder.0/.2, ...) and break every existing
@@ -69,6 +88,28 @@ class CandidatePolicyValueNet(nn.Module):
                 nn.ReLU(),
             )
             context_input_dim += META_HIDDEN_DIM
+        if use_information_features:
+            species_dim = self.state_encoder.species_embedding.embedding_dim
+            item_dim = self.state_encoder.item_embedding.embedding_dim
+            ability_dim = self.state_encoder.ability_embedding.embedding_dim
+            move_dim = self.state_encoder.move_embedding.embedding_dim
+            categorical_dim = species_dim + item_dim + ability_dim + move_dim
+            self.own_information_mon_encoder = nn.Sequential(
+                nn.Linear(categorical_dim + OWN_SCALARS_PER_MON, INFORMATION_MON_HIDDEN_DIM),
+                nn.ReLU(),
+            )
+            self.opp_information_mon_encoder = nn.Sequential(
+                nn.Linear(categorical_dim + OPP_SCALARS_PER_MON, INFORMATION_MON_HIDDEN_DIM),
+                nn.ReLU(),
+            )
+            self.information_encoder = nn.Sequential(
+                nn.Linear(
+                    INFORMATION_TEAM_SLOTS * INFORMATION_MON_HIDDEN_DIM * 2,
+                    INFORMATION_HIDDEN_DIM,
+                ),
+                nn.ReLU(),
+            )
+            context_input_dim += INFORMATION_HIDDEN_DIM
         self.context_encoder = nn.Sequential(
             nn.Linear(context_input_dim, HIDDEN_DIM),
             nn.ReLU(),
@@ -79,8 +120,17 @@ class CandidatePolicyValueNet(nn.Module):
             + self.state_encoder.species_embedding.embedding_dim
             + NUM_ACTION_FLAGS
         )
+        action_input_dim = NUM_ORDER_SLOTS * per_slot_dim
+        if use_tactical_features:
+            self.tactical_encoder = nn.Sequential(
+                nn.Linear(TACTICAL_FEATURE_DIM, TACTICAL_HIDDEN_DIM),
+                nn.ReLU(),
+                nn.Linear(TACTICAL_HIDDEN_DIM, TACTICAL_HIDDEN_DIM),
+                nn.ReLU(),
+            )
+            action_input_dim += TACTICAL_HIDDEN_DIM
         self.action_encoder = nn.Sequential(
-            nn.Linear(NUM_ORDER_SLOTS * per_slot_dim, ACTION_HIDDEN_DIM),
+            nn.Linear(action_input_dim, ACTION_HIDDEN_DIM),
             nn.ReLU(),
             nn.Linear(ACTION_HIDDEN_DIM, ACTION_HIDDEN_DIM),
             nn.ReLU(),
@@ -104,41 +154,37 @@ class CandidatePolicyValueNet(nn.Module):
         action_flags: torch.Tensor,
         candidate_mask: torch.Tensor,
         meta_scalars: torch.Tensor | None = None,
+        information_indices: torch.Tensor | None = None,
+        information_scalars: torch.Tensor | None = None,
+        tactical_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if candidate_mask.ndim != 2 or not torch.all(candidate_mask.any(dim=1)):
             raise ValueError("each batch row must contain at least one legal candidate")
 
-        state_hidden = self.state_encoder.encode_hidden(state_indices, state_scalars)
-        history_hidden = self.history_encoder(history_scalars)
-        if self.use_meta_features:
-            if meta_scalars is None:
-                raise ValueError("use_meta_features=True requires meta_scalars")
-            meta_hidden = self.meta_encoder(meta_scalars)
-            context_hidden = self.context_encoder(
-                torch.cat((state_hidden, history_hidden, meta_hidden), dim=-1)
-            )
-        else:
-            context_hidden = self.context_encoder(torch.cat((state_hidden, history_hidden), dim=-1))
+        context_hidden = self.encode_context(
+            state_indices,
+            state_scalars,
+            history_scalars,
+            meta_scalars=meta_scalars,
+            information_indices=information_indices,
+            information_scalars=information_scalars,
+        )
         # head_dropout applies only to the randomly-initialised action-scoring path --
         # the part of the network that overfits fastest on a small teacher-distillation
         # sample set. `action_context` is a dropped-out COPY of context_hidden used only
         # to build state_action below; `context_hidden` itself is left untouched so that
         # value_head's input (below) is never affected -- value learning shouldn't be
         # destabilized by a regularizer aimed at the policy's action-scoring path.
-        # action_hidden (the per-candidate action encoding) also gets dropout, for the
-        # same overfitting-prone-path reason. Neither `logits` nor `candidate_mask`
-        # handling gets dropout applied. Functional (not nn.Dropout modules) so this
-        # never touches state_dict keys; p=0.0 (the default) makes F.dropout an exact
-        # no-op and eval mode (training=False) never drops anything either way.
         action_context = F.dropout(context_hidden, p=self.head_dropout_p, training=self.training)
-        move_emb = self.state_encoder.move_embedding(move_indices)
-        target_emb = self.target_embedding(target_indices)
-        species_emb = self.state_encoder.species_embedding(switch_species_indices)
-        action_input = torch.cat((move_emb, target_emb, species_emb, action_flags), dim=-1)
-        batch, candidates = action_input.shape[:2]
-        action_hidden = self.action_encoder(action_input.reshape(batch, candidates, -1))
-        action_hidden = F.dropout(action_hidden, p=self.head_dropout_p, training=self.training)
+        action_hidden = self.encode_actions(
+            move_indices,
+            target_indices,
+            switch_species_indices,
+            action_flags,
+            tactical_features=tactical_features,
+        )
 
+        candidates = action_hidden.shape[1]
         state_action = self.state_projection(action_context).unsqueeze(1).expand(-1, candidates, -1)
         policy_input = torch.cat(
             (state_action, action_hidden, state_action * action_hidden), dim=-1
@@ -146,7 +192,124 @@ class CandidatePolicyValueNet(nn.Module):
         logits = self.policy_head(policy_input).squeeze(-1)
         logits = logits.masked_fill(~candidate_mask.bool(), torch.finfo(logits.dtype).min)
         values = self.value_head(context_hidden).squeeze(-1)
+        if self.value_output_transform == "tanh":
+            # Terminal-return calibration checkpoints use +/-1 targets. Tanh makes
+            # that contract explicit and prevents a search leaf from receiving an
+            # impossible value such as +1.6 merely because the linear head extrapolated.
+            values = torch.tanh(values)
         return logits, values
+
+    def encode_context(
+        self,
+        state_indices: torch.Tensor,
+        state_scalars: torch.Tensor,
+        history_scalars: torch.Tensor,
+        *,
+        meta_scalars: torch.Tensor | None = None,
+        information_indices: torch.Tensor | None = None,
+        information_scalars: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Encode one fog-safe battle observation for any candidate-aware head."""
+
+        state_hidden = self.state_encoder.encode_hidden(state_indices, state_scalars)
+        history_hidden = self.history_encoder(history_scalars)
+        context_parts = [state_hidden, history_hidden]
+        if self.use_meta_features:
+            if meta_scalars is None:
+                raise ValueError("use_meta_features=True requires meta_scalars")
+            meta_hidden = self.meta_encoder(meta_scalars)
+            context_parts.append(meta_hidden)
+        if self.use_information_features:
+            if information_indices is None or information_scalars is None:
+                raise ValueError(
+                    "use_information_features=True requires information indices and scalars"
+                )
+            context_parts.append(
+                self._encode_information(information_indices, information_scalars)
+            )
+        return self.context_encoder(torch.cat(context_parts, dim=-1))
+
+    def encode_actions(
+        self,
+        move_indices: torch.Tensor,
+        target_indices: torch.Tensor,
+        switch_species_indices: torch.Tensor,
+        action_flags: torch.Tensor,
+        *,
+        tactical_features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Encode joint actions while preserving the existing policy representation."""
+
+        move_emb = self.state_encoder.move_embedding(move_indices)
+        target_emb = self.target_embedding(target_indices)
+        species_emb = self.state_encoder.species_embedding(switch_species_indices)
+        action_input = torch.cat((move_emb, target_emb, species_emb, action_flags), dim=-1)
+        batch, candidates = action_input.shape[:2]
+        action_input = action_input.reshape(batch, candidates, -1)
+        if self.use_tactical_features:
+            if tactical_features is None:
+                raise ValueError("use_tactical_features=True requires tactical_features")
+            action_input = torch.cat(
+                (action_input, self.tactical_encoder(tactical_features)), dim=-1
+            )
+        action_hidden = self.action_encoder(action_input)
+        return F.dropout(action_hidden, p=self.head_dropout_p, training=self.training)
+
+    def _encode_information(
+        self, indices: torch.Tensor, scalars: torch.Tensor
+    ) -> torch.Tensor:
+        """Embed the fixed six-by-six information contract into one context vector."""
+
+        slots = INFORMATION_TEAM_SLOTS
+        moves_width = slots * INFORMATION_MOVES_PER_MON
+        own_species = indices[:, 0:slots]
+        own_items = indices[:, slots : 2 * slots]
+        own_abilities = indices[:, 2 * slots : 3 * slots]
+        own_moves = indices[:, 3 * slots : 3 * slots + moves_width]
+        opp_start = 3 * slots + moves_width
+        opp_species = indices[:, opp_start : opp_start + slots]
+        opp_items = indices[:, opp_start + slots : opp_start + 2 * slots]
+        opp_abilities = indices[:, opp_start + 2 * slots : opp_start + 3 * slots]
+        opp_moves = indices[
+            :, opp_start + 3 * slots : opp_start + 3 * slots + moves_width
+        ]
+
+        def categorical(species, items, abilities, moves):
+            move_embeddings = self.state_encoder.move_embedding(
+                moves.reshape(-1, slots, INFORMATION_MOVES_PER_MON)
+            ).mean(dim=2)
+            return torch.cat(
+                (
+                    self.state_encoder.species_embedding(species),
+                    self.state_encoder.item_embedding(items),
+                    self.state_encoder.ability_embedding(abilities),
+                    move_embeddings,
+                ),
+                dim=-1,
+            )
+
+        own_scalar_width = slots * OWN_SCALARS_PER_MON
+        own_scalars = scalars[:, :own_scalar_width].reshape(
+            -1, slots, OWN_SCALARS_PER_MON
+        )
+        opp_scalars = scalars[:, own_scalar_width:].reshape(
+            -1, slots, OPP_SCALARS_PER_MON
+        )
+        own_hidden = self.own_information_mon_encoder(
+            torch.cat(
+                (categorical(own_species, own_items, own_abilities, own_moves), own_scalars),
+                dim=-1,
+            )
+        )
+        opp_hidden = self.opp_information_mon_encoder(
+            torch.cat(
+                (categorical(opp_species, opp_items, opp_abilities, opp_moves), opp_scalars),
+                dim=-1,
+            )
+        )
+        return self.information_encoder(
+            torch.cat((own_hidden.flatten(1), opp_hidden.flatten(1)), dim=-1)
+        )
 
     def warm_start_state_encoder(self, checkpoint_path: str | Path) -> dict[str, int]:
         """Load compatible BC embedding/trunk weights, ignoring old prediction heads."""

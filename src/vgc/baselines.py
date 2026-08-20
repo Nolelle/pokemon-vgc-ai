@@ -8,6 +8,7 @@ knowing which poke-env class backs it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from poke_env.player.baselines import MaxBasePowerPlayer, RandomPlayer, SimpleHeuristicsPlayer
 from poke_env.player.player import Player
@@ -99,3 +100,36 @@ def make_player(
         available = ", ".join(sorted(BASELINES))
         raise ValueError(f"unknown baseline {name!r}; available: {available}") from exc
     return factory(team, battle_format, **kwargs)
+
+
+def make_learned_player(
+    checkpoint: Path,
+    team: str,
+    battle_format: str = FORMAT_ID,
+    *,
+    device: str = "cpu",
+    deterministic: bool = True,
+    **kwargs,
+) -> Player:
+    """Build the learned joint-action player without making it a shipped default.
+
+    The imports stay inside this explicit opt-in function so installing the ordinary
+    heuristic bot does not require PyTorch. A checkpoint path is mandatory: there is no
+    implicit ``latest.pt`` fallback that could silently deploy an unreviewed training
+    result.
+    """
+
+    from vgc.rl.opponents import load_snapshot
+    from vgc.rl.player import PpoVgcPlayer
+
+    config = kwargs.pop("config", None) or PolicyConfig(format_id=battle_format)
+    model = load_snapshot(Path(checkpoint), device=device)
+    return PpoVgcPlayer(
+        model=model,
+        device=device,
+        deterministic=deterministic,
+        config=config,
+        team=team,
+        battle_format=battle_format,
+        **kwargs,
+    )

@@ -11,11 +11,15 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.actions import enumerate_joint_orders
+from vgc.battle_memory import BattleMemory
+from vgc.own_team import apply_own_spreads
+from vgc.rl.encoding import TACTICAL_FEATURE_DIM, encode_candidates
 from vgc.rl.env import (
     DEFAULT_SHOWDOWN_REPO,
     DirectBattle,
@@ -147,6 +151,26 @@ def test_our_own_stat_points_and_nature_come_from_the_packed_team(worker, team: 
 
 
 @pytest.mark.integration
+def test_legal_orders_receive_finite_first_principles_features(worker, team: str) -> None:
+    direct = DirectBattle.start(worker, "t-tactical", team, team, seed=[13, 13, 13, 13])
+    direct.step({side: "team 1234" for side in direct.sides_to_move()})
+    view = direct.battles["p1"]
+    apply_own_spreads(view)
+    memory = BattleMemory("t-tactical", our_role="p1")
+    memory.observe_battle(view)
+    orders = enumerate_joint_orders(view)
+    encoded = encode_candidates(orders, battle=view, memory=memory)
+
+    assert encoded.tactical is not None
+    assert encoded.tactical.shape == (len(orders), TACTICAL_FEATURE_DIM)
+    assert np.isfinite(encoded.tactical).all()
+    # Legal choices are tactically different; the feature branch is not a zero or
+    # constant placeholder attached merely to satisfy a tensor shape.
+    assert np.unique(encoded.tactical, axis=0).shape[0] > 1
+    direct.close()
+
+
+@pytest.mark.integration
 def test_same_sim_and_policy_seeds_reproduce_the_battle_exactly(worker, team: str) -> None:
     first = _play(worker, team, "t-seed-a", seed=11, policy_seed=5)
     second = _play(worker, team, "t-seed-b", seed=11, policy_seed=5)
@@ -161,6 +185,51 @@ def test_same_sim_and_policy_seeds_reproduce_the_battle_exactly(worker, team: st
     # policy seed must still change the battle, or we are not actually sampling.
     assert trace(first) != trace(third)
     for battle in (first, second, third):
+        battle.close()
+
+
+def _normalized_lines(lines: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {
+        side: ["|t:|" if line.startswith("|t:|") else line for line in side_lines]
+        for side, side_lines in lines.items()
+    }
+
+
+@pytest.mark.integration
+def test_direct_battle_clone_is_exact_and_future_seed_is_controlled(
+    worker, team: str
+) -> None:
+    root = DirectBattle.start(
+        worker,
+        "clone-root",
+        team,
+        team,
+        seed=[17, 18, 19, 20],
+    )
+    root.step({"p1": "team 1234", "p2": "team 1234"})
+
+    same_a = root.clone("clone-same-a")
+    same_b = root.clone("clone-same-b")
+    assert same_a.inspect()["stateHash"] == same_b.inspect()["stateHash"]
+    assert same_a.sides_to_move() == root.sides_to_move()
+    assert same_b.sides_to_move() == root.sides_to_move()
+
+    choices = {
+        side: choice_string(enumerate_joint_orders(same_a.battles[side])[0])
+        for side in same_a.sides_to_move()
+    }
+    result_a = same_a.step(choices)
+    result_b = same_b.step(choices)
+    assert _normalized_lines(result_a.lines) == _normalized_lines(result_b.lines)
+    assert same_a.inspect()["stateHash"] == same_b.inspect()["stateHash"]
+
+    seeded_a = root.clone("clone-seeded-a", seed=[101, 102, 103, 104])
+    seeded_b = root.clone("clone-seeded-b", seed=[101, 102, 103, 104])
+    seeded_c = root.clone("clone-seeded-c", seed=[201, 202, 203, 204])
+    assert seeded_a.inspect()["stateHash"] == seeded_b.inspect()["stateHash"]
+    assert seeded_a.inspect()["prngSeed"] != seeded_c.inspect()["prngSeed"]
+
+    for battle in (seeded_a, seeded_b, seeded_c, same_a, same_b, root):
         battle.close()
 
 

@@ -20,7 +20,12 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
         "vgc.rl.ppo requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.rl.encoding import CandidateFeatures, pad_candidate_features
+from vgc.rl.encoding import (
+    CandidateFeatures,
+    InformationFeatures,
+    pad_candidate_features,
+    pad_candidate_tactical_features,
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ class RolloutStep:
     # vgc.rl.encoding.encode_meta_context); left None otherwise so non-meta training is
     # byte-for-byte unaffected.
     meta_scalars: np.ndarray | None = None
+    information: InformationFeatures | None = None
     reward: float = 0.0
     done: bool = False
     advantage: float = 0.0
@@ -159,6 +165,9 @@ def select_action(
     *,
     deterministic: bool = False,
     meta_scalars: torch.Tensor | None = None,
+    information_indices: torch.Tensor | None = None,
+    information_scalars: torch.Tensor | None = None,
+    tactical_features: torch.Tensor | None = None,
     generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample (or greedily choose) only among the mask's legal candidates.
@@ -179,6 +188,9 @@ def select_action(
         flags,
         candidate_mask,
         meta_scalars=meta_scalars,
+        information_indices=information_indices,
+        information_scalars=information_scalars,
+        tactical_features=tactical_features,
     )
     distribution = Categorical(logits=logits)
     if deterministic:
@@ -197,6 +209,7 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
     moves, targets, species, flags, mask = pad_candidate_features(
         [step.candidates for step in steps]
     )
+    tactical = pad_candidate_tactical_features([step.candidates for step in steps])
     batch = {
         "state_indices": torch.as_tensor(
             np.stack([step.state_indices for step in steps]), dtype=torch.long, device=device
@@ -214,6 +227,9 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
         "switch_species_indices": torch.as_tensor(species, dtype=torch.long, device=device),
         "flags": torch.as_tensor(flags, dtype=torch.float32, device=device),
         "candidate_mask": torch.as_tensor(mask, dtype=torch.bool, device=device),
+        "tactical_features": torch.as_tensor(
+            tactical, dtype=torch.float32, device=device
+        ),
         "actions": torch.as_tensor(
             [step.action_index for step in steps], dtype=torch.long, device=device
         ),
@@ -244,6 +260,17 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
     if steps[0].meta_scalars is not None:
         batch["meta_scalars"] = torch.as_tensor(
             np.stack([step.meta_scalars for step in steps]), dtype=torch.float32, device=device
+        )
+    if steps[0].information is not None:
+        batch["information_indices"] = torch.as_tensor(
+            np.stack([step.information.indices for step in steps]),
+            dtype=torch.long,
+            device=device,
+        )
+        batch["information_scalars"] = torch.as_tensor(
+            np.stack([step.information.scalars for step in steps]),
+            dtype=torch.float32,
+            device=device,
         )
     return batch
 
@@ -287,6 +314,13 @@ def ppo_update(
                 batch["flags"],
                 batch["candidate_mask"],
                 meta_scalars=batch.get("meta_scalars"),
+                information_indices=batch.get("information_indices"),
+                information_scalars=batch.get("information_scalars"),
+                tactical_features=(
+                    batch["tactical_features"]
+                    if getattr(model, "use_tactical_features", False)
+                    else None
+                ),
             )
             distribution = Categorical(logits=logits)
             log_probs = distribution.log_prob(batch["actions"])

@@ -91,6 +91,8 @@ before it).
 from __future__ import annotations
 
 import math
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import cmp_to_key, partial
 from itertools import product
@@ -450,6 +452,40 @@ class PositionForecast:
             "trapped_slots": self.trapped_slots,
             "plan_progress": round(self.plan_progress, 3),
         }
+
+
+@dataclass(frozen=True)
+class SearchLeafSnapshot:
+    """One searched candidate under one hypothetical opponent response.
+
+    This is an observation hook for default-off research tools. ``baseline_value`` is
+    exactly the value the existing search used before response aggregation, including
+    the rolling forecast when enabled. Nothing supplied here can change search's
+    decision.
+    """
+
+    response: OppResponse
+    exchange: ExchangeResult
+    baseline_value: float
+
+
+@dataclass(frozen=True)
+class SearchActionSnapshot:
+    """The existing search result and all of its simulated response leaves."""
+
+    order: DoubleBattleOrder
+    myopic_score: float
+    baseline_exchange_value: float
+    baseline_final_score: float
+    leaves: tuple[SearchLeafSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class SearchShadowBatch:
+    """Read-only searched leaves from one decision, exposed after scoring finishes."""
+
+    context: _Context
+    actions: tuple[SearchActionSnapshot, ...]
 
 
 @dataclass
@@ -1295,6 +1331,8 @@ def _order_tags(order: DoubleBattleOrder) -> frozenset[str]:
         elif isinstance(target, Move):
             move_id = to_id(target.id)
             moves.append(move_id)
+            if move_id in _PROTECT_MOVES:
+                tags.add("protect")
             kind = utility_kind(move_id)
             if kind:
                 tags.add(kind)
@@ -1352,11 +1390,48 @@ def _select_search_candidates(
     return selected, unsearched
 
 
+SearchCandidateSelector = Callable[
+    [list[ScoredOrder], PolicyConfig], tuple[list[ScoredOrder], list[ScoredOrder]]
+]
+SearchLeafObserver = Callable[[SearchShadowBatch], None]
+SearchLeafValueAdjuster = Callable[[SearchShadowBatch], list[list[float]]]
+
+
+def _validate_selected_partition(
+    myopic: list[ScoredOrder],
+    searched: list[ScoredOrder],
+    unsearched: list[ScoredOrder],
+    config: PolicyConfig,
+) -> None:
+    """Fail closed when an experimental selector changes the fixed search budget.
+
+    The ordinary selector already satisfies this contract.  Neural guidance is allowed
+    to change WHICH entries receive expensive search, never how many are searched or
+    whether a legal entry disappears/appears twice.
+    """
+
+    expected = min(len(myopic), max(1, config.search_our_candidates))
+    if len(searched) != expected:
+        raise ValueError(
+            f"candidate selector returned {len(searched)} searched orders; expected {expected}"
+        )
+    all_ids = [id(entry) for entry in [*searched, *unsearched]]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("candidate selector returned a duplicate order")
+    if set(all_ids) != {id(entry) for entry in myopic}:
+        raise ValueError("candidate selector must partition the complete legal order list")
+
+
 # --- top-level entry point ---------------------------------------------------------------
 
 
 def search_joint_orders(
-    battle: DoubleBattle, config: PolicyConfig | None = None
+    battle: DoubleBattle,
+    config: PolicyConfig | None = None,
+    *,
+    candidate_selector: SearchCandidateSelector | None = None,
+    leaf_observer: SearchLeafObserver | None = None,
+    leaf_value_adjuster: SearchLeafValueAdjuster | None = None,
 ) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn using the shallow 2-ply
     search, best first. See the module docstring for the full pipeline.
@@ -1376,6 +1451,7 @@ def search_joint_orders(
     descending so the tail's own myopic order is preserved beneath the searched block,
     never above it) instead of using its own myopic-derived score directly.
     """
+    started_at = time.perf_counter()
     config = config or PolicyConfig()
     myopic = score_joint_orders(battle, config)
     if not myopic:
@@ -1404,7 +1480,11 @@ def search_joint_orders(
                 exchange_state_record(ctx.our_states, ctx.opp_states, ctx, cache=record_cache),
             )
 
-    searched, unsearched = _select_search_candidates(myopic, config)
+    if candidate_selector is None:
+        searched, unsearched = _select_search_candidates(myopic, config)
+    else:
+        searched, unsearched = candidate_selector(list(myopic), config)
+        _validate_selected_partition(myopic, searched, unsearched, config)
 
     # Every (candidate, response) exchange is resolved FIRST, across the whole searched
     # block, so the value head (if active) can be scored in ONE batched forward pass
@@ -1431,6 +1511,7 @@ def search_joint_orders(
         v_after_by_entry = [[None] * len(exchanges) for exchanges in exchanges_by_entry]
 
     scored: list[ScoredOrder] = []
+    shadow_actions: list[SearchActionSnapshot] = []
     searched_finals: list[float] = []
     for entry, exchanges, v_afters in zip(
         searched, exchanges_by_entry, v_after_by_entry, strict=True
@@ -1483,6 +1564,71 @@ def search_joint_orders(
         breakdown["searched"] = True
         scored.append(ScoredOrder(order=entry.order, score=final_score, breakdown=breakdown))
         searched_finals.append(final_score)
+        shadow_actions.append(
+            SearchActionSnapshot(
+                order=entry.order,
+                myopic_score=float(entry.score),
+                baseline_exchange_value=float(aggregated),
+                baseline_final_score=float(final_score),
+                leaves=tuple(
+                    SearchLeafSnapshot(
+                        response=response,
+                        exchange=exchange,
+                        baseline_value=float(value),
+                    )
+                    for response, exchange, value in zip(
+                        responses, exchanges, values, strict=True
+                    )
+                ),
+            )
+        )
+
+    shadow_batch = SearchShadowBatch(context=ctx, actions=tuple(shadow_actions))
+    if leaf_value_adjuster is not None:
+        adjusted_by_action = leaf_value_adjuster(shadow_batch)
+        if len(adjusted_by_action) != len(shadow_actions):
+            raise ValueError("leaf value adjuster returned the wrong number of actions")
+        adjusted_scored: list[ScoredOrder] = []
+        adjusted_finals: list[float] = []
+        for baseline_entry, snapshot, adjusted_values in zip(
+            scored, shadow_actions, adjusted_by_action, strict=True
+        ):
+            if len(adjusted_values) != len(snapshot.leaves):
+                raise ValueError("leaf value adjuster returned the wrong number of responses")
+            if not all(math.isfinite(float(value)) for value in adjusted_values):
+                raise ValueError("leaf value adjuster returned a non-finite score")
+            responses_for_action = [leaf.response for leaf in snapshot.leaves]
+            adjusted_exchange = _aggregate_exchange_values(
+                [float(value) for value in adjusted_values],
+                responses_for_action,
+                ctx,
+                config,
+            )
+            adjusted_final = (
+                config.search_myopic_weight * snapshot.myopic_score
+                + config.search_position_weight * adjusted_exchange
+            )
+            breakdown = dict(baseline_entry.breakdown)
+            breakdown["baseline_search_score"] = snapshot.baseline_final_score
+            breakdown["baseline_exchange_value"] = snapshot.baseline_exchange_value
+            breakdown["exchange_value"] = adjusted_exchange
+            if adjusted_values:
+                worst_index = min(
+                    range(len(adjusted_values)), key=lambda index: adjusted_values[index]
+                )
+                breakdown["worst_response"] = responses_for_action[worst_index].describe()
+                breakdown["worst_response_value"] = float(adjusted_values[worst_index])
+            breakdown["learned_leaf_adjustment"] = True
+            adjusted_scored.append(
+                ScoredOrder(
+                    order=baseline_entry.order,
+                    score=float(adjusted_final),
+                    breakdown=breakdown,
+                )
+            )
+            adjusted_finals.append(float(adjusted_final))
+        scored = adjusted_scored
+        searched_finals = adjusted_finals
 
     # Always non-empty here: `searched` has at least one entry whenever `myopic` is
     # non-empty (cutoff = max(1, ...)), and we already returned early for empty myopic.
@@ -1499,6 +1645,26 @@ def search_joint_orders(
         scored.append(ScoredOrder(order=entry.order, score=tail_score, breakdown=breakdown))
 
     scored.sort(key=lambda scored_order: scored_order.score, reverse=True)
+    search_metrics = {
+        "legal_actions": len(myopic),
+        "searched_actions": len(searched),
+        "opponent_responses": len(responses),
+        "exchange_count": len(searched) * len(responses),
+        "forecast_count": (
+            len(searched) * len(responses) if config.use_rolling_horizon else 0
+        ),
+        "elapsed_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
+        "candidate_selector": "default" if candidate_selector is None else "experimental",
+        "leaf_value_adjuster": leaf_value_adjuster is not None,
+    }
+    for entry in scored:
+        entry.breakdown["search_metrics"] = search_metrics
+    if leaf_observer is not None:
+        # Deliberately invoked only after every baseline score and search metric is
+        # final. The callback has no return value, so shadow research cannot alter the
+        # selected order accidentally.
+        leaf_observer(shadow_batch)
+    record_note("search_metrics", search_metrics)
     _record_search_trace(scored, config)
     return scored
 

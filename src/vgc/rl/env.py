@@ -337,6 +337,48 @@ class DirectBattle:
 
         return self._apply(self.worker.request(self.step_payload(choices)))
 
+    def clone(
+        self,
+        battle_id: str,
+        *,
+        seed: Sequence[int] | None = None,
+    ) -> DirectBattle:
+        """Return an exact simulator clone with an independent future.
+
+        The Showdown simulator serializes every battle field, including hidden state,
+        queued effects, and the current random-number state. The worker restores that
+        serialization into a new battle. ``seed`` optionally changes randomness only
+        after the clone point, so counterfactual branches share an identical past while
+        sampling different futures.
+
+        Each player's poke-env view is rebuilt from that side's fogged protocol
+        transcript. Omniscient simulator state is never fed into either observation.
+        """
+
+        clone = DirectBattle(
+            self.worker,
+            battle_id,
+            usernames=dict(self.usernames),
+            own_team_spreads=self.own_team_spreads,
+        )
+        clone._teambuilder = {
+            side: dict(team) for side, team in self._teambuilder.items()
+        }
+        payload: dict[str, Any] = {
+            "cmd": "clone",
+            "id": battle_id,
+            "source": self.battle_id,
+        }
+        if seed is not None:
+            payload["seed"] = list(seed)
+        clone._apply(self.worker.request(payload))
+        return clone
+
+    def inspect(self) -> dict[str, Any]:
+        """Return worker-side reproducibility facts without exposing them to a policy."""
+
+        return self.worker.request({"cmd": "inspect", "id": self.battle_id})
+
     def step_payload(self, choices: dict[str, str]) -> dict[str, Any]:
         """The `choose` command for `choices`, for `step` or for `step_many`'s batch."""
 

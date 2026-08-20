@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from vgc.baselines import BASELINES, make_player
+from vgc.baselines import BASELINES, make_learned_player, make_player
 from vgc.config import FORMAT_ID, TEAMS_DIR
 from vgc.agent import VgcPlayer
 
@@ -46,3 +46,35 @@ def test_capability_ladder_rungs_are_strictly_nested() -> None:
     assert shallow.config.use_rolling_horizon is False
     assert full.config.use_two_ply_search is True
     assert full.config.use_rolling_horizon is True
+
+
+def test_learned_player_is_explicit_checkpoint_opt_in(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    from vgc.rl.model import CandidatePolicyValueNet
+    from vgc.rl.opponents import save_snapshot
+    from vgc.rl.player import PpoVgcPlayer
+
+    checkpoint = save_snapshot(
+        tmp_path,
+        CandidatePolicyValueNet(
+            use_information_features=True,
+            use_tactical_features=True,
+            head_dropout=0.2,
+        ),
+        generation=0,
+        max_snapshots=1,
+    )
+    team = Path(TEAMS_DIR / "dev.packed.txt").read_text().strip()
+    player = make_learned_player(
+        checkpoint,
+        team,
+        FORMAT_ID,
+        start_listening=False,
+    )
+
+    assert isinstance(player, PpoVgcPlayer)
+    assert player.deterministic is True
+    assert player.model.use_information_features is True
+    assert player.model.use_tactical_features is True
+    assert player.model.head_dropout_p == pytest.approx(0.2)
+    assert "learned" not in BASELINES

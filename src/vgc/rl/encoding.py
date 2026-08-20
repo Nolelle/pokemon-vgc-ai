@@ -13,10 +13,15 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
+from poke_env.battle.move import Move
+from poke_env.battle.pokemon import Pokemon
+from poke_env.battle.side_condition import SideCondition
 from poke_env.player.battle_order import DoubleBattleOrder
 
 from vgc.archetypes import ARCHETYPES, classify_team
 from vgc.bc.encoding import (
+    ABILITY_TO_IDX,
+    ITEM_TO_IDX,
     MOVE_TO_IDX,
     SLOT_FEATURE_DIM,
     SPECIES_TO_IDX,
@@ -27,13 +32,56 @@ from vgc.bc.encoding import (
 from vgc.bc.policy import battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
 from vgc.battle_memory import BattleMemory
-from vgc.damage import to_id
+from vgc.damage import PokemonState, damage_range, to_id
+from vgc.data import load_moves, load_natures
+from vgc.evaluator import (
+    _attacker_state_for,
+    _our_pokemon_state,
+    _resolve_targets,
+    build_context,
+    field_effective_speed,
+    resolves_before,
+)
 from vgc.models import PolicyConfig
+from vgc.opponent_belief import (
+    MAX_SPREAD_HYPOTHESES,
+    PokemonBelief,
+    build_opponent_beliefs,
+)
+from vgc.own_team import spread_index
+from vgc.principles import utility_kind
 from vgc.sets import load_set_priors, opponent_move_ids
+from vgc.stats import STAT_IDS, calculate_stats
 
 NUM_ORDER_SLOTS = 2
 NUM_ACTION_FLAGS = 4  # mega, z-move, dynamax, tera
 HISTORY_SCALAR_DIM = 16
+TACTICAL_FEATURE_DIM = 42
+
+# Full-information contract for the new learned pipeline.  The old BC-shaped state is
+# retained above for checkpoint compatibility; this parallel branch supplies what it
+# omitted: all six exact own sets and a fog-safe probability estimate for all six
+# opposing preview species.
+INFORMATION_TEAM_SLOTS = 6
+INFORMATION_MOVES_PER_MON = 4
+OWN_SCALARS_PER_MON = 28
+OPP_SCALARS_PER_MON = 36
+INFORMATION_SCALAR_DIM = (
+    INFORMATION_TEAM_SLOTS * OWN_SCALARS_PER_MON
+    + INFORMATION_TEAM_SLOTS * OPP_SCALARS_PER_MON
+)
+INFORMATION_INDEX_DIM = INFORMATION_TEAM_SLOTS * (3 + INFORMATION_MOVES_PER_MON) * 2
+_STATUS_IDS = ("none", "brn", "par", "psn", "tox", "slp", "frz")
+_STATUS_INDEX = {status: index for index, status in enumerate(_STATUS_IDS)}
+_NORMALIZED_STAT_CEILING = 500.0
+
+
+@dataclass(frozen=True)
+class InformationFeatures:
+    """Complete own-team facts plus fog-safe opponent probabilities."""
+
+    indices: np.ndarray  # (84,) categorical ids
+    scalars: np.ndarray  # (384,) normalized factual/probability values
 
 # --- Meta-aware context (deployment-available only -- see encode_meta_context below) --
 
@@ -65,6 +113,7 @@ class CandidateFeatures:
     target_indices: np.ndarray  # (candidates, 2)
     switch_species_indices: np.ndarray  # (candidates, 2)
     flags: np.ndarray  # (candidates, 2, 4)
+    tactical: np.ndarray | None = None  # (candidates, 42), zero when battle omitted
 
     def __len__(self) -> int:
         return int(self.move_indices.shape[0])
@@ -81,6 +130,209 @@ def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
     record = battle_state_record(battle, config)
     index_array, scalars = flatten_state(encode_state(record))
     return index_array, np.concatenate((scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)))
+
+
+def _distribution_uncertainty(probabilities: dict[str, float]) -> float:
+    if not probabilities:
+        return 1.0
+    return float(1.0 - max(probabilities.values()))
+
+
+def _status_vector(status) -> list[float]:
+    status_id = getattr(status, "name", str(status or "none")).lower()
+    vector = [0.0] * len(_STATUS_IDS)
+    vector[_STATUS_INDEX.get(status_id, 0)] = 1.0
+    return vector
+
+
+def _own_information(battle) -> tuple[list[int], list[int], list[int], list[int], list[float]]:
+    team = list((getattr(battle, "team", None) or {}).items())[:INFORMATION_TEAM_SLOTS]
+    active_ids = {
+        id(mon)
+        for mon in (getattr(battle, "active_pokemon", None) or [])
+        if mon is not None
+    }
+    builders = spread_index(getattr(battle, "teambuilder_team", None) or [])
+    species_indices: list[int] = []
+    item_indices: list[int] = []
+    ability_indices: list[int] = []
+    move_indices: list[int] = []
+    scalars: list[float] = []
+    natures = load_natures()
+    for ident, mon in team:
+        name = str(ident).split(": ", 1)[-1]
+        builder = builders.get(name)
+        species_id = to_id(getattr(mon, "species", None))
+        species_indices.append(SPECIES_TO_IDX.get(species_id, SPECIES_TO_IDX["<unk>"]))
+        original_item = to_id(getattr(builder, "item", None)) if builder is not None else None
+        item_id = original_item or to_id(getattr(mon, "item", None))
+        item_indices.append(ITEM_TO_IDX.get(item_id, ITEM_TO_IDX["<unk>"]))
+        original_ability = (
+            to_id(getattr(builder, "ability", None)) if builder is not None else None
+        )
+        ability_id = original_ability or to_id(getattr(mon, "ability", None))
+        ability_indices.append(ABILITY_TO_IDX.get(ability_id, ABILITY_TO_IDX["<unk>"]))
+        raw_moves = (
+            list(getattr(builder, "moves", None) or [])
+            if builder is not None
+            else list((getattr(mon, "moves", None) or {}).keys())
+        )
+        encoded_moves = [
+            MOVE_TO_IDX.get(to_id(move), MOVE_TO_IDX["<unk>"])
+            for move in raw_moves[:INFORMATION_MOVES_PER_MON]
+        ]
+        encoded_moves += [MOVE_TO_IDX["<pad>"]] * (
+            INFORMATION_MOVES_PER_MON - len(encoded_moves)
+        )
+        move_indices.extend(encoded_moves)
+
+        try:
+            if builder is not None and getattr(builder, "evs", None) is not None:
+                spread = dict(zip(STAT_IDS, builder.evs, strict=True))
+                nature = str(getattr(builder, "nature", None) or "serious").lower()
+                stats = calculate_stats(species_id, spread, nature)
+            else:
+                state = _our_pokemon_state(mon)
+                spread = state.sp_spread or {}
+                nature = state.nature or "serious"
+                stats = state.stats()
+        except (AttributeError, KeyError, TypeError, ValueError):
+            spread = dict.fromkeys(STAT_IDS, 0)
+            nature = "serious"
+            stats = {stat: 0 for stat in STAT_IDS}
+        nature_data = natures.get(nature) or {}
+        nature_vector = [
+            1.0 if nature_data.get("plus") == stat else (-1.0 if nature_data.get("minus") == stat else 0.0)
+            for stat in STAT_IDS[1:]
+        ]
+        scalars.extend(
+            [
+                1.0,
+                float(id(mon) in active_ids),
+                float(getattr(mon, "current_hp_fraction", 0.0) or 0.0),
+                float(bool(getattr(mon, "fainted", False))),
+                *_status_vector(getattr(mon, "status", None)),
+                *[float(spread.get(stat, 0)) / 32.0 for stat in STAT_IDS],
+                *[float(stats.get(stat, 0)) / _NORMALIZED_STAT_CEILING for stat in STAT_IDS],
+                *nature_vector,
+            ]
+        )
+
+    missing = INFORMATION_TEAM_SLOTS - len(team)
+    species_indices.extend([SPECIES_TO_IDX["<pad>"]] * missing)
+    item_indices.extend([ITEM_TO_IDX["<unk>"]] * missing)
+    ability_indices.extend([ABILITY_TO_IDX["<unk>"]] * missing)
+    move_indices.extend(
+        [MOVE_TO_IDX["<pad>"]] * (missing * INFORMATION_MOVES_PER_MON)
+    )
+    scalars.extend([0.0] * (missing * OWN_SCALARS_PER_MON))
+    return species_indices, item_indices, ability_indices, move_indices, scalars
+
+
+def _opponent_information(
+    battle, memory: BattleMemory, config: PolicyConfig
+) -> tuple[list[int], list[int], list[int], list[int], list[float]]:
+    beliefs = build_opponent_beliefs(battle, memory, config)[:INFORMATION_TEAM_SLOTS]
+    species_indices: list[int] = []
+    item_indices: list[int] = []
+    ability_indices: list[int] = []
+    move_indices: list[int] = []
+    scalars: list[float] = []
+    for belief in beliefs:
+        species_indices.append(
+            SPECIES_TO_IDX.get(belief.species_id, SPECIES_TO_IDX["<unk>"])
+        )
+        item_indices.append(
+            ITEM_TO_IDX.get(belief.known_item, ITEM_TO_IDX["<unk>"])
+            if belief.known_item
+            else ITEM_TO_IDX["<unk>"]
+        )
+        ability_indices.append(
+            ABILITY_TO_IDX.get(belief.known_ability, ABILITY_TO_IDX["<unk>"])
+            if belief.known_ability
+            else ABILITY_TO_IDX["<unk>"]
+        )
+        encoded_moves = [
+            MOVE_TO_IDX.get(move_id, MOVE_TO_IDX["<unk>"])
+            for move_id in belief.revealed_moves[:INFORMATION_MOVES_PER_MON]
+        ]
+        encoded_moves += [MOVE_TO_IDX["<pad>"]] * (
+            INFORMATION_MOVES_PER_MON - len(encoded_moves)
+        )
+        move_indices.extend(encoded_moves)
+        scalars.extend(
+            [
+                1.0,
+                float(belief.appeared),
+                float(belief.active),
+                belief.hp_fraction,
+                float(belief.fainted),
+                float(belief.known_item is not None),
+                float(belief.known_ability is not None),
+                len(belief.revealed_moves) / INFORMATION_MOVES_PER_MON,
+                _distribution_uncertainty(belief.move_probabilities),
+                _distribution_uncertainty(belief.item_probabilities),
+                _distribution_uncertainty(belief.ability_probabilities),
+                belief.spread_entropy,
+                belief.speed_min / _NORMALIZED_STAT_CEILING,
+                belief.speed_max / _NORMALIZED_STAT_CEILING,
+                belief.speed_mean / _NORMALIZED_STAT_CEILING,
+            ]
+        )
+        for index in range(MAX_SPREAD_HYPOTHESES):
+            if index < len(belief.hypotheses):
+                hypothesis = belief.hypotheses[index]
+                stats = hypothesis.stats(belief.species_id)
+                scalars.extend(
+                    [
+                        hypothesis.probability,
+                        *[
+                            float(stats[stat]) / _NORMALIZED_STAT_CEILING
+                            for stat in STAT_IDS
+                        ],
+                    ]
+                )
+            else:
+                scalars.extend([0.0] * 7)
+
+    missing = INFORMATION_TEAM_SLOTS - len(beliefs)
+    species_indices.extend([SPECIES_TO_IDX["<pad>"]] * missing)
+    item_indices.extend([ITEM_TO_IDX["<unk>"]] * missing)
+    ability_indices.extend([ABILITY_TO_IDX["<unk>"]] * missing)
+    move_indices.extend(
+        [MOVE_TO_IDX["<pad>"]] * (missing * INFORMATION_MOVES_PER_MON)
+    )
+    scalars.extend([0.0] * (missing * OPP_SCALARS_PER_MON))
+    return species_indices, item_indices, ability_indices, move_indices, scalars
+
+
+def encode_information_context(
+    battle, memory: BattleMemory, config: PolicyConfig | None = None
+) -> InformationFeatures:
+    """Encode facts available to a real player, never private simulator truth."""
+
+    config = config or PolicyConfig()
+    own_species, own_items, own_abilities, own_moves, own_scalars = _own_information(battle)
+    opp_species, opp_items, opp_abilities, opp_moves, opp_scalars = _opponent_information(
+        battle, memory, config
+    )
+    indices = np.asarray(
+        [
+            *own_species,
+            *own_items,
+            *own_abilities,
+            *own_moves,
+            *opp_species,
+            *opp_items,
+            *opp_abilities,
+            *opp_moves,
+        ],
+        dtype=np.int64,
+    )
+    scalars = np.asarray([*own_scalars, *opp_scalars], dtype=np.float32)
+    assert indices.shape == (INFORMATION_INDEX_DIM,)
+    assert scalars.shape == (INFORMATION_SCALAR_DIM,)
+    return InformationFeatures(indices=indices, scalars=scalars)
 
 
 def _mean_hp(values: dict[str, float]) -> float:
@@ -303,7 +555,344 @@ def _single_features(single, action: dict[str, object]) -> tuple[int, int, int, 
     return move_idx, target_idx, switch_species_idx, flags
 
 
-def encode_candidates(orders: Sequence[DoubleBattleOrder]) -> CandidateFeatures:
+def _active_beliefs(battle, beliefs: list[PokemonBelief]) -> dict[int, PokemonBelief]:
+    by_species = {belief.species_id: belief for belief in beliefs}
+    result: dict[int, PokemonBelief] = {}
+    for slot, mon in enumerate((getattr(battle, "opponent_active_pokemon", None) or [])[:2]):
+        if mon is not None:
+            belief = by_species.get(to_id(getattr(mon, "species", None)))
+            if belief is not None:
+                result[slot] = belief
+    return result
+
+
+def _hypothesis_state(belief: PokemonBelief, hypothesis) -> PokemonState:
+    state = PokemonState(
+        species_id=belief.species_id,
+        sp_spread=hypothesis.sp,
+        nature=hypothesis.nature,
+        item=belief.known_item,
+        ability=belief.known_ability,
+    )
+    state.current_hp = round(state.max_hp() * belief.hp_fraction)
+    return state
+
+
+def _ko_roll_probability(result, target_hp: int) -> float:
+    rolls = result.breakdown.get("rolls") or []
+    return sum(float(damage >= target_hp) for damage in rolls) / len(rolls) if rolls else 0.0
+
+
+def _clip_percent(value: float, ceiling: float = 200.0) -> float:
+    return float(np.clip(value / ceiling, 0.0, 1.0))
+
+
+def _move_tactical_features(
+    single,
+    actor_slot: int,
+    ctx,
+    active_beliefs: dict[int, PokemonBelief],
+) -> tuple[list[float], dict[str, object]]:
+    move_id = to_id(single.order.id)
+    move_data = load_moves().get(move_id) or {}
+    attacker = _attacker_state_for(single, actor_slot, ctx)
+    targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
+    opponent_targets = [slot for slot, ally in targets if not ally]
+    ally_targets = [slot for slot, ally in targets if ally]
+    incoming = max(
+        ctx.threat_on_us[actor_slot].percent,
+        ctx.double_target_threat[actor_slot],
+    )
+    actor_state = ctx.our_states[actor_slot]
+    actor_hp = (
+        actor_state.hp_or_max() / actor_state.max_hp() if actor_state is not None else 0.0
+    )
+    accuracy = move_data.get("accuracy", 100)
+    accuracy_value = 1.0 if accuracy is True else float(accuracy or 0.0) / 100.0
+    priority = int(move_data.get("priority", 0) or 0)
+    kind = utility_kind(move_id)
+    is_status = move_data.get("category") == "Status"
+
+    expected_values: list[float] = []
+    minimum_values: list[float] = []
+    maximum_values: list[float] = []
+    ko_probability = 0.0
+    move_first_probability = 0.0
+    unsupported_probability = 0.0
+    target_hp_fraction = 0.0
+    target_slots: set[int] = set()
+    for target_slot in opponent_targets:
+        belief = active_beliefs.get(target_slot)
+        if belief is None:
+            unsupported_probability += 1.0
+            continue
+        target_slots.add(target_slot)
+        target_hp_fraction += belief.hp_fraction
+        target_expected = 0.0
+        target_min = float("inf")
+        target_max = 0.0
+        target_ko = 0.0
+        target_first = 0.0
+        target_unsupported = 0.0
+        for hypothesis in belief.hypotheses:
+            defender = _hypothesis_state(belief, hypothesis)
+            field = ctx.field_state(
+                defender_is_ours=False,
+                num_targets=max(1, len(targets)),
+            )
+            result = damage_range(attacker, defender, move_id, field)
+            probability = hypothesis.probability
+            if not result.breakdown.get("move_supported", False):
+                target_unsupported += probability
+                continue
+            target_expected += probability * result.expected_percent
+            target_min = min(target_min, result.min_percent)
+            target_max = max(target_max, result.max_percent)
+            target_ko += probability * _ko_roll_probability(result, defender.hp_or_max())
+            opponent_speed = field_effective_speed(
+                defender,
+                weather=ctx.weather,
+                tailwind=SideCondition.TAILWIND
+                in (getattr(ctx.battle, "opponent_side_conditions", {}) or {}),
+            )
+            target_first += probability * float(
+                resolves_before(
+                    priority,
+                    ctx.our_speed[actor_slot],
+                    0,
+                    opponent_speed,
+                    ctx.trick_room,
+                )
+            )
+        expected_values.append(target_expected)
+        minimum_values.append(0.0 if target_min == float("inf") else target_min)
+        maximum_values.append(target_max)
+        ko_probability += target_ko
+        move_first_probability += target_first
+        unsupported_probability += target_unsupported
+
+    target_count = max(1, len(opponent_targets))
+    expected = sum(expected_values)
+    minimum = sum(minimum_values)
+    maximum = sum(maximum_values)
+    ko_probability /= target_count
+    move_first_probability = (
+        move_first_probability / target_count if opponent_targets else 1.0
+    )
+    unsupported_probability /= target_count
+    target_hp_fraction = (
+        target_hp_fraction / target_count if opponent_targets else 0.0
+    )
+
+    ally_damage = 0.0
+    for target_slot in ally_targets:
+        defender = ctx.our_states[target_slot]
+        if defender is not None:
+            result = damage_range(
+                attacker,
+                defender,
+                move_id,
+                ctx.field_state(defender_is_ours=True, num_targets=max(1, len(targets))),
+            )
+            ally_damage += result.expected_percent
+
+    vector = [
+        _clip_percent(expected),
+        _clip_percent(minimum),
+        _clip_percent(maximum),
+        float(np.clip(ko_probability, 0.0, 1.0)),
+        float(np.clip(move_first_probability, 0.0, 1.0)),
+        _clip_percent(incoming),
+        actor_hp,
+        target_hp_fraction,
+        accuracy_value,
+        float(np.clip(priority / 7.0, -1.0, 1.0)),
+        float(kind == "protect"),
+        0.0,
+        float(kind == "speed_control"),
+        float(kind in {"redirection", "action_denial", "wide_defense", "burn"}),
+        float(kind in {"setup", "recovery"}),
+        float(np.clip(unsupported_probability, 0.0, 1.0)),
+    ]
+    return vector, {
+        "expected": expected,
+        "minimum": minimum,
+        "maximum": maximum,
+        "incoming": incoming,
+        "targets": target_slots,
+        "ally_damage": ally_damage,
+        "kind": kind,
+        "is_attack": not is_status,
+    }
+
+
+def _switch_tactical_features(
+    incoming_mon,
+    actor_slot: int,
+    ctx,
+    active_beliefs: dict[int, PokemonBelief],
+) -> tuple[list[float], dict[str, object]]:
+    incoming = _our_pokemon_state(incoming_mon)
+    outgoing_values: list[float] = []
+    incoming_values: list[float] = []
+    move_first_values: list[float] = []
+    for target_slot, belief in active_beliefs.items():
+        for hypothesis in belief.hypotheses:
+            opponent = _hypothesis_state(belief, hypothesis)
+            outgoing_best = 0.0
+            for move_id in (getattr(incoming_mon, "moves", None) or {}):
+                result = damage_range(
+                    incoming,
+                    opponent,
+                    move_id,
+                    ctx.field_state(defender_is_ours=False, num_targets=1),
+                )
+                if result.breakdown.get("move_supported", False):
+                    outgoing_best = max(outgoing_best, result.expected_percent)
+            outgoing_values.append(hypothesis.probability * outgoing_best)
+
+            incoming_best = 0.0
+            for move_id, move_probability in belief.move_probabilities.items():
+                result = damage_range(
+                    opponent,
+                    incoming,
+                    move_id,
+                    ctx.field_state(defender_is_ours=True, num_targets=1),
+                )
+                if result.breakdown.get("move_supported", False):
+                    incoming_best = max(
+                        incoming_best, move_probability * result.expected_percent
+                    )
+            incoming_values.append(hypothesis.probability * incoming_best)
+            opponent_speed = field_effective_speed(
+                opponent,
+                weather=ctx.weather,
+                tailwind=SideCondition.TAILWIND
+                in (getattr(ctx.battle, "opponent_side_conditions", {}) or {}),
+            )
+            move_first_values.append(
+                hypothesis.probability
+                * float(
+                    resolves_before(
+                        0,
+                        field_effective_speed(incoming, weather=ctx.weather),
+                        0,
+                        opponent_speed,
+                        ctx.trick_room,
+                    )
+                )
+            )
+    expected = sum(outgoing_values)
+    incoming_threat = sum(incoming_values)
+    count = max(1, len(active_beliefs))
+    expected /= count
+    incoming_threat /= count
+    move_first = sum(move_first_values) / count
+    hp_fraction = incoming.hp_or_max() / incoming.max_hp()
+    vector = [
+        _clip_percent(expected),
+        _clip_percent(min(outgoing_values, default=0.0)),
+        _clip_percent(max(outgoing_values, default=0.0)),
+        0.0,
+        float(np.clip(move_first, 0.0, 1.0)),
+        _clip_percent(incoming_threat),
+        hp_fraction,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
+    return vector, {
+        "expected": expected,
+        "minimum": min(outgoing_values, default=0.0),
+        "maximum": max(outgoing_values, default=0.0),
+        "incoming": incoming_threat,
+        "targets": set(),
+        "ally_damage": 0.0,
+        "kind": "switch",
+        "is_attack": False,
+    }
+
+
+def _single_tactical_features(single, actor_slot, ctx, active_beliefs):
+    if single is None:
+        return [0.0] * 16, {
+            "expected": 0.0,
+            "minimum": 0.0,
+            "maximum": 0.0,
+            "incoming": 0.0,
+            "targets": set(),
+            "ally_damage": 0.0,
+            "kind": "pass",
+            "is_attack": False,
+        }
+    if isinstance(single.order, Move):
+        return _move_tactical_features(single, actor_slot, ctx, active_beliefs)
+    if isinstance(single.order, Pokemon):
+        return _switch_tactical_features(single.order, actor_slot, ctx, active_beliefs)
+    return _single_tactical_features(None, actor_slot, ctx, active_beliefs)
+
+
+def encode_candidate_tactical_features(
+    battle,
+    memory: BattleMemory,
+    orders: Sequence[DoubleBattleOrder],
+    config: PolicyConfig | None = None,
+) -> np.ndarray:
+    """First-principles facts for every legal joint order, integrated over beliefs."""
+
+    config = config or PolicyConfig()
+    ctx = build_context(battle, config)
+    beliefs = build_opponent_beliefs(battle, memory, config)
+    active_beliefs = _active_beliefs(battle, beliefs)
+    rows: list[list[float]] = []
+    for order in orders:
+        first, first_meta = _single_tactical_features(
+            order.first_order, 0, ctx, active_beliefs
+        )
+        second, second_meta = _single_tactical_features(
+            order.second_order, 1, ctx, active_beliefs
+        )
+        targets = set(first_meta["targets"]) | set(second_meta["targets"])
+        shared_targets = set(first_meta["targets"]) & set(second_meta["targets"])
+        both_attack = bool(first_meta["is_attack"] and second_meta["is_attack"])
+        joint = [
+            _clip_percent(float(first_meta["expected"]) + float(second_meta["expected"])),
+            len(targets) / 2.0,
+            float(bool(shared_targets)),
+            _clip_percent(
+                float(first_meta["ally_damage"]) + float(second_meta["ally_damage"]),
+                100.0,
+            ),
+            _clip_percent(float(first_meta["minimum"]) + float(second_meta["minimum"])),
+            _clip_percent(float(first_meta["maximum"]) + float(second_meta["maximum"])),
+            _clip_percent(max(float(first_meta["incoming"]), float(second_meta["incoming"]))),
+            float(
+                (first_meta["kind"] == "protect" and second_meta["is_attack"])
+                or (second_meta["kind"] == "protect" and first_meta["is_attack"])
+            ),
+            float(
+                (not first_meta["is_attack"] and second_meta["is_attack"])
+                or (not second_meta["is_attack"] and first_meta["is_attack"])
+            ),
+            float(both_attack),
+        ]
+        rows.append([*first, *second, *joint])
+    return np.asarray(rows, dtype=np.float32).reshape(len(orders), TACTICAL_FEATURE_DIM)
+
+
+def encode_candidates(
+    orders: Sequence[DoubleBattleOrder],
+    *,
+    battle=None,
+    memory: BattleMemory | None = None,
+    config: PolicyConfig | None = None,
+) -> CandidateFeatures:
     """Encode every legal joint order in enumeration order."""
 
     move_rows: list[list[int]] = []
@@ -322,6 +911,11 @@ def encode_candidates(orders: Sequence[DoubleBattleOrder]) -> CandidateFeatures:
         flag_rows.append([entry[3] for entry in encoded])
 
     count = len(orders)
+    tactical = (
+        encode_candidate_tactical_features(battle, memory, orders, config)
+        if battle is not None and memory is not None
+        else np.zeros((count, TACTICAL_FEATURE_DIM), dtype=np.float32)
+    )
     return CandidateFeatures(
         move_indices=np.asarray(move_rows, dtype=np.int64).reshape(count, NUM_ORDER_SLOTS),
         target_indices=np.asarray(target_rows, dtype=np.int64).reshape(count, NUM_ORDER_SLOTS),
@@ -331,7 +925,21 @@ def encode_candidates(orders: Sequence[DoubleBattleOrder]) -> CandidateFeatures:
         flags=np.asarray(flag_rows, dtype=np.float32).reshape(
             count, NUM_ORDER_SLOTS, NUM_ACTION_FLAGS
         ),
+        tactical=tactical,
     )
+
+
+def pad_candidate_tactical_features(candidates: Sequence[CandidateFeatures]) -> np.ndarray:
+    """Pad candidate tactical rows to the same width as ``pad_candidate_features``."""
+
+    if not candidates:
+        raise ValueError("candidate batch must be non-empty")
+    width = max(len(entry) for entry in candidates)
+    tactical = np.zeros((len(candidates), width, TACTICAL_FEATURE_DIM), dtype=np.float32)
+    for row, entry in enumerate(candidates):
+        if entry.tactical is not None:
+            tactical[row, : len(entry)] = entry.tactical
+    return tactical
 
 
 def pad_candidate_features(

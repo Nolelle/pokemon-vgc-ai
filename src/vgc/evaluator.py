@@ -337,7 +337,8 @@ def field_effective_speed(
     """
 
     speed = effective_speed(state)
-    if _WEATHER_SPEED_ABILITY.get(weather) == state.ability:
+    weather_ability = _WEATHER_SPEED_ABILITY.get(weather)
+    if weather_ability is not None and weather_ability == state.ability:
         speed *= 2.0
     if tailwind:
         speed *= 2.0

@@ -729,6 +729,24 @@ def _bare_player(config: PolicyConfig) -> VgcPlayer:
     return player
 
 
+def test_exception_fallback_is_counted_even_when_detailed_tracing_is_off(
+    monkeypatch,
+) -> None:
+    player = _bare_player(PolicyConfig(log_decisions=False))
+    player.fallback_count = 0
+    player.decision_trace_history = []
+    sentinel = object()
+    monkeypatch.delenv("VGC_TRACE", raising=False)
+    monkeypatch.setattr(player, "decide", lambda _battle: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(player, "choose_random_move", lambda _battle: sentinel)
+
+    result = player.choose_move(SimpleNamespace(battle_tag="battle-test", turn=1))
+
+    assert result is sentinel
+    assert player.fallback_count == 1
+    assert player.decision_trace_history == []
+
+
 def test_use_two_ply_search_false_never_consults_search_joint_orders(monkeypatch) -> None:
     battle = DoubleBattle(
         "battle-gen9championsvgc2026regmb-1", "user", logging.getLogger(__name__), 9

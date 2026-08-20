@@ -57,6 +57,10 @@ class VgcPlayer(Player):
         self._resolved_ots_rejections: set[str] = set()
         self._battle_memories: dict[str, BattleMemory] = {}
         self.decision_trace_history: list[dict[str, object]] = []
+        # Always-on safety counter for automated gates. Detailed traces remain opt-in,
+        # but a gate must still detect that inference crashed and random fallback play
+        # was used when VGC_TRACE is unset.
+        self.fallback_count = 0
         player_kwargs.setdefault("battle_format", self.config.format_id)
         player_kwargs.setdefault("accept_open_team_sheet", self.config.accept_open_team_sheet)
         super().__init__(**player_kwargs)
@@ -232,6 +236,7 @@ class VgcPlayer(Player):
             chosen_order = self.decide(battle)
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
+            self.fallback_count += 1
             record_fallback(f"decide() raised {exc!r}")
             if self.config.log_decisions:
                 self.logger.exception(
@@ -261,6 +266,7 @@ class VgcPlayer(Player):
             chosen_order = self.decide_teampreview(battle)
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
+            self.fallback_count += 1
             record_fallback(f"decide_teampreview() raised {exc!r}")
             if self.config.log_decisions:
                 self.logger.exception(

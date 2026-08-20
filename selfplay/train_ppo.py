@@ -508,6 +508,8 @@ def save_checkpoint(
             "ppo_config": asdict(ppo_config),
             "architecture": RL_ARCHITECTURE_VERSION,
             "use_meta_features": model.use_meta_features,
+            "use_information_features": model.use_information_features,
+            "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
         },
         path,
@@ -550,6 +552,23 @@ def load_training_checkpoint(
             f"checkpoint use_meta_features={checkpoint_use_meta} does not match "
             f"requested model use_meta_features={model.use_meta_features}; pass/omit "
             "--meta-features to match the checkpoint it was trained with"
+        )
+    checkpoint_use_information = bool(
+        checkpoint.get("use_information_features", False)
+    )
+    if checkpoint_use_information != model.use_information_features:
+        raise ValueError(
+            f"checkpoint use_information_features={checkpoint_use_information} does not "
+            f"match requested model use_information_features="
+            f"{model.use_information_features}; pass/omit --information-features to "
+            "match the checkpoint it was trained with"
+        )
+    checkpoint_use_tactical = bool(checkpoint.get("use_tactical_features", False))
+    if checkpoint_use_tactical != model.use_tactical_features:
+        raise ValueError(
+            f"checkpoint use_tactical_features={checkpoint_use_tactical} does not match "
+            f"requested model use_tactical_features={model.use_tactical_features}; "
+            "pass/omit --tactical-features to match the checkpoint it was trained with"
         )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     checkpoint_head_dropout = float(checkpoint.get("head_dropout", 0.0))
@@ -1812,6 +1831,22 @@ def parse_args() -> argparse.Namespace:
             "byte-for-byte unchanged behavior."
         ),
     )
+    parser.add_argument(
+        "--information-features",
+        action="store_true",
+        help=(
+            "add all six exact own sets plus fog-safe opponent set probabilities, "
+            "move-order evidence, and damage evidence to the learned input"
+        ),
+    )
+    parser.add_argument(
+        "--tactical-features",
+        action="store_true",
+        help=(
+            "add per-legal-order first-principles damage, knockout, Speed, incoming "
+            "threat, switching, uncertainty, and two-slot synergy facts"
+        ),
+    )
     args = parser.parse_args()
     # Which PpoConfig-backed knobs the caller actually set on the command line. --resume
     # restores the checkpoint's saved PpoConfig wholesale, which would otherwise silently
@@ -1920,7 +1955,10 @@ def main() -> int:
     torch.manual_seed(args.seed)
 
     model = CandidatePolicyValueNet(
-        use_meta_features=args.meta_features, head_dropout=args.head_dropout
+        use_meta_features=args.meta_features,
+        use_information_features=args.information_features,
+        use_tactical_features=args.tactical_features,
+        head_dropout=args.head_dropout,
     ).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     last_iteration = 0

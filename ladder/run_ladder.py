@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -179,11 +180,67 @@ class LadderPlayer(VgcPlayer):
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
         }
+        learned_checkpoint = getattr(self, "learned_checkpoint_path", None)
+        if learned_checkpoint is not None:
+            record["policy"] = "learned"
+            record["checkpoint_path"] = str(learned_checkpoint.resolve())
+            record["checkpoint_sha256"] = self.learned_checkpoint_sha256
         if battle.lost:
             record["loss_classification"] = classify_loss(traces)
         with self.log_path.open("a") as log_file:
             log_file.write(json.dumps(record, sort_keys=True) + "\n")
         self.completed_records.append(record)
+
+
+def checkpoint_sha256(path: Path) -> str:
+    """Return a stable identity for the exact saved model file being evaluated."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as checkpoint_file:
+        while chunk := checkpoint_file.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _make_session_player(
+    *,
+    checkpoint_path: Path | None,
+    device: str,
+    **player_kwargs,
+) -> LadderPlayer:
+    """Construct the heuristic logger or an explicitly selected learned logger.
+
+    The learned imports are lazy so the normal ladder bot still works without the
+    optional training dependency installed.
+    """
+
+    if checkpoint_path is None:
+        return LadderPlayer(**player_kwargs)
+
+    from vgc.rl.opponents import load_snapshot
+    from vgc.rl.player import PpoVgcPlayer
+
+    class LearnedLadderPlayer(PpoVgcPlayer, LadderPlayer):
+        def __init__(self, *, learned_checkpoint: Path, learned_device: str, **kwargs) -> None:
+            self.learned_checkpoint_path = learned_checkpoint
+            self.learned_checkpoint_sha256 = checkpoint_sha256(learned_checkpoint)
+            model = load_snapshot(learned_checkpoint, device=learned_device)
+            super().__init__(
+                model=model,
+                device=learned_device,
+                deterministic=True,
+                **kwargs,
+            )
+
+        def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+            PpoVgcPlayer._battle_finished_callback(self, battle)
+            LadderPlayer._battle_finished_callback(self, battle)
+
+    return LearnedLadderPlayer(
+        learned_checkpoint=checkpoint_path,
+        learned_device=device,
+        **player_kwargs,
+    )
 
 
 def _session_id() -> str:
@@ -379,13 +436,17 @@ async def run_local_smoke(
     artifacts_dir: Path,
     log_path: Path,
     config: PolicyConfig | None = None,
+    checkpoint_path: Path | None = None,
+    device: str = "cpu",
     timeout_seconds: float = 60.0,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
     config = config or PolicyConfig(log_decisions=True)
     session_id = f"local-{_session_id()}"
-    player = LadderPlayer(
+    player = _make_session_player(
+        checkpoint_path=checkpoint_path,
+        device=device,
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
@@ -425,6 +486,8 @@ async def run_live_session(
     config: PolicyConfig,
     game_timeout_seconds: float,
     max_retries: int,
+    checkpoint_path: Path | None = None,
+    device: str = "cpu",
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
@@ -440,7 +503,9 @@ async def run_live_session(
     try:
         while len(records) < n_games:
             if player is None:
-                player = LadderPlayer(
+                player = _make_session_player(
+                    checkpoint_path=checkpoint_path,
+                    device=device,
                     artifacts_dir=artifacts_dir,
                     log_path=log_path,
                     session_id=session_id,
@@ -594,6 +659,16 @@ def parse_args() -> argparse.Namespace:
             "comment for why)"
         ),
     )
+    parser.add_argument(
+        "--policy-checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "explicit learned-policy checkpoint to run deterministically; default stays "
+            "on the shipped heuristic policy"
+        ),
+    )
+    parser.add_argument("--device", default="cpu", help="learned-policy inference device")
     return parser.parse_args()
 
 
@@ -603,7 +678,14 @@ def main() -> int:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
     config = session_config(args.search, args.bc, args.value, args.horizon)
-    print(f"policy: {policy_label(config)}")
+    if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
+        raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
+    selected_policy = (
+        f"learned checkpoint {args.policy_checkpoint}"
+        if args.policy_checkpoint is not None
+        else policy_label(config)
+    )
+    print(f"policy: {selected_policy}")
     team = args.team.read_text().strip()
     if args.local_smoke:
         records = asyncio.run(
@@ -614,6 +696,8 @@ def main() -> int:
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
                 config=config,
+                checkpoint_path=args.policy_checkpoint,
+                device=args.device,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -627,13 +711,15 @@ def main() -> int:
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
                 config=config,
+                checkpoint_path=args.policy_checkpoint,
+                device=args.device,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )
         )
     wins = sum(record.get("won") is True for record in records)
     print(f"completed {len(records)} games: {wins} wins, {len(records) - wins} non-wins")
-    print(f"policy: {policy_label(config)}")
+    print(f"policy: {selected_policy}")
     print(f"artifacts: {artifacts_dir}")
     print(f"session log: {log_path}")
     return 0

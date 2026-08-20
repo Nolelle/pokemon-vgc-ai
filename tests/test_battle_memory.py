@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from vgc.battle_memory import BattleMemory
+from vgc.battle_memory import BattleMemory, TurnMemory
+from vgc.damage import PokemonState
 
 
 def _mon(species: str, hp: float = 1.0):
@@ -60,3 +61,39 @@ def test_memory_records_plan_changes_instead_of_forgetting_original_plan() -> No
             "reason": "previous plan no longer best or available",
         }
     ]
+
+
+def test_memory_infers_relative_speed_and_direct_damage_from_public_protocol() -> None:
+    target_state = PokemonState(
+        "incineroar", sp_spread={"hp": 32}, nature="careful", current_hp=202
+    )
+    memory = BattleMemory("battle-test", our_role="p1", current_turn=1)
+    memory.turns.append(
+        TurnMemory(
+            turn=1,
+            our_active=("incineroar",),
+            opponent_active=("garchomp",),
+            our_hp={"incineroar": 100.0},
+            opponent_hp={"garchomp": 100.0},
+            weather=(),
+            our_effective_speed={"incineroar": 100.0},
+            our_states={"incineroar": target_state},
+        )
+    )
+    memory._ident_species.update(
+        {"p1a: Cat": "incineroar", "p2a: Chomp": "garchomp"}
+    )
+    memory._protocol_hp[("p1", "incineroar")] = 1.0
+    memory.observe_protocol(
+        [
+            ["", "move", "p2a: Chomp", "Earthquake", "p1a: Cat"],
+            ["", "-damage", "p1a: Cat", "150/202"],
+            ["", "move", "p1a: Cat", "Flare Blitz", "p2a: Chomp"],
+        ]
+    )
+
+    assert memory.speed_observations[-1].opponent_species == "garchomp"
+    assert memory.speed_observations[-1].relation == "at_least"
+    assert memory.speed_observations[-1].threshold == 100.0
+    assert memory.damage_observations[-1].move_id == "earthquake"
+    assert memory.damage_observations[-1].damage_fraction == (202 - 150) / 202

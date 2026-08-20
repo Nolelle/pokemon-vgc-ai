@@ -65,6 +65,10 @@ def save_snapshot(
             "architecture": RL_ARCHITECTURE_VERSION,
             "generation": generation,
             "use_meta_features": model.use_meta_features,
+            "use_information_features": model.use_information_features,
+            "use_tactical_features": model.use_tactical_features,
+            "head_dropout": model.head_dropout_p,
+            "value_output_transform": model.value_output_transform,
         },
         path,
     )
@@ -80,7 +84,15 @@ def load_snapshot(path: Path, *, device: str = "cpu") -> CandidatePolicyValueNet
             f"expected {RL_ARCHITECTURE_VERSION!r}"
         )
     use_meta_features = bool(checkpoint.get("use_meta_features", False))
-    model = CandidatePolicyValueNet(use_meta_features=use_meta_features)
+    use_information_features = bool(checkpoint.get("use_information_features", False))
+    use_tactical_features = bool(checkpoint.get("use_tactical_features", False))
+    model = CandidatePolicyValueNet(
+        use_meta_features=use_meta_features,
+        use_information_features=use_information_features,
+        use_tactical_features=use_tactical_features,
+        head_dropout=float(checkpoint.get("head_dropout", 0.0)),
+        value_output_transform=str(checkpoint.get("value_output_transform", "identity")),
+    )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.to(device)
     model.eval()

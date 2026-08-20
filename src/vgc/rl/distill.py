@@ -28,11 +28,16 @@ from vgc.evaluator import score_joint_orders
 from vgc.rl.encoding import (
     META_SCALAR_DIM,
     CandidateFeatures,
+    InformationFeatures,
+    INFORMATION_INDEX_DIM,
+    INFORMATION_SCALAR_DIM,
     encode_battle_history,
     encode_candidates,
     encode_live_state,
+    encode_information_context,
     encode_meta_context,
     pad_candidate_features,
+    pad_candidate_tactical_features,
 )
 from vgc.search import search_joint_orders
 
@@ -63,6 +68,10 @@ class DistillationSample:
     # features) -- cheap and lets --meta-features be combined with --bootstrap-games
     # without needing a separate teacher-recording pass.
     meta_scalars: np.ndarray | None = None
+    information: InformationFeatures | None = None
+    source_id: str = "simulator_teacher"
+    team_id: str | None = None
+    opponent_team_id: str | None = None
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -97,9 +106,12 @@ class TeacherRecordingPlayer(VgcPlayer):
                 state_indices=np.array(state_indices, copy=True),
                 state_scalars=np.array(state_scalars, copy=True),
                 history_scalars=np.array(history_scalars, copy=True),
-                candidates=encode_candidates(orders),
+                candidates=encode_candidates(
+                    orders, battle=battle, memory=memory, config=self.config
+                ),
                 teacher_action_index=0,
                 meta_scalars=encode_meta_context(battle, self.config),
+                information=encode_information_context(battle, memory, self.config),
             )
         )
         chosen = orders[0]
@@ -160,7 +172,8 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
     moves, targets, species, flags, mask = pad_candidate_features(
         [sample.candidates for sample in samples]
     )
-    return {
+    tactical = pad_candidate_tactical_features([sample.candidates for sample in samples])
+    batch = {
         "state_indices": torch.as_tensor(
             np.stack([sample.state_indices for sample in samples]),
             dtype=torch.long,
@@ -181,6 +194,9 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
         "switch_species_indices": torch.as_tensor(species, dtype=torch.long, device=device),
         "flags": torch.as_tensor(flags, dtype=torch.float32, device=device),
         "candidate_mask": torch.as_tensor(mask, dtype=torch.bool, device=device),
+        "tactical_features": torch.as_tensor(
+            tactical, dtype=torch.float32, device=device
+        ),
         "teacher_actions": torch.as_tensor(
             [sample.teacher_action_index for sample in samples],
             dtype=torch.long,
@@ -201,6 +217,31 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
             device=device,
         ),
     }
+    batch["information_indices"] = torch.as_tensor(
+        np.stack(
+            [
+                sample.information.indices
+                if sample.information is not None
+                else np.zeros(INFORMATION_INDEX_DIM, dtype=np.int64)
+                for sample in samples
+            ]
+        ),
+        dtype=torch.long,
+        device=device,
+    )
+    batch["information_scalars"] = torch.as_tensor(
+        np.stack(
+            [
+                sample.information.scalars
+                if sample.information is not None
+                else np.zeros(INFORMATION_SCALAR_DIM, dtype=np.float32)
+                for sample in samples
+            ]
+        ),
+        dtype=torch.float32,
+        device=device,
+    )
+    return batch
 
 
 def evaluate_agreement(
@@ -232,6 +273,15 @@ def evaluate_agreement(
                 batch["flags"],
                 batch["candidate_mask"],
                 meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
+                information_indices=(
+                    batch["information_indices"] if model.use_information_features else None
+                ),
+                information_scalars=(
+                    batch["information_scalars"] if model.use_information_features else None
+                ),
+                tactical_features=(
+                    batch["tactical_features"] if model.use_tactical_features else None
+                ),
             )
             loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
             distribution = Categorical(logits=logits)
@@ -288,6 +338,14 @@ def distill_policy(
     grad_norms: list[float] = []
     best_epoch = 0
     best_val_accuracy = -1.0
+    # Validation cross-entropy is the primary checkpoint selector. Exact top-1
+    # agreement is very coarse on a small held-out set: a model can assign much more
+    # probability to the teacher across nearly every state while flipping one marginal
+    # argmax and appearing "worse" by accuracy. Loss is the proper scoring rule for the
+    # full distribution; teacher probability and then accuracy break ties.
+    best_val_key = (float("-inf"), -1.0, -1.0)
+    best_val_teacher_probability = 0.0
+    best_val_loss = float("inf")
     best_state_dict: dict[str, torch.Tensor] | None = None
     epochs_since_improvement = 0
     val_history: list[dict[str, float]] = []
@@ -308,6 +366,15 @@ def distill_policy(
                 batch["flags"],
                 batch["candidate_mask"],
                 meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
+                information_indices=(
+                    batch["information_indices"] if model.use_information_features else None
+                ),
+                information_scalars=(
+                    batch["information_scalars"] if model.use_information_features else None
+                ),
+                tactical_features=(
+                    batch["tactical_features"] if model.use_tactical_features else None
+                ),
             )
             loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
             optimizer.zero_grad(set_to_none=True)
@@ -334,8 +401,16 @@ def distill_policy(
                     "loss": epoch_metrics["loss"],
                 }
             )
-            if epoch_metrics["accuracy"] > best_val_accuracy:
+            candidate_key = (
+                -epoch_metrics["loss"],
+                epoch_metrics["teacher_probability"],
+                epoch_metrics["accuracy"],
+            )
+            if candidate_key > best_val_key:
+                best_val_key = candidate_key
                 best_val_accuracy = epoch_metrics["accuracy"]
+                best_val_teacher_probability = epoch_metrics["teacher_probability"]
+                best_val_loss = epoch_metrics["loss"]
                 best_epoch = epoch
                 best_state_dict = {
                     key: value.detach().cpu().clone() for key, value in model.state_dict().items()
@@ -360,6 +435,8 @@ def distill_policy(
         model.load_state_dict(best_state_dict)
         result["best_epoch"] = float(best_epoch)
         result["best_val_accuracy"] = best_val_accuracy
+        result["best_val_teacher_probability"] = best_val_teacher_probability
+        result["best_val_loss"] = best_val_loss
         result["epochs_run"] = float(epochs_run)
         result["val_history"] = val_history
     return result

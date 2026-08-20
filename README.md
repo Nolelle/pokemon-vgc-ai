@@ -4,63 +4,27 @@ A rules-first Pokémon Showdown bot for the Champions VGC 2026 Reg M-B doubles l
 It uses the Champions mod's exported data, a simulator-checked damage engine, and an
 explicit one-turn evaluator before any learned components are introduced.
 
-## Candidate-aware reinforcement learning
+## Full learning pipeline
 
-The default ladder bot remains unchanged. An experimental, default-off PPO path under
-`vgc.rl` scores every complete legal doubles order, masks padded/illegal candidates,
-and learns a policy plus position value from final battle outcomes. A separate history
-branch summarizes accumulated opponent move/Protect/switch/targeting patterns, repeated
-orders, weather changes, active turnover, and recent HP momentum. Its board-state
-encoder can warm-start from the existing behavior-cloning checkpoint; the joint-action
-policy and history heads start new because the old model predicted each active slot
-independently from only the current snapshot.
+The learned bot now has one end-to-end, default-off path:
 
-Run a one-battle end-to-end smoke (local Showdown battle, terminal reward, PPO update,
-checkpoint write) with:
+1. exact Champions rules and our complete six-Pokemon team;
+2. public high-level replays for an initial human-like state representation;
+3. full joint-action imitation from the simulator-backed search teacher;
+4. reinforcement learning against mixed opponents, old model snapshots, and varied teams;
+5. a held-out-team promotion gate; and
+6. explicit checkpoint deployment to local smoke or public ladder games.
 
-```bash
-.venv/bin/python selfplay/train_ppo.py --iterations 1 --games-per-iteration 1 \
-  --out-dir runs/ppo/smoke
-```
+Opponent information stays fogged. Revealed moves, items, abilities, move order, and
+damage update a probability distribution over plausible hidden sets; the model never
+reads the simulator's private opponent state. Every legal doubles order also receives
+raw damage, knockout, Speed, threat, Protect, switching, targeting, and coordination
+facts from the rules engine.
 
-Longer experiments keep the learner on `meta1`, but vary the opponent across the
-20-team self-play pool, `dev`, and occasional `meta1` mirrors. They also use multiple
-rollout workers and a bounded rotating pool of old policy snapshots, while retaining
-the fixed VGC heuristic as an anchor:
-
-```bash
-.venv/bin/python selfplay/train_ppo.py --bootstrap-games 32 --bootstrap-epochs 30 \
-  --iterations 10 --games-per-iteration 32 --jobs 4 \
-  --snapshot-pool-size 8 --heuristic-opponent-fraction 0.25 \
-  --mirror-team-fraction 0.25 --teacher-anchor-weight 0.05 \
-  --eval-games 100 --eval-every-games 100 \
-  --eval-jobs 8 --eval-mirror-team-fraction 0.50
-```
-
-The optional bootstrap first lets the new joint-action head watch the existing search
-policy play. Training stops before PPO unless, on entirely held-out games, the teacher
-move becomes both the top choice often enough and receives enough actual probability.
-The second check matters because PPO samples actions while training—a move that barely
-ranks first among many near-ties is not yet a reliable learned policy.
-`runs/ppo/bootstrap.json` records that gate.
-
-The teacher anchor is a small stability guardrail during PPO updates. The network still
-learns from final wins and losses, but it is penalized for driving the existing search
-policy's preferred legal action toward zero probability. Set
-`--teacher-anchor-weight 0` only for an explicit unanchored comparison.
-
-`--eval-games` freezes the network, disables action sampling, swaps which side issues
-the challenge across workers, and measures it against the unchanged heuristic without
-further learning. `--eval-every-games` repeats that clean test during a longer run and
-appends each result to `runs/ppo/evaluation_history.jsonl`. Mirror and varied-team
-results are reported separately. These frozen evaluations are the performance result;
-rollout win rates are training diagnostics. `best.pt` preserves the strongest frozen
-checkpoint even if later PPO updates make `latest.pt` worse.
-
-Resume an interrupted run with `--resume runs/ppo/latest.pt` and the same `--out-dir`.
-Checkpoints and JSONL metrics are written under `runs/ppo/` and are not used by the
-public ladder runner until an RL candidate passes separate offline and public-smoke
-gates.
+The shipped heuristic remains the default. A learned checkpoint is usable only through
+an explicit path and is not promoted merely because training completed. See
+[`docs/full_learning_pipeline.md`](docs/full_learning_pipeline.md) for the commands,
+data boundaries, measured smoke results, and promotion rules.
 
 ## Local verification
 
