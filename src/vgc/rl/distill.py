@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Any, Sequence
 
 import numpy as np
 from poke_env.battle.double_battle import DoubleBattle
@@ -72,6 +73,12 @@ class DistillationSample:
     source_id: str = "simulator_teacher"
     team_id: str | None = None
     opponent_team_id: str | None = None
+    # Stratification metadata. Recall is not uniform across a battle -- a turn with 300
+    # legal joint orders is a much harder ranking problem than one with 20 -- so a
+    # headline recall number that does not say WHICH states it came from is not
+    # comparable across collections. Defaulted so older saved datasets still load.
+    turn: int = 0
+    legal_action_count: int = 0
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -112,6 +119,8 @@ class TeacherRecordingPlayer(VgcPlayer):
                 teacher_action_index=0,
                 meta_scalars=encode_meta_context(battle, self.config),
                 information=encode_information_context(battle, memory, self.config),
+                turn=int(getattr(battle, "turn", 0) or 0),
+                legal_action_count=len(orders),
             )
         )
         chosen = orders[0]
@@ -194,9 +203,7 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
         "switch_species_indices": torch.as_tensor(species, dtype=torch.long, device=device),
         "flags": torch.as_tensor(flags, dtype=torch.float32, device=device),
         "candidate_mask": torch.as_tensor(mask, dtype=torch.bool, device=device),
-        "tactical_features": torch.as_tensor(
-            tactical, dtype=torch.float32, device=device
-        ),
+        "tactical_features": torch.as_tensor(tactical, dtype=torch.float32, device=device),
         "teacher_actions": torch.as_tensor(
             [sample.teacher_action_index for sample in samples],
             dtype=torch.long,
@@ -440,3 +447,92 @@ def distill_policy(
         result["epochs_run"] = float(epochs_run)
         result["val_history"] = val_history
     return result
+
+
+def turn_bucket(turn: int) -> str:
+    """Same early/mid/late split the counterfactual collector uses, so they compare."""
+
+    if turn <= 2:
+        return "early"
+    return "mid" if turn <= 4 else "late"
+
+
+def recall_at_k(
+    model: nn.Module,
+    samples: list[DistillationSample],
+    *,
+    ks: Sequence[int],
+    batch_size: int,
+    device: str,
+) -> dict[str, Any]:
+    """Per-decision hit flags for "is the teacher's action inside the model's top K".
+
+    This is the metric that decides whether the network may replace the hand-written
+    candidate selector: search only ever sees the shortlist, so an action ranked K+1 is
+    gone no matter how good the search that follows is.
+
+    Returned `hits[k]` is a list aligned with `samples`, so a caller can cluster by team
+    (`vgc.evaluation.clustered_interval`) instead of pooling decisions that share a
+    roster. `trivial` counts decisions with at most K legal actions, where retention is
+    automatic -- a collection weighted toward those inflates recall without the model
+    getting better, so it is reported rather than hidden.
+    """
+
+    if not samples:
+        raise ValueError("cannot evaluate an empty distillation sample set")
+    if not ks or any(k < 1 for k in ks):
+        raise ValueError("ks must be positive")
+    model.eval()
+    hits: dict[int, list[bool]] = {int(k): [] for k in ks}
+    ranks: list[int] = []
+    with torch.no_grad():
+        for start in range(0, len(samples), batch_size):
+            chunk = samples[start : start + batch_size]
+            batch = _tensor_batch(chunk, device)
+            logits, _values = model(
+                batch["state_indices"],
+                batch["state_scalars"],
+                batch["history_scalars"],
+                batch["move_indices"],
+                batch["target_indices"],
+                batch["switch_species_indices"],
+                batch["flags"],
+                batch["candidate_mask"],
+                meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
+                information_indices=(
+                    batch["information_indices"] if model.use_information_features else None
+                ),
+                information_scalars=(
+                    batch["information_scalars"] if model.use_information_features else None
+                ),
+                tactical_features=(
+                    batch["tactical_features"] if model.use_tactical_features else None
+                ),
+            )
+            teacher = batch["teacher_actions"]
+            # Rank of the teacher's action = how many legal candidates outscore it.
+            # Strict `>` means an exact logit tie counts in the teacher's favor -- the
+            # optimistic reading, and unreachable in float32 practice except for
+            # genuinely identical candidate rows.
+            teacher_logit = logits.gather(1, teacher.unsqueeze(1))
+            better = ((logits > teacher_logit) & batch["candidate_mask"].bool()).sum(dim=1)
+            ranks.extend((better + 1).cpu().tolist())
+            for k in hits:
+                hits[k].extend((better < k).cpu().tolist())
+    rank_array = np.asarray(ranks, dtype=np.float64)
+    return {
+        "samples": len(samples),
+        "hits": {str(k): value for k, value in hits.items()},
+        "recall": {str(k): float(np.mean(value)) for k, value in hits.items()},
+        # legal_action_count defaults to 0 on datasets collected before it was recorded;
+        # that means "unknown", not "trivially retained", so it must not be counted here.
+        "trivial": {
+            str(k): int(sum(1 for s in samples if 0 < s.legal_action_count <= k)) for k in hits
+        },
+        "teacher_rank": {
+            "mean": float(rank_array.mean()),
+            "median": float(np.median(rank_array)),
+            "p95": float(np.percentile(rank_array, 95)),
+            "max": float(rank_array.max()),
+        },
+    }
