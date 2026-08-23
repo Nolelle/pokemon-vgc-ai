@@ -183,9 +183,16 @@ def main(argv: list[str] | None = None) -> int:
             }
             block["decisions_without_guidance_metadata"] = len(guided_hits[k]) - len(flavor)
             block["trivial_decisions_with_at_most_k_legal_actions"] = result["trivial"][str(k)]
-            block["meets_target"] = bool(
-                flavor and block["clustered_lower_bound"] >= args.recall_target
-            )
+            # A pass computed on a metadata-covered SUBSET is not a pass for the gate
+            # when the excluded remainder can fail at all -- especially since trivially
+            # retained decisions are exactly the ones metadata-less replay CAN score.
+            if not flavor or block["decisions_without_guidance_metadata"]:
+                block["verdict"] = "INDETERMINATE"
+            elif block["clustered_lower_bound"] >= args.recall_target:
+                block["verdict"] = "PASS"
+            else:
+                block["verdict"] = "FAIL"
+            block["meets_target"] = block["verdict"] == "PASS"
             report["by_k_guided"][str(k)] = block
 
     strata = _strata(samples)
@@ -229,12 +236,15 @@ def main(argv: list[str] | None = None) -> int:
     if guided_blocks:
         gverdict = guided_blocks[str(top)]
         unknown = gverdict["decisions_without_guidance_metadata"]
+        suffix = (
+            f", {unknown} decisions without metadata excluded -- INDETERMINATE"
+            if gverdict["verdict"] == "INDETERMINATE"
+            else (f", {unknown} without metadata excluded" if unknown else "")
+        )
         print(
             f"decision rule (guided, safety_slots={report['guided_safety_slots']}): "
-            f"LCB(Recall@{top}) >= {args.recall_target:.2f} -> "
-            f"{'PASS' if gverdict['meets_target'] else 'FAIL'} "
-            f"(LCB {gverdict['clustered_lower_bound']:.3f}"
-            + (f", {unknown} decisions without metadata excluded)" if unknown else ")")
+            f"LCB(Recall@{top}) >= {args.recall_target:.2f} -> {gverdict['verdict']} "
+            f"(LCB {gverdict['clustered_lower_bound']:.3f}{suffix})"
         )
     print("\nhardest strata by recall@%d:" % top)
     ranked = sorted(report["by_stratum"].items(), key=lambda item: item[1][str(top)]["recall"])
