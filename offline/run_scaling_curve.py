@@ -194,6 +194,10 @@ def fit_power_law(points: list[tuple[float, float]]) -> dict:
     mean_x = sum(xs) / len(xs)
     mean_y = sum(ys) / len(ys)
     sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx <= 0:
+        # Every point at the same data volume -- nothing to fit (e.g. someone passed
+        # holdout sizes instead of training sizes).
+        return {"slope_alpha": None, "r_squared": None}
     sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
     slope = sxy / sxx
     intercept = mean_y - slope * mean_x
@@ -213,6 +217,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if not 0 < args.target_recall < 1:
         raise SystemExit("--target-recall must be in (0, 1)")
+    # REMAINDER swallows everything after --extra-train-args, including any later
+    # driver-owned flags; make that failure loud instead of silently retargeting the
+    # training runs.
+    reserved = {"--dataset", "--out-dir", "--seed", "--device"}
+    for flag in reserved:
+        if flag in args.extra_train_args:
+            raise SystemExit(
+                f"{flag} must be given to run_scaling_curve itself, not forwarded "
+                f"via --extra-train-args (extras must come last on the command line)"
+            )
 
     from vgc.rl.demonstrations import load_demonstrations
 
@@ -240,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
         evaluation = evaluate_checkpoint(checkpoint, holdout_samples, ks=args.ks, device=args.device)
         entry = {
             "fraction": fraction,
+            # The scaling axis is how much data the model TRAINED on -- every
+            # checkpoint is scored on the same holdout, so holdout size carries no
+            # information about the curve.
+            "trained_decisions": train_metrics.get("sample_count"),
             "checkpoint": str(checkpoint),
             "training_best_val_recall_at_10": (
                 train_metrics.get("training", {}).get("best_val_recall_at_10")
@@ -251,18 +269,24 @@ def main(argv: list[str] | None = None) -> int:
         curve.append(entry)
         top = entry["top_k_clustered"]
         print(
-            f"{label}: R@{max(args.ks)} {top['recall']:.1%} "
-            f"(LCB {top['clustered_lower_bound']:.3f}) over {entry['decisions']} decisions"
+            f"{label}: trained on {entry['trained_decisions']} decisions | "
+            f"R@{max(args.ks)} {top['recall']:.1%} "
+            f"(LCB {top['clustered_lower_bound']:.3f}) over {entry['decisions']} holdout decisions"
         )
 
     top_k = str(max(args.ks))
-    points = [(entry["decisions"], 1.0 - entry["by_k"][top_k]["recall"]) for entry in curve]
+    points = [
+        (entry["trained_decisions"] or 0, 1.0 - entry["by_k"][top_k]["recall"])
+        for entry in curve
+    ]
     fit = fit_power_law(points)
     final_miss = 1.0 - curve[-1]["by_k"][top_k]["recall"]
     if fit.get("slope_alpha") is not None and final_miss > 0:
         needed_ratio = ((1.0 - args.target_recall) / final_miss) ** (1.0 / fit["slope_alpha"])
         fit["multiplier_to_target"] = needed_ratio
-        fit["projected_decisions_to_target"] = curve[-1]["decisions"] * needed_ratio
+        fit["projected_decisions_to_target"] = (
+            curve[-1]["trained_decisions"] * needed_ratio
+        )
         fit["target_recall"] = args.target_recall
 
     report = {
@@ -278,11 +302,12 @@ def main(argv: list[str] | None = None) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 
-    print("\ndecisions      R@10     LCB     misses")
+    print("\ntrained_on    holdout   R@10     LCB     misses")
     for entry in curve:
         top = entry["top_k_clustered"]
         print(
-            f"{entry['decisions']:>8d}   {top['recall']:>7.1%}  {top['clustered_lower_bound']:.3f}"
+            f"{entry['trained_decisions'] or 0:>10d}  {entry['decisions']:>8d}   "
+            f"{top['recall']:>7.1%}  {top['clustered_lower_bound']:.3f}"
             f"   {1.0 - entry['by_k'][top_k]['recall']:.1%}"
         )
     if fit.get("slope_alpha") is not None:
