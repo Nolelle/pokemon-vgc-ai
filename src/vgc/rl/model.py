@@ -51,6 +51,7 @@ class CandidatePolicyValueNet(nn.Module):
         use_tactical_features: bool = False,
         head_dropout: float = 0.0,
         value_output_transform: str = "identity",
+        head_width: int | None = None,
     ) -> None:
         super().__init__()
         if value_output_transform not in ("identity", "tanh"):
@@ -59,6 +60,13 @@ class CandidatePolicyValueNet(nn.Module):
         self.use_information_features = use_information_features
         self.use_tactical_features = use_tactical_features
         self.value_output_transform = value_output_transform
+        # Capacity lever for the action-scoring path only. None keeps the historical
+        # ACTION_HIDDEN_DIM so existing checkpoints stay byte-compatible; a larger value
+        # widens action_encoder/state_projection/policy_head, which are freshly
+        # initialized on every distillation run (only the state trunk warm-starts), so
+        # this never breaks warm-starting. PPO snapshots of a wide model are only
+        # loadable into the same width (load_snapshot restores it).
+        self.head_width = int(head_width) if head_width else ACTION_HIDDEN_DIM
         # Applied functionally in forward() (see there) rather than as nn.Dropout
         # modules inserted into the existing nn.Sequential stacks -- inserting modules
         # would shift child indices (action_encoder.0/.2, ...) and break every existing
@@ -130,16 +138,16 @@ class CandidatePolicyValueNet(nn.Module):
             )
             action_input_dim += TACTICAL_HIDDEN_DIM
         self.action_encoder = nn.Sequential(
-            nn.Linear(action_input_dim, ACTION_HIDDEN_DIM),
+            nn.Linear(action_input_dim, self.head_width),
             nn.ReLU(),
-            nn.Linear(ACTION_HIDDEN_DIM, ACTION_HIDDEN_DIM),
+            nn.Linear(self.head_width, self.head_width),
             nn.ReLU(),
         )
-        self.state_projection = nn.Linear(HIDDEN_DIM, ACTION_HIDDEN_DIM)
+        self.state_projection = nn.Linear(HIDDEN_DIM, self.head_width)
         self.policy_head = nn.Sequential(
-            nn.Linear(ACTION_HIDDEN_DIM * 3, ACTION_HIDDEN_DIM),
+            nn.Linear(self.head_width * 3, self.head_width),
             nn.ReLU(),
-            nn.Linear(ACTION_HIDDEN_DIM, 1),
+            nn.Linear(self.head_width, 1),
         )
         self.value_head = nn.Linear(HIDDEN_DIM, 1)
 

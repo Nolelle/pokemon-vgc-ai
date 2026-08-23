@@ -76,6 +76,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260815)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument(
+        "--select-metric",
+        choices=("loss", "recall_at_k"),
+        default="recall_at_k",
+        help="validation metric that picks the restored best epoch (default: Recall@10, "
+        "the shortlist gate; 'loss' restores the historical cross-entropy selection)",
+    )
+    parser.add_argument(
+        "--hard-example-weight",
+        type=float,
+        default=0.0,
+        help="extra loss weight for samples whose teacher action currently ranks past "
+        "--hard-example-rank (0 disables)",
+    )
+    parser.add_argument("--hard-example-rank", type=int, default=10)
+    parser.add_argument(
+        "--balance-action-count-bins",
+        action="store_true",
+        help="equalize expected draws across the legal-action-count bins so rare "
+        "large-branching turns get proportional gradient updates",
+    )
+    parser.add_argument(
+        "--head-width",
+        type=int,
+        default=None,
+        help="capacity probe: widen the action-scoring path's hidden width "
+        "(default keeps ACTION_HIDDEN_DIM and checkpoint compatibility)",
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     return parser.parse_args(argv)
 
@@ -169,6 +197,7 @@ def save_model_checkpoint(
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
             "value_output_transform": model.value_output_transform,
+            "head_width": getattr(model, "head_width", None),
             "stage": "complete_context_imitation",
             "metrics": metrics,
             "args": {
@@ -264,6 +293,7 @@ def main(argv: list[str] | None = None) -> None:
             use_information_features=True,
             use_tactical_features=True,
             head_dropout=0.1,
+            head_width=args.head_width,
         ).to(args.device)
         warm_start = {"loaded": 0, "available": 0}
         if args.bc_checkpoint.is_file():
@@ -281,6 +311,11 @@ def main(argv: list[str] | None = None) -> None:
                 batch_size=args.batch_size,
                 seed=args.seed,
                 early_stopping_patience=max(2, args.epochs // 4),
+                checkpoint_metric=args.select_metric,
+                checkpoint_recall_k=10,
+                hard_example_weight=args.hard_example_weight,
+                hard_example_rank=args.hard_example_rank,
+                balance_action_count_bins=args.balance_action_count_bins,
             ),
             device=args.device,
             val_samples=validation_samples,

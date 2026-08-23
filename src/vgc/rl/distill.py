@@ -60,6 +60,27 @@ class DistillationConfig:
     # default) disables early stopping entirely -- distill_policy always runs the full
     # `epochs` and never restores a "best" checkpoint, current behavior byte-for-byte.
     early_stopping_patience: int = 0
+    # Which validation metric picks the restored "best" epoch. "loss" keeps the
+    # historical behavior (validation cross-entropy primary). "recall_at_k" selects by
+    # validation Recall@K instead -- the shortlist gate is set membership at rank K, not
+    # distribution sharpness, so an epoch that sharpens rank-1-vs-2 distinctions while
+    # pushing one more action past rank K is visibly worse here while cross-entropy
+    # barely notices. Val loss breaks ties in both modes.
+    checkpoint_metric: str = "loss"
+    checkpoint_recall_k: int = 10
+    # Upweight training samples whose teacher action sits past rank K under the CURRENT
+    # model -- exactly the samples that fail the shortlist gate. Ranks are recomputed at
+    # each epoch boundary from a fresh pass over the training set; 0.0 disables. The
+    # first epoch's ranks come from a randomly initialized model, so they are noise --
+    # harmless, just not yet informative.
+    hard_example_weight: float = 0.0
+    hard_example_rank: int = 10
+    # Rebalance sampling toward large-branching turns: expected draws equalized across
+    # the legal-action-count bins the recall screen reports (<=25, 26-100, 101-200,
+    # 201+), with samples of unknown count keeping their original overall share. Without
+    # this, the rare 201+ bin (~6% of collected decisions) contributes too few gradient
+    # updates to move the stratum that fails most. False keeps plain uniform shuffling.
+    balance_action_count_bins: bool = False
 
 
 @dataclass(frozen=True)
@@ -319,6 +340,7 @@ def evaluate_agreement(
     losses: list[float] = []
     entropies: list[float] = []
     teacher_probabilities: list[float] = []
+    teacher_ranks: list[int] = []
     with torch.no_grad():
         for start in range(0, len(samples), batch_size):
             batch = _tensor_batch(samples[start : start + batch_size], device)
@@ -356,17 +378,110 @@ def evaluate_agreement(
             top3_correct += int(
                 (ranked == batch["teacher_actions"].unsqueeze(1)).any(dim=1).sum().item()
             )
+            # Same rank definition as recall_at_k: legal candidates strictly outscoring
+            # the teacher, so validation tracks the shortlist gate during training.
+            teacher_logit = logits.gather(1, batch["teacher_actions"].unsqueeze(1))
+            better = ((logits > teacher_logit) & batch["candidate_mask"].bool()).sum(dim=1)
+            teacher_ranks.extend((better + 1).cpu().tolist())
             total += logits.shape[0]
             losses.append(float(loss))
             entropies.append(float(distribution.entropy().mean()))
+    rank_array = np.asarray(teacher_ranks, dtype=np.float64)
     return {
         "accuracy": correct / total,
         "top3_accuracy": top3_correct / total,
+        "recall_at_5": float((rank_array <= 5).mean()),
+        "recall_at_10": float((rank_array <= 10).mean()),
+        "teacher_rank_median": float(np.median(rank_array)),
+        "teacher_rank_p95": float(np.percentile(rank_array, 95)),
         "teacher_probability": sum(teacher_probabilities) / len(teacher_probabilities),
         "loss": sum(losses) / len(losses),
         "entropy": sum(entropies) / len(entropies),
         "samples": float(total),
     }
+
+
+def _action_count_bin(count: int) -> str | None:
+    """Same bins the offline recall screen reports; None marks an unknown count."""
+
+    if count <= 0:
+        return None
+    if count <= 25:
+        return "0-25"
+    if count <= 100:
+        return "26-100"
+    if count <= 200:
+        return "101-200"
+    return "201+"
+
+
+def _action_count_sampling_probabilities(
+    samples: list[DistillationSample],
+) -> np.ndarray | None:
+    """Per-sample draw probabilities that equalize the four action-count bins.
+
+    Known-count samples share mass uniformly across bins (each bin gets 1/4 of the
+    pool's total mass); unknown-count samples keep their original overall share so old
+    datasets are not silently distorted. Returns None when there is nothing to rebalance
+    (no metadata, or fewer than two distinct bins).
+    """
+
+    from collections import Counter
+
+    total = len(samples)
+    known_bins = [_action_count_bin(int(s.legal_action_count)) for s in samples]
+    known_total = sum(bin_name is not None for bin_name in known_bins)
+    if known_total == 0 or known_total == total:
+        return None
+    counts = Counter(bin_name for bin_name in known_bins if bin_name is not None)
+    if len(counts) < 2:
+        return None
+    known_mass = known_total / total
+    probabilities = np.full(total, (1.0 - known_mass) / (total - known_total))
+    for index, bin_name in enumerate(known_bins):
+        if bin_name is not None:
+            probabilities[index] = known_mass / (len(counts) * counts[bin_name])
+    return probabilities
+
+
+def _teacher_ranks(
+    model: nn.Module,
+    samples: list[DistillationSample],
+    *,
+    batch_size: int,
+    device: str,
+) -> np.ndarray:
+    """Rank of the teacher's action under the model, one value per sample."""
+
+    model.eval()
+    ranks: list[int] = []
+    with torch.no_grad():
+        for start in range(0, len(samples), batch_size):
+            batch = _tensor_batch(samples[start : start + batch_size], device)
+            logits, _values = model(
+                batch["state_indices"],
+                batch["state_scalars"],
+                batch["history_scalars"],
+                batch["move_indices"],
+                batch["target_indices"],
+                batch["switch_species_indices"],
+                batch["flags"],
+                batch["candidate_mask"],
+                meta_scalars=batch["meta_scalars"] if model.use_meta_features else None,
+                information_indices=(
+                    batch["information_indices"] if model.use_information_features else None
+                ),
+                information_scalars=(
+                    batch["information_scalars"] if model.use_information_features else None
+                ),
+                tactical_features=(
+                    batch["tactical_features"] if model.use_tactical_features else None
+                ),
+            )
+            teacher_logit = logits.gather(1, batch["teacher_actions"].unsqueeze(1))
+            better = ((logits > teacher_logit) & batch["candidate_mask"].bool()).sum(dim=1)
+            ranks.extend((better + 1).cpu().tolist())
+    return np.asarray(ranks, dtype=np.int64)
 
 
 def distill_policy(
@@ -381,36 +496,66 @@ def distill_policy(
     """Train `model` to imitate the teacher for `config.epochs` epochs.
 
     When `val_samples` is given, evaluates honest validation agreement after EVERY
-    epoch, tracks the best epoch by validation accuracy, and restores that best
-    state_dict into `model` before returning -- this is the early-stopping / best-
-    epoch-selection lever described in the module docstring's overfitting rationale.
+    epoch, tracks the best epoch by the configured validation metric
+    (`DistillationConfig.checkpoint_metric`), and restores that best state_dict into
+    `model` before returning -- this is the early-stopping / best-epoch-selection lever
+    described in the module docstring's overfitting rationale.
     `config.early_stopping_patience > 0` additionally stops training once that many
     consecutive epochs pass with no improvement over the best. When `val_samples` is
     None (the default caller shape), behavior is exactly as before this argument
     existed: fixed `config.epochs`, no extra evaluation cost, no restore.
+
+    Training-side retention levers (all default off, so defaults reproduce history):
+    `balance_action_count_bins` oversamples rare large-branching turns, and
+    `hard_example_weight` upweights samples whose teacher action currently ranks past
+    `hard_example_rank` -- the only samples a shortlist gate can actually fail.
     """
 
     if not train_samples:
         raise ValueError("cannot train from an empty distillation sample set")
     rng = np.random.default_rng(config.seed)
+    sampling_probabilities = (
+        _action_count_sampling_probabilities(train_samples)
+        if config.balance_action_count_bins
+        else None
+    )
     losses: list[float] = []
     grad_norms: list[float] = []
     best_epoch = 0
     best_val_accuracy = -1.0
-    # Validation cross-entropy is the primary checkpoint selector. Exact top-1
-    # agreement is very coarse on a small held-out set: a model can assign much more
-    # probability to the teacher across nearly every state while flipping one marginal
-    # argmax and appearing "worse" by accuracy. Loss is the proper scoring rule for the
-    # full distribution; teacher probability and then accuracy break ties.
+    # Checkpoint selection. "loss" mode keeps the historical key (validation
+    # cross-entropy primary -- see DistillationConfig.checkpoint_metric for why
+    # "recall_at_k" exists as the alternative). Loss breaks ties in both modes.
     best_val_key = (float("-inf"), -1.0, -1.0)
     best_val_teacher_probability = 0.0
     best_val_loss = float("inf")
+    best_val_recall: dict[str, float] = {}
     best_state_dict: dict[str, torch.Tensor] | None = None
     epochs_since_improvement = 0
     val_history: list[dict[str, float]] = []
     epochs_run = 0
     for epoch in range(1, config.epochs + 1):
-        indices = rng.permutation(len(train_samples))
+        if sampling_probabilities is None:
+            indices = rng.permutation(len(train_samples))
+        else:
+            # With-replacement draws weighted toward the rare large-branching bins.
+            indices = rng.choice(
+                len(train_samples), size=len(train_samples), replace=True,
+                p=sampling_probabilities,
+            )
+        if config.hard_example_weight > 0:
+            # Ranks under the CURRENT model; epoch 1's are from random weights and are
+            # effectively noise -- harmless, and correct from epoch 2 on.
+            epoch_ranks = _teacher_ranks(
+                model, train_samples, batch_size=config.batch_size, device=device
+            )
+            sample_weights = np.where(
+                epoch_ranks > config.hard_example_rank,
+                1.0 + config.hard_example_weight,
+                1.0,
+            )
+        else:
+            sample_weights = None
         model.train()
         for start in range(0, len(indices), config.batch_size):
             selected = indices[start : start + config.batch_size]
@@ -435,7 +580,19 @@ def distill_policy(
                     batch["tactical_features"] if model.use_tactical_features else None
                 ),
             )
-            loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
+            if sample_weights is None:
+                loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
+            else:
+                # Weighted mean, not plain mean: keeps the loss scale comparable to the
+                # unweighted case while spending proportionally more gradient on the
+                # samples that actually fail the shortlist gate.
+                per_sample = nn.functional.cross_entropy(
+                    logits, batch["teacher_actions"], reduction="none"
+                )
+                weights = torch.as_tensor(
+                    sample_weights[selected], dtype=torch.float32, device=device
+                )
+                loss = (per_sample * weights).sum() / weights.sum()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
@@ -458,18 +615,34 @@ def distill_policy(
                     "accuracy": epoch_metrics["accuracy"],
                     "teacher_probability": epoch_metrics["teacher_probability"],
                     "loss": epoch_metrics["loss"],
+                    # Optional so legacy evaluate_agreement stand-ins keep working.
+                    "recall_at_10": epoch_metrics.get("recall_at_10"),
+                    "teacher_rank_p95": epoch_metrics.get("teacher_rank_p95"),
                 }
             )
-            candidate_key = (
-                -epoch_metrics["loss"],
-                epoch_metrics["teacher_probability"],
-                epoch_metrics["accuracy"],
-            )
+            if config.checkpoint_metric == "recall_at_k":
+                metric_name = f"recall_at_{config.checkpoint_recall_k}"
+                candidate_key = (
+                    epoch_metrics[metric_name],
+                    -epoch_metrics["loss"],
+                    epoch_metrics["teacher_probability"],
+                )
+            else:
+                candidate_key = (
+                    -epoch_metrics["loss"],
+                    epoch_metrics["teacher_probability"],
+                    epoch_metrics["accuracy"],
+                )
             if candidate_key > best_val_key:
                 best_val_key = candidate_key
                 best_val_accuracy = epoch_metrics["accuracy"]
                 best_val_teacher_probability = epoch_metrics["teacher_probability"]
                 best_val_loss = epoch_metrics["loss"]
+                best_val_recall = {
+                    name: value
+                    for name, value in epoch_metrics.items()
+                    if name.startswith("recall_at_")
+                }
                 best_epoch = epoch
                 best_state_dict = {
                     key: value.detach().cpu().clone() for key, value in model.state_dict().items()
@@ -496,6 +669,11 @@ def distill_policy(
         result["best_val_accuracy"] = best_val_accuracy
         result["best_val_teacher_probability"] = best_val_teacher_probability
         result["best_val_loss"] = best_val_loss
+        for name, value in best_val_recall.items():
+            result[f"best_val_{name}"] = value
+        if config.checkpoint_metric == "recall_at_k":
+            result["checkpoint_metric"] = config.checkpoint_metric
+            result["checkpoint_recall_k"] = float(config.checkpoint_recall_k)
         result["epochs_run"] = float(epochs_run)
         result["val_history"] = val_history
     return result

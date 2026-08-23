@@ -69,6 +69,7 @@ def save_snapshot(
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
             "value_output_transform": model.value_output_transform,
+            "head_width": getattr(model, "head_width", None),
         },
         path,
     )
@@ -92,6 +93,7 @@ def load_snapshot(path: Path, *, device: str = "cpu") -> CandidatePolicyValueNet
         use_tactical_features=use_tactical_features,
         head_dropout=float(checkpoint.get("head_dropout", 0.0)),
         value_output_transform=str(checkpoint.get("value_output_transform", "identity")),
+        head_width=checkpoint.get("head_width"),
     )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model.to(device)
