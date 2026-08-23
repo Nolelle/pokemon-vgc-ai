@@ -8,6 +8,20 @@ picks the ten. The question it has to answer first is therefore retention, not s
 if the teacher's action is ranked 11th by the network, search never sees it and no
 amount of search quality afterwards recovers it.
 
+Two retention flavors are reported:
+
+``by_k``
+    Pure top-K of the network's ranking. Computable on every dataset; this is the fast
+    screen.
+
+``by_k_guided`` (--simulate-guided)
+    Retention through the DEPLOYED selector (`vgc.rl.guided_selection`), which reserves
+    up to half the budget for heuristic safety picks before filling from neural ranks.
+    This is the number hybrid mode actually experiences -- a teacher action at neural
+    rank 8 can be dropped by the reserve, or one at rank 40 kept via the myopic-leader
+    slot. Requires schema-v2 collections that recorded per-candidate myopic ranks and
+    tags; older datasets report those decisions as unknown rather than guessing.
+
 Recall@K is reported with a team-clustered interval because decisions inside one battle
 (and one roster) are not independent evidence -- the same reason the multi-team gates
 and the counterfactual Q work cluster by team. Pooling 9,000 decisions as if they were
@@ -47,10 +61,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ks", type=int, nargs="+", default=list(DEFAULT_KS))
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument(
-        "--holdout-teams",
-        type=Path,
+    parser.add_argument("--holdout-teams", type=Path,
         help="JSON list of team labels to score; omit to score every loaded sample.",
+    )
+    parser.add_argument(
+        "--simulate-guided",
+        action="store_true",
+        help="also replay the deployed safety-slotted selector (needs schema-v2 samples)",
+    )
+    parser.add_argument(
+        "--safety-slots",
+        type=int,
+        default=4,
+        help="safety reserve passed to the guided replay (deployment default: 4)",
     )
     parser.add_argument("--recall-target", type=float, default=RECALL_TARGET)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -143,6 +166,28 @@ def main(argv: list[str] | None = None) -> int:
         block["meets_target"] = bool(block["clustered_lower_bound"] >= args.recall_target)
         report["by_k"][str(k)] = block
 
+    if args.simulate_guided:
+        from vgc.rl.distill import simulate_guided_hits
+
+        guided_hits = simulate_guided_hits(
+            samples, result["ranked_indices"], ks=args.ks, safety_slots=args.safety_slots
+        )
+        report["by_k_guided"] = {}
+        report["guided_safety_slots"] = args.safety_slots
+        for k in args.ks:
+            flavor = [hit for hit in guided_hits[k] if hit is not None]
+            block = _clustered(flavor, teams) if flavor else {
+                "recall": 0.0, "teams": 0, "decisions": 0,
+                "clustered_interval_95": [0.0, 0.0], "clustered_lower_bound": 0.0,
+                "naive_wilson_interval_95": [0.0, 0.0], "clustering_widened_interval_by": 1.0,
+            }
+            block["decisions_without_guidance_metadata"] = len(guided_hits[k]) - len(flavor)
+            block["trivial_decisions_with_at_most_k_legal_actions"] = result["trivial"][str(k)]
+            block["meets_target"] = bool(
+                flavor and block["clustered_lower_bound"] >= args.recall_target
+            )
+            report["by_k_guided"][str(k)] = block
+
     strata = _strata(samples)
     for label, indices in strata.items():
         report["by_stratum"][label] = {
@@ -176,10 +221,21 @@ def main(argv: list[str] | None = None) -> int:
     top = max(args.ks)
     verdict = report["by_k"][str(top)]
     print(
-        f"\ndecision rule: LCB(Recall@{top}) >= {args.recall_target:.2f} -> "
+        f"\ndecision rule (pure top-{top}): LCB >= {args.recall_target:.2f} -> "
         f"{'PASS' if verdict['meets_target'] else 'FAIL'} "
         f"(LCB {verdict['clustered_lower_bound']:.3f})"
     )
+    guided_blocks = report.get("by_k_guided")
+    if guided_blocks:
+        gverdict = guided_blocks[str(top)]
+        unknown = gverdict["decisions_without_guidance_metadata"]
+        print(
+            f"decision rule (guided, safety_slots={report['guided_safety_slots']}): "
+            f"LCB(Recall@{top}) >= {args.recall_target:.2f} -> "
+            f"{'PASS' if gverdict['meets_target'] else 'FAIL'} "
+            f"(LCB {gverdict['clustered_lower_bound']:.3f}"
+            + (f", {unknown} decisions without metadata excluded)" if unknown else ")")
+        )
     print("\nhardest strata by recall@%d:" % top)
     ranked = sorted(report["by_stratum"].items(), key=lambda item: item[1][str(top)]["recall"])
     for label, block in ranked[:4]:

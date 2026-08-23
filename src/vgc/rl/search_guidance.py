@@ -52,10 +52,10 @@ from vgc.rl.encoding import (
     pad_candidate_features,
     pad_candidate_tactical_features,
 )
+from vgc.rl.guided_selection import select_guided_candidate_indices
 from vgc.search import _order_tags, _select_search_candidates, search_joint_orders
 
 GuidanceMode = Literal["shadow", "hybrid"]
-_CONTROL_TAGS = frozenset({"speed_control", "setup", "screen", "action_denial"})
 
 
 def checkpoint_sha256(path: Path) -> str:
@@ -231,21 +231,6 @@ def rank_legal_orders(
     )
 
 
-def _best_distinct_with_tags(
-    myopic: list[ScoredOrder],
-    selected_ids: set[int],
-    wanted: frozenset[str],
-) -> ScoredOrder | None:
-    return next(
-        (
-            entry
-            for entry in myopic
-            if id(entry) not in selected_ids and bool(_order_tags(entry.order) & wanted)
-        ),
-        None,
-    )
-
-
 def select_neural_guided_candidates(
     myopic: list[ScoredOrder],
     config,
@@ -257,54 +242,43 @@ def select_neural_guided_candidates(
 
     At most half of the budget can be reserved for safety.  This keeps Hybrid-5 from
     becoming a disguised all-heuristic selector while still protecting the current
-    myopic leader and rare switch/Protect/control/offense alternatives.
+    myopic leader and rare switch/Protect/control/offense alternatives.  The selection
+    algorithm lives in `vgc.rl.guided_selection` so the offline recall screen replays
+    literally the same code rather than a reimplementation that can drift.
     """
 
     cutoff = min(len(myopic), max(1, int(config.search_our_candidates)))
-    safety_budget = min(max(0, requested_safety_slots), cutoff // 2)
-    selected: list[ScoredOrder] = []
-    selected_ids: set[int] = set()
-    safety: list[dict[str, str]] = []
-
-    def add_safety(label: str, entry: ScoredOrder | None) -> None:
-        if entry is None or id(entry) in selected_ids or len(safety) >= safety_budget:
-            return
-        selected.append(entry)
-        selected_ids.add(id(entry))
-        safety.append({"reason": label, "action": describe_order(entry.order)})
-
-    if safety_budget:
-        add_safety("heuristic_top", myopic[0])
-        groups = (
-            ("switch", frozenset({"switch"})),
-            ("protect", frozenset({"protect"})),
-            ("control", _CONTROL_TAGS),
-            ("offense", frozenset({"double_attack"})),
-            ("non_protect", frozenset({"non_protect"})),
-        )
-        for label, tags in groups:
-            if len(safety) >= safety_budget:
-                break
-            if any(bool(_order_tags(entry.order) & tags) for entry in selected):
-                continue
-            add_safety(label, _best_distinct_with_tags(myopic, selected_ids, tags))
-
-    entry_by_description = {describe_order(entry.order): entry for entry in myopic}
-    for description in ranking.descriptions:
-        if len(selected) >= cutoff:
-            break
-        entry = entry_by_description.get(description)
-        if entry is not None and id(entry) not in selected_ids:
-            selected.append(entry)
-            selected_ids.add(id(entry))
-    for entry in myopic:
-        if len(selected) >= cutoff:
-            break
-        if id(entry) not in selected_ids:
-            selected.append(entry)
-            selected_ids.add(id(entry))
-
+    # Match the network's ranked descriptions back onto candidate positions the way the
+    # original implementation did: first myopic entry wins a duplicated description, and
+    # unknown descriptions are skipped.
+    index_by_description: dict[str, int] = {}
+    for position, entry in enumerate(myopic):
+        index_by_description.setdefault(describe_order(entry.order), position)
+    ranked_indices = [
+        index_by_description[description]
+        for description in ranking.descriptions
+        if description in index_by_description
+    ]
+    selected_indices, safety_records = select_guided_candidate_indices(
+        len(myopic),
+        ranked_indices=ranked_indices,
+        myopic_position={index: index for index in range(len(myopic))},
+        tags_by_index={
+            index: _order_tags(entry.order) for index, entry in enumerate(myopic)
+        },
+        cutoff=cutoff,
+        safety_slots=requested_safety_slots,
+    )
+    selected = [myopic[index] for index in selected_indices]
+    selected_ids = {id(entry) for entry in selected}
     unsearched = [entry for entry in myopic if id(entry) not in selected_ids]
+    safety = [
+        {
+            "reason": record["reason"],
+            "action": describe_order(myopic[int(record["index"])].order),
+        }
+        for record in safety_records
+    ]
     return selected, unsearched, safety
 
 

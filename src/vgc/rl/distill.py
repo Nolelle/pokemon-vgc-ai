@@ -26,6 +26,12 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.actions import describe_order
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
+from vgc.rl.guided_selection import (
+    SAFETY_COLUMN_TAGS,
+    SAFETY_TAG_COLUMNS,
+    select_guided_candidate_indices,
+)
+from vgc.search import _order_tags, search_joint_orders
 from vgc.rl.encoding import (
     META_SCALAR_DIM,
     CandidateFeatures,
@@ -40,7 +46,6 @@ from vgc.rl.encoding import (
     pad_candidate_features,
     pad_candidate_tactical_features,
 )
-from vgc.search import search_joint_orders
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,16 @@ class DistillationSample:
     # comparable across collections. Defaulted so older saved datasets still load.
     turn: int = 0
     legal_action_count: int = 0
+    # Schema-v2 guidance metadata, aligned with the candidate rows. `candidate_ranks[i]`
+    # is the candidate's 0-based position in the MYOPIC evaluator's score order (-1 if
+    # unmatched) and `candidate_tags[i]` flags the safety categories
+    # (`vgc.rl.guided_selection.SAFETY_TAG_COLUMNS`) its joint order satisfies. Together
+    # they let an offline evaluator replay the deployed safety-slotted shortlist
+    # (`vgc.rl.search_guidance`) instead of approximating it with the raw top-K -- which
+    # matters because up to half of the deployed budget is heuristic-reserved. Defaulted
+    # so older saved datasets still load (they simply cannot simulate guided selection).
+    candidate_myopic_ranks: np.ndarray | None = None
+    candidate_tags: np.ndarray | None = None
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -96,10 +111,17 @@ class TeacherRecordingPlayer(VgcPlayer):
         history_scalars = encode_battle_history(memory)
         if self.config.use_two_ply_search:
             scored = search_joint_orders(battle, self.config)
+            # One extra myopic pass per decision: the exchange search reorders candidates
+            # by simulated outcome, but the safety-slot replay needs each candidate's
+            # position in the CHEAP evaluator's order. Worth its cost at collection time
+            # only.
+            myopic_scored = score_joint_orders(battle, self.config) if scored else None
         elif self.config.use_heuristic_evaluator:
             scored = score_joint_orders(battle, self.config)
+            myopic_scored = scored
         else:
             scored = []
+            myopic_scored = None
         if not scored:
             return self.choose_random_move(battle)
 
@@ -107,6 +129,8 @@ class TeacherRecordingPlayer(VgcPlayer):
         # position is never encoded, so putting the teacher's choice at index 0 cannot
         # leak the answer to the network.
         orders = [entry.order for entry in scored]
+        guidance_metadata = build_guidance_metadata(orders, myopic_scored)
+        ranks, tags = guidance_metadata if guidance_metadata is not None else (None, None)
         self.distillation_samples.append(
             DistillationSample(
                 battle_id=battle.battle_tag,
@@ -121,6 +145,8 @@ class TeacherRecordingPlayer(VgcPlayer):
                 information=encode_information_context(battle, memory, self.config),
                 turn=int(getattr(battle, "turn", 0) or 0),
                 legal_action_count=len(orders),
+                candidate_myopic_ranks=ranks,
+                candidate_tags=tags,
             )
         )
         chosen = orders[0]
@@ -153,6 +179,32 @@ def teacher_action_index(battle, config, orders) -> int | None:
         index for index, order in enumerate(orders) if describe_order(order) == teacher_description
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def build_guidance_metadata(orders, myopic_scored) -> tuple[np.ndarray, np.ndarray] | None:
+    """Per-candidate myopic position and safety-tag flags aligned with ``orders``.
+
+    ``myopic_scored`` is the cheap evaluator's complete legal set in its own score order
+    -- either ``ScoredOrder`` entries (as the search returns them) or bare order objects
+    when the teacher itself is myopic. Returns None when no myopic ordering is available,
+    so callers can store schema-v1 samples unchanged. Tag COLUMNS are the coarse safety
+    labels (`SAFETY_TAG_COLUMNS`); the stored "control" column means "any of
+    `CONTROL_TAGS`" and is expanded back to those tags on replay.
+    """
+
+    if not orders or myopic_scored is None:
+        return None
+    position: dict[str, int] = {}
+    for rank, entry in enumerate(myopic_scored):
+        position.setdefault(describe_order(getattr(entry, "order", entry)), rank)
+    ranks = np.full(len(orders), -1, dtype=np.int64)
+    tags = np.zeros((len(orders), len(SAFETY_TAG_COLUMNS)), dtype=np.int8)
+    for index, order in enumerate(orders):
+        ranks[index] = position.get(describe_order(order), -1)
+        order_tags = _order_tags(order)
+        for column, name in enumerate(SAFETY_TAG_COLUMNS):
+            tags[index, column] = int(bool(order_tags & SAFETY_COLUMN_TAGS[name]))
+    return ranks, tags
 
 
 def split_samples_by_battle(
@@ -485,6 +537,7 @@ def recall_at_k(
     model.eval()
     hits: dict[int, list[bool]] = {int(k): [] for k in ks}
     ranks: list[int] = []
+    ranked_indices: list[list[int]] = []
     with torch.no_grad():
         for start in range(0, len(samples), batch_size):
             chunk = samples[start : start + batch_size]
@@ -517,6 +570,14 @@ def recall_at_k(
             teacher_logit = logits.gather(1, teacher.unsqueeze(1))
             better = ((logits > teacher_logit) & batch["candidate_mask"].bool()).sum(dim=1)
             ranks.extend((better + 1).cpu().tolist())
+            # Legal candidates best-first, for callers that replay the deployed
+            # safety-slotted selector (`simulate_guided_hits`). Padded slots are forced
+            # to -inf so they sort strictly after every legal action; a model that does
+            # not mask its own padded logits therefore still yields a legal ranking.
+            masked_logits = logits.masked_fill(~batch["candidate_mask"].bool(), float("-inf"))
+            order = torch.argsort(masked_logits, dim=-1, descending=True)
+            for row, sample in enumerate(chunk):
+                ranked_indices.append(order[row, : len(sample.candidates)].cpu().tolist())
             for k in hits:
                 hits[k].extend((better < k).cpu().tolist())
     rank_array = np.asarray(ranks, dtype=np.float64)
@@ -524,6 +585,8 @@ def recall_at_k(
         "samples": len(samples),
         "hits": {str(k): value for k, value in hits.items()},
         "recall": {str(k): float(np.mean(value)) for k, value in hits.items()},
+        # Legal candidate indices per sample, best-first (see the masking note above).
+        "ranked_indices": ranked_indices,
         # legal_action_count defaults to 0 on datasets collected before it was recorded;
         # that means "unknown", not "trivially retained", so it must not be counted here.
         "trivial": {
@@ -536,3 +599,67 @@ def recall_at_k(
             "max": float(rank_array.max()),
         },
     }
+
+
+def simulate_guided_hits(
+    samples: list[DistillationSample],
+    ranked_indices: list[list[int]],
+    *,
+    ks: Sequence[int],
+    safety_slots: int = 4,
+) -> dict[int, list[bool | None]]:
+    """Replay the deployed safety-slotted shortlist offline, per decision.
+
+    For every sample this runs `vgc.rl.guided_selection`'s selection -- the exact code
+    the hybrid player uses at battle time -- against the recorded myopic ranks and tag
+    flags, then reports whether the teacher's action survived it. The result is a
+    DIFFERENT number than the raw top-K: at K=10 up to four slots belong to heuristic
+    safety picks, so a network can rank the teacher's action 8th and still lose it, or
+    rank it 40th and keep it via the myopic-leader slot.
+
+    Returns hits aligned with ``samples`` per K; ``None`` marks samples whose dataset
+    predates the guidance metadata and therefore cannot be replayed (they must be
+    reported as unknown, never silently counted either way).
+    """
+
+    if len(samples) != len(ranked_indices):
+        raise ValueError("ranked_indices must align with samples")
+    hits: dict[int, list[bool | None]] = {int(k): [] for k in ks}
+    for sample, ranked in zip(samples, ranked_indices, strict=True):
+        n_candidates = len(sample.candidates)
+        has_metadata = (
+            sample.candidate_myopic_ranks is not None and sample.candidate_tags is not None
+        )
+        legal_ranked = [index for index in dict.fromkeys(ranked) if 0 <= index < n_candidates]
+        for k in hits:
+            if k >= n_candidates:
+                # Every legal action fits inside the budget; retention is automatic for
+                # any correct selector.
+                hits[k].append(True)
+                continue
+            if not has_metadata:
+                hits[k].append(None)
+                continue
+            tags_by_index = {
+                index: frozenset(
+                    tag
+                    for column, flag in zip(SAFETY_TAG_COLUMNS, sample.candidate_tags[index])
+                    if flag
+                    for tag in SAFETY_COLUMN_TAGS[column]
+                )
+                for index in range(n_candidates)
+            }
+            selected, _safety = select_guided_candidate_indices(
+                n_candidates,
+                ranked_indices=legal_ranked,
+                myopic_position={
+                    index: int(sample.candidate_myopic_ranks[index])
+                    for index in range(n_candidates)
+                    if sample.candidate_myopic_ranks[index] >= 0
+                },
+                tags_by_index=tags_by_index,
+                cutoff=k,
+                safety_slots=safety_slots,
+            )
+            hits[k].append(sample.teacher_action_index in selected)
+    return hits
