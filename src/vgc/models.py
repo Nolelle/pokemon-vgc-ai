@@ -347,6 +347,15 @@ class PolicyConfig:
     # with Protect valued via protect_threat_weight) -- keeps resolve_exchange's
     # damage_range call count bounded regardless of how many moves either slot knows.
     search_opp_candidates: int = 12
+    # Hybrid neural-guided mode only (`vgc.rl.search_guidance`): a candidate that the
+    # DEFAULT heuristic selector would NOT have searched may only become the chosen
+    # move if its refined score beats the best default-searched candidate by this many
+    # points; otherwise the best default-searched action wins. Powered paired-gate
+    # attribution (runs/experiments.jsonl, 2026-08-25) showed the entire strength
+    # deficit comes from such upset flips (-58%/game on near-ties) while true misses
+    # were harmless -- so admit the network's discoveries only when they clear a real
+    # margin. 0 disables arbitration entirely (pure argmax over the searched set).
+    guided_upset_margin: float = 10.0
     # Points per 1% of a Pokemon's max HP lost during a simulated exchange -- the same
     # currency as damage_percent_weight, so exchange-derived and myopic-derived HP
     # percentages are directly comparable once blended together.

@@ -246,3 +246,79 @@ def test_shadow_summary_clusters_recall_by_team_and_reports_cost() -> None:
     assert summary["teams"] == 2
     assert summary["latency_ms"]["total"]["p50"] == 24.0
     assert summary["search_work"]["exchange_count_mean"] == 100.0
+
+
+# --- upset arbitration -------------------------------------------------------------------
+
+
+def _scored_actions(pairs):
+    """pairs: list of (description, score, searched). Orders are opaque stubs."""
+
+    return [
+        ScoredOrder(order=SimpleNamespace(description=description), score=score, breakdown={"searched": searched})
+        for description, score, searched in pairs
+    ]
+
+
+def _describe_stub(order):
+    return order.description
+
+
+def test_upset_below_margin_falls_back_to_best_default(monkeypatch):
+    from vgc.rl import search_guidance as sg
+
+    monkeypatch.setattr(sg, "describe_order", _describe_stub)
+    scored = _scored_actions(
+        [
+            ("newcomer", 100.0, True),   # hybrid-only discovery
+            ("default_best", 95.0, True),
+            ("other_default", 90.0, True),
+            ("tail", 10.0, False),
+        ]
+    )
+    reheaded, audit = sg._arbitrate_guided_upset(scored, {"default_best", "other_default"}, 10.0)
+
+    assert _describe_stub(reheaded[0].order) == "default_best"
+    assert audit["upset_arbitrated"] is True
+    assert audit["upset_gap"] == pytest.approx(5.0)
+    assert len({id(e) for e in reheaded}) == 4  # still a complete permutation
+
+
+def test_upset_clearing_margin_stands(monkeypatch):
+    from vgc.rl import search_guidance as sg
+
+    monkeypatch.setattr(sg, "describe_order", _describe_stub)
+    scored = _scored_actions(
+        [
+            ("newcomer", 120.0, True),
+            ("default_best", 95.0, True),
+        ]
+    )
+    reheaded, audit = sg._arbitrate_guided_upset(
+        scored, {"default_best"}, 10.0
+    )
+    assert _describe_stub(reheaded[0].order) == "newcomer"
+    assert audit["upset_arbitrated"] is False
+    assert audit["upset_gap"] == pytest.approx(25.0)
+
+
+def test_default_winner_and_zero_margin_are_untouched(monkeypatch):
+    from vgc.rl import search_guidance as sg
+
+    monkeypatch.setattr(sg, "describe_order", _describe_stub)
+    scored = _scored_actions([("default_a", 50.0, True), ("default_b", 40.0, True)])
+    same, audit = sg._arbitrate_guided_upset(scored, {"default_a", "default_b"}, 10.0)
+    assert same is scored and audit["upset_arbitrated"] is False
+
+    upset = _scored_actions([("newcomer", 99.0, True), ("default_a", 40.0, True)])
+    untouched, audit2 = sg._arbitrate_guided_upset(upset, {"default_a"}, 0.0)
+    assert _describe_stub(untouched[0].order) == "newcomer" and audit2["upset_arbitrated"] is False
+
+
+def test_no_default_searched_entries_leaves_list_alone(monkeypatch):
+    from vgc.rl import search_guidance as sg
+
+    monkeypatch.setattr(sg, "describe_order", _describe_stub)
+    scored = _scored_actions([("newcomer", 99.0, True)])
+    same, audit = sg._arbitrate_guided_upset(scored, set(), 10.0)
+    assert same is scored and audit["upset_arbitrated"] is False

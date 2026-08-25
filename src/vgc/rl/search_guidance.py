@@ -368,6 +368,55 @@ def write_decision_records(path: Path, records: list[dict[str, object]]) -> None
     path.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records))
 
 
+def _arbitrate_guided_upset(
+    scored: list[ScoredOrder],
+    default_searched: set[str],
+    margin: float,
+) -> tuple[list[ScoredOrder], dict[str, object]]:
+    """Keep an upset winner only when it clears ``margin`` over the default best.
+
+    The guided shortlist admits candidates the heuristic selector would never have
+    searched. When one of those refines above every default-searched action, that is
+    either a genuine discovery or exactly the trap the heuristic filter existed for --
+    the powered paired gate showed such flips carry the entire strength deficit. This
+    arbitration keeps the network's discovery only on a clear margin; otherwise the
+    best default-searched action heads the list.
+
+    Returns the (possibly re-headed) complete scored list plus an audit payload. The
+    list stays a permutation of all legal entries; only ordering changes.
+    """
+
+    if margin <= 0 or not scored:
+        return scored, {"upset_arbitrated": False}
+    winner_description = describe_order(scored[0].order)
+    if winner_description in default_searched:
+        return scored, {"upset_arbitrated": False}
+    best_default = max(
+        (
+            entry
+            for entry in scored
+            if describe_order(entry.order) in default_searched
+        ),
+        key=lambda entry: entry.score,
+        default=None,
+    )
+    if best_default is None:
+        return scored, {"upset_arbitrated": False}
+    gap = float(scored[0].score) - float(best_default.score)
+    if gap >= margin:
+        return scored, {
+            "upset_arbitrated": False,
+            "upset_gap": round(gap, 3),
+        }
+    reheaded = [best_default] + [entry for entry in scored if entry is not best_default]
+    return reheaded, {
+        "upset_arbitrated": True,
+        "upset_gap": round(gap, 3),
+        "displaced_action": winner_description,
+        "restored_action": describe_order(best_default.order),
+    }
+
+
 class NeuralSearchPlayer(VgcPlayer):
     """Rank with a checkpoint, but always let the existing search choose the move."""
 
@@ -444,9 +493,13 @@ class NeuralSearchPlayer(VgcPlayer):
         selection_audit: dict[str, object] = {}
 
         if self.mode == "hybrid":
+            captured_defaults: dict[str, set[str]] = {}
 
             def guided_selector(myopic, config):
                 default_searched, _default_tail = _select_search_candidates(myopic, config)
+                captured_defaults["descriptions"] = {
+                    describe_order(entry.order) for entry in default_searched
+                }
                 searched, unsearched, safety = select_neural_guided_candidates(
                     myopic,
                     config,
@@ -467,6 +520,15 @@ class NeuralSearchPlayer(VgcPlayer):
             scored = search_joint_orders(
                 battle, self.config, candidate_selector=guided_selector
             )
+            # Upset arbitration: the network's newcomer candidates may only take the
+            # move away from the shipped selector's best on a clear margin (see
+            # PolicyConfig.guided_upset_margin).
+            scored, arbitration = _arbitrate_guided_upset(
+                scored,
+                captured_defaults.get("descriptions", set()),
+                self.config.guided_upset_margin,
+            )
+            selection_audit.update(arbitration)
         else:
             scored = search_joint_orders(battle, self.config)
             rebuilt = self._rebuild_myopic(scored)
