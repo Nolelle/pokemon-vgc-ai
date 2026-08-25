@@ -103,6 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     teams = [str(s.team_id) for s in samples]
 
     members = [load_snapshot(path, device=args.device) for path in args.checkpoint]
+    # Checkpoints are usually named best.pt; key by distinguishing parent when needed.
+    seen: set[str] = set()
+    labels: list[str] = []
+    for path in args.checkpoint:
+        label = path.name if path.name not in seen else f"{path.parent.name}/{path.name}"
+        seen.add(path.name)
+        labels.append(label)
     report: dict[str, Any] = {
         "schema": "vgc-shortlist-ensemble-recall-v1",
         "members": [str(path) for path in args.checkpoint],
@@ -112,12 +119,12 @@ def main(argv: list[str] | None = None) -> int:
         "ensemble": {},
     }
 
-    for path, member in zip(args.checkpoint, members):
+    for label, member in zip(labels, members):
         result = recall_at_k(member, samples, ks=args.ks, batch_size=args.batch_size, device=args.device)
-        report["by_member"][path.name] = {
+        report["by_member"][label] = {
             k: _clustered(result["hits"][k], teams) for k in result["hits"]
         }
-        report["by_member"][path.name]["teacher_rank"] = result["teacher_rank"]
+        report["by_member"][label]["teacher_rank"] = result["teacher_rank"]
 
     ensemble = LogitAveragedEnsemble(members)
     result = recall_at_k(ensemble, samples, ks=args.ks, batch_size=args.batch_size, device=args.device)
