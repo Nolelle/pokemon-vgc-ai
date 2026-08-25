@@ -182,7 +182,9 @@ class LadderPlayer(VgcPlayer):
         }
         learned_checkpoint = getattr(self, "learned_checkpoint_path", None)
         if learned_checkpoint is not None:
-            record["policy"] = "learned"
+            record["policy"] = (
+                "learned-hybrid" if getattr(self, "hybrid_mode", False) else "learned"
+            )
             record["checkpoint_path"] = str(learned_checkpoint.resolve())
             record["checkpoint_sha256"] = self.learned_checkpoint_sha256
         if battle.lost:
@@ -206,18 +208,69 @@ def _make_session_player(
     *,
     checkpoint_path: Path | None,
     device: str,
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
     **player_kwargs,
 ) -> LadderPlayer:
     """Construct the heuristic logger or an explicitly selected learned logger.
 
     The learned imports are lazy so the normal ladder bot still works without the
-    optional training dependency installed.
+    optional training dependency installed. ``policy_mode="hybrid"`` swaps WHO picks
+    the search shortlist (neural ranking inside the deployed safety-slot selector)
+    while search still chooses every move -- see `vgc.rl.guided_selection`.
     """
+
+    if policy_mode not in ("deterministic", "hybrid"):
+        raise ValueError(f"unknown policy_mode {policy_mode!r}")
+    if policy_mode == "hybrid" and checkpoint_path is None:
+        raise ValueError("policy_mode='hybrid' requires a policy checkpoint")
 
     if checkpoint_path is None:
         return LadderPlayer(**player_kwargs)
 
     from vgc.rl.opponents import load_snapshot
+
+    if policy_mode == "hybrid":
+        from vgc.rl.search_guidance import NeuralSearchPlayer
+
+        class HybridLadderPlayer(NeuralSearchPlayer, LadderPlayer):
+            def __init__(
+                self, *, hybrid_checkpoint: Path, hybrid_device: str, **kwargs
+            ) -> None:
+                self.learned_checkpoint_path = hybrid_checkpoint
+                self.learned_checkpoint_sha256 = checkpoint_sha256(hybrid_checkpoint)
+                self.hybrid_mode = True
+                model = load_snapshot(hybrid_checkpoint, device=hybrid_device)
+                super().__init__(
+                    model=model,
+                    checkpoint_path=hybrid_checkpoint,
+                    mode="hybrid",
+                    device=hybrid_device,
+                    safety_slots=safety_slots,
+                    **kwargs,
+                )
+                self._written_decision_records = 0
+
+            def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+                # Stamps win/loss onto this battle's decision records BEFORE they are
+                # flushed, then defers replay/trace handling like every other mode.
+                NeuralSearchPlayer._battle_finished_callback(self, battle)
+                records_path = self.artifacts_dir / "neural_decisions.jsonl"
+                with records_path.open("a") as out:
+                    for record in self.decision_records[self._written_decision_records :]:
+                        out.write(json.dumps(record, sort_keys=True) + "\n")
+                self._written_decision_records = len(self.decision_records)
+                LadderPlayer._battle_finished_callback(self, battle)
+
+        return HybridLadderPlayer(
+            hybrid_checkpoint=checkpoint_path,
+            hybrid_device=device,
+            **player_kwargs,
+        )
+
+    if policy_mode != "deterministic":
+        raise ValueError(f"unknown policy_mode {policy_mode!r}")
+
     from vgc.rl.player import PpoVgcPlayer
 
     class LearnedLadderPlayer(PpoVgcPlayer, LadderPlayer):
@@ -439,6 +492,8 @@ async def run_local_smoke(
     checkpoint_path: Path | None = None,
     device: str = "cpu",
     timeout_seconds: float = 60.0,
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
@@ -447,6 +502,8 @@ async def run_local_smoke(
     player = _make_session_player(
         checkpoint_path=checkpoint_path,
         device=device,
+        policy_mode=policy_mode,
+        safety_slots=safety_slots,
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
@@ -488,6 +545,8 @@ async def run_live_session(
     max_retries: int,
     checkpoint_path: Path | None = None,
     device: str = "cpu",
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
@@ -506,6 +565,8 @@ async def run_live_session(
                 player = _make_session_player(
                     checkpoint_path=checkpoint_path,
                     device=device,
+                    policy_mode=policy_mode,
+                    safety_slots=safety_slots,
                     artifacts_dir=artifacts_dir,
                     log_path=log_path,
                     session_id=session_id,
@@ -668,6 +729,22 @@ def parse_args() -> argparse.Namespace:
             "on the shipped heuristic policy"
         ),
     )
+    parser.add_argument(
+        "--policy-mode",
+        choices=("deterministic", "hybrid"),
+        default="deterministic",
+        help=(
+            "with --policy-checkpoint: 'deterministic' plays the network's argmax; "
+            "'hybrid' keeps the exchange search as the decider but lets the network "
+            "pick which candidates enter the safety-slotted shortlist"
+        ),
+    )
+    parser.add_argument(
+        "--safety-slots",
+        type=int,
+        default=4,
+        help="hybrid mode only: heuristic-reserved slots inside the shortlist budget",
+    )
     parser.add_argument("--device", default="cpu", help="learned-policy inference device")
     return parser.parse_args()
 
@@ -680,6 +757,8 @@ def main() -> int:
     config = session_config(args.search, args.bc, args.value, args.horizon)
     if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
         raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
+    if args.policy_mode == "hybrid" and args.policy_checkpoint is None:
+        raise SystemExit("--policy-mode hybrid requires --policy-checkpoint")
     selected_policy = (
         f"learned checkpoint {args.policy_checkpoint}"
         if args.policy_checkpoint is not None
@@ -698,6 +777,8 @@ def main() -> int:
                 config=config,
                 checkpoint_path=args.policy_checkpoint,
                 device=args.device,
+                policy_mode=args.policy_mode,
+                safety_slots=args.safety_slots,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -713,6 +794,8 @@ def main() -> int:
                 config=config,
                 checkpoint_path=args.policy_checkpoint,
                 device=args.device,
+                policy_mode=args.policy_mode,
+                safety_slots=args.safety_slots,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )

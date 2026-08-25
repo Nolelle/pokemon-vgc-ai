@@ -457,3 +457,79 @@ def test_run_live_session_counts_record_recovered_during_failure(monkeypatch) ->
 
     assert records == [{"won": False, "battle_tag": "recovered-1"}]
     assert _FakeRecoveredRecordPlayer.attempt_count == 1
+
+
+def _tiny_checkpoint(tmp_path):
+    pytest.importorskip("torch")
+    from vgc.rl.model import CandidatePolicyValueNet
+    from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
+    import torch
+
+    path = tmp_path / "best.pt"
+    net = CandidatePolicyValueNet()
+    torch.save(
+        {
+            "model_state_dict": net.state_dict(),
+            "architecture": RL_ARCHITECTURE_VERSION,
+            "use_meta_features": False,
+            "use_information_features": False,
+            "use_tactical_features": False,
+            "head_dropout": 0.0,
+            "value_output_transform": "identity",
+            "head_width": None,
+        },
+        path,
+    )
+    return path
+
+
+def test_make_session_player_hybrid_mode_builds_guided_ladder_player(tmp_path):
+    from vgc.models import PolicyConfig
+
+    checkpoint = _tiny_checkpoint(tmp_path)
+    player = run_ladder_module._make_session_player(
+        checkpoint_path=checkpoint,
+        device="cpu",
+        policy_mode="hybrid",
+        artifacts_dir=tmp_path / "artifacts",
+        log_path=tmp_path / "log.jsonl",
+        session_id="unit",
+        config=PolicyConfig(),
+        team="fake-team",
+        battle_format="gen9championsvgc2026regmb",
+        start_listening=False,
+    )
+
+    assert player.mode == "hybrid"
+    assert player.learned_checkpoint_sha256 == run_ladder_module.checkpoint_sha256(checkpoint)
+    assert player.hybrid_mode is True
+    assert (tmp_path / "artifacts" / "replays").exists()
+
+
+def test_make_session_player_defaults_and_unknown_modes(tmp_path):
+    from ladder.run_ladder import LadderPlayer
+
+    heuristic = run_ladder_module._make_session_player(
+        checkpoint_path=None,
+        device="cpu",
+        artifacts_dir=tmp_path / "artifacts",
+        log_path=tmp_path / "log.jsonl",
+        session_id="unit",
+        team="fake-team",
+        battle_format="gen9championsvgc2026regmb",
+        start_listening=False,
+    )
+    assert isinstance(heuristic, LadderPlayer)
+
+    with pytest.raises(ValueError, match="unknown policy_mode"):
+        run_ladder_module._make_session_player(
+            checkpoint_path=None,
+            device="cpu",
+            policy_mode="telepathy",
+            artifacts_dir=tmp_path / "a2",
+            log_path=tmp_path / "log2.jsonl",
+            session_id="unit2",
+            team="fake-team",
+            battle_format="gen9championsvgc2026regmb",
+            start_listening=False,
+        )
