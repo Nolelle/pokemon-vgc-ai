@@ -104,6 +104,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="capacity probe: widen the action-scoring path's hidden width "
         "(default keeps ACTION_HIDDEN_DIM and checkpoint compatibility)",
     )
+    parser.add_argument(
+        "--soft-targets",
+        action="store_true",
+        help="train against softmax(teacher search scores / T) instead of the argmax "
+        "(schema-v2.x datasets only; rows without stored scores fall back to hard CE)",
+    )
+    parser.add_argument(
+        "--soft-target-temperature",
+        type=float,
+        default=16.0,
+        help="softmax temperature in evaluator points; higher flattens the target",
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     return parser.parse_args(argv)
 
@@ -316,6 +328,8 @@ def main(argv: list[str] | None = None) -> None:
                 hard_example_weight=args.hard_example_weight,
                 hard_example_rank=args.hard_example_rank,
                 balance_action_count_bins=args.balance_action_count_bins,
+                soft_targets=args.soft_targets,
+                soft_target_temperature=args.soft_target_temperature,
             ),
             device=args.device,
             val_samples=validation_samples,

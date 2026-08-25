@@ -194,3 +194,72 @@ def test_hard_example_weighting_reranks_every_epoch(monkeypatch):
 
     assert metrics["epochs"] == 3.0
     assert calls["n"] == 3  # one re-ranking pass per epoch
+
+
+# --- soft targets ------------------------------------------------------------------------
+
+
+def _scored_sample(count: int, scores: list[float], *, battle: str = "b") -> DistillationSample:
+    from dataclasses import replace
+
+    return replace(
+        _sample(count, battle=battle),
+        search_scores=np.asarray(scores, dtype=np.float32),
+        searched_mask=np.ones(count, dtype=bool),
+    )
+
+
+def test_soft_target_distribution_spreads_over_near_ties_and_zeroes_padding():
+    from vgc.rl.distill import soft_target_distribution
+
+    scores = torch.as_tensor([[10.0, 0.0, float("nan")]], dtype=torch.float32)
+    mask = torch.as_tensor([[True, True, False]])
+    target = soft_target_distribution(scores, mask, temperature=10.0)
+
+    assert target[0, 2].item() == 0.0  # padded column carries no mass
+    expected_top = float(np.exp(1.0) / (1.0 + np.exp(1.0)))  # gap of 10 at T=10
+    assert target[0, 0].item() == pytest.approx(expected_top, rel=1e-4)
+    assert target.sum().item() == pytest.approx(1.0)
+
+
+def test_all_missing_scores_produce_zero_rows_for_hard_fallback():
+    from vgc.rl.distill import soft_target_distribution
+
+    scores = torch.full((1, 3), float("nan"))
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    target = soft_target_distribution(scores, mask, temperature=16.0)
+    assert torch.isnan(target).all() or target.abs().sum().item() == 0.0
+
+
+def test_tensor_batch_pads_scores_and_flags_availability():
+    from vgc.rl.distill import _tensor_batch
+
+    wide = _scored_sample(30, [5.0, 1.0], battle="wide")
+    plain = _sample(2, battle="plain")
+    batch = _tensor_batch([wide, plain], device="cpu")
+
+    assert batch["search_scores"].shape[1] == 30
+    assert torch.isfinite(batch["search_scores"][0, :2]).all()
+    assert not torch.isfinite(batch["search_scores"][1]).any()
+
+
+def test_soft_targets_train_without_crash_on_mixed_batches():
+    torch.manual_seed(3)
+    scored = [
+        _scored_sample(30, [40.0, 38.5] + [float(i) for i in range(28)], battle=f"s{i}")
+        for i in range(4)
+    ]
+    unscored = [_sample(30, battle=f"u{i}") for i in range(4)]
+    model = CandidatePolicyValueNet()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    config = DistillationConfig(
+        epochs=2,
+        batch_size=8,
+        seed=0,
+        soft_targets=True,
+        soft_target_temperature=16.0,
+    )
+    metrics = distill_policy(model, optimizer, scored + unscored, config, device="cpu")
+
+    assert metrics["loss"] >= 0.0
+    assert np.isfinite(metrics["loss"])

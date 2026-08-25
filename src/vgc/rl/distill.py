@@ -81,6 +81,14 @@ class DistillationConfig:
     # this, the rare 201+ bin (~6% of collected decisions) contributes too few gradient
     # updates to move the stratum that fails most. False keeps plain uniform shuffling.
     balance_action_count_bins: bool = False
+    # Train against the teacher's full score distribution (softmax of the stored
+    # `search_scores` at `soft_target_temperature`) instead of its argmax. Measured tie
+    # mass on the 5x collection: ~23% of decisions hold a top-2 gap under 10 points --
+    # argmax labels there are close to coin flips, and hard cross-entropy spends real
+    # gradient defending arbitrary choices while recall@K cares about the whole shortlist.
+    # Samples whose dataset predates stored scores fall back to hard labels per-row.
+    soft_targets: bool = False
+    soft_target_temperature: float = 16.0
 
 
 @dataclass(frozen=True)
@@ -287,6 +295,35 @@ def split_samples_by_battle(
     return train, val
 
 
+def _padded_scores(sample: DistillationSample, width: int) -> np.ndarray:
+    row = np.full(width, np.nan, dtype=np.float32)
+    if sample.search_scores is not None:
+        count = (
+            sample.legal_action_count
+            if 0 < sample.legal_action_count <= len(sample.search_scores)
+            else len(sample.search_scores)
+        )
+        row[:count] = sample.search_scores[:count]
+    return row
+
+
+def soft_target_distribution(
+    scores: torch.Tensor,
+    candidate_mask: torch.Tensor,
+    temperature: float,
+) -> torch.Tensor:
+    """Teacher score distribution over LEGAL candidates; zero on padded columns.
+
+    Rows whose scores are entirely missing (schema-v1 samples) produce all-zero rows --
+    callers must route those to hard labels via the availability mask rather than use
+    this output.
+    """
+
+    finite = torch.isfinite(scores)
+    masked = torch.where(finite & candidate_mask.bool(), scores, torch.full_like(scores, float("-inf")))
+    return torch.softmax(masked / float(temperature), dim=1)
+
+
 def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, torch.Tensor]:
     moves, targets, species, flags, mask = pad_candidate_features(
         [sample.candidates for sample in samples]
@@ -317,6 +354,19 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
         "teacher_actions": torch.as_tensor(
             [sample.teacher_action_index for sample in samples],
             dtype=torch.long,
+            device=device,
+        ),
+        # Raw teacher scores, NaN-padded to the batch width. Rows from schema-v1
+        # samples are all-NaN and must fall back to hard labels (see
+        # soft_target_distribution).
+        "search_scores": torch.as_tensor(
+            np.stack(
+                [
+                    _padded_scores(sample, moves.shape[1])
+                    for sample in samples
+                ]
+            ),
+            dtype=torch.float32,
             device=device,
         ),
         # Hand-built samples (e.g. in tests) may not set meta_scalars -- fall back to a
@@ -617,19 +667,44 @@ def distill_policy(
                     batch["tactical_features"] if model.use_tactical_features else None
                 ),
             )
-            if sample_weights is None:
+            if sample_weights is None and not config.soft_targets:
                 loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
             else:
-                # Weighted mean, not plain mean: keeps the loss scale comparable to the
-                # unweighted case while spending proportionally more gradient on the
-                # samples that actually fail the shortlist gate.
+                # Per-sample loss so heterogeneous rows can be combined: hard CE as the
+                # base (and the fallback for samples without stored scores), soft CE
+                # where schema-v2.x scores exist, then hard-example weights on top.
                 per_sample = nn.functional.cross_entropy(
                     logits, batch["teacher_actions"], reduction="none"
                 )
-                weights = torch.as_tensor(
-                    sample_weights[selected], dtype=torch.float32, device=device
-                )
-                loss = (per_sample * weights).sum() / weights.sum()
+                if config.soft_targets:
+                    # Subset FIRST: building the distribution over rows without stored
+                    # scores would run softmax on all -inf inputs, and even where()
+                    # masking cannot stop those NaNs from leaking into gradients.
+                    has_scores = torch.isfinite(batch["search_scores"]).any(dim=1)
+                    if bool(has_scores.any()):
+                        sub_logits = logits[has_scores]
+                        sub_mask = batch["candidate_mask"][has_scores].bool()
+                        targets = soft_target_distribution(
+                            batch["search_scores"][has_scores],
+                            sub_mask,
+                            config.soft_target_temperature,
+                        )
+                        log_probs = nn.functional.log_softmax(sub_logits, dim=1)
+                        log_probs = log_probs.masked_fill(~sub_mask, 0.0)
+                        soft = -(targets * log_probs).sum(dim=1)
+                        index = torch.nonzero(has_scores, as_tuple=True)[0]
+                        per_sample = per_sample.clone()
+                        per_sample[index] = soft
+                if sample_weights is not None:
+                    # Weighted mean, not plain mean: keeps the loss scale comparable to
+                    # the unweighted case while spending proportionally more gradient
+                    # on the samples that actually fail the shortlist gate.
+                    weights = torch.as_tensor(
+                        sample_weights[selected], dtype=torch.float32, device=device
+                    )
+                    loss = (per_sample * weights).sum() / weights.sum()
+                else:
+                    loss = per_sample.mean()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
