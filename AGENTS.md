@@ -217,6 +217,41 @@ we know the +/-10-point team-to-team spread under A/B is a real property of the 
 change rather than noise. The 160-team confirmation measured the same spread (tau 0.114)
 around a 49.5% mean, so the heterogeneity is real and the overall edge is not.
 
+## Neural shortlist distillation (Phase 4): the guided gate passed
+
+The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is trained
+by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
+`offline/evaluate_shortlist_recall.py`. State as of 2026-08-25:
+
+- **The deployed shortlist is NOT the network's raw top-K** -- up to half its budget is
+  heuristic safety slots (`vgc.rl.guided_selection`, shared verbatim by live play and
+  offline replay). Screens must report BOTH flavors; pure-only numbers answer a
+  different question. A guided verdict computed on a metadata-covered SUBSET prints
+  INDETERMINATE, never PASS.
+- **Schema v2.x**: every collected `DistillationSample` also carries per-candidate
+  myopic ranks, safety-tag columns, the teacher's full search-score vector, and a
+  searched-mask (`build_guidance_metadata` / `build_score_metadata`). Old datasets load
+  unchanged (fields defaulted) but cannot replay guided selection.
+- **Current standing**: retrained on 76,801 v2.x decisions
+  (`runs/full_pipeline/teacher_5x_model`, recipe: recall-selected checkpoint +
+  hard-example weight 2.0 + action-count bin balancing; lr 3e-4 matters, weight is
+  flat). On the clean 150-team expanded holdout (18,209 decisions):
+  pure R@10 97.7% (LCB 0.974), **guided@10 LCB 0.984 = PASS**, live shadow
+  **guided@10 99.1% / LCB 0.985 = prior_stage PASSED**. Paired hybrid-vs-full-search
+  strength is dead even (0.66 vs 0.66) but needs ~1,500 paired games to certify the
+  +/-0.02 non-inferiority margin -- powered run launched; check
+  `runs/experiments.jsonl` for its verdict before claiming strength parity.
+- Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
+  byte-identical** to training-pool teams (seed collision in variant generation);
+  they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
+  Any new pool used for evaluation needs the same packed-content exclusion.
+- Tooling: `offline/run_scaling_curve.py` (nested subsets -> fitted miss ~ N^-alpha;
+  fit against TRAINING volume, never holdout size), `offline/audit_miss_regret.py`
+  (miss severity, not just frequency), `offline/merge_demonstrations.py`,
+  `offline/evaluate_ensemble_recall.py` (logit ensembling: +0.3pt over best member).
+  Misses are NOT free: median known_regret ~30 evaluator points on old-checkpoint
+  shadow records, which is why the recall bar was not relaxed.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
