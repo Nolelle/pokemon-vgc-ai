@@ -115,6 +115,17 @@ class DistillationSample:
     # so older saved datasets still load (they simply cannot simulate guided selection).
     candidate_myopic_ranks: np.ndarray | None = None
     candidate_tags: np.ndarray | None = None
+    # Schema-v2.x guidance metadata, aligned with the candidate rows. `search_scores`
+    # is the teacher's COMPLETE comparable score vector -- `search_joint_orders`
+    # re-scores searched actions from simulated exchanges and leaves unsearched ones
+    # at their (scaled) myopic score, so all values share one currency -- and
+    # `searched_mask` marks which rows are exchange-refined. This is what lets later
+    # experiments (soft targets over near-tied actions, tie-mass measurement,
+    # regret-weighted mining) work on THIS collection instead of requiring yet
+    # another one: the argmax label alone throws away exactly the information those
+    # losses need. Defaulted so older datasets keep loading untouched.
+    search_scores: np.ndarray | None = None
+    searched_mask: np.ndarray | None = None
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -152,6 +163,10 @@ class TeacherRecordingPlayer(VgcPlayer):
         orders = [entry.order for entry in scored]
         guidance_metadata = build_guidance_metadata(orders, myopic_scored)
         ranks, tags = guidance_metadata if guidance_metadata is not None else (None, None)
+        score_metadata = build_score_metadata(scored)
+        score_vector, searched_flags = (
+            score_metadata if score_metadata is not None else (None, None)
+        )
         self.distillation_samples.append(
             DistillationSample(
                 battle_id=battle.battle_tag,
@@ -168,6 +183,8 @@ class TeacherRecordingPlayer(VgcPlayer):
                 legal_action_count=len(orders),
                 candidate_myopic_ranks=ranks,
                 candidate_tags=tags,
+                search_scores=score_vector,
+                searched_mask=searched_flags,
             )
         )
         chosen = orders[0]
@@ -200,6 +217,26 @@ def teacher_action_index(battle, config, orders) -> int | None:
         index for index, order in enumerate(orders) if describe_order(order) == teacher_description
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def build_score_metadata(scored) -> tuple[np.ndarray, np.ndarray] | None:
+    """Teacher score vector + exchange-searched flags, aligned with ``scored`` order.
+
+    Under a two-ply search teacher, ``searched`` rows carry exchange-refined scores and
+    the rest scaled myopic ones; under a myopic-only teacher every score is already
+    final, so the mask is all-True (nothing was left unrefined).
+    """
+
+    if not scored:
+        return None
+    scores = np.asarray([float(entry.score) for entry in scored], dtype=np.float32)
+    flags = [entry.breakdown.get("searched") for entry in scored]
+    if all(flag is None for flag in flags):
+        # No 'searched' key anywhere: a myopic-only teacher whose scores are all final.
+        searched = np.ones(len(scored), dtype=np.bool_)
+    else:
+        searched = np.asarray([bool(flag) for flag in flags], dtype=np.bool_)
+    return scores, searched
 
 
 def build_guidance_metadata(orders, myopic_scored) -> tuple[np.ndarray, np.ndarray] | None:
