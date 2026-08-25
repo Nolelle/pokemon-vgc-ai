@@ -242,7 +242,9 @@ by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
   first-divergence attribution shows true misses are HARMLESS (+4.8% for hybrid) and
   the whole deficit comes from "upset flips" where the neural shortlist admits a
   candidate that outscored the shipped winner but lost anyway (concentrated in
-  triple_setup_balance). Next fix: upset-margin rule in guided selection, re-gate.
+  triple_setup_balance). Fix shipped 2026-08-25: `PolicyConfig.guided_upset_margin=10`
+  arbitrates those flips in `vgc.rl.search_guidance` (audit fields on every hybrid
+  record); powered re-gate verdict lands in `runs/eval/neural_search_5x_regate.json`.
 - Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
   byte-identical** to training-pool teams (seed collision in variant generation);
   they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
