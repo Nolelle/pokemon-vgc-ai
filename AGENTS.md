@@ -237,10 +237,12 @@ by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
   hard-example weight 2.0 + action-count bin balancing; lr 3e-4 matters, weight is
   flat). On the clean 150-team expanded holdout (18,209 decisions):
   pure R@10 97.7% (LCB 0.974), **guided@10 LCB 0.984 = PASS**, live shadow
-  **guided@10 99.1% / LCB 0.985 = prior_stage PASSED**. Paired hybrid-vs-full-search
-  strength is dead even (0.66 vs 0.66) but needs ~1,500 paired games to certify the
-  +/-0.02 non-inferiority margin -- powered run launched; check
-  `runs/experiments.jsonl` for its verdict before claiming strength parity.
+  **guided@10 99.1% / LCB 0.985 = prior_stage PASSED**. The powered paired strength
+  gate (1,500 pairs) **FAILED narrowly** (delta [−0.030, +0.013] vs −0.02 margin):
+  first-divergence attribution shows true misses are HARMLESS (+4.8% for hybrid) and
+  the whole deficit comes from "upset flips" where the neural shortlist admits a
+  candidate that outscored the shipped winner but lost anyway (concentrated in
+  triple_setup_balance). Next fix: upset-margin rule in guided selection, re-gate.
 - Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
   byte-identical** to training-pool teams (seed collision in variant generation);
   they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
