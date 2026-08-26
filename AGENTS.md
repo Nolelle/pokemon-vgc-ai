@@ -248,6 +248,8 @@ by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
   delta [−0.009, +0.017]; arbitration fired on 0.77% of decisions) — verdict in
   `runs/eval/neural_search_5x_regate.json`. Ship path:
   `ladder/run_ladder.py --policy-checkpoint <ckpt> --policy-mode hybrid`.
+  Public smoke 2026-08-25: **6-4 at zero fallbacks** — hybrid is the live ladder
+  policy; treat the shipped heuristic as the A/B incumbent from here on.
 - Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
   byte-identical** to training-pool teams (seed collision in variant generation);
   they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
