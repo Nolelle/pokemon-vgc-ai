@@ -244,7 +244,10 @@ by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
   candidate that outscored the shipped winner but lost anyway (concentrated in
   triple_setup_balance). Fix shipped 2026-08-25: `PolicyConfig.guided_upset_margin=10`
   arbitrates those flips in `vgc.rl.search_guidance` (audit fields on every hybrid
-  record); powered re-gate verdict lands in `runs/eval/neural_search_5x_regate.json`.
+  record); **powered re-gate PASSED** (1,500 pairs: hybrid +0.4pts vs full search,
+  delta [−0.009, +0.017]; arbitration fired on 0.77% of decisions) — verdict in
+  `runs/eval/neural_search_5x_regate.json`. Ship path:
+  `ladder/run_ladder.py --policy-checkpoint <ckpt> --policy-mode hybrid`.
 - Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
   byte-identical** to training-pool teams (seed collision in variant generation);
   they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
