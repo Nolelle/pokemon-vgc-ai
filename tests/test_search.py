@@ -51,6 +51,7 @@ def _mon(
     fainted: bool = False,
     moves: dict | None = None,
     protect_counter: int = 0,
+    status_counter: int = 0,
     species: str = "missingno",
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -58,6 +59,7 @@ def _mon(
         moves=moves or {},
         ability=None,
         protect_counter=protect_counter,
+        status_counter=status_counter,
         species=species,
     )
 
@@ -153,6 +155,150 @@ def test_trick_room_inverts_turn_order_so_slower_attacker_lands_its_hit_first() 
     # before Garchomp's earthquake (still guaranteed-KOs the 1 HP Klefki afterward).
     assert result.our_hp_lost_pct > 0.0
     assert result.opp_faints == 1
+
+
+def test_new_sleep_powder_denies_a_slower_attack_by_its_accuracy() -> None:
+    our_state = _klefki()
+    opp_state = _garchomp()
+    ctx = _build_ctx(
+        our_states=[our_state, None],
+        opp_states=[opp_state, None],
+        our_pokemon=[_mon(moves={"psychic": None}, species="klefki"), None],
+        opp_pokemon=[_mon(moves={"sleeppowder": None}, species="garchomp"), None],
+    )
+    our_order = _fake_order(_fake_single("psychic", move_target=1), None)
+    no_op = OppResponse(
+        slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+    )
+    sleep = OppResponse(
+        slot0=_OppSlotAction(
+            kind="utility",
+            move_id="sleeppowder",
+            target_our_slot=0,
+            utility_value=25.0,
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    awake = resolve_exchange(our_order, no_op, ctx, PolicyConfig())
+    slept = resolve_exchange(our_order, sleep, ctx, PolicyConfig())
+
+    # Sleep Powder is 75% accurate, so the queued attack happens only on the 25% miss
+    # branch. The modal post-turn state is asleep for the rolling forecast.
+    assert slept.opp_hp_lost_pct == pytest.approx(awake.opp_hp_lost_pct * 0.25)
+    assert slept.our_states[0].status == "slp"
+    assert slept.opp_utility_value == pytest.approx(25.0 * 0.75)
+
+
+def test_existing_champions_sleep_uses_observed_status_counter() -> None:
+    opp_state = _klefki()
+    order = _fake_order(_fake_single("bodyslam", move_target=1), None)
+    no_op = OppResponse(
+        slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+    )
+
+    def damage_at(counter: int, *, asleep: bool = True) -> float:
+        state = _garchomp(status="slp" if asleep else None)
+        ctx = _build_ctx(
+            our_states=[state, None],
+            opp_states=[opp_state, None],
+            our_pokemon=[
+                _mon(moves={"bodyslam": None}, status_counter=counter, species="garchomp"),
+                None,
+            ],
+            opp_pokemon=[_mon(species="klefki"), None],
+        )
+        return resolve_exchange(order, no_op, ctx, PolicyConfig()).opp_hp_lost_pct
+
+    awake = damage_at(0, asleep=False)
+    assert damage_at(0) == 0.0
+    assert damage_at(1) == pytest.approx(awake / 3.0)
+    assert damage_at(2) == pytest.approx(awake)
+
+
+@pytest.mark.parametrize(
+    ("target", "terrain"),
+    [
+        (PokemonState("venusaur"), None),  # Grass types ignore powder moves.
+        (_klefki(ability="overcoat"), None),
+        (_klefki(ability="insomnia"), None),
+        (_klefki(item="lumberry"), None),
+        (_klefki(item="safetygoggles"), None),
+        (_klefki(), "electric"),
+    ],
+)
+def test_sleep_immunity_keeps_the_target_action(target, terrain) -> None:
+    opp_state = _garchomp()
+    ctx = _build_ctx(
+        our_states=[target, None],
+        opp_states=[opp_state, None],
+        our_pokemon=[_mon(moves={"psychic": None}, species=target.species_id), None],
+        opp_pokemon=[_mon(moves={"sleeppowder": None}, species="garchomp"), None],
+    )
+    ctx.terrain = terrain
+    order = _fake_order(_fake_single("psychic", move_target=1), None)
+    no_op = OppResponse(
+        slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+    )
+    sleep = OppResponse(
+        slot0=_OppSlotAction(
+            kind="utility", move_id="sleeppowder", target_our_slot=0, utility_value=25.0
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    baseline = resolve_exchange(order, no_op, ctx, PolicyConfig())
+    blocked = resolve_exchange(order, sleep, ctx, PolicyConfig())
+
+    assert blocked.opp_hp_lost_pct == pytest.approx(baseline.opp_hp_lost_pct)
+    assert blocked.our_states[0].status is None
+    assert blocked.opp_utility_value == 0.0
+
+
+def test_soundproof_blocks_sing_but_not_sleep_powder() -> None:
+    target = _klefki(ability="soundproof")
+    ctx = _build_ctx(
+        our_states=[target, None],
+        opp_states=[_garchomp(), None],
+        our_pokemon=[_mon(moves={"psychic": None}, species="klefki"), None],
+        opp_pokemon=[_mon(moves={"sing": None}, species="garchomp"), None],
+    )
+    order = _fake_order(_fake_single("psychic", move_target=1), None)
+
+    def outcome(move_id: str) -> float:
+        response = OppResponse(
+            slot0=_OppSlotAction(
+                kind="utility", move_id=move_id, target_our_slot=0, utility_value=25.0
+            ),
+            slot1=_OppSlotAction(kind="none"),
+        )
+        return resolve_exchange(order, response, ctx, PolicyConfig()).opp_hp_lost_pct
+
+    baseline = outcome("sing")
+    assert baseline > 0.0
+    assert outcome("sleeppowder") < baseline
+
+
+def test_protect_blocks_sleep_powder() -> None:
+    ctx = _build_ctx(
+        our_states=[_klefki(), None],
+        opp_states=[_garchomp(), None],
+        our_pokemon=[_mon(moves={"protect": None}, species="klefki"), None],
+        opp_pokemon=[_mon(moves={"sleeppowder": None}, species="garchomp"), None],
+    )
+    response = OppResponse(
+        slot0=_OppSlotAction(
+            kind="utility", move_id="sleeppowder", target_our_slot=0, utility_value=25.0
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(
+        _fake_order(_fake_single("protect"), None), response, ctx, PolicyConfig()
+    )
+
+    assert result.our_states[0].status is None
+    assert result.opp_utility_value == 0.0
 
 
 def test_protect_blocks_a_single_target_hit() -> None:
@@ -408,6 +554,28 @@ def test_opp_slot_candidates_include_setup_and_control_utility() -> None:
     candidates = _opp_slot_candidates(0, ctx, config)
     utility_moves = {candidate.move_id for candidate in candidates if candidate.kind == "utility"}
     assert {"taunt", "tailwind", "swordsdance"} <= utility_moves
+
+
+def test_opp_slot_candidates_target_sleep_at_each_alive_slot() -> None:
+    config = PolicyConfig(search_opp_utility_per_slot=4)
+    ctx = _build_ctx(
+        our_states=[_garchomp(), _klefki()],
+        opp_states=[_garchomp(), None],
+        our_pokemon=[_mon(species="garchomp"), _mon(species="klefki")],
+        opp_pokemon=[
+            _mon(moves={"sleeppowder": None}, species="garchomp"),
+            None,
+        ],
+    )
+
+    candidates = _opp_slot_candidates(0, ctx, config)
+    sleep_targets = {
+        candidate.target_our_slot
+        for candidate in candidates
+        if candidate.kind == "utility" and candidate.move_id == "sleeppowder"
+    }
+
+    assert sleep_targets == {0, 1}
 
 
 def test_opp_slot_candidates_no_protect_when_move_unknown() -> None:

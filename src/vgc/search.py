@@ -86,6 +86,13 @@ before it).
   values for a charge/recharge move that DOES get searched are still optimistic (full
   damage, no "wasted the charge turn" or "no follow-up next turn" modeling), same
   reasoning as the no-opponent-switches gap above.
+- **This is not a complete Showdown mechanics engine.** Existing sleep and newly caused
+  sleep now reduce action probability using the Champions mod's custom duration, base
+  accuracy, common immunities, berries, terrain, and Protect. The forecast still omits
+  damaging-move accuracy, most secondary effects and residual damage, flinch/Fake Out
+  action cancellation, paralysis/freeze action denial, side-wide guards, exact setup
+  stage changes, Focus Sash/Sturdy survival, and many item/ability effects. The current
+  coverage and ladder-team priorities are tracked in ``docs/mechanics_coverage.md``.
 """
 
 from __future__ import annotations
@@ -131,7 +138,7 @@ from vgc.evaluator import (
     score_joint_orders,
 )
 from vgc.models import PolicyConfig
-from vgc.principles import REDIRECTION_MOVES, utility_kind
+from vgc.principles import REDIRECTION_MOVES, SLEEP_MOVES, utility_kind
 from vgc.sets import load_usage_spreads, opponent_move_ids, opponent_state
 
 # --- opponent response candidates ---------------------------------------------------------
@@ -159,6 +166,101 @@ class _OppSlotAction:
     switch_state: PokemonState | None = None
     switch_species: str | None = None
     utility_value: float = 0.0
+
+
+# The Champions mod overrides ordinary Gen 9 sleep to use a hidden duration of either
+# two action opportunities (1/3) or three (2/3).  poke-env's ``status_counter`` records
+# how many opportunities have already been denied.  Snore and Sleep Talk are the only
+# standard moves explicitly usable while asleep in Showdown's move data.
+_SLEEP_USABLE_MOVES = frozenset({"sleeptalk", "snore"})
+_SLEEP_IMMUNE_ABILITIES = frozenset(
+    {"comatose", "goodasgold", "insomnia", "purifyingsalt", "vitalspirit"}
+)
+_POWDER_IMMUNE_ABILITIES = frozenset({"overcoat"})
+_POWDER_IMMUNE_ITEMS = frozenset({"safetygoggles"})
+_SLEEP_CURING_BERRIES = frozenset({"chestoberry", "lumberry"})
+
+
+def _sleep_action_probability(
+    state: PokemonState | None, pokemon: Pokemon | object | None, move_id: str | None
+) -> float:
+    """Chance an already-sleeping actor gets to use its selected move this turn.
+
+    This follows ``data/mods/champions/conditions.ts`` rather than vanilla Gen 9:
+    counter 0 cannot act, counter 1 wakes with probability 1/3, and counter 2 is
+    guaranteed to wake. Early Bird consumes two sleep ticks per action opportunity.
+    """
+
+    if state is None or state.status != "slp" or move_id in _SLEEP_USABLE_MOVES:
+        return 1.0
+    counter = max(0, int(getattr(pokemon, "status_counter", 0) or 0))
+    if state.ability == "earlybird":
+        return 1.0 / 3.0 if counter == 0 else 1.0
+    if counter <= 0:
+        return 0.0
+    if counter == 1:
+        return 1.0 / 3.0
+    return 1.0
+
+
+def _roughly_grounded(state: PokemonState) -> bool:
+    """Terrain groundedness available from ``PokemonState`` alone.
+
+    Iron Ball, Gravity, Roost, and Ingrain are documented audit gaps because their
+    volatile state is not represented in ``PokemonState``.
+    """
+
+    return "Flying" not in state.types() and to_id(state.ability) != "levitate"
+
+
+def _sleep_is_blocked(
+    target: PokemonState,
+    allies: list[PokemonState | None],
+    opponents: list[PokemonState | None],
+    *,
+    move_id: str,
+    terrain: str | None,
+    weather: str | None,
+    safeguard: bool,
+) -> bool:
+    """Whether a sleep move has no practical sleep effect on ``target``."""
+
+    ability = to_id(target.ability)
+    item = to_id(target.item)
+    if target.status is not None or ability in _SLEEP_IMMUNE_ABILITIES or safeguard:
+        return True
+    berries_suppressed = any(
+        opponent is not None and to_id(opponent.ability) == "unnerve"
+        for opponent in opponents
+    )
+    if item in _SLEEP_CURING_BERRIES and not berries_suppressed:
+        return True
+    if ability == "leafguard" and weather == "sun":
+        return True
+    if ability == "sweetveil" or any(
+        ally is not None and to_id(ally.ability) == "sweetveil" for ally in allies
+    ):
+        return True
+    move = load_moves().get(move_id) or {}
+    if move.get("flags", {}).get("powder") and (
+        "Grass" in target.types()
+        or ability in _POWDER_IMMUNE_ABILITIES
+        or item in _POWDER_IMMUNE_ITEMS
+    ):
+        return True
+    if move.get("flags", {}).get("sound") and ability == "soundproof":
+        return True
+    if terrain in {"electric", "misty"} and _roughly_grounded(target):
+        return True
+    return False
+
+
+def _move_accuracy(move_id: str | None) -> float:
+    """Base hit probability for a move; accuracy/evasion stages remain an audit gap."""
+
+    move = load_moves().get(move_id or "") or {}
+    accuracy = move.get("accuracy", 100)
+    return 1.0 if accuracy is True else min(1.0, max(0.0, float(accuracy) / 100.0))
 
 
 @dataclass(frozen=True)
@@ -303,14 +405,29 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
             "pivot": 0.6,
         }.get(kind, 0.5)
         strategic_value = config.search_opp_utility_weight * kind_scale
-        utility_actions.append(
-            _OppSlotAction(
-                kind="utility",
-                move_id=move_id,
-                value=strategic_value,
-                utility_value=strategic_value,
+        if move_id in SLEEP_MOVES:
+            # Sleep is targeted, so one generic no-target response cannot represent it.
+            # Accuracy belongs in the cheap response likelihood/value; resolve_exchange
+            # independently applies the mechanical hit probability.
+            for our_idx in our_alive:
+                utility_actions.append(
+                    _OppSlotAction(
+                        kind="utility",
+                        move_id=move_id,
+                        target_our_slot=our_idx,
+                        value=strategic_value * _move_accuracy(move_id),
+                        utility_value=strategic_value,
+                    )
+                )
+        else:
+            utility_actions.append(
+                _OppSlotAction(
+                    kind="utility",
+                    move_id=move_id,
+                    value=strategic_value,
+                    utility_value=strategic_value,
+                )
             )
-        )
     utility_actions.sort(key=lambda action: action.value, reverse=True)
     candidates.extend(utility_actions[: max(0, config.search_opp_utility_per_slot)])
 
@@ -507,6 +624,9 @@ class _Action:
     # Protect-family success probability for this turn. Fresh Protect is 1.0; repeated
     # attempts use the same geometric decay as evaluator._score_protect.
     success_prob: float = 1.0
+    # Probability the actor is awake/otherwise able to execute this action. The first
+    # sleep fix uses the Champions-specific duration plus poke-env's observed counter.
+    action_probability: float = 1.0
 
 
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
@@ -588,13 +708,17 @@ def _build_our_actions(
                         "recovery": 0.5,
                         "pivot": 0.6,
                     }.get(kind, 0.5)
+                    targets = _resolve_targets(move_data, slot, single.move_target, ctx)
+                    side_tagged = [
+                        ("opp", idx, False) for idx, is_ally in targets if not is_ally
+                    ] + [("our", idx, True) for idx, is_ally in targets if is_ally]
                     actions.append(
                         _Action(
                             side="our",
                             slot=slot,
                             kind="utility",
                             move_id=move_id,
-                            targets=[],
+                            targets=side_tagged,
                             priority=int(move_data.get("priority", 0)),
                             utility_value=config.search_opp_utility_weight * utility_scale,
                         )
@@ -641,13 +765,18 @@ def _build_opp_actions(opp_response: OppResponse, ctx: _Context) -> list[_Action
         if slot_action.kind == "utility":
             if move_data is None:
                 continue
+            targets = (
+                [("our", slot_action.target_our_slot, False)]
+                if slot_action.target_our_slot is not None
+                else []
+            )
             actions.append(
                 _Action(
                     side="opp",
                     slot=slot,
                     kind="utility",
                     move_id=slot_action.move_id,
-                    targets=[],
+                    targets=targets,
                     priority=int(move_data.get("priority", 0)),
                     utility_value=slot_action.utility_value,
                 )
@@ -712,6 +841,8 @@ def _apply_action(
     opp_pre_protect_hp: list[float | None],
     our_redirector: list[int | None],
     opp_redirector: list[int | None],
+    our_can_act: list[float],
+    opp_can_act: list[float],
     weather_for_exchange: str | None,
     ctx: _Context,
     result: ExchangeResult,
@@ -720,35 +851,92 @@ def _apply_action(
     actor_state = actor_states[action.slot]
     if actor_state is None or actor_state.hp_or_max() <= 0:
         return  # a fainted actor (from an earlier action this exchange) does not act
+    can_act = our_can_act if action.side == "our" else opp_can_act
+    actor_probability = action.action_probability * can_act[action.slot]
+    if actor_probability <= 0.0:
+        return
 
     if action.kind == "protect":
         protected = our_protected if action.side == "our" else opp_protected
         pre_protect_hp = (
             our_pre_protect_hp if action.side == "our" else opp_pre_protect_hp
         )
-        protected[action.slot] = min(1.0, max(0.0, action.success_prob))
+        protected[action.slot] = min(
+            1.0, max(0.0, action.success_prob * actor_probability)
+        )
         pre_protect_hp[action.slot] = actor_state.hp_or_max()
         return
     if action.kind == "utility":
+        realized_probability = actor_probability
+        if action.move_id in SLEEP_MOVES:
+            realized_probability = 0.0
+            for side, original_idx, _is_ally in action.targets:
+                idx = original_idx
+                if side != action.side:
+                    redirector = our_redirector[0] if side == "our" else opp_redirector[0]
+                    if redirector is not None:
+                        idx = redirector
+                target_states = our_states if side == "our" else opp_states
+                target_state = target_states[idx]
+                if target_state is None or target_state.hp_or_max() <= 0:
+                    continue
+                protected = our_protected if side == "our" else opp_protected
+                hit_probability = (
+                    actor_probability
+                    * _move_accuracy(action.move_id)
+                    * (1.0 - protected[idx])
+                )
+                if hit_probability <= 0.0 or _sleep_is_blocked(
+                    target_state,
+                    target_states,
+                    opp_states if side == "our" else our_states,
+                    move_id=action.move_id,
+                    terrain=ctx.terrain,
+                    weather=weather_for_exchange,
+                    safeguard=(
+                        SideCondition.SAFEGUARD
+                        in (
+                            ctx.battle.side_conditions
+                            if side == "our"
+                            else ctx.battle.opponent_side_conditions
+                        )
+                    ),
+                ):
+                    continue
+                target_can_act = our_can_act if side == "our" else opp_can_act
+                # Early Bird consumes two sleep ticks. In the Champions duration
+                # distribution it therefore wakes immediately on the short (1/3)
+                # branch but still loses the action on the long (2/3) branch.
+                denial_given_hit = 2.0 / 3.0 if target_state.ability == "earlybird" else 1.0
+                target_can_act[idx] *= 1.0 - hit_probability * denial_given_hit
+                # The rolling forecast has no probabilistic-status field yet. All legal
+                # sleep moves hit more often than not, so retaining the modal post-turn
+                # state is a conservative representation of the following turn.
+                if hit_probability >= 0.5:
+                    target_state.status = "slp"
+                realized_probability = max(realized_probability, hit_probability)
         if action.side == "our":
-            result.our_utility_value += action.utility_value
+            result.our_utility_value += action.utility_value * realized_probability
             if action.move_id in REDIRECTION_MOVES:
                 our_redirector[0] = action.slot
         else:
-            result.opp_utility_value += action.utility_value
+            result.opp_utility_value += action.utility_value * realized_probability
             if action.move_id in REDIRECTION_MOVES:
                 opp_redirector[0] = action.slot
         # Preserve the subset of global setup effects the damage/speed engine can
         # faithfully use on following turns. This is mechanical state, separate from
         # the flat immediate utility proxy above.
-        if action.move_id == "tailwind":
+        if action.move_id == "tailwind" and actor_probability >= 0.5:
             if action.side == "our":
                 result.our_tailwind = True
             else:
                 result.opp_tailwind = True
-        elif action.move_id == "trickroom":
+        elif action.move_id == "trickroom" and actor_probability >= 0.5:
             result.trick_room = not result.trick_room
-        elif action.move_id in {"reflect", "lightscreen", "auroraveil"}:
+        elif (
+            action.move_id in {"reflect", "lightscreen", "auroraveil"}
+            and actor_probability >= 0.5
+        ):
             if action.side == "our":
                 result.our_screens = result.our_screens | {action.move_id}
             else:
@@ -794,18 +982,24 @@ def _apply_action(
         damage_result = damage_range(actor_state, defender_state, action.move_id, field)
         before = defender_state.hp_or_max()
         actual_loss = min(damage_result.expected_damage, before)
-        defender_state.current_hp = max(0.0, before - actual_loss)
+        probabilistic_action = actor_probability < 1.0
+        applied_loss = actual_loss * actor_probability if probabilistic_action else actual_loss
+        defender_state.current_hp = max(0.0, before - applied_loss)
         max_hp = defender_state.max_hp()
-        loss_pct = (actual_loss / max_hp * 100.0 * failure_prob) if max_hp else 0.0
-        newly_fainted = before > 0 and defender_state.current_hp <= 0
+        loss_pct = (
+            actual_loss / max_hp * 100.0 * failure_prob * actor_probability
+            if max_hp
+            else 0.0
+        )
+        newly_fainted = before > 0 and actual_loss >= before
         if side == "our":
             result.our_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.our_faints += failure_prob
+                result.our_faints += failure_prob * actor_probability
         else:
             result.opp_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.opp_faints += failure_prob
+                result.opp_faints += failure_prob * actor_probability
 
 
 def resolve_exchange(
@@ -834,6 +1028,11 @@ def resolve_exchange(
     opp_tailwind = SideCondition.TAILWIND in ctx.battle.opponent_side_conditions
     for action in our_actions:
         state = our_states[action.slot]
+        action.action_probability = _sleep_action_probability(
+            state, ctx.our_pokemon[action.slot], action.move_id
+        )
+        if state is not None and state.status == "slp" and action.action_probability >= 1.0:
+            state.status = None
         action.speed = (
             field_effective_speed(state, weather=weather_for_exchange, tailwind=our_tailwind)
             if state is not None
@@ -841,6 +1040,11 @@ def resolve_exchange(
         )
     for action in opp_actions:
         state = opp_states[action.slot]
+        action.action_probability = _sleep_action_probability(
+            state, ctx.opp_pokemon[action.slot], action.move_id
+        )
+        if state is not None and state.status == "slp" and action.action_probability >= 1.0:
+            state.status = None
         action.speed = (
             field_effective_speed(state, weather=weather_for_exchange, tailwind=opp_tailwind)
             if state is not None
@@ -863,6 +1067,10 @@ def resolve_exchange(
     opp_pre_protect_hp: list[float | None] = [None, None]
     our_redirector: list[int | None] = [None]
     opp_redirector: list[int | None] = [None]
+    # Earlier targeted denial (notably Sleep Powder) scales a later queued action.
+    # Existing sleep is carried on each action's own ``action_probability`` above.
+    our_can_act = [1.0, 1.0]
+    opp_can_act = [1.0, 1.0]
     for action in all_actions:
         _apply_action(
             action,
@@ -874,6 +1082,8 @@ def resolve_exchange(
             opp_pre_protect_hp,
             our_redirector,
             opp_redirector,
+            our_can_act,
+            opp_can_act,
             weather_for_exchange,
             ctx,
             result,
@@ -1049,7 +1259,11 @@ def _forecast_options(
     field_state = _forecast_field(exchange, ctx, defender_side)
     moves_data = load_moves()
     for slot, state in enumerate(states):
-        if state is None or state.hp_or_max() <= 0:
+        # A newly/likely sleeping state carried out of the explicit exchange does not
+        # get a fictional full-power attack in the compact future forecast. Exact wake
+        # branching is intentionally left in the audit as an approximation; skipping
+        # one forecast attack is the conservative side of that uncertainty.
+        if state is None or state.hp_or_max() <= 0 or state.status == "slp":
             options_by_slot.append([None])
             continue
         best_by_target: dict[int, tuple[float, str, int]] = {}
