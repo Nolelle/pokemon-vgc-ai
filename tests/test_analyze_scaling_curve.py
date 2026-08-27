@@ -10,6 +10,7 @@ from offline.analyze_scaling_curve import (
     bootstrap_delta_interval,
     classify,
     fit_log_slope,
+    load_rows,
     nearest_level,
     paired_delta_by_team,
     resolve_anchor_levels,
@@ -21,6 +22,18 @@ ANCHORS = (25_000, 100_000)
 
 def _write_records(path: Path, rows: list[dict]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def test_load_rows_combines_multiple_seed_files(tmp_path: Path) -> None:
+    first = tmp_path / "seed-a.jsonl"
+    second = tmp_path / "seed-b.jsonl"
+    _write_records(first, [{"seed_label": "seed-a"}])
+    _write_records(second, [{"seed_label": "seed-b"}])
+
+    assert load_rows([first, second]) == [
+        {"seed_label": "seed-a"},
+        {"seed_label": "seed-b"},
+    ]
 
 
 def _records_for(

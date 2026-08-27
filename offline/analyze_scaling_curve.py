@@ -32,12 +32,17 @@ SEARCH_RUNGS = ("vgc_myopic", "vgc_shallow", "vgc")
 INCUMBENT_RUNG = "vgc"
 
 
-def load_rows(path: Path) -> list[dict]:
+def load_rows(paths: Path | list[Path]) -> list[dict]:
+    """Load one or more per-seed milestone-evaluation JSONL files."""
+
+    if isinstance(paths, Path):
+        paths = [paths]
     rows = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
+    for path in paths:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
     return rows
 
 
@@ -348,7 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--eval-jsonl",
         type=Path,
+        nargs="+",
         default=Path("runs/full_pipeline/rl_scale/milestone_eval.jsonl"),
+        help="one or more per-seed milestone-evaluation JSONL files",
     )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--from-games", type=int, default=25_000)

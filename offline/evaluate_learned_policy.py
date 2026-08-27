@@ -43,6 +43,37 @@ def checkpoint_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def materialize_evaluated_checkpoint(
+    *,
+    source: Path,
+    output: Path,
+    payload: dict[str, object],
+    train_result: dict[str, object],
+    holdout_result: dict[str, object],
+) -> dict[str, object]:
+    """Preserve a preselected checkpoint with the gate evaluation attached.
+
+    Scaling-study endpoints are selected by game count rather than by an in-training
+    score.  This creates a new, explicitly named artifact instead of overwriting the
+    original endpoint, while keeping the model and optimizer bytes represented by the
+    payload unchanged.
+    """
+
+    if source.resolve() == output.resolve():
+        raise ValueError("evaluated checkpoint output must not overwrite its source")
+    evaluated_payload = dict(payload)
+    evaluated_payload["evaluation"] = {
+        "schema": "vgc-promotion-gate-linked-evaluation-v1",
+        "source_checkpoint": str(source.resolve()),
+        "source_checkpoint_sha256": checkpoint_sha256(source),
+        "train": train_result,
+        "holdout": holdout_result,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(evaluated_payload, output)
+    return evaluated_payload
+
+
 def build_gate_report(
     *,
     checkpoint: Path,
@@ -126,6 +157,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--holdout-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=20260815)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--evaluated-checkpoint-output",
+        type=Path,
+        default=None,
+        help="write a copy of a preselected checkpoint with this gate evaluation attached",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args(argv)
 
@@ -178,8 +215,18 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed + 20_000_000,
             device=args.device,
         )
+    report_checkpoint = args.checkpoint
+    if args.evaluated_checkpoint_output is not None:
+        checkpoint_payload = materialize_evaluated_checkpoint(
+            source=args.checkpoint,
+            output=args.evaluated_checkpoint_output,
+            payload=checkpoint_payload,
+            train_result=train_result,
+            holdout_result=holdout_result,
+        )
+        report_checkpoint = args.evaluated_checkpoint_output
     report = build_gate_report(
-        checkpoint=args.checkpoint,
+        checkpoint=report_checkpoint,
         checkpoint_payload=checkpoint_payload,
         train_result=train_result,
         holdout_result=holdout_result,

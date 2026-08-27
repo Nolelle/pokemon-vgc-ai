@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from offline.evaluate_learned_policy import build_gate_report
+import pytest
+
+pytest.importorskip("torch")
+
+import torch  # noqa: E402
+
+from offline.evaluate_learned_policy import (  # noqa: E402
+    build_gate_report,
+    checkpoint_sha256,
+    materialize_evaluated_checkpoint,
+)
 
 
 def _result(*, rate: float, low: float, fallback_count: int = 0) -> dict[str, object]:
@@ -72,3 +82,38 @@ def test_gate_requires_rl_provenance_strength_generalization_and_zero_fallbacks(
     assert failed["checks"]["heldout_clustered_lower_bound"] is False
     assert failed["checks"]["generalization_gap"] is False
     assert failed["checks"]["zero_fallbacks"] is False
+
+
+def test_materialize_evaluated_checkpoint_preserves_source_and_links_gate_results(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "latest.pt"
+    output = tmp_path / "evaluated_latest.pt"
+    payload = {"model_state_dict": {"weight": torch.tensor([1.0])}, "games_seen": 100_096}
+    torch.save(payload, source)
+    source_digest = checkpoint_sha256(source)
+    train_result = _result(rate=0.58, low=0.54)
+    holdout_result = _result(rate=0.56, low=0.52)
+
+    evaluated = materialize_evaluated_checkpoint(
+        source=source,
+        output=output,
+        payload=payload,
+        train_result=train_result,
+        holdout_result=holdout_result,
+    )
+
+    assert checkpoint_sha256(source) == source_digest
+    assert torch.equal(evaluated["model_state_dict"]["weight"], torch.tensor([1.0]))
+    assert evaluated["evaluation"]["source_checkpoint_sha256"] == source_digest
+    assert evaluated["evaluation"]["holdout"] == holdout_result
+    assert output.exists()
+
+    with pytest.raises(ValueError, match="must not overwrite"):
+        materialize_evaluated_checkpoint(
+            source=source,
+            output=source,
+            payload=payload,
+            train_result=train_result,
+            holdout_result=holdout_result,
+        )

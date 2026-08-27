@@ -261,6 +261,31 @@ by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
   Misses are NOT free: median known_regret ~30 evaluator points on old-checkpoint
   shadow records, which is why the recall bar was not relaxed.
 
+## Pure-RL 100k scaling closeout: do not promote or scale this recipe further
+
+The frozen scaling study completed on 2026-08-26: three independent seeds
+(`20260901/02/03`) each trained for 100,096 games from the same imitation checkpoint,
+with the team split and evaluation schedule fixed at seed `20260815`. All 12 saved
+milestones per seed were evaluated on both familiar and unseen teams (42,000 games),
+followed by a 1,000-game-per-split promotion gate for every exact-100k endpoint (6,000
+more games). There were zero fallbacks throughout.
+
+- The pre-registered 25k -> 100k verdict was `MIXED_OR_INSUFFICIENT_EVIDENCE`; Case A
+  (keep scaling), Case B (plateau), and Case C (generalization wall) were all false.
+  Paired unseen-team deltas versus full `vgc` were +13.9 points (team-bootstrap 95%
+  interval [-4.4, +31.8]), -6.9 [-25.0, +10.0], and -9.7 [-30.0, +12.1]. No seed had a
+  certified gain, and the required two-seed replication did not occur.
+- All three exact-100k promotion gates failed. Unseen-team win rates versus shipped
+  full search were 42.6%, 39.5%, and 36.4%; their Wilson lower bounds were all far below
+  the required 50%. Seed 2 also missed the maximum generalization-gap check by 0.2
+  points. Overall held-out performance remained 67.0-67.6% because the policies still
+  beat easier opponents, which is why the per-rung gate matters.
+- Conclusion: ten times more pure reinforcement-learning games did not yield a policy
+  safe to replace search. Do not promote these checkpoints or launch a larger run with
+  the same recipe. The shipped neural-guided hybrid remains authoritative. Evidence:
+  `runs/full_pipeline/rl_scale/scaling_verdict.json` and
+  `runs/eval/rl_scale_seed2026090{1,2,3}_promotion_gate.json`.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh

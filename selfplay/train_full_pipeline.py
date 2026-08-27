@@ -648,6 +648,19 @@ def main(argv: list[str] | None = None) -> None:
                 eval_row = {"iteration": iteration, "games_seen": games_seen, **evaluation}
                 with eval_path.open("a") as file:
                     file.write(json.dumps(eval_row, sort_keys=True) + "\n")
+                # `latest.pt` was saved immediately before this frozen evaluation.
+                # Re-save the exact same model with its evaluation attached so the
+                # conservative promotion gate can verify that the tested checkpoint
+                # is evaluation-linked, even when the final iteration is not `best.pt`.
+                save_training_checkpoint(
+                    args.out_dir / "latest.pt",
+                    model,
+                    optimizer,
+                    iteration=iteration,
+                    games_seen=games_seen,
+                    ppo_config=ppo_config,
+                    evaluation=evaluation,
+                )
                 candidate_key = (
                     float(evaluation["min_opponent_win_rate"]),
                     float(evaluation["mean_opponent_win_rate"]),
