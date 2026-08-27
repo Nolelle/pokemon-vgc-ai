@@ -60,6 +60,7 @@ from vgc.agent import VgcPlayer  # noqa: E402
 from vgc.baselines import BASELINES, make_player  # noqa: E402
 from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
+from vgc.mechanics_gate import enforce_mechanics_gate_for_cli  # noqa: E402
 from vgc.postmortem import classify_loss  # noqa: E402
 
 USERNAME_ENV = "VGC_SHOWDOWN_USERNAME"
@@ -783,6 +784,9 @@ def main() -> int:
             )
         )
     else:
+        # Fail closed: public results are not interpretable while legal mechanics remain
+        # partial/missing. Local smoke stays available for mechanics development.
+        enforce_mechanics_gate_for_cli("public ladder play")
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(

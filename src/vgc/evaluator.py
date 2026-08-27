@@ -93,6 +93,7 @@ from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
+from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.principles import (
     BURN_MOVES,
@@ -512,6 +513,10 @@ class _Context:
     opp_engine_enabler_slots: frozenset[int] = frozenset()
     preview_plan: object | None = None
     endgame: bool = False
+    # Complete observable state. The smaller lists above remain the current evaluator's
+    # fast inputs; this snapshot prevents new mechanics handlers from silently losing
+    # counters, volatile effects, PP, accuracy/evasion, or side/field state.
+    mechanics_state: BattleMechanicsState | None = None
 
     def field_state(
         self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
@@ -866,6 +871,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_engine_enabler_slots=opp_engine_enabler_slots,
         preview_plan=preview_plan,
         endgame=endgame,
+        mechanics_state=snapshot_battle(battle),
     )
 
 
