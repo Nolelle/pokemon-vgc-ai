@@ -294,3 +294,23 @@ The exact flag-to-move lists are under `mechanics_surface.move_flags`.
 
 Any catalogue change invalidates the mechanics coverage gate until the new callbacks,
 fields, flags, or entities are reviewed and classified.
+
+## Readiness is separated into five layers
+
+1. **Training environment: ready.** Battles and terminal win/loss rewards already run
+   through the official Showdown `BattleStream`; mechanics are not reimplemented there.
+2. **Observable state: ready.** `vgc.mechanics_state` captures every poke-env battle,
+   Pokemon, and dynamic move property under a fail-closed property contract. A future
+   poke-env property addition breaks the test until reviewed.
+3. **Learned input: blocked.** The fixed-size neural input has not yet been expanded to
+   contain every field in that mechanics snapshot.
+4. **Teacher labels: blocked.** `vgc.rl.mechanics_oracle` can now clone a complete
+   Showdown state and execute exact counterfactual branches, but the hybrid dataset
+   collector still uses the approximate Python search teacher by default.
+5. **Live decisions: blocked.** A public battle does not yet maintain an exact local
+   Showdown mirror across hidden spreads and random outcomes, so live counterfactual
+   search remains approximate.
+
+This separation prevents a true statement—"training battles use Showdown"—from being
+misread as the much stronger and currently false statement—"the model sees every state
+detail and the live search predicts every mechanic exactly."

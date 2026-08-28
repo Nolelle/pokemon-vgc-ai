@@ -32,6 +32,7 @@ def _pokemon(species: str, *, opponent: bool = False):
         selected_in_teampreview=True,
         stats={"atk": 80, "def": 100, "spa": 130, "spd": 110, "spe": 90},
         evs=(0, 0, 22, 20, 9, 15),
+        ivs=(31, 31, 31, 31, 31, 31),
         nature="Modest",
         boosts={"spa": 2, "accuracy": -1, "evasion": 1},
         status="par",
@@ -40,11 +41,15 @@ def _pokemon(species: str, *, opponent: bool = False):
         item=None if opponent else "Fairy Feather",
         ability=None if opponent else "Pixilate",
         base_ability=None if opponent else "Pixilate",
+        temporary_ability=None,
+        forme_change_ability=None,
+        base_moves=("Hyper Voice", "Protect"),
         moves={
             "hypervoice": _move("hypervoice", pp=7, max_pp=16),
             "protect": _move("protect", pp=8, max_pp=8, disabled=True),
         },
         last_move=SimpleNamespace(id="Hyper Voice"),
+        mimic_move=None,
         preparing_move=None,
         preparing_target=None,
         must_recharge=True,
@@ -64,7 +69,11 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
         format="gen9championsvgc2026regmb",
         gen=9,
         turn=8,
+        max_team_size=6,
+        team_size=4,
         teampreview=False,
+        commanding=False,
+        reviving=False,
         wait=False,
         finished=False,
         won=False,
@@ -102,6 +111,8 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
         available_moves=[[ours.moves["hypervoice"]], []],
         available_switches=[[opponent], []],
         valid_orders=("one", "two"),
+        teampreview_team=[ours],
+        teampreview_opponent_team=[opponent],
     )
 
     state = snapshot_battle(battle)
@@ -126,11 +137,17 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
     assert mon.moves[0].id == "hypervoice"
     assert mon.moves[1].disabled
     assert mon.moves[1].disabled_reason == "Taunt"
+    assert dict(mon.individual_values or ()) == dict.fromkeys(
+        ("hp", "atk", "def", "spa", "spd", "spe"), 31
+    )
+    assert mon.base_move_ids == ("hypervoice", "protect")
     assert state.our_side.force_switch == (False, True)
     assert state.our_side.trapped == (True, False)
     assert state.available_moves == (("hypervoice",), ())
     assert state.available_switches == (("gengar",), ())
     assert state.valid_order_count == 2
+    assert state.our_preview_species == ("sylveon",)
+    assert state.opponent_preview_species == ("gengar",)
 
 
 def test_opponent_unknown_item_ability_and_moves_stay_unknown() -> None:

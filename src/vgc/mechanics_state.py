@@ -11,6 +11,7 @@ cheat by filling private moves, spreads, or abilities from simulator-only data.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Iterable, Mapping
@@ -116,6 +117,7 @@ class PokemonMechanicsState:
     selected_in_preview: bool
     stats: tuple[tuple[str, int | None], ...]
     stat_points: tuple[tuple[str, int | None], ...] | None
+    individual_values: tuple[tuple[str, int | None], ...] | None
     nature: str | None
     boosts: tuple[tuple[str, int], ...]
     status: str | None
@@ -125,11 +127,16 @@ class PokemonMechanicsState:
     item_known: bool
     ability_id: str | None
     base_ability_id: str | None
+    temporary_ability_id: str | None
+    forme_change_ability_id: str | None
     ability_known: bool
+    base_move_ids: tuple[str, ...]
     moves: tuple[MoveSnapshot, ...]
     last_move_id: str | None
+    mimic_move_id: str | None
     preparing_move_id: str | None
     preparing_target: str | int | None
+    preparing: bool
     must_recharge: bool
     protect_counter: int
     first_turn: bool
@@ -151,6 +158,7 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
     raw_stats = getattr(pokemon, "stats", None) or {}
     raw_boosts = getattr(pokemon, "boosts", None) or {}
     raw_stat_points = getattr(pokemon, "evs", None)
+    raw_individual_values = getattr(pokemon, "ivs", None)
     stat_points = (
         tuple(
             (stat_id, _optional_int(value))
@@ -180,6 +188,16 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
             sorted((str(key), _optional_int(value)) for key, value in raw_stats.items())
         ),
         stat_points=stat_points,
+        individual_values=(
+            tuple(
+                (stat_id, _optional_int(value))
+                for stat_id, value in zip(
+                    STAT_POINT_IDS, raw_individual_values, strict=True
+                )
+            )
+            if raw_individual_values is not None
+            else None
+        ),
         nature=to_id(getattr(pokemon, "nature", None)) or None,
         boosts=tuple((boost, int(raw_boosts.get(boost, 0))) for boost in BOOST_IDS),
         status=normalize_status(getattr(pokemon, "status", None)),
@@ -189,15 +207,29 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
         item_known=not opponent or item is not None,
         ability_id=ability,
         base_ability_id=base_ability,
+        temporary_ability_id=to_id(getattr(pokemon, "temporary_ability", None)) or None,
+        forme_change_ability_id=to_id(
+            getattr(pokemon, "forme_change_ability", None)
+        )
+        or None,
         ability_known=not opponent or ability is not None,
+        base_move_ids=tuple(
+            sorted(to_id(move) for move in (getattr(pokemon, "base_moves", None) or ()))
+        ),
         moves=tuple(sorted((_move_snapshot(key, move) for key, move in move_entries), key=lambda move: move.id)),
         last_move_id=to_id(getattr(getattr(pokemon, "last_move", None), "id", None)) or None,
+        mimic_move_id=to_id(
+            getattr(getattr(pokemon, "mimic_move", None), "id", None)
+            or getattr(pokemon, "mimic_move", None)
+        )
+        or None,
         preparing_move_id=to_id(
             getattr(getattr(pokemon, "preparing_move", None), "id", None)
             or getattr(pokemon, "preparing_move", None)
         )
         or None,
         preparing_target=preparing_target,
+        preparing=bool(getattr(pokemon, "preparing", False)),
         must_recharge=bool(getattr(pokemon, "must_recharge", False)),
         protect_counter=int(getattr(pokemon, "protect_counter", 0) or 0),
         first_turn=bool(getattr(pokemon, "first_turn", False)),
@@ -272,7 +304,11 @@ class BattleMechanicsState:
     generation: int
     game_type: str
     turn: int
+    max_team_size: int | None
+    team_size: int | None
     team_preview: bool
+    commanding: bool
+    reviving: bool
     waiting: bool
     finished: bool
     won: bool
@@ -282,6 +318,9 @@ class BattleMechanicsState:
     available_moves: tuple[tuple[str, ...], ...]
     available_switches: tuple[tuple[str, ...], ...]
     valid_order_count: int | None
+    last_request_json: str | None
+    our_preview_species: tuple[str, ...]
+    opponent_preview_species: tuple[str, ...]
     our_side: SideMechanicsState
     opponent_side: SideMechanicsState
 
@@ -301,12 +340,25 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         raw_valid_orders = getattr(battle, "valid_orders", None)
     except (AttributeError, RuntimeError, ValueError):
         raw_valid_orders = None
+    try:
+        raw_last_request = getattr(battle, "last_request", None)
+        last_request_json = (
+            json.dumps(raw_last_request, sort_keys=True, default=str)
+            if raw_last_request is not None
+            else None
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        last_request_json = None
     return BattleMechanicsState(
         format_id=to_id(getattr(battle, "format", None)),
         generation=int(getattr(battle, "gen", 9) or 9),
         game_type="doubles",
         turn=int(getattr(battle, "turn", 0) or 0),
+        max_team_size=_optional_int(getattr(battle, "max_team_size", None)),
+        team_size=_optional_int(getattr(battle, "team_size", None)),
         team_preview=bool(getattr(battle, "teampreview", False)),
+        commanding=bool(getattr(battle, "commanding", False)),
+        reviving=bool(getattr(battle, "reviving", False)),
         waiting=bool(getattr(battle, "wait", False)),
         finished=bool(getattr(battle, "finished", False)),
         won=bool(getattr(battle, "won", False)),
@@ -322,6 +374,15 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
             for slot_switches in raw_available_switches
         ),
         valid_order_count=len(raw_valid_orders) if raw_valid_orders is not None else None,
+        last_request_json=last_request_json,
+        our_preview_species=tuple(
+            to_id(getattr(mon, "species", mon))
+            for mon in (getattr(battle, "teampreview_team", None) or ())
+        ),
+        opponent_preview_species=tuple(
+            to_id(getattr(mon, "species", mon))
+            for mon in (getattr(battle, "teampreview_opponent_team", None) or ())
+        ),
         our_side=_side_snapshot(battle, opponent=False),
         opponent_side=_side_snapshot(battle, opponent=True),
     )

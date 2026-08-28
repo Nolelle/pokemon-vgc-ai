@@ -4,7 +4,32 @@
   "catalog_sha256": "97743e4c951a50af362064a858829ab4b28ca4097d69cbb0798dd2f84879bc79",
   "release_ready": false,
   "release_rule": "Every required family must be exact and Showdown-backed before training or public ladder play.",
+  "readiness_scopes": {
+    "training_environment": {
+      "ready": true,
+      "evidence": ["official Showdown BattleStream", "fogged per-player streams", "terminal result from Showdown"]
+    },
+    "observable_state": {
+      "ready": true,
+      "evidence": ["complete poke-env property contract", "unknown opponent facts remain unknown", "catalog drift test"]
+    },
+    "neural_input": {
+      "ready": false,
+      "blockers": ["the learned input does not yet encode every mechanics-state field"]
+    },
+    "teacher_labels": {
+      "ready": false,
+      "blockers": ["hybrid teacher still uses Python resolve_exchange", "exact Showdown branch oracle is not yet the default labeler"]
+    },
+    "live_decisions": {
+      "ready": false,
+      "blockers": ["public battles do not yet have an exact synchronized Showdown branch state", "Python search has partial and missing families"]
+    }
+  },
   "families": [
+    {"id": "training_environment_transitions", "status": "exact", "state": "official_showdown", "verification": "integration"},
+    {"id": "fogged_protocol_observations", "status": "exact", "state": "captured", "verification": "integration"},
+    {"id": "exact_showdown_branch_oracle", "status": "exact", "state": "official_showdown_clone", "verification": "integration"},
     {"id": "format_legality", "status": "exact", "state": "captured", "verification": "showdown_validator"},
     {"id": "open_team_sheet_knowledge", "status": "exact", "state": "captured", "verification": "integration"},
     {"id": "observable_battle_state", "status": "exact", "state": "captured", "verification": "unit"},
@@ -50,6 +75,9 @@
     {"id": "residual_and_end_of_turn_order", "status": "missing", "state": "captured", "verification": "none"},
     {"id": "faint_and_replacement_order", "status": "partial", "state": "captured", "verification": "integration"},
     {"id": "random_branch_order", "status": "missing", "state": "captured", "verification": "none"}
+    ,{"id": "neural_mechanics_encoding", "status": "missing", "state": "not_encoded", "verification": "none"}
+    ,{"id": "oracle_teacher_migration", "status": "missing", "state": "oracle_available_not_default", "verification": "none"}
+    ,{"id": "live_exact_transition_access", "status": "missing", "state": "unavailable", "verification": "none"}
   ],
   "catalog_surface_classification": {
     "format_rules": "classified_by_format_legality",

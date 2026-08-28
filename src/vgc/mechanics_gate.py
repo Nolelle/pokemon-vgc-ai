@@ -26,6 +26,7 @@ class MechanicsReadiness:
     exact: tuple[str, ...]
     partial: tuple[str, ...]
     missing: tuple[str, ...]
+    scopes: tuple[tuple[str, bool], ...]
 
     @property
     def ready(self) -> bool:
@@ -34,6 +35,7 @@ class MechanicsReadiness:
             and self.declared_ready
             and not self.partial
             and not self.missing
+            and all(ready for _scope, ready in self.scopes)
         )
 
 
@@ -77,6 +79,12 @@ def mechanics_readiness(
         exact=tuple(sorted(grouped["exact"])),
         partial=tuple(sorted(grouped["partial"])),
         missing=tuple(sorted(grouped["missing"])),
+        scopes=tuple(
+            sorted(
+                (scope, details.get("ready") is True)
+                for scope, details in coverage.get("readiness_scopes", {}).items()
+            )
+        ),
     )
 
 
@@ -93,6 +101,9 @@ def assert_mechanics_ready(action: str = "public ladder play") -> None:
         reasons.append(f"{len(readiness.missing)} mechanics families are missing")
     if not readiness.declared_ready:
         reasons.append("release_ready is false")
+    blocked_scopes = [scope for scope, ready in readiness.scopes if not ready]
+    if blocked_scopes:
+        reasons.append(f"blocked scopes: {', '.join(blocked_scopes)}")
     raise MechanicsNotReadyError(
         f"Blocked {action}: " + "; ".join(reasons) + ". "
         "Run `.venv/bin/python offline/check_mechanics_readiness.py` for the full list."

@@ -19,6 +19,12 @@ def main() -> int:
     print(f"exact ({len(result.exact)}): {', '.join(result.exact)}")
     print(f"partial ({len(result.partial)}): {', '.join(result.partial)}")
     print(f"missing ({len(result.missing)}): {', '.join(result.missing)}")
+    print(
+        "scopes: "
+        + ", ".join(
+            f"{scope}={'READY' if ready else 'BLOCKED'}" for scope, ready in result.scopes
+        )
+    )
     print(f"verdict: {'PASS' if result.ready else 'BLOCKED'}")
     return 0 if result.ready else 1
 
