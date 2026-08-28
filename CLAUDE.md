@@ -286,6 +286,17 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   same-session A/B, not a default flip. Spreads rebuild the root (Stat Points are baked
   into the starting team); timers re-patch it, which is why `LiveExactMirror.hypotheses`
   is ordered spread-major.
+- **Those beliefs are a posterior, not a fixed prior.** `vgc.opponent_belief.
+  build_opponent_beliefs` reweights the corpus spreads by what the battle has shown --
+  `BattleMemory.speed_observations` (who moved first, at what effective Speed, weather/
+  Tailwind/Trick-Room aware) and `damage_observations` (observed % vs `damage_range`) --
+  keeping a contradicted hypothesis at 5% rather than deleting it, because speed ties and
+  crits make one observation noisy. `LiveExactMirror.hypotheses(battle, memory)` consumes
+  it; omitting `memory` gives the pre-battle prior. One Speed observation typically moves
+  Charizard from a three-way 34/34/33 split to 91/4/4. **Note the shipped ladder search
+  (`vgc.search`) and `vgc.evaluator` still use `vgc.sets.opponent_state`'s point estimate
+  -- `build_opponent_beliefs` reaches only the neural network's input features
+  (`vgc.rl.encoding`) and now the mirror.**
 - **The training-time exact search reads the opponent's PRIVATE battle object**
   (`vgc.rl.exact_search.py`'s `score_joint_orders(root.battles[other], ...)`), so teacher
   labels are currently minted with knowledge of the opponent's true moves/item/stats that

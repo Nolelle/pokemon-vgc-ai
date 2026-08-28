@@ -19,6 +19,7 @@ from vgc.damage import to_id
 from vgc.data import load_items, load_learnsets, load_moves, load_species
 from vgc.mechanics_state import snapshot_battle
 from vgc.models import PolicyConfig
+from vgc.opponent_belief import build_opponent_beliefs
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
 from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
 from vgc.sets import (
@@ -192,7 +193,51 @@ def _active_opponent_species(battle) -> list[str]:
     )
 
 
-def _spread_beliefs(battle, config: PolicyConfig) -> list[tuple[float, dict]]:
+def _species_spread_beliefs(
+    battle, config: PolicyConfig, memory, limit: int
+) -> dict[str, list[tuple[dict, str, float]]]:
+    """Per-species spread beliefs, POSTERIOR where the battle has told us something.
+
+    `vgc.opponent_belief.build_opponent_beliefs` starts from the same corpus weights that
+    `vgc.sets.opponent_spread_hypotheses` returns, then reweights them by what this battle
+    has actually shown -- who moved first at what speed, and how hard a move hit. Using
+    the static prior when that evidence exists would throw away the only opponent
+    information a real game ever hands us.
+
+    Falls back to the flat corpus prior when no memory is available (offline callers and
+    unit tests), which is the same distribution before any evidence arrives.
+    """
+
+    species_ids = _active_opponent_species(battle)
+    if memory is None:
+        return {
+            species_id: opponent_spread_hypotheses(species_id, limit=limit)
+            for species_id in species_ids
+        }
+    posterior = {
+        belief.species_id: belief
+        for belief in build_opponent_beliefs(battle, memory, config)
+    }
+    result: dict[str, list[tuple[dict, str, float]]] = {}
+    for species_id in species_ids:
+        belief = posterior.get(species_id)
+        if belief is None or not belief.hypotheses:
+            result[species_id] = opponent_spread_hypotheses(species_id, limit=limit)
+            continue
+        kept = sorted(
+            belief.hypotheses, key=lambda entry: -entry.probability
+        )[:limit]
+        total = sum(entry.probability for entry in kept)
+        if total <= 0.0:
+            result[species_id] = opponent_spread_hypotheses(species_id, limit=limit)
+            continue
+        result[species_id] = [
+            (entry.sp, entry.nature, entry.probability / total) for entry in kept
+        ]
+    return result
+
+
+def _spread_beliefs(battle, config: PolicyConfig, memory=None) -> list[tuple[float, dict]]:
     """Weighted Stat Point/nature beliefs for the opponent's ACTIVE Pokemon.
 
     Only the active pair varies. Their spreads decide this turn's damage, speed order,
@@ -202,7 +247,7 @@ def _spread_beliefs(battle, config: PolicyConfig) -> list[tuple[float, dict]]:
 
     Returns ``(probability, {species_id: (spread, nature)})`` pairs, most likely first
     and renormalized after the cap. A cap of 1 -- the shipped default -- returns exactly
-    one belief holding each species' most popular spread, i.e. today's behavior.
+    one belief holding each species' most likely spread, i.e. today's behavior.
     """
 
     limit = config.exact_search_spread_hypotheses
@@ -210,8 +255,9 @@ def _spread_beliefs(battle, config: PolicyConfig) -> list[tuple[float, dict]]:
         raise ValueError(
             f"exact_search_spread_hypotheses must be at least 1, got {limit!r}"
         )
+    by_species = _species_spread_beliefs(battle, config, memory, limit)
     per_species = [
-        (species_id, opponent_spread_hypotheses(species_id, limit=limit))
+        (species_id, by_species[species_id])
         for species_id in _active_opponent_species(battle)
     ]
     if not per_species:
@@ -271,20 +317,25 @@ class LiveExactMirror:
         self._counter = itertools.count()
         self._root_spread_key: tuple | None = None
 
-    def hypotheses(self, battle) -> list[MirrorHypothesis]:
+    def hypotheses(self, battle, memory=None) -> list[MirrorHypothesis]:
         """Every hidden-information belief for this observation, most likely first.
 
         The cross product of the opponent's possible Stat Point spreads
         (`exact_search_spread_hypotheses`) and their possible sleep/confusion timers
         (`exact_search_state_hypotheses`). At the shipped defaults this is exactly the
-        timer branches, carrying the single most popular spread -- unchanged behavior.
+        timer branches, carrying the single most likely spread -- unchanged behavior.
+
+        Passing ``memory`` (a `vgc.battle_memory.BattleMemory`) uses the POSTERIOR spread
+        distribution -- the corpus prior reweighted by the speed and damage this battle
+        has actually shown -- instead of the flat prior. Omitting it is the pre-battle
+        distribution, which is all an offline caller with no history has.
 
         Ordered spread-major, most likely first within each spread, so :meth:`rebase`
         pays one team-preview start per spread rather than one per branch.
         """
 
         timers = enumerate_hidden_state_hypotheses(snapshot_battle(battle), self.config)
-        spreads = _spread_beliefs(battle, self.config)
+        spreads = _spread_beliefs(battle, self.config, memory)
         combined = [
             MirrorHypothesis(
                 weight=spread_weight * timer.weight, spreads=assignment, timers=timer

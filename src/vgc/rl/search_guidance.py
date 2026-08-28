@@ -525,7 +525,7 @@ class NeuralSearchPlayer(VgcPlayer):
                 # A rebuilt live root has to assume the privately rolled sleep and
                 # confusion durations. Average over the legal ones instead of picking
                 # the modal duration and calling that exact.
-                beliefs = list(live_mirror.hypotheses(battle))
+                beliefs = list(live_mirror.hypotheses(battle, memory))
 
         def run_exact(selector):
             """Rank via Showdown, once per hidden-state belief, then combine."""

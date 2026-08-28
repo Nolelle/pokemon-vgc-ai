@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from vgc.models import PolicyConfig
+from vgc.battle_memory import BattleMemory, SpeedObservation
 from vgc.rl.live_mirror import MirrorHypothesis, _spread_beliefs
 from vgc.rl.hidden_state import HiddenStateHypothesis
 
@@ -113,3 +114,79 @@ def test_real_usage_data_makes_the_top_spread_uncertain() -> None:
         return
     assert beliefs[0][0] < 1.0
     assert sum(weight for weight, _assignment in beliefs) == pytest.approx(1.0)
+
+
+# --- beliefs must narrow as the battle reveals things -------------------------------
+#
+# vgc.opponent_belief already reweights the corpus prior by observed move order and
+# damage. These check the mirror consumes that POSTERIOR rather than the flat prior, so
+# "they outsped my Pokemon" actually shrinks the hypothesis set the search branches over.
+
+
+def _battle_with_preview(*species: str) -> SimpleNamespace:
+    mons = [SimpleNamespace(species=name, fainted=False, moves={}, item=None,
+                            ability=None, status=None, current_hp_fraction=1.0)
+            for name in species]
+    return SimpleNamespace(
+        opponent_active_pokemon=mons,
+        teampreview_opponent_team=mons,
+        opponent_team={name: mon for name, mon in zip(species, mons, strict=True)},
+    )
+
+
+def _speed_evidence(species_id: str, threshold: float) -> BattleMemory:
+    memory = BattleMemory(battle_tag="test")
+    memory.speed_observations.append(
+        SpeedObservation(
+            opponent_species=species_id, threshold=threshold, relation="at_least"
+        )
+    )
+    return memory
+
+
+def test_observing_that_they_outsped_us_reweights_toward_fast_spreads() -> None:
+    config = PolicyConfig(exact_search_spread_hypotheses=3)
+    battle = _battle_with_preview("charizard")
+
+    prior = _spread_beliefs(battle, config)
+    if len(prior) < 2:
+        pytest.skip("charizard has a single corpus spread in this checkout")
+
+    def speed_of(assignment):
+        from vgc.stats import calculate_stats
+
+        spread, nature = assignment["charizard"]
+        return calculate_stats("charizard", spread, nature)["spe"]
+
+    speeds = sorted(speed_of(assignment) for _weight, assignment in prior)
+    # Say we watched it move before something faster than its slowest hypothesis.
+    memory = _speed_evidence("charizard", float(speeds[-1]))
+    posterior = _spread_beliefs(battle, config, memory)
+
+    prior_top = max(prior, key=lambda row: row[0])
+    posterior_top = max(posterior, key=lambda row: row[0])
+    # The surviving belief must be one that can actually reach the observed Speed.
+    assert speed_of(posterior_top[1]) >= speeds[-1]
+    assert posterior_top[0] > prior_top[0]
+    assert sum(weight for weight, _assignment in posterior) == pytest.approx(1.0)
+
+
+def test_contradicted_spreads_are_suppressed_but_not_deleted() -> None:
+    # vgc.opponent_belief keeps a mismatch at 5% rather than zero, because speed ties and
+    # crits make a single observation noisy. The mirror must not launder that into
+    # certainty.
+    config = PolicyConfig(exact_search_spread_hypotheses=3)
+    battle = _battle_with_preview("charizard")
+    prior = _spread_beliefs(battle, config)
+    if len(prior) < 2:
+        pytest.skip("charizard has a single corpus spread in this checkout")
+    memory = _speed_evidence("charizard", 9999.0)  # nothing can be this fast
+    posterior = _spread_beliefs(battle, config, memory)
+    assert len(posterior) == len(prior)
+    assert all(0.0 < weight < 1.0 for weight, _assignment in posterior)
+
+
+def test_no_memory_falls_back_to_the_flat_prior(fixed_spreads) -> None:
+    config = PolicyConfig(exact_search_spread_hypotheses=2)
+    battle = _battle("garchomp")
+    assert _spread_beliefs(battle, config, None) == _spread_beliefs(battle, config)
