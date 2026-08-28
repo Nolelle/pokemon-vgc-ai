@@ -414,6 +414,14 @@ class PolicyConfig:
     # Champions 2-or-3-action sleep duration. These are facts no player is told; each
     # branch is a legal Showdown state rather than a made-up deterministic duration.
     exact_search_state_hypotheses: int = 4
+    # Number of opponent Stat Point/nature beliefs the live mirror builds a root for.
+    # Open Team Sheets never reveal a spread, and the shipped usage corpus names the most
+    # popular one with only ~52% confidence at the median (no species reaches certainty),
+    # so 1 means "treat the most popular spread as fact" -- today's behavior. Raising it
+    # costs one extra Showdown team-preview start per belief and reasons over the
+    # distribution instead. Left at 1 because moving it changes gate-tuned behavior and
+    # needs a same-session A/B, not a default flip.
+    exact_search_spread_hypotheses: int = 1
     # Exact-branch value for applying a major status. Sleep/freeze use the larger
     # control weight below; other statuses share this base currency.
     exact_search_status_weight: float = 18.0

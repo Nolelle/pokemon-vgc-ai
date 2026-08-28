@@ -395,7 +395,7 @@
   "information_uncertainty": [
     {
       "id": "hidden_opponent_spread_and_nature",
-      "handling": "Estimated from usage priors when rebuilding a live mirror. Open Team Sheets reveal species, moves, items, and abilities but never the spread."
+      "handling": "Estimated from usage priors when rebuilding a live mirror. Open Team Sheets reveal species, moves, items, and abilities but never the spread. vgc.sets.opponent_spread_hypotheses exposes the full weighted distribution and PolicyConfig.exact_search_spread_hypotheses builds one Showdown root per belief; it ships at 1 (the most popular spread, treated as a point estimate) because raising it changes gate-tuned behaviour and needs a same-session A/B."
     },
     {
       "id": "hidden_sleep_and_confusion_timers",

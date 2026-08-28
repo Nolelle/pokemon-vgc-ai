@@ -65,7 +65,8 @@ def load_usage_spreads(path: str | None = None) -> dict[str, list[dict[str, Any]
                         "weight": 0.42}, ...], ...}
 
     `weight` is any relative popularity score (higher = more common); `opponent_state`
-    picks the highest-weight entry per species.
+    picks the highest-weight entry per species, while `opponent_spread_hypotheses` keeps
+    them all as a normalized belief distribution.
 
     Graceful fallback: if `path` is None, defaults to `data/usage/spreads.json`
     (`DEFAULT_USAGE_SPREADS_PATH`); if that file doesn't exist yet -- there is no usage
@@ -88,6 +89,55 @@ def _usage_spread_for_species(
         return None
     best = max(entries, key=lambda entry: entry.get("weight", 0))
     return best["sp"], best["nature"]
+
+
+def opponent_spread_hypotheses(
+    species_id: str,
+    usage: dict[str, list[dict[str, Any]]] | None = None,
+    limit: int | None = None,
+) -> list[tuple[SPSpread, str, float]]:
+    """Weighted Stat Point/nature beliefs for one opponent species, most likely first.
+
+    `opponent_state` collapses this to its single most popular entry, which is the right
+    default for the myopic evaluator's one damage number per matchup. Callers that can
+    afford to reason over a DISTRIBUTION -- notably `vgc.rl.live_mirror`, which can build
+    one Showdown root per hypothesis -- should use this instead, so "probably Adamant"
+    stays a probability instead of hardening into a fact.
+
+    Probabilities are renormalized over whatever survives `limit`, so the returned
+    weights always sum to 1.0. A species with no usage data yields exactly one
+    hypothesis, `vgc.stats.default_opponent_spread`/`default_opponent_nature` at
+    probability 1.0 -- a certain belief, because there is nothing to be uncertain
+    between, not because that spread is known to be right.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be at least 1, got {limit!r}")
+    if usage is None:
+        usage = load_usage_spreads()
+    entries = usage.get(species_id) or []
+    ranked = sorted(
+        (entry for entry in entries if entry.get("sp") is not None),
+        key=lambda entry: (-float(entry.get("weight", 0.0)), str(entry.get("nature", ""))),
+    )
+    if limit is not None:
+        ranked = ranked[:limit]
+    total = sum(max(0.0, float(entry.get("weight", 0.0))) for entry in ranked)
+    if not ranked or total <= 0.0:
+        return [
+            (
+                default_opponent_spread(species_id),
+                default_opponent_nature(species_id),
+                1.0,
+            )
+        ]
+    return [
+        (
+            entry["sp"],
+            entry["nature"],
+            max(0.0, float(entry.get("weight", 0.0))) / total,
+        )
+        for entry in ranked
+    ]
 
 
 @lru_cache(maxsize=8)

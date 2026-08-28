@@ -274,6 +274,27 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   `vgc.rl.demonstrations` rejects any `source_id` other than `exact_showdown_teacher_v1`.
   `tests/test_exact_mechanics_contract.py` asserts `resolve_exchange`/`search_joint_orders`
   are unreachable from the exact modules.
+- **Hidden opponent spreads are a distribution, and it is not a confident one.**
+  `vgc.sets.opponent_spread_hypotheses` returns the weighted Stat Point/nature beliefs
+  behind `opponent_state`'s single point estimate (median confidence in the most popular
+  spread across the 275-species corpus is 52.4%; no species reaches certainty).
+  `PolicyConfig.exact_search_spread_hypotheses` makes `vgc.rl.live_mirror` build one real
+  Showdown root per belief -- verified reaching the engine as genuinely different stats
+  (`tests/test_exact_search.py::test_hidden_spread_beliefs_reach_showdown_as_different_opponent_stats`
+  shows three near-equally-likely Charizards at Speed 144/152/167). It **ships at 1**, i.e.
+  today's point-estimate behaviour; raising it changes gate-tuned behaviour and needs a
+  same-session A/B, not a default flip. Spreads rebuild the root (Stat Points are baked
+  into the starting team); timers re-patch it, which is why `LiveExactMirror.hypotheses`
+  is ordered spread-major.
+- **The training-time exact search reads the opponent's PRIVATE battle object**
+  (`vgc.rl.exact_search.py`'s `score_joint_orders(root.battles[other], ...)`), so teacher
+  labels are currently minted with knowledge of the opponent's true moves/item/stats that
+  the deployed agent can never have. On ladder the same root is a `live_mirror`
+  reconstruction, so reading it there is fine. This cannot be fixed by swapping the
+  enumeration source alone: a believed-but-untrue opponent move is illegal in a
+  true-rooted battle and `DirectBattle.step` raises `InvalidChoice`. The clean fix is to
+  build the training search root through `live_mirror` too. **Not yet done** -- measure
+  how much the teacher's advice actually depends on the leaked information first.
 - **The gate promises exact transitions, not good judgement.** The final rank still blends
   `vgc.evaluator`'s myopic heuristic score (`search_myopic_weight`, deliberately left at
   1.0 -- zeroing it changes frozen gate-tuned weights and needs a same-session A/B), the

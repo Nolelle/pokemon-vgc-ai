@@ -21,7 +21,13 @@ from vgc.mechanics_state import snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
 from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
-from vgc.sets import load_set_priors, normalize_item, opponent_move_ids, opponent_state
+from vgc.sets import (
+    load_set_priors,
+    normalize_item,
+    opponent_move_ids,
+    opponent_spread_hypotheses,
+    opponent_state,
+)
 from vgc.stats import STAT_IDS
 
 
@@ -93,7 +99,19 @@ def _fallback_moves(species_id: str) -> list[str]:
     return ranked[:4]
 
 
-def _opponent_sets(battle, config: PolicyConfig) -> list[dict[str, object]]:
+def _opponent_sets(
+    battle,
+    config: PolicyConfig,
+    spreads: dict[str, tuple[dict[str, int], str]] | None = None,
+) -> list[dict[str, object]]:
+    """Six opponent sets rebuilt from public information only.
+
+    ``spreads`` overrides the hidden Stat Points/nature for the species it names, so a
+    caller can build one root per belief in the distribution instead of hardening
+    `opponent_state`'s single most-popular guess into a fact. Species it omits keep
+    that point estimate.
+    """
+
     preview = list(getattr(battle, "teampreview_opponent_team", None) or ())
     known = _known_opponent_by_species(battle)
     active_ids = [
@@ -142,7 +160,9 @@ def _opponent_sets(battle, config: PolicyConfig) -> list[dict[str, object]]:
         if not ability:
             abilities = (species_data.get(species_id) or {}).get("abilities") or {}
             ability = to_id(next(iter(abilities.values()), ""))
-        spread = state.sp_spread or dict.fromkeys(STAT_IDS, 0)
+        believed = (spreads or {}).get(species_id)
+        spread = (believed[0] if believed else state.sp_spread) or dict.fromkeys(STAT_IDS, 0)
+        nature = (believed[1] if believed else state.nature) or "serious"
         result.append(
             {
                 "name": species_id,
@@ -150,7 +170,7 @@ def _opponent_sets(battle, config: PolicyConfig) -> list[dict[str, object]]:
                 "item": item or "",
                 "ability": ability,
                 "moves": moves,
-                "nature": state.nature or "serious",
+                "nature": nature,
                 "evs": {stat: int(spread.get(stat, 0) or 0) for stat in STAT_IDS},
                 "ivs": dict.fromkeys(STAT_IDS, 31),
                 "level": 50,
@@ -164,6 +184,80 @@ def _opponent_sets(battle, config: PolicyConfig) -> list[dict[str, object]]:
     return result
 
 
+def _active_opponent_species(battle) -> list[str]:
+    return _ordered_unique(
+        _base_species_id(to_id(getattr(mon, "species", None)))
+        for mon in (getattr(battle, "opponent_active_pokemon", None) or ())
+        if mon is not None
+    )
+
+
+def _spread_beliefs(battle, config: PolicyConfig) -> list[tuple[float, dict]]:
+    """Weighted Stat Point/nature beliefs for the opponent's ACTIVE Pokemon.
+
+    Only the active pair varies. Their spreads decide this turn's damage, speed order,
+    and survival, which is what the search is actually asking about; branching the bench
+    too would multiply Showdown roots for hypotheses that cannot change the current
+    ranking. Benched species keep `opponent_state`'s point estimate.
+
+    Returns ``(probability, {species_id: (spread, nature)})`` pairs, most likely first
+    and renormalized after the cap. A cap of 1 -- the shipped default -- returns exactly
+    one belief holding each species' most popular spread, i.e. today's behavior.
+    """
+
+    limit = config.exact_search_spread_hypotheses
+    if limit < 1:
+        raise ValueError(
+            f"exact_search_spread_hypotheses must be at least 1, got {limit!r}"
+        )
+    per_species = [
+        (species_id, opponent_spread_hypotheses(species_id, limit=limit))
+        for species_id in _active_opponent_species(battle)
+    ]
+    if not per_species:
+        return [(1.0, {})]
+    combined: list[tuple[float, dict]] = []
+    for choice in itertools.product(*(hypotheses for _species, hypotheses in per_species)):
+        weight = 1.0
+        assignment: dict[str, tuple[dict[str, int], str]] = {}
+        for (species_id, _hypotheses), (spread, nature, probability) in zip(
+            per_species, choice, strict=True
+        ):
+            weight *= probability
+            assignment[species_id] = (spread, nature)
+        combined.append((weight, assignment))
+    combined.sort(key=lambda row: row[0], reverse=True)
+    combined = combined[:limit]
+    total = sum(weight for weight, _assignment in combined)
+    return [(weight / total, assignment) for weight, assignment in combined]
+
+
+@dataclass(frozen=True)
+class MirrorHypothesis:
+    """One complete belief about everything the opponent has not shown us.
+
+    Two independent kinds of hidden information are combined here: Stat Points/nature,
+    which are baked into the team a mirror root is STARTED from, and sleep/confusion
+    timers, which are patched onto an existing root. `LiveExactMirror.rebase` relies on
+    that split -- changing timers re-patches, changing spreads has to rebuild.
+    """
+
+    weight: float
+    spreads: dict
+    timers: HiddenStateHypothesis | None = None
+
+    @property
+    def spread_key(self) -> tuple:
+        return tuple(
+            (species_id, tuple(sorted(spread.items())), nature)
+            for species_id, (spread, nature) in sorted(self.spreads.items())
+        )
+
+    @property
+    def payload(self) -> dict:
+        return self.timers.payload if self.timers is not None else {}
+
+
 @dataclass
 class LiveExactMirror:
     """Own one local Showdown worker and rebuild a current-state root per decision."""
@@ -175,24 +269,48 @@ class LiveExactMirror:
     def __post_init__(self) -> None:
         self.worker = SimWorker(self.showdown_repo)
         self._counter = itertools.count()
+        self._root_spread_key: tuple | None = None
 
-    def hypotheses(self, battle) -> list[HiddenStateHypothesis]:
-        """Legal hidden-timer beliefs for this observation, most likely first."""
+    def hypotheses(self, battle) -> list[MirrorHypothesis]:
+        """Every hidden-information belief for this observation, most likely first.
 
-        return enumerate_hidden_state_hypotheses(snapshot_battle(battle), self.config)
+        The cross product of the opponent's possible Stat Point spreads
+        (`exact_search_spread_hypotheses`) and their possible sleep/confusion timers
+        (`exact_search_state_hypotheses`). At the shipped defaults this is exactly the
+        timer branches, carrying the single most popular spread -- unchanged behavior.
+
+        Ordered spread-major, most likely first within each spread, so :meth:`rebase`
+        pays one team-preview start per spread rather than one per branch.
+        """
+
+        timers = enumerate_hidden_state_hypotheses(snapshot_battle(battle), self.config)
+        spreads = _spread_beliefs(battle, self.config)
+        combined = [
+            MirrorHypothesis(
+                weight=spread_weight * timer.weight, spreads=assignment, timers=timer
+            )
+            for spread_weight, assignment in spreads
+            for timer in timers
+        ]
+        # Spread-major, then most likely first within a spread: a caller stepping through
+        # in order rebuilds the Showdown root once per spread rather than once per branch.
+        combined.sort(key=lambda entry: (entry.spread_key, -entry.weight))
+        return combined
 
     def build(
-        self, battle, hypothesis: HiddenStateHypothesis | None = None
+        self, battle, hypothesis: MirrorHypothesis | HiddenStateHypothesis | None = None
     ) -> DirectBattle:
-        """Rebuild the current public state, under one hidden-timer belief.
+        """Rebuild the current public state under one belief about hidden information.
 
         Omitting ``hypothesis`` leaves the worker on its own conservative default. Use
-        :meth:`hypotheses` and pass each belief in turn when the caller wants the
-        privately rolled sleep/confusion durations averaged rather than assumed.
+        :meth:`hypotheses` and pass each belief in turn when the caller wants the hidden
+        spreads and privately rolled durations averaged rather than assumed.
         """
 
         battle_id = f"live-mirror-{next(self._counter)}"
-        opponent_sets = _opponent_sets(battle, self.config)
+        spreads = getattr(hypothesis, "spreads", None)
+        self._root_spread_key = getattr(hypothesis, "spread_key", None)
+        opponent_sets = _opponent_sets(battle, self.config, spreads)
         root = DirectBattle.start(
             self.worker,
             battle_id,
@@ -220,15 +338,24 @@ class LiveExactMirror:
             raise
 
     def rebase(
-        self, root: DirectBattle, battle, hypothesis: HiddenStateHypothesis
+        self,
+        root: DirectBattle,
+        battle,
+        hypothesis: MirrorHypothesis | HiddenStateHypothesis,
     ) -> DirectBattle:
-        """Re-patch an existing mirror root onto a different hidden-timer belief.
+        """Move an existing mirror root onto a different belief.
 
         ``patchPublic`` rewrites the whole battle from the supplied snapshot, so one
-        Showdown battle can serve every belief branch instead of paying a fresh
-        team-preview start per hypothesis.
+        Showdown battle can serve every hidden-TIMER branch instead of paying a fresh
+        team-preview start per hypothesis. A different hidden SPREAD cannot be patched
+        the same way -- Stat Points are baked into the team the battle started from -- so
+        that case closes this root and starts a new one.
         """
 
+        wanted = getattr(hypothesis, "spread_key", None)
+        if wanted != self._root_spread_key:
+            root.close()
+            return self.build(battle, hypothesis)
         root.patch_public_state(
             snapshot_battle(battle),
             perspective="p1",

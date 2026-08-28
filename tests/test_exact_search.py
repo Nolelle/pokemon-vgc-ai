@@ -177,3 +177,61 @@ def test_one_mirror_root_is_reused_across_belief_branches() -> None:
     assert combined[0].breakdown["mechanics_source"] == "official_showdown_clone"
     # Identical beliefs must not drift: the combined score is the shared branch score.
     assert combined[0].score == pytest.approx(rankings[0][1][0].score)
+
+
+@pytest.mark.integration
+def test_hidden_spread_beliefs_reach_showdown_as_different_opponent_stats() -> None:
+    """A spread belief must change the opponent's real stats inside the engine.
+
+    The sleep test above proves a PATCHED belief lands. Stat Points are not patchable --
+    they are baked into the team the battle starts from -- so this proves the other half:
+    that `exact_search_spread_hypotheses` actually rebuilds the root with a different
+    opponent rather than quietly reusing the most popular spread.
+    """
+
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    team = (REPO_ROOT / "teams" / "meta1.packed.txt").read_text().strip()
+    config = PolicyConfig(
+        exact_search_spread_hypotheses=3,
+        exact_search_state_hypotheses=1,
+        exact_search_future_samples=1,
+        use_rolling_horizon=False,
+        use_value_head=False,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(source_worker, "spread-source", team, team, seed=[7, 8, 9, 10])
+        source.step({"p1": "team 1234", "p2": "team 1234"})
+        observation = source.battles["p1"]
+
+        mirror = LiveExactMirror(team, config)
+        try:
+            beliefs = mirror.hypotheses(observation)
+            if len({belief.spread_key for belief in beliefs}) < 2:
+                pytest.skip("this team's actives have a single known spread in the corpus")
+            statlines = []
+            root = None
+            for belief in beliefs:
+                root = (
+                    mirror.rebase(root, observation, belief)
+                    if root is not None
+                    else mirror.build(observation, belief)
+                )
+                dumped = mirror.worker.request({"cmd": "dump", "id": root.battle_id})["state"]
+                statlines.append(
+                    tuple(
+                        tuple(sorted(mon["baseStoredStats"].items()))
+                        for mon in dumped["sides"][1]["pokemon"][:2]
+                    )
+                )
+            if root is not None:
+                root.close()
+        finally:
+            mirror.close()
+            source.close()
+
+    # Distinct beliefs must produce distinct opponents, and the weights must be a real
+    # distribution rather than a relabelled certainty.
+    assert len(set(statlines)) > 1
+    assert sum(belief.weight for belief in beliefs) == pytest.approx(1.0)
+    assert all(belief.weight < 1.0 for belief in beliefs)
