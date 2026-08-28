@@ -24,6 +24,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.bc.encoding import MOVE_TO_IDX, SPECIES_TO_IDX, TARGET_TO_IDX
 from vgc.rl.encoding import TACTICAL_FEATURE_DIM
+from vgc.rl.mechanics_encoding import pad_mechanics_features
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,10 @@ def _tensor_batch(samples: list, device: str) -> dict[str, torch.Tensor]:
     moves = np.full((count, 1, 2), MOVE_TO_IDX["<pass>"], dtype=np.int64)
     targets = np.full((count, 1, 2), TARGET_TO_IDX["<none>"], dtype=np.int64)
     species = np.full((count, 1, 2), SPECIES_TO_IDX["<pad>"], dtype=np.int64)
+    mechanics = [getattr(sample.encoded, "mechanics", None) for sample in samples]
+    if any(feature is None for feature in mechanics):
+        raise ValueError("value calibration requires complete mechanics snapshots")
+    mechanics_tokens, mechanics_mask = pad_mechanics_features(mechanics)
     return {
         "state_indices": torch.as_tensor(
             np.stack([sample.encoded.state_indices for sample in samples]),
@@ -109,6 +114,12 @@ def _tensor_batch(samples: list, device: str) -> dict[str, torch.Tensor]:
         "tactical_features": torch.zeros(
             (count, 1, TACTICAL_FEATURE_DIM), dtype=torch.float32, device=device
         ),
+        "mechanics_tokens": torch.as_tensor(
+            mechanics_tokens, dtype=torch.long, device=device
+        ),
+        "mechanics_mask": torch.as_tensor(
+            mechanics_mask, dtype=torch.bool, device=device
+        ),
         "targets": torch.as_tensor(
             [float(sample.outcome) for sample in samples],
             dtype=torch.float32,
@@ -136,6 +147,12 @@ def _values(model: nn.Module, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         ),
         tactical_features=(
             batch["tactical_features"] if model.use_tactical_features else None
+        ),
+        mechanics_tokens=(
+            batch["mechanics_tokens"] if model.use_mechanics_features else None
+        ),
+        mechanics_mask=(
+            batch["mechanics_mask"] if model.use_mechanics_features else None
         ),
     )
     return values
@@ -278,4 +295,3 @@ def calibrate_value_head(
         "trainable_parameters": ["value_head.weight", "value_head.bias"],
         "value_output_transform": model.value_output_transform,
     }
-

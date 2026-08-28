@@ -48,9 +48,13 @@ def _load(path: Path) -> dict:
 
 
 def mechanics_readiness(
-    catalog_path: Path = CATALOG_PATH,
-    coverage_path: Path = COVERAGE_PATH,
+    catalog_path: Path | None = None,
+    coverage_path: Path | None = None,
 ) -> MechanicsReadiness:
+    # Resolved at call time, not bound at import time, so a test can point the gate at
+    # a regressed coverage file and confirm it still fails closed.
+    catalog_path = catalog_path or CATALOG_PATH
+    coverage_path = coverage_path or COVERAGE_PATH
     catalog_bytes = catalog_path.read_bytes()
     catalog = json.loads(catalog_bytes)
     coverage = _load(coverage_path)

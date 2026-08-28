@@ -24,6 +24,7 @@ from vgc.rl.encoding import (
     OWN_SCALARS_PER_MON,
     TACTICAL_FEATURE_DIM,
 )
+from vgc.rl.mechanics_encoding import MECHANICS_TOKEN_VOCAB_SIZE
 
 TARGET_EMBED_DIM = 8
 ACTION_HIDDEN_DIM = 128
@@ -37,6 +38,9 @@ META_HIDDEN_DIM = 32
 INFORMATION_MON_HIDDEN_DIM = 64
 INFORMATION_HIDDEN_DIM = 128
 TACTICAL_HIDDEN_DIM = 64
+MECHANICS_BYTE_EMBED_DIM = 16
+MECHANICS_CONV_DIM = 32
+MECHANICS_HIDDEN_DIM = 64
 
 
 class CandidatePolicyValueNet(nn.Module):
@@ -49,6 +53,7 @@ class CandidatePolicyValueNet(nn.Module):
         use_meta_features: bool = False,
         use_information_features: bool = False,
         use_tactical_features: bool = False,
+        use_mechanics_features: bool = False,
         head_dropout: float = 0.0,
         value_output_transform: str = "identity",
         head_width: int | None = None,
@@ -59,6 +64,7 @@ class CandidatePolicyValueNet(nn.Module):
         self.use_meta_features = use_meta_features
         self.use_information_features = use_information_features
         self.use_tactical_features = use_tactical_features
+        self.use_mechanics_features = use_mechanics_features
         self.value_output_transform = value_output_transform
         # Capacity lever for the action-scoring path only. None keeps the historical
         # ACTION_HIDDEN_DIM so existing checkpoints stay byte-compatible; a larger value
@@ -118,6 +124,27 @@ class CandidatePolicyValueNet(nn.Module):
                 nn.ReLU(),
             )
             context_input_dim += INFORMATION_HIDDEN_DIM
+        if use_mechanics_features:
+            # Complete, reversible public-state bytes run beside the historical summary
+            # branches. A strided convolution reads local JSON key/value patterns; both
+            # mean and max pooling retain signals regardless of snapshot length.
+            self.mechanics_embedding = nn.Embedding(
+                MECHANICS_TOKEN_VOCAB_SIZE,
+                MECHANICS_BYTE_EMBED_DIM,
+                padding_idx=0,
+            )
+            self.mechanics_conv = nn.Conv1d(
+                MECHANICS_BYTE_EMBED_DIM,
+                MECHANICS_CONV_DIM,
+                kernel_size=7,
+                stride=4,
+                padding=3,
+            )
+            self.mechanics_encoder = nn.Sequential(
+                nn.Linear(MECHANICS_CONV_DIM * 2, MECHANICS_HIDDEN_DIM),
+                nn.ReLU(),
+            )
+            context_input_dim += MECHANICS_HIDDEN_DIM
         self.context_encoder = nn.Sequential(
             nn.Linear(context_input_dim, HIDDEN_DIM),
             nn.ReLU(),
@@ -165,6 +192,8 @@ class CandidatePolicyValueNet(nn.Module):
         information_indices: torch.Tensor | None = None,
         information_scalars: torch.Tensor | None = None,
         tactical_features: torch.Tensor | None = None,
+        mechanics_tokens: torch.Tensor | None = None,
+        mechanics_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if candidate_mask.ndim != 2 or not torch.all(candidate_mask.any(dim=1)):
             raise ValueError("each batch row must contain at least one legal candidate")
@@ -176,6 +205,8 @@ class CandidatePolicyValueNet(nn.Module):
             meta_scalars=meta_scalars,
             information_indices=information_indices,
             information_scalars=information_scalars,
+            mechanics_tokens=mechanics_tokens,
+            mechanics_mask=mechanics_mask,
         )
         # head_dropout applies only to the randomly-initialised action-scoring path --
         # the part of the network that overfits fastest on a small teacher-distillation
@@ -216,6 +247,8 @@ class CandidatePolicyValueNet(nn.Module):
         meta_scalars: torch.Tensor | None = None,
         information_indices: torch.Tensor | None = None,
         information_scalars: torch.Tensor | None = None,
+        mechanics_tokens: torch.Tensor | None = None,
+        mechanics_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Encode one fog-safe battle observation for any candidate-aware head."""
 
@@ -235,7 +268,38 @@ class CandidatePolicyValueNet(nn.Module):
             context_parts.append(
                 self._encode_information(information_indices, information_scalars)
             )
+        if self.use_mechanics_features:
+            if mechanics_tokens is None or mechanics_mask is None:
+                raise ValueError(
+                    "use_mechanics_features=True requires mechanics tokens and mask"
+                )
+            context_parts.append(
+                self._encode_mechanics(mechanics_tokens, mechanics_mask)
+            )
         return self.context_encoder(torch.cat(context_parts, dim=-1))
+
+    def _encode_mechanics(
+        self, tokens: torch.Tensor, mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Read the complete public snapshot without truncating padded batches."""
+
+        if tokens.ndim != 2 or mask.shape != tokens.shape:
+            raise ValueError("mechanics tokens and mask must have matching (batch, bytes) shape")
+        if not torch.all(mask.bool().any(dim=1)):
+            raise ValueError("every mechanics-enabled row must contain a complete snapshot")
+        embedded = self.mechanics_embedding(tokens).transpose(1, 2)
+        convolved = F.relu(self.mechanics_conv(embedded))
+        pooled_mask = F.max_pool1d(
+            mask.to(convolved.dtype).unsqueeze(1),
+            kernel_size=7,
+            stride=4,
+            padding=3,
+        ).bool()
+        masked = convolved.masked_fill(~pooled_mask, 0.0)
+        counts = pooled_mask.sum(dim=2).clamp_min(1).to(convolved.dtype)
+        mean = masked.sum(dim=2) / counts
+        maximum = convolved.masked_fill(~pooled_mask, torch.finfo(convolved.dtype).min).amax(dim=2)
+        return self.mechanics_encoder(torch.cat((mean, maximum), dim=1))
 
     def encode_actions(
         self,

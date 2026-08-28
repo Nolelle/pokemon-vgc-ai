@@ -13,6 +13,7 @@ from vgc.rl.demonstrations import (
     split_samples_grouped,
 )
 from vgc.rl.distill import DistillationSample
+from vgc.rl.mechanics_encoding import MechanicsFeatures
 from vgc.rl.encoding import (
     HISTORY_SCALAR_DIM,
     INFORMATION_INDEX_DIM,
@@ -41,6 +42,9 @@ def _sample(battle_id: str, *, team_id: str | None = None) -> DistillationSample
         information=InformationFeatures(
             indices=np.zeros(INFORMATION_INDEX_DIM, dtype=np.int64),
             scalars=np.zeros(INFORMATION_SCALAR_DIM, dtype=np.float32),
+        ),
+        mechanics=MechanicsFeatures(
+            tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
         ),
         team_id=team_id,
     )

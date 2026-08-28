@@ -26,6 +26,7 @@ def test_fit_power_law_needs_three_positive_points():
 def test_nested_subsets_are_prefixes_of_one_shuffle(tmp_path):
     from vgc.rl.distill import DistillationSample
     from vgc.rl.encoding import CandidateFeatures, InformationFeatures
+    from vgc.rl.mechanics_encoding import MechanicsFeatures
 
     def sample(battle: str):
         return DistillationSample(
@@ -44,6 +45,10 @@ def test_nested_subsets_are_prefixes_of_one_shuffle(tmp_path):
             information=InformationFeatures(
                 indices=np.zeros(84, dtype=np.int64), scalars=np.zeros(384, dtype=np.float32)
             ),
+            mechanics=MechanicsFeatures(
+                tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
+            ),
+            source_id="exact_showdown_teacher_v1",
         )
 
     dataset = tmp_path / "all.pt"

@@ -163,7 +163,10 @@ def test_smoke_trains_one_iteration_and_writes_checkpoint(tmp_path: Path) -> Non
     assert row["steps"] > 0
     assert "ppo" in row
 
-    model = CandidatePolicyValueNet(use_meta_features=False)
+    model = CandidatePolicyValueNet(
+        use_meta_features=False,
+        use_mechanics_features=True,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     iteration, games_seen, restored = train_fixed_mirror.load_checkpoint(
         checkpoint_path, model, optimizer, device="cpu"

@@ -16,7 +16,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.rl.distill import DistillationSample
 
-DEMONSTRATION_FORMAT_VERSION = "vgc-joint-demonstrations-v1"
+DEMONSTRATION_FORMAT_VERSION = "vgc-joint-demonstrations-v2-exact-mechanics"
 SplitGroup = Literal["battle", "team"]
 
 
@@ -27,6 +27,13 @@ def validate_sample(sample: DistillationSample) -> None:
         raise ValueError("teacher action does not identify a legal joint candidate")
     if sample.information is None:
         raise ValueError("complete-context demonstrations require information features")
+    if sample.mechanics is None:
+        raise ValueError("complete-context demonstrations require a full mechanics snapshot")
+    if sample.source_id != "exact_showdown_teacher_v1":
+        raise ValueError(
+            "training demonstrations must come from exact Showdown branches; got "
+            f"{sample.source_id!r}"
+        )
     if sample.candidates.tactical is None:
         raise ValueError("complete-context demonstrations require tactical features")
 
@@ -36,7 +43,7 @@ def annotate_samples(
     *,
     team_id: str,
     opponent_team_id: str,
-    source_id: str = "simulator_search_teacher",
+    source_id: str = "exact_showdown_teacher_v1",
 ) -> list[DistillationSample]:
     return [
         replace(

@@ -12,6 +12,7 @@ from vgc.rl.encoding import (
     InformationFeatures,
 )
 from vgc.rl.model import CandidatePolicyValueNet
+from vgc.rl.mechanics_encoding import MechanicsFeatures
 from vgc.rl.value_calibration import (
     ValueCalibrationConfig,
     calibrate_value_head,
@@ -29,6 +30,9 @@ def _sample(index: int, team: str, outcome: float):
         information=InformationFeatures(
             indices=np.zeros(INFORMATION_INDEX_DIM, dtype=np.int64),
             scalars=np.zeros(INFORMATION_SCALAR_DIM, dtype=np.float32),
+        ),
+        mechanics=MechanicsFeatures(
+            tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
         ),
     )
     return SimpleNamespace(
@@ -68,6 +72,7 @@ def test_value_calibration_changes_only_value_head_and_bounds_output() -> None:
         use_meta_features=True,
         use_information_features=True,
         use_tactical_features=True,
+        use_mechanics_features=True,
     )
     before = {key: value.detach().clone() for key, value in model.state_dict().items()}
 
@@ -97,4 +102,3 @@ def test_value_calibration_changes_only_value_head_and_bounds_output() -> None:
 def test_identity_value_transform_remains_backward_compatible() -> None:
     model = CandidatePolicyValueNet()
     assert model.value_output_transform == "identity"
-

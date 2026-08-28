@@ -100,6 +100,12 @@ def play_battle(
             agents[side].observe(battle_id, battle.last_lines[side])
         while not battle.ended:
             to_move = battle.sides_to_move()
+            # Offline-only authority seam: exact mechanics teachers need the clonable
+            # Showdown root, while ordinary players continue to receive the same fogged
+            # DoubleBattle object. Public websocket battles never have these attributes.
+            for side in to_move:
+                battle.battles[side]._vgc_direct_root = battle
+                battle.battles[side]._vgc_direct_side = side
             choices = {side: agents[side].choose(battle.battles[side]) for side in to_move}
             decisions += len(choices)
             result = battle.step(choices)

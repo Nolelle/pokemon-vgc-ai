@@ -31,7 +31,7 @@ from vgc.rl.guided_selection import (
     SAFETY_TAG_COLUMNS,
     select_guided_candidate_indices,
 )
-from vgc.search import _order_tags, search_joint_orders
+from vgc.search import _order_tags
 from vgc.rl.encoding import (
     META_SCALAR_DIM,
     CandidateFeatures,
@@ -46,6 +46,12 @@ from vgc.rl.encoding import (
     pad_candidate_features,
     pad_candidate_tactical_features,
 )
+from vgc.rl.mechanics_encoding import (
+    MechanicsFeatures,
+    encode_mechanics_context,
+    pad_mechanics_features,
+)
+from vgc.rl.exact_search import search_joint_orders_exact
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,7 @@ class DistillationSample:
     # without needing a separate teacher-recording pass.
     meta_scalars: np.ndarray | None = None
     information: InformationFeatures | None = None
+    mechanics: MechanicsFeatures | None = None
     source_id: str = "simulator_teacher"
     team_id: str | None = None
     opponent_team_id: str | None = None
@@ -150,18 +157,22 @@ class TeacherRecordingPlayer(VgcPlayer):
         state_indices, state_scalars = encode_live_state(battle, self.config)
         history_scalars = encode_battle_history(memory)
         if self.config.use_two_ply_search:
-            scored = search_joint_orders(battle, self.config)
+            root = getattr(battle, "_vgc_direct_root", None)
+            side = getattr(battle, "_vgc_direct_side", None)
+            if root is None or side is None:
+                # Never mint an approximate teacher label. Network collection can keep
+                # playing, but it produces no examples and its caller will fail its
+                # requested sample-count check.
+                return self.choose_random_move(battle)
+            scored = search_joint_orders_exact(root, side, self.config)
             # One extra myopic pass per decision: the exchange search reorders candidates
             # by simulated outcome, but the safety-slot replay needs each candidate's
             # position in the CHEAP evaluator's order. Worth its cost at collection time
             # only.
             myopic_scored = score_joint_orders(battle, self.config) if scored else None
-        elif self.config.use_heuristic_evaluator:
-            scored = score_joint_orders(battle, self.config)
-            myopic_scored = scored
         else:
-            scored = []
-            myopic_scored = None
+            # A myopic evaluator is a policy baseline, not a mechanics-exact labeler.
+            return self.choose_random_move(battle)
         if not scored:
             return self.choose_random_move(battle)
 
@@ -187,6 +198,8 @@ class TeacherRecordingPlayer(VgcPlayer):
                 teacher_action_index=0,
                 meta_scalars=encode_meta_context(battle, self.config),
                 information=encode_information_context(battle, memory, self.config),
+                mechanics=encode_mechanics_context(battle),
+                source_id="exact_showdown_teacher_v1",
                 turn=int(getattr(battle, "turn", 0) or 0),
                 legal_action_count=len(orders),
                 candidate_myopic_ranks=ranks,
@@ -213,9 +226,11 @@ def teacher_action_index(battle, config, orders) -> int | None:
     """
 
     if config.use_two_ply_search:
-        scored = search_joint_orders(battle, config)
-    elif config.use_heuristic_evaluator:
-        scored = score_joint_orders(battle, config)
+        root = getattr(battle, "_vgc_direct_root", None)
+        side = getattr(battle, "_vgc_direct_side", None)
+        if root is None or side is None:
+            return None
+        scored = search_joint_orders_exact(root, side, config)
     else:
         return None
     if not scored:
@@ -408,6 +423,20 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
         dtype=torch.float32,
         device=device,
     )
+    present_mechanics = [sample.mechanics for sample in samples if sample.mechanics is not None]
+    if present_mechanics and len(present_mechanics) != len(samples):
+        raise ValueError("a batch cannot mix complete and missing mechanics snapshots")
+    if present_mechanics:
+        mechanics_tokens, mechanics_mask = pad_mechanics_features(present_mechanics)
+    else:
+        mechanics_tokens = np.zeros((len(samples), 1), dtype=np.int64)
+        mechanics_mask = np.zeros((len(samples), 1), dtype=np.bool_)
+    batch["mechanics_tokens"] = torch.as_tensor(
+        mechanics_tokens, dtype=torch.long, device=device
+    )
+    batch["mechanics_mask"] = torch.as_tensor(
+        mechanics_mask, dtype=torch.bool, device=device
+    )
     return batch
 
 
@@ -449,6 +478,16 @@ def evaluate_agreement(
                 ),
                 tactical_features=(
                     batch["tactical_features"] if model.use_tactical_features else None
+                ),
+                mechanics_tokens=(
+                    batch["mechanics_tokens"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
+                ),
+                mechanics_mask=(
+                    batch["mechanics_mask"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
                 ),
             )
             loss = nn.functional.cross_entropy(logits, batch["teacher_actions"])
@@ -564,6 +603,16 @@ def _teacher_ranks(
                 tactical_features=(
                     batch["tactical_features"] if model.use_tactical_features else None
                 ),
+                mechanics_tokens=(
+                    batch["mechanics_tokens"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
+                ),
+                mechanics_mask=(
+                    batch["mechanics_mask"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
+                ),
             )
             teacher_logit = logits.gather(1, batch["teacher_actions"].unsqueeze(1))
             better = ((logits > teacher_logit) & batch["candidate_mask"].bool()).sum(dim=1)
@@ -665,6 +714,16 @@ def distill_policy(
                 ),
                 tactical_features=(
                     batch["tactical_features"] if model.use_tactical_features else None
+                ),
+                mechanics_tokens=(
+                    batch["mechanics_tokens"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
+                ),
+                mechanics_mask=(
+                    batch["mechanics_mask"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
                 ),
             )
             if sample_weights is None and not config.soft_targets:
@@ -850,6 +909,16 @@ def recall_at_k(
                 ),
                 tactical_features=(
                     batch["tactical_features"] if model.use_tactical_features else None
+                ),
+                mechanics_tokens=(
+                    batch["mechanics_tokens"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
+                ),
+                mechanics_mask=(
+                    batch["mechanics_mask"]
+                    if getattr(model, "use_mechanics_features", False)
+                    else None
                 ),
             )
             teacher = batch["teacher_actions"]

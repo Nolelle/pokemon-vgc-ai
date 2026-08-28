@@ -185,6 +185,7 @@ def save_training_checkpoint(
         "architecture": RL_ARCHITECTURE_VERSION,
         "use_meta_features": model.use_meta_features,
         "use_information_features": model.use_information_features,
+        "use_mechanics_features": model.use_mechanics_features,
         "use_tactical_features": model.use_tactical_features,
         "head_dropout": model.head_dropout_p,
         "value_output_transform": model.value_output_transform,
@@ -469,14 +470,25 @@ def main(argv: list[str] | None = None) -> None:
         model, optimizer, start_iteration, games_seen = load_resume_state(
             resume_path, device=args.device
         )
-        if not model.use_information_features or not model.use_tactical_features:
+        if (
+            not model.use_information_features
+            or not model.use_tactical_features
+            or not model.use_mechanics_features
+        ):
             raise SystemExit(
-                "--resume checkpoint must be a complete-context information+tactical one"
+                "--resume checkpoint must include information, tactical, and complete "
+                "mechanics inputs"
             )
     else:
         model = load_snapshot(args.init, device=args.device)
-        if not model.use_information_features or not model.use_tactical_features:
-            raise SystemExit("--init must be a complete-context information+tactical checkpoint")
+        if (
+            not model.use_information_features
+            or not model.use_tactical_features
+            or not model.use_mechanics_features
+        ):
+            raise SystemExit(
+                "--init must include information, tactical, and complete mechanics inputs"
+            )
         start_iteration = 0
         games_seen = 0
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)

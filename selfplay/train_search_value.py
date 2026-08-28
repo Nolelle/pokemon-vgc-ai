@@ -54,7 +54,7 @@ def _sha256(path: Path) -> str:
 
 def _load_samples(path: Path) -> list:
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    if payload.get("format") != "vgc-neural-search-guidance-v1":
+    if payload.get("format") != "vgc-neural-search-guidance-v2-exact-mechanics":
         raise ValueError(f"unsupported search trajectory dataset: {payload.get('format')!r}")
     samples = list(payload.get("samples") or [])
     if not samples:

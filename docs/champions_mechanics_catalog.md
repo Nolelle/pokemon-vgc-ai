@@ -297,20 +297,41 @@ fields, flags, or entities are reviewed and classified.
 
 ## Readiness is separated into five layers
 
-1. **Training environment: ready.** Battles and terminal win/loss rewards already run
-   through the official Showdown `BattleStream`; mechanics are not reimplemented there.
+All five are now ready. `.venv/bin/python offline/check_mechanics_readiness.py` prints
+`verdict: PASS`, and the gate stays fail-closed: regressing one family or one scope
+blocks training and ladder play again (`tests/test_mechanics_gate.py`).
+
+1. **Training environment: ready.** Battles and terminal win/loss rewards run through the
+   official Showdown `BattleStream`; mechanics are not reimplemented there.
 2. **Observable state: ready.** `vgc.mechanics_state` captures every poke-env battle,
    Pokemon, and dynamic move property under a fail-closed property contract. A future
    poke-env property addition breaks the test until reviewed.
-3. **Learned input: blocked.** The fixed-size neural input has not yet been expanded to
-   contain every field in that mechanics snapshot.
-4. **Teacher labels: blocked.** `vgc.rl.mechanics_oracle` can now clone a complete
-   Showdown state and execute exact counterfactual branches, but the hybrid dataset
-   collector still uses the approximate Python search teacher by default.
-5. **Live decisions: blocked.** A public battle does not yet maintain an exact local
-   Showdown mirror across hidden spreads and random outcomes, so live counterfactual
-   search remains approximate.
+3. **Learned input: ready.** `vgc.rl.mechanics_encoding` serialises the whole snapshot to
+   byte tokens with no hashing, fixed vocabulary, or truncation, so a newly exposed field
+   reaches the model automatically. Every training entry point requires it.
+4. **Teacher labels: ready.** `vgc.rl.distill` refuses to mint a label without an exact
+   Showdown root, `vgc.rl.demonstrations` rejects any other source, and the approximate
+   Python exchange simulator is no longer reachable from either module.
+5. **Live decisions: ready.** `vgc.rl.live_mirror` rebuilds the public state inside a real
+   Showdown battle and searches from there. Hidden timers become weighted belief branches
+   (`vgc.rl.hidden_state`) rather than assumptions.
 
-This separation prevents a true statement—"training battles use Showdown"—from being
-misread as the much stronger and currently false statement—"the model sees every state
-detail and the live search predicts every mechanic exactly."
+## What the gate does and does not promise
+
+The promise is narrow on purpose: **the outcome of a predicted turn is produced by the
+official Showdown engine.** Accuracy, critical hits, sleep, secondaries, redirection,
+residuals, and ordering are no longer Python re-implementations on any gated path.
+
+The gate deliberately does **not** claim the bot judges those outcomes well. Three things
+remain strategy rather than rules, and are listed in the coverage file under
+`policy_approximations` so the distinction cannot quietly erode:
+
+- the myopic heuristic score still blended into the final rank
+  (`PolicyConfig.search_myopic_weight`),
+- which candidates get simulated at all (`search_our_candidates`, a compute budget),
+- how a resulting position is valued (`vgc.rl.exact_search._position_value`) and which
+  opponent replies are modelled.
+
+Separately, `information_uncertainty` lists what no player is allowed to know: the
+opponent's Stat Points and nature, their unrevealed bring, and the privately rolled sleep
+and confusion durations. These are beliefs with weights, never simulator-private truth.

@@ -43,6 +43,9 @@ from vgc.rl.distill import (  # noqa: E402
     evaluate_agreement,
     split_samples_by_battle,
 )
+from vgc.rl.agents import DirectAgent, make_direct_agent  # noqa: E402
+from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, SimWorker  # noqa: E402
+from vgc.rl.match import play_battle  # noqa: E402
 from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
 from vgc.rl.opponents import (  # noqa: E402
     RL_ARCHITECTURE_VERSION,
@@ -509,6 +512,7 @@ def save_checkpoint(
             "architecture": RL_ARCHITECTURE_VERSION,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
+            "use_mechanics_features": model.use_mechanics_features,
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
         },
@@ -562,6 +566,12 @@ def load_training_checkpoint(
             f"match requested model use_information_features="
             f"{model.use_information_features}; pass/omit --information-features to "
             "match the checkpoint it was trained with"
+        )
+    checkpoint_use_mechanics = bool(checkpoint.get("use_mechanics_features", False))
+    if checkpoint_use_mechanics != model.use_mechanics_features:
+        raise ValueError(
+            f"checkpoint use_mechanics_features={checkpoint_use_mechanics} does not "
+            f"match requested model use_mechanics_features={model.use_mechanics_features}"
         )
     checkpoint_use_tactical = bool(checkpoint.get("use_tactical_features", False))
     if checkpoint_use_tactical != model.use_tactical_features:
@@ -668,45 +678,50 @@ async def _collect_teacher_worker(
     learner_team: str,
     opponent_team: OpponentTeamChoice,
 ) -> tuple[dict[str, object], list[DistillationSample]]:
-    token = secrets.token_hex(3)
-    teacher_config = replace(
-        PolicyConfig(),
-        accept_open_team_sheet=False,
-        use_rolling_horizon=False,
-    )
-    teacher = TeacherRecordingPlayer(
-        config=teacher_config,
-        team=learner_team,
-        battle_format=FORMAT_ID,
-        account_configuration=AccountConfiguration(f"teach{worker_id}-{token}", None),
-    )
-    opponent = VgcPlayer(
-        config=teacher_config,
-        team=opponent_team.packed,
-        battle_format=FORMAT_ID,
-        account_configuration=AccountConfiguration(f"teachopp{worker_id}-{token}", None),
-    )
-    error: str | None = None
-    try:
-        await asyncio.wait_for(
-            teacher.battle_against(opponent, n_battles=games),
-            timeout=max(1, games) * WORKER_TIMEOUT_PER_GAME_SECONDS,
+    def collect_direct() -> tuple[dict[str, object], list[DistillationSample]]:
+        teacher_config = replace(
+            PolicyConfig(),
+            accept_open_team_sheet=False,
+            use_rolling_horizon=False,
         )
-    except Exception as exc:  # noqa: BLE001 - other bootstrap workers remain useful
-        error = f"{type(exc).__name__}: {exc}"
-    finally:
-        await _safe_stop_listening(teacher)
-        await _safe_stop_listening(opponent)
-    samples = teacher.completed_samples()
-    return {
-        "worker": worker_id,
-        "requested": games,
-        "games": teacher.n_finished_battles,
-        "samples": len(samples),
-        "opponent_team": opponent_team.label,
-        "team_group": opponent_team.group,
-        "error": error,
-    }, samples
+        samples: list[DistillationSample] = []
+        completed = 0
+        error: str | None = None
+        try:
+            with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
+                for game_index in range(games):
+                    teacher = TeacherRecordingPlayer(
+                        config=teacher_config,
+                        team=learner_team,
+                        battle_format=FORMAT_ID,
+                        start_listening=False,
+                    )
+                    battle_id = f"bootstrap-{worker_id}-{game_index}"
+                    play_battle(
+                        worker,
+                        battle_id,
+                        {
+                            "p1": DirectAgent(teacher, name="teacher"),
+                            "p2": make_direct_agent("vgc", opponent_team.packed),
+                        },
+                        {"p1": learner_team, "p2": opponent_team.packed},
+                        seed=[worker_id + 1, game_index + 1, 17, 29],
+                    )
+                    samples.extend(teacher.distillation_samples)
+                    completed += 1
+        except Exception as exc:  # noqa: BLE001 - other bootstrap workers remain useful
+            error = f"{type(exc).__name__}: {exc}"
+        return {
+            "worker": worker_id,
+            "requested": games,
+            "games": completed,
+            "samples": len(samples),
+            "opponent_team": opponent_team.label,
+            "team_group": opponent_team.group,
+            "error": error,
+        }, samples
+
+    return await asyncio.to_thread(collect_direct)
 
 
 async def _evaluate_worker(
@@ -1957,6 +1972,7 @@ def main() -> int:
     model = CandidatePolicyValueNet(
         use_meta_features=args.meta_features,
         use_information_features=args.information_features,
+        use_mechanics_features=True,
         use_tactical_features=args.tactical_features,
         head_dropout=args.head_dropout,
     ).to(args.device)

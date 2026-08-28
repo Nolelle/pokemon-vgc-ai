@@ -10,3 +10,6 @@ __pycache__/
 .showdown-credentials.json
 .DS_Store
 .zshrc
+
+# Local editor state
+.cursor/

@@ -53,6 +53,9 @@ from vgc.rl.encoding import (
     pad_candidate_tactical_features,
 )
 from vgc.rl.guided_selection import select_guided_candidate_indices
+from vgc.rl.exact_search import combine_belief_rankings, search_joint_orders_exact
+from vgc.rl.live_mirror import LiveExactMirror
+from vgc.rl.mechanics_encoding import MechanicsFeatures, encode_mechanics_context
 from vgc.search import _order_tags, _select_search_candidates, search_joint_orders
 
 GuidanceMode = Literal["shadow", "hybrid"]
@@ -109,6 +112,7 @@ class EncodedGuidanceInput:
     candidates: CandidateFeatures
     meta_scalars: np.ndarray | None
     information: InformationFeatures | None
+    mechanics: MechanicsFeatures | None
     action_descriptions: tuple[str, ...]
     neural_probabilities: np.ndarray
 
@@ -131,10 +135,12 @@ class SearchGuidanceSample:
 def write_guidance_samples(path: Path, samples: list[SearchGuidanceSample]) -> None:
     """Save model-ready data without inventing labels for unsearched actions."""
 
+    if any(sample.encoded.mechanics is None for sample in samples):
+        raise ValueError("search guidance samples require complete mechanics snapshots")
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
-            "format": "vgc-neural-search-guidance-v1",
+            "format": "vgc-neural-search-guidance-v2-exact-mechanics",
             "samples": samples,
             "sample_count": len(samples),
             "battle_count": len({sample.battle_id for sample in samples}),
@@ -172,6 +178,7 @@ def rank_legal_orders(
         if model.use_information_features
         else None
     )
+    mechanics = encode_mechanics_context(battle) if model.use_mechanics_features else None
 
     model.eval()
     with torch.no_grad():
@@ -208,6 +215,16 @@ def rank_legal_orders(
                 if model.use_tactical_features
                 else None
             ),
+            mechanics_tokens=(
+                torch.as_tensor(mechanics.tokens[None, :], dtype=torch.long, device=device)
+                if mechanics is not None
+                else None
+            ),
+            mechanics_mask=(
+                torch.ones((1, len(mechanics.tokens)), dtype=torch.bool, device=device)
+                if mechanics is not None
+                else None
+            ),
         )
         probabilities = torch.softmax(logits[0], dim=0)
         ranked_indices = torch.argsort(logits[0], descending=True).cpu().tolist()
@@ -225,6 +242,7 @@ def rank_legal_orders(
             candidates=candidates,
             meta_scalars=np.array(meta, copy=True) if meta is not None else None,
             information=information,
+            mechanics=mechanics,
             action_descriptions=tuple(describe_order(order) for order in orders),
             neural_probabilities=probabilities.cpu().numpy().copy(),
         ),
@@ -448,6 +466,8 @@ class NeuralSearchPlayer(VgcPlayer):
         self.metric_ks = tuple(sorted({int(k) for k in metric_ks if int(k) > 0}))
         self.decision_records: list[dict[str, object]] = []
         self.training_samples: list[SearchGuidanceSample] = []
+        supplied_team = player_kwargs.get("team")
+        self._exact_own_packed_team = supplied_team if isinstance(supplied_team, str) else None
         super().__init__(**player_kwargs)
 
     @staticmethod
@@ -491,6 +511,52 @@ class NeuralSearchPlayer(VgcPlayer):
             raise RuntimeError("neural ranking did not retain its encoded observation")
         encoded = ranking.encoded
         selection_audit: dict[str, object] = {}
+        exact_root = None
+        live_mirror = None
+        exact_side = getattr(battle, "_vgc_direct_side", None)
+        beliefs: list[object | None] = [None]
+        if self.model.use_mechanics_features:
+            exact_root = getattr(battle, "_vgc_direct_root", None)
+            if exact_root is None:
+                if not self._exact_own_packed_team:
+                    raise RuntimeError("mechanics-complete hybrid requires its packed own team")
+                live_mirror = LiveExactMirror(self._exact_own_packed_team, self.config)
+                exact_side = "p1"
+                # A rebuilt live root has to assume the privately rolled sleep and
+                # confusion durations. Average over the legal ones instead of picking
+                # the modal duration and calling that exact.
+                beliefs = list(live_mirror.hypotheses(battle))
+
+        def run_exact(selector):
+            """Rank via Showdown, once per hidden-state belief, then combine."""
+
+            nonlocal exact_root
+            rankings = []
+            try:
+                for belief in beliefs:
+                    if live_mirror is not None:
+                        exact_root = (
+                            live_mirror.rebase(exact_root, battle, belief)
+                            if exact_root is not None
+                            else live_mirror.build(battle, belief)
+                        )
+                    rankings.append(
+                        (
+                            getattr(belief, "weight", 1.0),
+                            search_joint_orders_exact(
+                                exact_root,
+                                exact_side,
+                                self.config,
+                                candidate_selector=selector,
+                            ),
+                        )
+                    )
+            finally:
+                if live_mirror is not None:
+                    if exact_root is not None:
+                        exact_root.close()
+                    live_mirror.close()
+            return combine_belief_rankings(rankings)
 
         if self.mode == "hybrid":
             captured_defaults: dict[str, set[str]] = {}
@@ -517,8 +583,12 @@ class NeuralSearchPlayer(VgcPlayer):
                 )
                 return searched, unsearched
 
-            scored = search_joint_orders(
-                battle, self.config, candidate_selector=guided_selector
+            scored = (
+                run_exact(guided_selector)
+                if self.model.use_mechanics_features
+                else search_joint_orders(
+                    battle, self.config, candidate_selector=guided_selector
+                )
             )
             # Upset arbitration: the network's newcomer candidates may only take the
             # move away from the shipped selector's best on a clear margin (see
@@ -530,7 +600,11 @@ class NeuralSearchPlayer(VgcPlayer):
             )
             selection_audit.update(arbitration)
         else:
-            scored = search_joint_orders(battle, self.config)
+            scored = (
+                run_exact(None)
+                if self.model.use_mechanics_features
+                else search_joint_orders(battle, self.config)
+            )
             rebuilt = self._rebuild_myopic(scored)
             default_searched, _default_tail = _select_search_candidates(rebuilt, self.config)
             selection_audit["heuristic_shortlist"] = [

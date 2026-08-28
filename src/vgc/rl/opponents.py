@@ -15,7 +15,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.rl.model import CandidatePolicyValueNet
 
-RL_ARCHITECTURE_VERSION = "candidate-policy-value-v3-meta"
+RL_ARCHITECTURE_VERSION = "candidate-policy-value-v4-mechanics"
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,7 @@ def save_snapshot(
             "generation": generation,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
+            "use_mechanics_features": model.use_mechanics_features,
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
             "value_output_transform": model.value_output_transform,
@@ -86,10 +87,12 @@ def load_snapshot(path: Path, *, device: str = "cpu") -> CandidatePolicyValueNet
         )
     use_meta_features = bool(checkpoint.get("use_meta_features", False))
     use_information_features = bool(checkpoint.get("use_information_features", False))
+    use_mechanics_features = bool(checkpoint.get("use_mechanics_features", False))
     use_tactical_features = bool(checkpoint.get("use_tactical_features", False))
     model = CandidatePolicyValueNet(
         use_meta_features=use_meta_features,
         use_information_features=use_information_features,
+        use_mechanics_features=use_mechanics_features,
         use_tactical_features=use_tactical_features,
         head_dropout=float(checkpoint.get("head_dropout", 0.0)),
         value_output_transform=str(checkpoint.get("value_output_transform", "identity")),

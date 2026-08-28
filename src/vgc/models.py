@@ -405,6 +405,24 @@ class PolicyConfig:
     # Setting this to 0.0 disables the search's actual influence on ranking while still
     # paying its compute cost -- useful as an isolation test, not a recommended setting.
     search_position_weight: float = 1.0
+    # Number of deterministic future-randomness samples used by the exact Showdown
+    # teacher. Four means accuracy, critical hits, damage rolls, wake turns, secondary
+    # effects, and Speed ties are averaged across four real simulator branches instead
+    # of being replaced by hand-written expected-value shortcuts.
+    exact_search_future_samples: int = 4
+    # Number of current-state belief branches used for hidden timers such as the
+    # Champions 2-or-3-action sleep duration. These are facts no player is told; each
+    # branch is a legal Showdown state rather than a made-up deterministic duration.
+    exact_search_state_hypotheses: int = 4
+    # Exact-branch value for applying a major status. Sleep/freeze use the larger
+    # control weight below; other statuses share this base currency.
+    exact_search_status_weight: float = 18.0
+    exact_search_hard_control_weight: float = 30.0
+    # Value per net stat stage and per newly established side/field effect in an exact
+    # branch. These judge strategy; Showdown itself remains responsible for whether the
+    # effect actually occurred and how long it lasts.
+    exact_search_boost_weight: float = 5.0
+    exact_search_effect_weight: float = 12.0
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat

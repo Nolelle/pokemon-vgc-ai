@@ -249,6 +249,40 @@ Consequences, in order of how much time they save:
   `clustered_interval`/`variance_components` for per-position quantities like regret;
   `offline/evaluate_q_vs_search_powered.py` is the worked example.
 
+## Exact Showdown mechanics: the gate, and what it does not cover
+
+Every predicted turn in a gated decision path is now executed by the official local
+Showdown engine, not by Python re-implementations. `offline/check_mechanics_readiness.py`
+prints the gate; it must say `verdict: PASS` or training and ladder play refuse to run
+(`vgc.mechanics_gate`, fail-closed, catalogue-hash pinned). Full write-up:
+`docs/champions_mechanics_catalog.md`.
+
+- `vgc.rl.exact_search.search_joint_orders_exact` ranks orders by cloning the real battle
+  and playing each candidate/response through Showdown. `vgc.rl.mechanics_oracle` does
+  the cloning; `tools/sim_worker.mjs` gained `dump` and `patchPublic` for it.
+- `vgc.rl.live_mirror.LiveExactMirror` rebuilds a *public* observation into a real local
+  Showdown battle so live play searches exactly too. `vgc.rl.hidden_state` turns the
+  privately rolled Champions sleep (`sample([2, 3, 3])`) and confusion (`random(2, 6)`)
+  durations into weighted legal branches, combined by
+  `vgc.rl.exact_search.combine_belief_rankings` -- never assumed.
+- `vgc.rl.mechanics_encoding` feeds the model the whole `vgc.mechanics_state` snapshot as
+  byte tokens: no hashing, no fixed vocabulary, no truncation, so a newly exposed field
+  reaches the network automatically. Every training entry point hardcodes
+  `use_mechanics_features=True`.
+- **The approximate Python teacher is gone, not merely unused.** `vgc.rl.distill` will not
+  mint a label without an exact Showdown root (it plays a random move instead), and
+  `vgc.rl.demonstrations` rejects any `source_id` other than `exact_showdown_teacher_v1`.
+  `tests/test_exact_mechanics_contract.py` asserts `resolve_exchange`/`search_joint_orders`
+  are unreachable from the exact modules.
+- **The gate promises exact transitions, not good judgement.** The final rank still blends
+  `vgc.evaluator`'s myopic heuristic score (`search_myopic_weight`, deliberately left at
+  1.0 -- zeroing it changes frozen gate-tuned weights and needs a same-session A/B), the
+  shortlist is a compute budget, and `_position_value` is a hand-weighted value function.
+  All three are listed in `data/champions/mechanics_coverage.json` under
+  `policy_approximations`; hidden opponent spreads/nature/bring are under
+  `information_uncertainty`. Do not let "mechanics are exact" drift into "the search is
+  optimal" -- they are different claims and the file keeps them apart.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -256,6 +290,9 @@ shells on this machine, and `node` may also need an absolute path
 (`~/.nvm/versions/node/v22.22.0/bin/node`) if it isn't on PATH.
 
 ```bash
+# Mechanics gate -- must PASS before any training or ladder command runs
+.venv/bin/python offline/check_mechanics_readiness.py
+
 # Start the local server (from the showdown repo, port 8000, no auth)
 cd /Users/edmundyu/code/projects/pokemon-showdown && node pokemon-showdown start --no-security
 

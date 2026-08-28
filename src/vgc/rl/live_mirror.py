@@ -1,0 +1,241 @@
+"""Build a mechanics-exact Showdown branch root from one live public observation.
+
+Public battles do not expose the server's private ``Battle`` object.  This module starts
+a fresh local Showdown battle from our known team and a fog-safe opponent hypothesis,
+then patches every currently observable mechanics field before any branch is evaluated.
+Unknown opponent Stat Points, nature, unrevealed bring choices, or rejected-sheet sets
+remain explicit estimates; they are information uncertainty, not hand-written battle
+rules.  All transitions after the patch are executed by Showdown itself.
+"""
+
+from __future__ import annotations
+
+import itertools
+from dataclasses import dataclass
+
+from poke_env.teambuilder.teambuilder import Teambuilder
+
+from vgc.damage import to_id
+from vgc.data import load_items, load_learnsets, load_moves, load_species
+from vgc.mechanics_state import snapshot_battle
+from vgc.models import PolicyConfig
+from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
+from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
+from vgc.sets import load_set_priors, normalize_item, opponent_move_ids, opponent_state
+from vgc.stats import STAT_IDS
+
+
+def _base_species_id(species_id: str) -> str:
+    data = load_species().get(species_id) or {}
+    return to_id(data.get("baseSpecies")) or species_id
+
+
+def _ordered_unique(values):
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _team_preview_order(packed_team: str, battle) -> str:
+    entries = Teambuilder.parse_packed_team(packed_team)
+    species = [to_id(entry.species or entry.nickname) for entry in entries]
+    active = [
+        _base_species_id(to_id(getattr(mon, "species", None)))
+        for mon in (getattr(battle, "active_pokemon", None) or ())
+        if mon is not None
+    ]
+    switches = [
+        _base_species_id(to_id(getattr(mon, "species", None)))
+        for slot in (getattr(battle, "available_switches", None) or ())
+        for mon in slot
+    ]
+    fainted = [
+        _base_species_id(to_id(getattr(mon, "species", None)))
+        for mon in (getattr(battle, "team", None) or {}).values()
+        if getattr(mon, "fainted", False)
+    ]
+    wanted = _ordered_unique([*active, *switches, *fainted])
+    ordered_indices: list[int] = []
+    for wanted_id in wanted:
+        match = next(
+            (
+                index
+                for index, species_id in enumerate(species)
+                if index not in ordered_indices and _base_species_id(species_id) == wanted_id
+            ),
+            None,
+        )
+        if match is not None:
+            ordered_indices.append(match)
+    ordered_indices.extend(index for index in range(len(entries)) if index not in ordered_indices)
+    # Champions VGC is bring-four. The first two digits become the current template
+    # leads and the next two are a concrete bench hypothesis.
+    return "team " + "".join(str(index + 1) for index in ordered_indices[:4])
+
+
+def _known_opponent_by_species(battle) -> dict[str, object]:
+    known: dict[str, object] = {}
+    for mon in (getattr(battle, "opponent_team", None) or {}).values():
+        species_id = _base_species_id(to_id(getattr(mon, "species", None)))
+        known[species_id] = mon
+    return known
+
+
+def _fallback_moves(species_id: str) -> list[str]:
+    learnset = list((load_learnsets().get(species_id) or {}).keys())
+    moves = load_moves()
+    ranked = sorted(
+        learnset,
+        key=lambda move_id: (
+            move_id != "protect",
+            -int((moves.get(move_id) or {}).get("basePower") or 0),
+            move_id,
+        ),
+    )
+    return ranked[:4]
+
+
+def _opponent_sets(battle, config: PolicyConfig) -> list[dict[str, object]]:
+    preview = list(getattr(battle, "teampreview_opponent_team", None) or ())
+    known = _known_opponent_by_species(battle)
+    active_ids = [
+        _base_species_id(to_id(getattr(mon, "species", None)))
+        for mon in (getattr(battle, "opponent_active_pokemon", None) or ())
+        if mon is not None
+    ]
+    preview_by_id = {
+        _base_species_id(to_id(getattr(mon, "species", None))): mon for mon in preview
+    }
+    ordered_ids = _ordered_unique([*active_ids, *preview_by_id])
+    priors = load_set_priors()
+    species_data = load_species()
+    legal_items = load_items()
+    used_items: set[str] = set()
+    result: list[dict[str, object]] = []
+    for species_id in ordered_ids:
+        mon = known.get(species_id) or preview_by_id[species_id]
+        state = opponent_state(mon)
+        moves = [
+            move_id
+            for move_id in opponent_move_ids(mon, priors=priors, config=config)
+            if move_id in (load_learnsets().get(species_id) or {})
+        ][:4]
+        if not moves:
+            moves = _fallback_moves(species_id)
+        item = normalize_item(getattr(mon, "item", None))
+        prior = ((priors.get("species") or {}).get(species_id) or {})
+        if not item:
+            ranked_items = sorted(
+                (prior.get("items") or {}).items(), key=lambda row: (-row[1], row[0])
+            )
+            item = next(
+                (
+                    item_id
+                    for item_id, _count in ranked_items
+                    if item_id in legal_items and item_id not in used_items
+                ),
+                None,
+            )
+        if item in used_items:
+            item = None
+        if item:
+            used_items.add(item)
+        ability = to_id(getattr(mon, "ability", None))
+        if not ability:
+            abilities = (species_data.get(species_id) or {}).get("abilities") or {}
+            ability = to_id(next(iter(abilities.values()), ""))
+        spread = state.sp_spread or dict.fromkeys(STAT_IDS, 0)
+        result.append(
+            {
+                "name": species_id,
+                "species": species_id,
+                "item": item or "",
+                "ability": ability,
+                "moves": moves,
+                "nature": state.nature or "serious",
+                "evs": {stat: int(spread.get(stat, 0) or 0) for stat in STAT_IDS},
+                "ivs": dict.fromkeys(STAT_IDS, 31),
+                "level": 50,
+            }
+        )
+    if len(result) != 6:
+        raise ValueError(
+            "an exact live mirror needs all six opponent preview species; "
+            f"the public observation currently has {len(result)}"
+        )
+    return result
+
+
+@dataclass
+class LiveExactMirror:
+    """Own one local Showdown worker and rebuild a current-state root per decision."""
+
+    own_packed_team: str
+    config: PolicyConfig
+    showdown_repo: object = DEFAULT_SHOWDOWN_REPO
+
+    def __post_init__(self) -> None:
+        self.worker = SimWorker(self.showdown_repo)
+        self._counter = itertools.count()
+
+    def hypotheses(self, battle) -> list[HiddenStateHypothesis]:
+        """Legal hidden-timer beliefs for this observation, most likely first."""
+
+        return enumerate_hidden_state_hypotheses(snapshot_battle(battle), self.config)
+
+    def build(
+        self, battle, hypothesis: HiddenStateHypothesis | None = None
+    ) -> DirectBattle:
+        """Rebuild the current public state, under one hidden-timer belief.
+
+        Omitting ``hypothesis`` leaves the worker on its own conservative default. Use
+        :meth:`hypotheses` and pass each belief in turn when the caller wants the
+        privately rolled sleep/confusion durations averaged rather than assumed.
+        """
+
+        battle_id = f"live-mirror-{next(self._counter)}"
+        opponent_sets = _opponent_sets(battle, self.config)
+        root = DirectBattle.start(
+            self.worker,
+            battle_id,
+            self.own_packed_team,
+            opponent_sets,
+            seed=[1, 2, 3, 4],
+        )
+        try:
+            root.step(
+                {
+                    "p1": _team_preview_order(self.own_packed_team, battle),
+                    # Opponent sets were ordered with the current active pair first.
+                    "p2": "team 1234",
+                }
+            )
+            root.patch_public_state(
+                snapshot_battle(battle),
+                perspective="p1",
+                observation_battle=battle,
+                hidden_hypothesis=hypothesis.payload if hypothesis is not None else None,
+            )
+            return root
+        except Exception:
+            root.close()
+            raise
+
+    def rebase(
+        self, root: DirectBattle, battle, hypothesis: HiddenStateHypothesis
+    ) -> DirectBattle:
+        """Re-patch an existing mirror root onto a different hidden-timer belief.
+
+        ``patchPublic`` rewrites the whole battle from the supplied snapshot, so one
+        Showdown battle can serve every belief branch instead of paying a fresh
+        team-preview start per hypothesis.
+        """
+
+        root.patch_public_state(
+            snapshot_battle(battle),
+            perspective="p1",
+            observation_battle=battle,
+            hidden_hypothesis=hypothesis.payload,
+        )
+        return root
+
+    def close(self) -> None:
+        self.worker.close()

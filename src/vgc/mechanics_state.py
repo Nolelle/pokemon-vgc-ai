@@ -48,9 +48,19 @@ class EffectSnapshot:
     id: str
     turns: int | None = None
     raw_value: str | int | float | bool | None = None
+    counter_kind: str = "unknown"
 
 
-def _effect_snapshots(values: Any) -> tuple[EffectSnapshot, ...]:
+_LAYERED_SIDE_CONDITIONS = frozenset(
+    {"spikes", "toxicspikes", "stealthrock", "stickyweb"}
+)
+
+
+def _effect_snapshots(
+    values: Any,
+    *,
+    counter_kind: str,
+) -> tuple[EffectSnapshot, ...]:
     if values is None:
         return ()
     entries: Iterable[tuple[Any, Any]]
@@ -69,6 +79,12 @@ def _effect_snapshots(values: Any) -> tuple[EffectSnapshot, ...]:
                 id=effect_id,
                 turns=_optional_int(raw),
                 raw_value=serializable_raw,
+                counter_kind=(
+                    "layers"
+                    if counter_kind == "side_start_turn"
+                    and effect_id in _LAYERED_SIDE_CONDITIONS
+                    else counter_kind
+                ),
             )
         )
     return tuple(sorted(result, key=lambda effect: effect.id))
@@ -175,9 +191,15 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
         base_species_id=base_species_id,
         name=getattr(pokemon, "name", None),
         level=_optional_int(getattr(pokemon, "level", None)),
-        gender=getattr(pokemon, "gender", None),
-        types=tuple(str(value) for value in (getattr(pokemon, "types", None) or ())),
-        base_types=tuple(str(value) for value in (getattr(pokemon, "base_types", None) or ())),
+        gender=(
+            _effect_id(getattr(pokemon, "gender", None)) or None
+            if getattr(pokemon, "gender", None) is not None
+            else None
+        ),
+        types=tuple(_effect_id(value) for value in (getattr(pokemon, "types", None) or ())),
+        base_types=tuple(
+            _effect_id(value) for value in (getattr(pokemon, "base_types", None) or ())
+        ),
         current_hp=_optional_int(getattr(pokemon, "current_hp", None)),
         max_hp=_optional_int(getattr(pokemon, "max_hp", None)),
         fainted=bool(getattr(pokemon, "fainted", False)),
@@ -202,7 +224,9 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
         boosts=tuple((boost, int(raw_boosts.get(boost, 0))) for boost in BOOST_IDS),
         status=normalize_status(getattr(pokemon, "status", None)),
         status_counter=int(getattr(pokemon, "status_counter", 0) or 0),
-        effects=_effect_snapshots(getattr(pokemon, "effects", None)),
+        effects=_effect_snapshots(
+            getattr(pokemon, "effects", None), counter_kind="elapsed_actions"
+        ),
         item_id=item,
         item_known=not opponent or item is not None,
         ability_id=ability,
@@ -281,7 +305,10 @@ def _side_snapshot(battle: Any, *, opponent: bool) -> SideMechanicsState:
         active_species=tuple(
             to_id(getattr(mon, "species", None)) if mon is not None else None for mon in active
         ),
-        side_conditions=_effect_snapshots(getattr(battle, f"{prefix}side_conditions", None)),
+        side_conditions=_effect_snapshots(
+            getattr(battle, f"{prefix}side_conditions", None),
+            counter_kind="side_start_turn",
+        ),
         force_switch=_bool_tuple(getattr(battle, f"{prefix}force_switch", False)),
         trapped=_bool_tuple(getattr(battle, f"{prefix}trapped", False)),
         maybe_trapped=_bool_tuple(getattr(battle, f"{prefix}maybe_trapped", False)),
@@ -363,8 +390,12 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         finished=bool(getattr(battle, "finished", False)),
         won=bool(getattr(battle, "won", False)),
         lost=bool(getattr(battle, "lost", False)),
-        fields=_effect_snapshots(getattr(battle, "fields", None)),
-        weather=_effect_snapshots(getattr(battle, "weather", None)),
+        fields=_effect_snapshots(
+            getattr(battle, "fields", None), counter_kind="start_turn"
+        ),
+        weather=_effect_snapshots(
+            getattr(battle, "weather", None), counter_kind="start_turn"
+        ),
         available_moves=tuple(
             tuple(to_id(getattr(move, "id", move)) for move in slot_moves)
             for slot_moves in raw_available_moves

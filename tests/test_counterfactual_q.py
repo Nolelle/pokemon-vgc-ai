@@ -43,6 +43,7 @@ from vgc.rl.encoding import (  # noqa: E402
     InformationFeatures,
 )
 from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
+from vgc.rl.mechanics_encoding import MechanicsFeatures  # noqa: E402
 
 
 def _action(move: str) -> CandidateFeatures:
@@ -76,6 +77,9 @@ def _sample(
         information=InformationFeatures(
             indices=np.zeros(INFORMATION_INDEX_DIM, dtype=np.int64),
             scalars=np.zeros(INFORMATION_SCALAR_DIM, dtype=np.float32),
+        ),
+        mechanics=MechanicsFeatures(
+            tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
         ),
     )
     return CounterfactualQSample(

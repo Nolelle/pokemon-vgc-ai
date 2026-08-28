@@ -26,6 +26,7 @@ from vgc.rl.encoding import (
     pad_candidate_features,
     pad_candidate_tactical_features,
 )
+from vgc.rl.mechanics_encoding import MechanicsFeatures, pad_mechanics_features
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class RolloutStep:
     # byte-for-byte unaffected.
     meta_scalars: np.ndarray | None = None
     information: InformationFeatures | None = None
+    mechanics: MechanicsFeatures | None = None
     reward: float = 0.0
     done: bool = False
     advantage: float = 0.0
@@ -168,6 +170,8 @@ def select_action(
     information_indices: torch.Tensor | None = None,
     information_scalars: torch.Tensor | None = None,
     tactical_features: torch.Tensor | None = None,
+    mechanics_tokens: torch.Tensor | None = None,
+    mechanics_mask: torch.Tensor | None = None,
     generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample (or greedily choose) only among the mask's legal candidates.
@@ -191,6 +195,8 @@ def select_action(
         information_indices=information_indices,
         information_scalars=information_scalars,
         tactical_features=tactical_features,
+        mechanics_tokens=mechanics_tokens,
+        mechanics_mask=mechanics_mask,
     )
     distribution = Categorical(logits=logits)
     if deterministic:
@@ -272,6 +278,17 @@ def _tensor_batch(steps: list[RolloutStep], device: str) -> dict[str, torch.Tens
             dtype=torch.float32,
             device=device,
         )
+    mechanics = [step.mechanics for step in steps if step.mechanics is not None]
+    if mechanics and len(mechanics) != len(steps):
+        raise ValueError("a rollout batch cannot mix complete and missing mechanics snapshots")
+    if mechanics:
+        mechanics_tokens, mechanics_mask = pad_mechanics_features(mechanics)
+        batch["mechanics_tokens"] = torch.as_tensor(
+            mechanics_tokens, dtype=torch.long, device=device
+        )
+        batch["mechanics_mask"] = torch.as_tensor(
+            mechanics_mask, dtype=torch.bool, device=device
+        )
     return batch
 
 
@@ -321,6 +338,8 @@ def ppo_update(
                     if getattr(model, "use_tactical_features", False)
                     else None
                 ),
+                mechanics_tokens=batch.get("mechanics_tokens"),
+                mechanics_mask=batch.get("mechanics_mask"),
             )
             distribution = Categorical(logits=logits)
             log_probs = distribution.log_prob(batch["actions"])

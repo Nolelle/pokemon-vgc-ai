@@ -102,6 +102,7 @@ def build_gate_report(
         "complete_context_checkpoint": bool(
             checkpoint_payload.get("use_information_features")
             and checkpoint_payload.get("use_tactical_features")
+            and checkpoint_payload.get("use_mechanics_features")
         ),
         "evaluation_linked_checkpoint": isinstance(
             checkpoint_payload.get("evaluation"), dict

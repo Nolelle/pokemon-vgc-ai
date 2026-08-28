@@ -9,6 +9,7 @@ torch = pytest.importorskip("torch")
 
 from vgc.evaluator import ScoredOrder  # noqa: E402
 from vgc.rl.distill import DistillationSample, build_score_metadata  # noqa: E402
+from vgc.rl.mechanics_encoding import MechanicsFeatures  # noqa: E402
 from vgc.rl.demonstrations import (  # noqa: E402
     load_demonstrations,
     save_demonstrations,
@@ -55,6 +56,10 @@ def test_sample_with_scores_round_trips_through_a_demonstrations_file(tmp_path):
         information=InformationFeatures(
             indices=np.zeros(84, dtype=np.int64), scalars=np.zeros(384, dtype=np.float32)
         ),
+        mechanics=MechanicsFeatures(
+            tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
+        ),
+        source_id="exact_showdown_teacher_v1",
         turn=2,
         legal_action_count=2,
         candidate_myopic_ranks=np.arange(2, dtype=np.int64),

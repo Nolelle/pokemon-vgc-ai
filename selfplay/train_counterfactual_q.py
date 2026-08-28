@@ -218,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         filtered_training_samples = 0
     backbone = load_snapshot(args.checkpoint, device=args.device)
+    if not backbone.use_mechanics_features:
+        raise SystemExit(
+            "counterfactual Q training requires a complete-mechanics backbone checkpoint"
+        )
     model = ActionResponseValueNet(backbone).to(args.device)
     config = QTrainingConfig(
         epochs=args.epochs,

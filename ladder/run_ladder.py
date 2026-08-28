@@ -787,6 +787,22 @@ def main() -> int:
         # Fail closed: public results are not interpretable while legal mechanics remain
         # partial/missing. Local smoke stays available for mechanics development.
         enforce_mechanics_gate_for_cli("public ladder play")
+        if args.policy_mode != "hybrid" or args.policy_checkpoint is None:
+            raise SystemExit(
+                "public ladder play requires --policy-mode hybrid and a mechanics-complete "
+                "--policy-checkpoint; legacy deterministic and Python-forecast policies "
+                "remain local diagnostics only"
+            )
+        import torch
+
+        checkpoint_payload = torch.load(
+            args.policy_checkpoint, map_location="cpu", weights_only=False
+        )
+        if checkpoint_payload.get("use_mechanics_features") is not True:
+            raise SystemExit(
+                "public ladder play requires a checkpoint trained with the complete "
+                "mechanics input"
+            )
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(

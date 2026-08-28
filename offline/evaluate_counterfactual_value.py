@@ -63,6 +63,7 @@ from vgc.rl.env import (  # noqa: E402
     choice_string,
 )
 from vgc.rl.opponents import load_snapshot  # noqa: E402
+from vgc.rl.mechanics_encoding import encode_mechanics_context  # noqa: E402
 from vgc.rl.search_guidance import checkpoint_sha256  # noqa: E402
 from vgc.rl.search_value import _batched_values  # noqa: E402
 from vgc.search import search_joint_orders  # noqa: E402
@@ -653,6 +654,7 @@ def _collect_root(
     history_scalars = encode_battle_history(root_memory)
     meta_scalars = encode_meta_context(root_view, config)
     information = encode_information_context(root_view, root_memory, config)
+    mechanics = encode_mechanics_context(root_view)
     own_features = {
         describe_order(scored.order): encode_candidates(
             [scored.order], battle=root_view, memory=root_memory, config=config
@@ -747,6 +749,7 @@ def _collect_root(
                         opponent_action=opponent_features[opponent_description],
                         meta_scalars=np.array(meta_scalars, copy=True),
                         information=information,
+                        mechanics=mechanics,
                     ),
                     mean_outcome=float(outcomes.mean()),
                     outcome_variance=float(outcomes.var()),

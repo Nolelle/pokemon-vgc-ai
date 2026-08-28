@@ -41,6 +41,7 @@ def test_gate_requires_rl_provenance_strength_generalization_and_zero_fallbacks(
     payload = {
         "use_information_features": True,
         "use_tactical_features": True,
+        "use_mechanics_features": True,
         "evaluation": {"win_rate": 0.56},
         "iteration": 5,
         "games_seen": 20_000,

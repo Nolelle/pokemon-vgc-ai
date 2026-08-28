@@ -251,8 +251,8 @@ async function handleClone(msg) {
 
 	return {
 		id: msg.id,
-		p1: [...source.transcript.p1],
-		p2: [...source.transcript.p2],
+		p1: msg.omitTranscript ? [] : [...source.transcript.p1],
+		p2: msg.omitTranscript ? [] : [...source.transcript.p2],
 		requestState: stream.battle.requestState,
 		ended: entry.ended,
 		winner: entry.winner,
@@ -276,6 +276,249 @@ function handleInspect(msg) {
 			p2: entry.transcript.p2.length,
 		},
 	};
+}
+
+function handleDump(msg) {
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	const battle = entry.stream.battle;
+	if (!battle) throw new Error(`battle ${msg.id} has not started`);
+	return { id: msg.id, state: JSON.parse(JSON.stringify(battle.toJSON())) };
+}
+
+function effectElapsed(snapshot, battle) {
+	if (!snapshot || !Number.isInteger(snapshot.turns)) return null;
+	if (snapshot.counter_kind === 'start_turn' || snapshot.counter_kind === 'side_start_turn') {
+		return Math.max(0, Number(battle.turn || 0) - snapshot.turns);
+	}
+	if (snapshot.counter_kind === 'elapsed_actions') return Math.max(0, snapshot.turns);
+	return null;
+}
+
+function effectState(id, target, snapshot, battle, hidden = {}) {
+	const state = { id, target };
+	const effect = battle.dex.conditions.get(id);
+	const elapsed = effectElapsed(snapshot, battle);
+	if (snapshot && snapshot.counter_kind === 'layers' && Number.isInteger(snapshot.turns)) {
+		state.layers = snapshot.turns;
+	} else if (Number.isInteger(effect.duration) && elapsed !== null) {
+		// poke-env exposes when an effect began (field/side/weather) or how many
+		// action opportunities elapsed (Pokemon volatile). Showdown stores the
+		// remaining duration, so copying the raw number would reverse its meaning.
+		state.duration = Math.max(1, effect.duration - elapsed);
+	}
+	if (id === 'confusion') {
+		// Confusion's 2-5-turn timer is sampled at start and is deliberately hidden.
+		// The Python belief builder supplies one legal remaining-time hypothesis.
+		state.time = Number.isInteger(hidden.confusionTime) ? hidden.confusionTime : 1;
+	}
+	if (snapshot && snapshot.raw_value !== null && snapshot.raw_value !== undefined) {
+		state.publicValue = snapshot.raw_value;
+	}
+	return state;
+}
+
+function findPokemon(side, snapshot, used) {
+	const ids = new Set([snapshot.species_id, snapshot.base_species_id].filter(Boolean));
+	for (const pokemon of side.pokemon) {
+		if (used.has(pokemon)) continue;
+		if (ids.has(pokemon.species.id) || ids.has(pokemon.baseSpecies.id)) {
+			used.add(pokemon);
+			return pokemon;
+		}
+	}
+	return null;
+}
+
+function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
+	const species = battle.dex.species.get(snapshot.species_id);
+	if (species.exists) {
+		pokemon.species = species;
+		pokemon.types = snapshot.types.length ? snapshot.types.map(
+			(type) => battle.dex.types.get(type).name
+		) : species.types.slice();
+	}
+	pokemon.hp = snapshot.current_hp === null ? pokemon.hp : snapshot.current_hp;
+	pokemon.maxhp = snapshot.max_hp === null ? pokemon.maxhp : snapshot.max_hp;
+	pokemon.fainted = Boolean(snapshot.fainted);
+	const publicStats = Object.fromEntries(snapshot.stats);
+	for (const stat of ['atk', 'def', 'spa', 'spd', 'spe']) {
+		if (Number.isInteger(publicStats[stat])) {
+			pokemon.storedStats[stat] = publicStats[stat];
+			pokemon.baseStoredStats[stat] = publicStats[stat];
+		}
+	}
+	pokemon.speed = pokemon.storedStats.spe;
+	pokemon.status = snapshot.status || '';
+	pokemon.statusState = { id: pokemon.status, target: pokemon };
+	if (pokemon.status === 'slp' || pokemon.status === 'frz') {
+		const defaultRemaining = Math.max(1, 3 - Number(snapshot.status_counter || 0));
+		const remaining = pokemon.status === 'slp' && Number.isInteger(hidden.sleepTime)
+			? hidden.sleepTime : defaultRemaining;
+		pokemon.statusState.startTime = 3;
+		pokemon.statusState.time = remaining;
+	}
+	pokemon.boosts = Object.fromEntries(snapshot.boosts);
+	pokemon.item = snapshot.item_id || '';
+	pokemon.itemState = { id: pokemon.item, target: pokemon };
+	pokemon.baseAbility = snapshot.base_ability_id || pokemon.baseAbility;
+	pokemon.ability = snapshot.temporary_ability_id || snapshot.ability_id || pokemon.ability;
+	pokemon.abilityState = { id: pokemon.ability, target: pokemon };
+	pokemon.volatiles = {};
+	for (const effect of snapshot.effects) {
+		pokemon.volatiles[effect.id] = effectState(effect.id, pokemon, effect, battle, hidden);
+		if (effect.id === 'substitute' && pokemon.volatiles[effect.id].hp === undefined) {
+			pokemon.volatiles[effect.id].hp = Math.max(1, Math.floor(pokemon.maxhp / 4));
+		}
+	}
+	if (snapshot.must_recharge && !pokemon.volatiles.mustrecharge) {
+		pokemon.volatiles.mustrecharge = { id: 'mustrecharge', target: pokemon };
+	}
+	if (snapshot.preparing && snapshot.preparing_move_id && !pokemon.volatiles.twoturnmove) {
+		pokemon.volatiles.twoturnmove = {
+			id: 'twoturnmove',
+			target: pokemon,
+			move: snapshot.preparing_move_id,
+		};
+	}
+	if (snapshot.protect_counter > 0) {
+		pokemon.volatiles.stall = {
+			id: 'stall', target: pokemon, counter: snapshot.protect_counter,
+		};
+	}
+	pokemon.trapped = false;
+	pokemon.maybeTrapped = false;
+	pokemon.transformed = Boolean(snapshot.transformed);
+	pokemon.activeTurns = snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1);
+	pokemon.weighthg = snapshot.weight === null ? pokemon.weighthg : Math.round(snapshot.weight * 10);
+	pokemon.lastMove = snapshot.last_move_id ? battle.dex.moves.get(snapshot.last_move_id) : null;
+	pokemon.lastMoveUsed = pokemon.lastMove;
+	if (snapshot.terastallized && snapshot.tera_type) {
+		pokemon.terastallized = battle.dex.types.get(snapshot.tera_type).name;
+	}
+	pokemon.moveSlots = pokemon.moveSlots.map((slot) => {
+		const publicMove = snapshot.moves.find((move) => move.id === slot.id);
+		if (!publicMove) return slot;
+		return {
+			...slot,
+			pp: publicMove.current_pp === null ? slot.pp : publicMove.current_pp,
+			maxpp: publicMove.max_pp === null ? slot.maxpp : publicMove.max_pp,
+			disabled: Boolean(publicMove.disabled),
+			disabledSource: publicMove.disabled_reason || '',
+		};
+	});
+}
+
+function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
+	const used = new Set();
+	const bySpecies = new Map();
+	for (const pokemonSnapshot of snapshot.pokemon) {
+		const pokemon = findPokemon(side, pokemonSnapshot, used);
+		// A player's parser can retain all six preview Pokemon while Showdown's chosen
+		// side contains only the brought four. Unmatched, inactive preview-only entries
+		// are knowledge, not members of this concrete bring hypothesis.
+		if (!pokemon) continue;
+		patchPokemon(
+			battle,
+			pokemon,
+			pokemonSnapshot,
+			hiddenBySpecies[pokemonSnapshot.species_id] || {},
+		);
+		bySpecies.set(pokemonSnapshot.species_id, pokemon);
+		if (pokemonSnapshot.base_species_id) {
+			bySpecies.set(pokemonSnapshot.base_species_id, pokemon);
+		}
+	}
+	for (const pokemon of side.pokemon) pokemon.isActive = false;
+	side.active = snapshot.active_species.map((speciesId) => {
+		if (!speciesId) return null;
+		const pokemon = bySpecies.get(speciesId) || side.pokemon.find(
+			(candidate) => candidate.species.id === speciesId || candidate.baseSpecies.id === speciesId
+		);
+		if (!pokemon) throw new Error(`cannot activate ${speciesId} on ${side.id}`);
+		pokemon.isActive = true;
+		return pokemon;
+	});
+	const activePokemon = side.active.filter(Boolean);
+	side.pokemon = [
+		...activePokemon,
+		...side.pokemon.filter((pokemon) => !activePokemon.includes(pokemon)),
+	];
+	for (let index = 0; index < side.pokemon.length; index++) {
+		side.pokemon[index].position = index;
+	}
+	side.slotConditions = side.active.map(() => ({}));
+	for (let index = 0; index < side.active.length; index++) {
+		if (!side.active[index]) continue;
+		side.active[index].switchFlag = snapshot.force_switch[index] ? true : false;
+		side.active[index].forceSwitchFlag = snapshot.force_switch[index] ? true : false;
+		side.active[index].trapped = Boolean(snapshot.trapped[index]);
+		side.active[index].maybeTrapped = Boolean(snapshot.maybe_trapped[index]);
+		if (snapshot.can_mega_evolve[index] === false) {
+			side.active[index].canMegaEvo = null;
+		}
+	}
+	side.pokemonLeft = side.pokemon.filter((pokemon) => pokemon.hp > 0 && !pokemon.fainted).length;
+	side.sideConditions = {};
+	for (const effect of snapshot.side_conditions) {
+		side.sideConditions[effect.id] = effectState(effect.id, side, effect, battle);
+	}
+	side.megaEvoUsed = Boolean(snapshot.used_mega_evolution);
+	if (snapshot.used_mega_evolution) {
+		for (const pokemon of side.pokemon) pokemon.canMegaEvo = null;
+	}
+	side.zMoveUsed = Boolean(snapshot.used_z_move);
+	side.dynamaxUsed = Boolean(snapshot.used_dynamax);
+	side.terastallizeUsed = Boolean(snapshot.used_tera);
+}
+
+async function handlePatchPublic(msg) {
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	const battle = entry.stream.battle;
+	if (!battle) throw new Error(`battle ${msg.id} has not started`);
+	const state = msg.state;
+	if (!state || !state.our_side || !state.opponent_side) {
+		throw new Error('patchPublic requires a complete public mechanics state');
+	}
+	battle.turn = Number(state.turn || 0);
+	const perspective = msg.perspective || 'p1';
+	const ownIndex = perspective === 'p1' ? 0 : 1;
+	const hidden = msg.hidden || {};
+	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {});
+	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {});
+	battle.field.weather = state.weather.length ? state.weather[0].id : '';
+	battle.field.weatherState = effectState(
+		battle.field.weather,
+		battle.field,
+		state.weather.length ? state.weather[0] : null,
+		battle,
+	);
+	battle.field.terrain = '';
+	battle.field.terrainState = { id: '', target: battle.field };
+	battle.field.pseudoWeather = {};
+	for (const effect of state.fields) {
+		if (effect.id.endsWith('terrain')) {
+			battle.field.terrain = effect.id;
+			battle.field.terrainState = effectState(effect.id, battle.field, effect, battle);
+		} else {
+			battle.field.pseudoWeather[effect.id] = effectState(
+				effect.id, battle.field, effect, battle
+			);
+		}
+	}
+	battle.midTurn = false;
+	battle.queue = [];
+	battle.faintQueue = [];
+	battle.clearRequest();
+	const forcedSwitch = [state.our_side, state.opponent_side].some(
+		(side) => side.force_switch.some(Boolean)
+	);
+	battle.makeRequest(forcedSwitch ? 'switch' : 'move');
+	for (const side of battle.sides) side.emitRequest();
+	battle.sentRequests = true;
+	for (let index = 0; index < 3; index++) await tick();
+	return respond(msg, entry);
 }
 
 async function handleChoose(msg) {
@@ -365,6 +608,10 @@ async function dispatch(msg) {
 			return handleChoose(msg);
 		case "inspect":
 			return handleInspect(msg);
+		case "dump":
+			return handleDump(msg);
+		case "patchPublic":
+			return handlePatchPublic(msg);
 		case "close":
 			return handleClose(msg);
 		case "batch":
@@ -399,7 +646,7 @@ rl.on("line", (line) => {
 			if (msg.rid !== undefined) result.rid = msg.rid;
 			process.stdout.write(`${JSON.stringify(result)}\n`);
 		} catch (err) {
-			const payload = { id: msg.id, error: err.message };
+			const payload = { id: msg.id, error: err.stack || err.message };
 			if (msg.rid !== undefined) payload.rid = msg.rid;
 			process.stdout.write(`${JSON.stringify(payload)}\n`);
 		}

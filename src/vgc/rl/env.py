@@ -47,6 +47,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import copy
+from dataclasses import asdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -260,8 +262,8 @@ class DirectBattle:
         cls,
         worker: SimWorker,
         battle_id: str,
-        p1_team: str,
-        p2_team: str,
+        p1_team: Any,
+        p2_team: Any,
         *,
         battle_format: str = DEFAULT_FORMAT,
         seed: Sequence[int] | None = None,
@@ -297,8 +299,8 @@ class DirectBattle:
         cls,
         worker: SimWorker,
         battle_id: str,
-        p1_team: str,
-        p2_team: str,
+        p1_team: Any,
+        p2_team: Any,
         *,
         usernames: dict[str, str] | None = None,
         own_team_spreads: bool = False,
@@ -317,7 +319,9 @@ class DirectBattle:
         )
         teams = {"p1": p1_team, "p2": p2_team}
         for side in SIDES:
-            battle._teambuilder[side] = index_from_packed(teams[side])
+            battle._teambuilder[side] = (
+                index_from_packed(teams[side]) if isinstance(teams[side], str) else {}
+            )
         return battle
 
     def sides_to_move(self) -> list[str]:
@@ -369,10 +373,55 @@ class DirectBattle:
             "id": battle_id,
             "source": self.battle_id,
         }
+        clone_bases = getattr(self, "_clone_battle_bases", None)
+        if clone_bases is not None:
+            clone.battles = {
+                side: copy.deepcopy(clone_bases[side]) for side in SIDES
+            }
+            payload["omitTranscript"] = True
         if seed is not None:
             payload["seed"] = list(seed)
         clone._apply(self.worker.request(payload))
+        if clone_bases is not None:
+            clone._waiting = dict(self._waiting)
         return clone
+
+    def patch_public_state(
+        self,
+        state,
+        *,
+        perspective: str = "p1",
+        observation_battle: DoubleBattle | None = None,
+        hidden_hypothesis: dict[str, object] | None = None,
+    ) -> StepResult:
+        """Rebase a fresh simulator template onto one public live observation.
+
+        The Node worker mutates only mechanics fields in its private Showdown battle.
+        When ``observation_battle`` is supplied, exact branches begin their player-side
+        parser from a deep copy of that already-fogged live view; omniscient simulator
+        data is never copied into the model observation.
+        """
+
+        if perspective not in SIDES:
+            raise ValueError(f"unknown perspective {perspective!r}")
+        response = self.worker.request(
+            {
+                "cmd": "patchPublic",
+                "id": self.battle_id,
+                "perspective": perspective,
+                "state": asdict(state),
+                "hidden": hidden_hypothesis or {},
+            }
+        )
+        result = self._apply(response)
+        bases = {side: self.battles[side] for side in SIDES}
+        if observation_battle is not None:
+            bases[perspective] = observation_battle
+            decision_battles = dict(getattr(self, "_decision_battles", {}))
+            decision_battles[perspective] = observation_battle
+            self._decision_battles = decision_battles
+        self._clone_battle_bases = bases
+        return result
 
     def inspect(self) -> dict[str, Any]:
         """Return worker-side reproducibility facts without exposing them to a policy."""
@@ -437,8 +486,8 @@ class DirectBattle:
 
     def start_payload(
         self,
-        p1_team: str,
-        p2_team: str,
+        p1_team: Any,
+        p2_team: Any,
         *,
         battle_format: str = DEFAULT_FORMAT,
         seed: Sequence[int] | None = None,

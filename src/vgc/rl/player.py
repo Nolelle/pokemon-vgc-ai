@@ -23,6 +23,7 @@ from vgc.rl.encoding import (
     pad_candidate_tactical_features,
 )
 from vgc.rl.distill import teacher_action_index
+from vgc.rl.mechanics_encoding import encode_mechanics_context
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, RolloutStep, select_action
 from vgc.rl.rewards import board_potential
 
@@ -98,6 +99,21 @@ class PpoVgcPlayer(VgcPlayer):
             if information is not None
             else None
         )
+        mechanics = (
+            encode_mechanics_context(battle) if self.model.use_mechanics_features else None
+        )
+        mechanics_tokens = (
+            torch.as_tensor(
+                mechanics.tokens[None, :], dtype=torch.long, device=self.device
+            )
+            if mechanics is not None
+            else None
+        )
+        mechanics_mask = (
+            torch.ones((1, len(mechanics.tokens)), dtype=torch.bool, device=self.device)
+            if mechanics is not None
+            else None
+        )
         self.model.eval()
         with torch.no_grad():
             actions, log_probs, values = select_action(
@@ -119,6 +135,8 @@ class PpoVgcPlayer(VgcPlayer):
                     if self.model.use_tactical_features
                     else None
                 ),
+                mechanics_tokens=mechanics_tokens,
+                mechanics_mask=mechanics_mask,
                 generator=self.policy_generator,
             )
         action_index = int(actions.item())
@@ -148,6 +166,7 @@ class PpoVgcPlayer(VgcPlayer):
                         np.array(meta_scalars, copy=True) if meta_scalars is not None else None
                     ),
                     information=information,
+                    mechanics=mechanics,
                     state_potential=state_potential,
                 )
             )

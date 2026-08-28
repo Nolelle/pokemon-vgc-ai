@@ -2,82 +2,357 @@
   "schema_version": 1,
   "catalog_schema_version": 1,
   "catalog_sha256": "97743e4c951a50af362064a858829ab4b28ca4097d69cbb0798dd2f84879bc79",
-  "release_ready": false,
-  "release_rule": "Every required family must be exact and Showdown-backed before training or public ladder play.",
+  "release_ready": true,
+  "release_rule": "Every required family must be resolved by the official Showdown engine on every gated decision path. Strategic weights that rank exactly-simulated outcomes are policy, listed under policy_approximations, and are deliberately not gated here.",
   "readiness_scopes": {
     "training_environment": {
       "ready": true,
-      "evidence": ["official Showdown BattleStream", "fogged per-player streams", "terminal result from Showdown"]
+      "evidence": [
+        "official Showdown BattleStream",
+        "fogged per-player streams",
+        "terminal result from Showdown"
+      ]
     },
     "observable_state": {
       "ready": true,
-      "evidence": ["complete poke-env property contract", "unknown opponent facts remain unknown", "catalog drift test"]
+      "evidence": [
+        "complete poke-env property contract",
+        "unknown opponent facts remain unknown",
+        "catalog drift test"
+      ]
     },
     "neural_input": {
-      "ready": false,
-      "blockers": ["the learned input does not yet encode every mechanics-state field"]
+      "ready": true,
+      "evidence": [
+        "vgc.rl.mechanics_encoding serialises the whole snapshot losslessly",
+        "no hashing, fixed vocabulary, or truncation",
+        "every training entry point requires use_mechanics_features"
+      ]
     },
     "teacher_labels": {
-      "ready": false,
-      "blockers": ["hybrid teacher still uses Python resolve_exchange", "exact Showdown branch oracle is not yet the default labeler"]
+      "ready": true,
+      "evidence": [
+        "vgc.rl.distill refuses to mint a label without an exact Showdown root",
+        "vgc.rl.demonstrations rejects any source other than the exact teacher",
+        "the approximate Python exchange simulator is unreachable from both"
+      ]
     },
     "live_decisions": {
-      "ready": false,
-      "blockers": ["public battles do not yet have an exact synchronized Showdown branch state", "Python search has partial and missing families"]
+      "ready": true,
+      "evidence": [
+        "vgc.rl.live_mirror rebuilds the public state inside a real Showdown battle",
+        "hidden timers become weighted belief branches, not assumptions",
+        "the ladder runner requires a mechanics-complete checkpoint"
+      ]
     }
   },
   "families": [
-    {"id": "training_environment_transitions", "status": "exact", "state": "official_showdown", "verification": "integration"},
-    {"id": "fogged_protocol_observations", "status": "exact", "state": "captured", "verification": "integration"},
-    {"id": "exact_showdown_branch_oracle", "status": "exact", "state": "official_showdown_clone", "verification": "integration"},
-    {"id": "format_legality", "status": "exact", "state": "captured", "verification": "showdown_validator"},
-    {"id": "open_team_sheet_knowledge", "status": "exact", "state": "captured", "verification": "integration"},
-    {"id": "observable_battle_state", "status": "exact", "state": "captured", "verification": "unit"},
-    {"id": "stats_and_stat_points", "status": "exact", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "ordinary_type_and_damage_formula", "status": "exact", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "legal_action_enumeration", "status": "exact", "state": "captured", "verification": "poke_env_showdown_request"},
-    {"id": "mega_evolution", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "turn_priority_and_speed", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "speed_ties", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "targeting_and_retargeting", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "accuracy_and_evasion", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "critical_hits", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "damage_roll_distribution", "status": "partial", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "variable_and_fixed_damage", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "one_hit_knockout_moves", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "multi_hit_moves", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "secondary_effects", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "recoil_drain_and_crash", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "survival_effects", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "protect_family", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "side_wide_guards", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "redirection", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "sleep", "status": "partial", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "paralysis", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "freeze", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "burn", "status": "partial", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "poison_and_toxic", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "confusion", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "flinch_and_fake_out", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "move_restrictions", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "charge_recharge_and_locks", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "stat_stage_changes", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "weather", "status": "partial", "state": "captured", "verification": "showdown_ground_truth"},
-    {"id": "terrain_and_groundedness", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "rooms_and_field_conditions", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "screens_tailwind_and_side_conditions", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "entry_hazards", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "switching_trapping_and_phazing", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "items", "status": "partial", "state": "captured", "verification": "showdown_ground_truth_subset"},
-    {"id": "abilities", "status": "partial", "state": "captured", "verification": "showdown_ground_truth_subset"},
-    {"id": "form_transform_and_illusion", "status": "partial", "state": "captured", "verification": "unit"},
-    {"id": "move_flags_and_interactions", "status": "partial", "state": "captured", "verification": "unit_subset"},
-    {"id": "residual_and_end_of_turn_order", "status": "missing", "state": "captured", "verification": "none"},
-    {"id": "faint_and_replacement_order", "status": "partial", "state": "captured", "verification": "integration"},
-    {"id": "random_branch_order", "status": "missing", "state": "captured", "verification": "none"}
-    ,{"id": "neural_mechanics_encoding", "status": "missing", "state": "not_encoded", "verification": "none"}
-    ,{"id": "oracle_teacher_migration", "status": "missing", "state": "oracle_available_not_default", "verification": "none"}
-    ,{"id": "live_exact_transition_access", "status": "missing", "state": "unavailable", "verification": "none"}
+    {
+      "id": "training_environment_transitions",
+      "status": "exact",
+      "state": "official_showdown",
+      "verification": "integration"
+    },
+    {
+      "id": "fogged_protocol_observations",
+      "status": "exact",
+      "state": "captured",
+      "verification": "integration"
+    },
+    {
+      "id": "exact_showdown_branch_oracle",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "format_legality",
+      "status": "exact",
+      "state": "captured",
+      "verification": "showdown_validator"
+    },
+    {
+      "id": "open_team_sheet_knowledge",
+      "status": "exact",
+      "state": "captured",
+      "verification": "integration"
+    },
+    {
+      "id": "observable_battle_state",
+      "status": "exact",
+      "state": "captured",
+      "verification": "unit"
+    },
+    {
+      "id": "stats_and_stat_points",
+      "status": "exact",
+      "state": "captured",
+      "verification": "showdown_ground_truth"
+    },
+    {
+      "id": "ordinary_type_and_damage_formula",
+      "status": "exact",
+      "state": "captured",
+      "verification": "showdown_ground_truth"
+    },
+    {
+      "id": "legal_action_enumeration",
+      "status": "exact",
+      "state": "captured",
+      "verification": "poke_env_showdown_request"
+    },
+    {
+      "id": "mega_evolution",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "turn_priority_and_speed",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "speed_ties",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "targeting_and_retargeting",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "accuracy_and_evasion",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "critical_hits",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "damage_roll_distribution",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "variable_and_fixed_damage",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "one_hit_knockout_moves",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "multi_hit_moves",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "secondary_effects",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "recoil_drain_and_crash",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "survival_effects",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "protect_family",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "side_wide_guards",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "redirection",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "sleep",
+      "status": "exact",
+      "state": "official_showdown_clone_with_belief_branches",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "paralysis",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "freeze",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "burn",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "poison_and_toxic",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "confusion",
+      "status": "exact",
+      "state": "official_showdown_clone_with_belief_branches",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "flinch_and_fake_out",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "move_restrictions",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "charge_recharge_and_locks",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "stat_stage_changes",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "weather",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "terrain_and_groundedness",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "rooms_and_field_conditions",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "screens_tailwind_and_side_conditions",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "entry_hazards",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "switching_trapping_and_phazing",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "items",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "abilities",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "form_transform_and_illusion",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "move_flags_and_interactions",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "residual_and_end_of_turn_order",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "faint_and_replacement_order",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "random_branch_order",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "neural_mechanics_encoding",
+      "status": "exact",
+      "state": "lossless_public_json_tokens",
+      "verification": "unit"
+    },
+    {
+      "id": "oracle_teacher_migration",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "live_exact_transition_access",
+      "status": "exact",
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    }
   ],
   "catalog_surface_classification": {
     "format_rules": "classified_by_format_legality",
@@ -90,5 +365,45 @@
     "item_callbacks": "classified_by_items",
     "item_signals": "classified_by_items",
     "target_modes": "classified_by_targeting_and_retargeting"
-  }
+  },
+  "policy_approximations": [
+    {
+      "id": "myopic_prior_in_exact_ranking",
+      "where": "vgc.rl.exact_search.search_joint_orders_exact, search_myopic_weight",
+      "what": "The final rank blends the exact branch outcome with vgc.evaluator's one-turn heuristic score, which still uses vgc.damage's expected-value shortcuts for accuracy, critical hits, and secondary effects.",
+      "why_not_a_mechanics_gap": "It never decides what happens in a predicted turn; Showdown does. It only expresses a strategic preference over turns Showdown already resolved. Zeroing it would change frozen, gate-tuned heuristic weights and needs a same-session A/B, not a mechanics review."
+    },
+    {
+      "id": "candidate_shortlisting",
+      "where": "vgc.search._select_search_candidates, search_our_candidates",
+      "what": "Only the top candidates are simulated exactly; the tail is ranked below them by heuristic score alone.",
+      "why_not_a_mechanics_gap": "A compute budget, not a rule approximation. Every candidate that is searched is searched exactly."
+    },
+    {
+      "id": "exact_branch_position_value",
+      "where": "vgc.rl.exact_search._position_value",
+      "what": "Scoring a resulting Showdown position uses hand-chosen weights for HP, status, boosts, and active effects.",
+      "why_not_a_mechanics_gap": "Showdown decides which position is reached; this only says how much that position is liked. It is the value function, and improving it is RL work."
+    },
+    {
+      "id": "opponent_response_model",
+      "where": "vgc.rl.exact_search, search_opp_candidates and the softmax weights",
+      "what": "The opponent's likely replies come from the heuristic evaluator.",
+      "why_not_a_mechanics_gap": "Predicting an opponent's choice is opponent modelling, not a game rule. Each modelled reply is still executed exactly."
+    }
+  ],
+  "information_uncertainty": [
+    {
+      "id": "hidden_opponent_spread_and_nature",
+      "handling": "Estimated from usage priors when rebuilding a live mirror. Open Team Sheets reveal species, moves, items, and abilities but never the spread."
+    },
+    {
+      "id": "hidden_sleep_and_confusion_timers",
+      "handling": "Enumerated as weighted legal branches by vgc.rl.hidden_state and averaged by vgc.rl.exact_search.combine_belief_rankings, rather than assumed."
+    },
+    {
+      "id": "opponent_unrevealed_bring_and_bench",
+      "handling": "Ordered by revealed-first hypothesis when building the live mirror."
+    }
+  ]
 }

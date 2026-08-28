@@ -50,6 +50,7 @@ from vgc.rl.encoding import (  # noqa: E402
     encode_meta_context,
     pad_candidate_features,
 )
+from vgc.rl import distill  # noqa: E402
 from vgc.rl.distill import (  # noqa: E402
     DistillationConfig,
     DistillationSample,
@@ -336,7 +337,7 @@ def test_teacher_anchor_increases_probability_of_search_action() -> None:
     assert metrics["teacher_anchor_loss"] > 0.0
 
 
-def test_teacher_action_index_matches_search_choice_to_network_candidates(monkeypatch) -> None:
+def test_teacher_action_index_refuses_approximate_non_showdown_teacher(monkeypatch) -> None:
     protect = Move("protect", gen=9)
     attack = Move("dragonclaw", gen=9)
     orders = [
@@ -344,12 +345,16 @@ def test_teacher_action_index_matches_search_choice_to_network_candidates(monkey
         _joint(_single(attack, move_target=1), _single(protect)),
     ]
     monkeypatch.setattr(
-        "vgc.rl.distill.search_joint_orders",
-        lambda _battle, _config: [SimpleNamespace(order=orders[1])],
+        "vgc.rl.distill.search_joint_orders_exact",
+        lambda *_args, **_kwargs: [SimpleNamespace(order=orders[1])],
     )
     config = SimpleNamespace(use_two_ply_search=True, use_heuristic_evaluator=True)
 
-    assert teacher_action_index(SimpleNamespace(), config, orders) == 1
+    # No exact Showdown root is attached, so even a working exact searcher must not be
+    # reached: a label without a real simulator behind it is never minted.
+    assert teacher_action_index(SimpleNamespace(), config, orders) is None
+    # The approximate Python teacher is not merely unused, it is no longer reachable.
+    assert not hasattr(distill, "search_joint_orders")
 
 
 def test_encode_battle_history_captures_longitudinal_signals() -> None:

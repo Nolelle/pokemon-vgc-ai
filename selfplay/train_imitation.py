@@ -206,6 +206,7 @@ def save_model_checkpoint(
             "architecture": RL_ARCHITECTURE_VERSION,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
+            "use_mechanics_features": model.use_mechanics_features,
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
             "value_output_transform": model.value_output_transform,
@@ -303,6 +304,7 @@ def main(argv: list[str] | None = None) -> None:
         model = CandidatePolicyValueNet(
             use_meta_features=True,
             use_information_features=True,
+            use_mechanics_features=True,
             use_tactical_features=True,
             head_dropout=0.1,
             head_width=args.head_width,

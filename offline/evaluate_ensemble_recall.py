@@ -35,13 +35,16 @@ class LogitAveragedEnsemble:
         flags = {
             ("use_meta_features", m.use_meta_features) for m in members
         } | {("use_information_features", m.use_information_features) for m in members} | {
+            ("use_mechanics_features", m.use_mechanics_features) for m in members
+        } | {
             ("use_tactical_features", m.use_tactical_features) for m in members
         }
-        if len(flags) != 3:
+        if len(flags) != 4:
             raise ValueError("ensemble members must agree on feature flags")
         self.members = torch.nn.ModuleList(members)
         self.use_meta_features = members[0].use_meta_features
         self.use_information_features = members[0].use_information_features
+        self.use_mechanics_features = members[0].use_mechanics_features
         self.use_tactical_features = members[0].use_tactical_features
         self.eval()
 

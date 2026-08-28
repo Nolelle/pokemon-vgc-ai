@@ -132,6 +132,7 @@ def save_checkpoint(
             "architecture": RL_ARCHITECTURE_VERSION,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
+            "use_mechanics_features": model.use_mechanics_features,
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
         },
@@ -158,6 +159,12 @@ def load_checkpoint(
         raise ValueError(
             f"checkpoint use_information_features={checkpoint_information} does not match "
             f"model use_information_features={model.use_information_features}"
+        )
+    checkpoint_mechanics = bool(checkpoint.get("use_mechanics_features", False))
+    if checkpoint_mechanics != model.use_mechanics_features:
+        raise ValueError(
+            f"checkpoint use_mechanics_features={checkpoint_mechanics} does not match "
+            f"model use_mechanics_features={model.use_mechanics_features}"
         )
     checkpoint_tactical = bool(checkpoint.get("use_tactical_features", False))
     if checkpoint_tactical != model.use_tactical_features:
@@ -270,6 +277,7 @@ def _save_iteration_snapshot(
             "games_seen": games_seen,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
+            "use_mechanics_features": model.use_mechanics_features,
             "use_tactical_features": model.use_tactical_features,
             "head_dropout": model.head_dropout_p,
         },
@@ -495,6 +503,7 @@ def main(argv: list[str] | None = None) -> None:
     model = CandidatePolicyValueNet(
         use_meta_features=False,
         use_information_features=args.information_features,
+        use_mechanics_features=True,
         use_tactical_features=args.tactical_features,
     ).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -519,6 +528,11 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(
                 "--init-from information-feature setting does not match; pass "
                 "--information-features only for a checkpoint trained with that input"
+            )
+        checkpoint_mechanics = bool(checkpoint.get("use_mechanics_features", False))
+        if checkpoint_mechanics != model.use_mechanics_features:
+            raise SystemExit(
+                "--init-from complete-mechanics setting does not match this training run"
             )
         checkpoint_tactical = bool(checkpoint.get("use_tactical_features", False))
         if checkpoint_tactical != model.use_tactical_features:

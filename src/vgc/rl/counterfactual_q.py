@@ -35,8 +35,9 @@ from vgc.rl.encoding import (
     pad_candidate_tactical_features,
 )
 from vgc.rl.model import ACTION_HIDDEN_DIM, CandidatePolicyValueNet
+from vgc.rl.mechanics_encoding import MechanicsFeatures, pad_mechanics_features
 
-COUNTERFACTUAL_Q_FORMAT = "vgc-counterfactual-q-v1"
+COUNTERFACTUAL_Q_FORMAT = "vgc-counterfactual-q-v2-exact-mechanics"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class CounterfactualQInput:
     opponent_action: CandidateFeatures
     meta_scalars: np.ndarray
     information: InformationFeatures
+    mechanics: MechanicsFeatures
 
 
 @dataclass(frozen=True)
@@ -230,6 +232,8 @@ class ActionResponseValueNet(nn.Module):
         information_scalars: torch.Tensor | None = None,
         own_tactical_features: torch.Tensor | None = None,
         opponent_tactical_features: torch.Tensor | None = None,
+        mechanics_tokens: torch.Tensor | None = None,
+        mechanics_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if pair_mask.ndim != 2 or not torch.all(pair_mask.any(dim=1)):
             raise ValueError("each batch row must contain at least one action pair")
@@ -240,6 +244,8 @@ class ActionResponseValueNet(nn.Module):
             meta_scalars=meta_scalars,
             information_indices=information_indices,
             information_scalars=information_scalars,
+            mechanics_tokens=mechanics_tokens,
+            mechanics_mask=mechanics_mask,
         )
         own_hidden = self.backbone.encode_actions(
             own_move_indices,
@@ -281,6 +287,9 @@ def _tensor_batch(
     own_moves, own_targets, own_species, own_flags, own_mask = pad_candidate_features(own)
     opp_moves, opp_targets, opp_species, opp_flags, opp_mask = pad_candidate_features(opponent)
     pair_mask = own_mask & opp_mask
+    mechanics_tokens, mechanics_mask = pad_mechanics_features(
+        [sample.encoded.mechanics for sample in samples]
+    )
     inputs = {
         "state_indices": torch.as_tensor(
             np.stack([sample.encoded.state_indices for sample in samples]),
@@ -329,6 +338,12 @@ def _tensor_batch(
         "opponent_tactical_features": torch.as_tensor(
             pad_candidate_tactical_features(opponent), dtype=torch.float32, device=device
         ),
+        "mechanics_tokens": torch.as_tensor(
+            mechanics_tokens, dtype=torch.long, device=device
+        ),
+        "mechanics_mask": torch.as_tensor(
+            mechanics_mask, dtype=torch.bool, device=device
+        ),
     }
     targets = torch.as_tensor(
         [sample.mean_outcome for sample in samples], dtype=torch.float32, device=device
@@ -356,6 +371,9 @@ def predict_q(
             if not model.backbone.use_tactical_features:
                 inputs["own_tactical_features"] = None
                 inputs["opponent_tactical_features"] = None
+            if not model.backbone.use_mechanics_features:
+                inputs["mechanics_tokens"] = None
+                inputs["mechanics_mask"] = None
             predictions.extend(model(**inputs)[:, 0].cpu().tolist())
     return np.asarray(predictions, dtype=np.float64)
 
