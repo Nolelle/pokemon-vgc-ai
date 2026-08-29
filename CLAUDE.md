@@ -304,8 +304,24 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   reconstruction, so reading it there is fine. This cannot be fixed by swapping the
   enumeration source alone: a believed-but-untrue opponent move is illegal in a
   true-rooted battle and `DirectBattle.step` raises `InvalidChoice`. The clean fix is to
-  build the training search root through `live_mirror` too. **Not yet done** -- measure
-  how much the teacher's advice actually depends on the leaked information first.
+  build the training search root through `live_mirror` too.
+  **Measured, on 2026-08-28** (`offline/measure_opponent_information_leak.py`, 34 real
+  checkpoints across `data/selfplay/archetype_pool_150`, identical reduced search width on
+  both roots): the search's top pick agrees only 28/34 = 82.4% of the time between the
+  true root and the reconstruction (Wilson low 66.5%) -- roughly 1 in 6 disagreed, and the
+  disagreements are substantive (Protect+switch vs attack, a Weather Ball/Hurricane
+  speed-order flip), not tie-break noise. This is frequent enough that the leak is a real
+  problem, not an academic one -- teacher labels are advising moves the deployed agent
+  cannot justify from what it actually sees roughly one turn in six.
+  **The live_mirror path also costs ~9.6x the search time** at the same reduced width
+  (0.10s peek vs 0.99s guess median); at full production search width a single probe
+  showed 2.0s vs 28.0s. Rerouting training through `live_mirror` is now justified by the
+  disagreement rate, but the ~10x per-decision cost needs budgeting (narrower search
+  width during training collection, most likely) before it is affordable at scale.
+  Results: `runs/eval/opponent_information_leak.json`. A handful of checkpoints hit a
+  transient `patch_public_state` race (`Choices are done immediately after a request`)
+  and were skipped rather than counted -- a latent bug in the patch path, not yet
+  diagnosed, worth a follow-up before relying on `live_mirror` at high volume.
 - **The gate promises exact transitions, not good judgement.** The final rank still blends
   `vgc.evaluator`'s myopic heuristic score (`search_myopic_weight`, deliberately left at
   1.0 -- zeroing it changes frozen gate-tuned weights and needs a same-session A/B), the
