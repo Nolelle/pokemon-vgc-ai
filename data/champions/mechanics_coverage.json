@@ -148,19 +148,23 @@
     },
     {
       "id": "turn_priority_and_speed",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_faster_pokemon_acts_before_a_slower_one",
+        "tests/test_mechanics_families_order_rng.py::test_plus_one_priority_from_a_slower_pokemon_beats_a_faster_normal_move",
+        "tests/test_mechanics_families_order_rng.py::test_trick_room_reverses_speed_order"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "speed_ties",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_speed_ties_realize_both_orderings"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "targeting_and_retargeting",
@@ -172,27 +176,31 @@
     },
     {
       "id": "accuracy_and_evasion",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_full_accuracy_never_misses_low_accuracy_does_both_always_hit_ignores_evasion"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "critical_hits",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_normal_high_crit_ratio_sometimes_crits_above_non_crit_max",
+        "tests/test_mechanics_families_order_rng.py::test_will_crit_move_always_crits_and_battle_armor_never_does"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "damage_roll_distribution",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_damage_rolls_span_the_calculator_range_and_never_leave_it"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "variable_and_fixed_damage",
@@ -286,19 +294,23 @@
     },
     {
       "id": "paralysis",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_paralysis_halves_speed_in_the_ordering",
+        "tests/test_mechanics_families_order_rng.py::test_champions_full_paralysis_is_one_in_eight_not_one_in_four"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "freeze",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_champions_freeze_thaws_by_the_three_step_limit_and_sometimes_earlier",
+        "tests/test_mechanics_families_order_rng.py::test_fire_hit_and_defrost_flag_move_thaw_a_frozen_pokemon"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "burn",
@@ -319,11 +331,13 @@
     },
     {
       "id": "confusion",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_confused_pokemon_sometimes_hits_itself_and_sometimes_acts",
+        "tests/test_mechanics_families_order_rng.py::test_own_tempo_prevents_confusion"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "flinch_and_fake_out",
@@ -480,11 +494,12 @@
     },
     {
       "id": "random_branch_order",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_identical_future_seeds_are_byte_identical_and_different_seeds_can_differ"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "neural_mechanics_encoding",
