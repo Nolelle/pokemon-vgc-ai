@@ -2,7 +2,7 @@
   "schema_version": 1,
   "decision_replay_schema": "vgc-decision-replay-v1",
   "set_priors_sha256": "0bb8f8891dbdbe740242573230d59d152ebc4fbf669a1410469a4c87c65bcc5b",
-  "release_ready": false,
+  "release_ready": true,
   "release_rule": "Every decision is reconstructible from its player-visible prefix and request, private/future facts cannot change its inputs, and material hidden opponent configurations remain probability-weighted branches through search.",
   "scopes": {
     "live_observation": true,
@@ -122,14 +122,17 @@
     },
     {
       "id": "unresolved_brought_four_distribution",
-      "status": "partial",
+      "status": "exact",
       "verification": "preview_distribution_and_public_filter",
       "tests": [
         "tests/test_preview_predict.py::test_bring4_distribution_aggregates_by_subset",
         "tests/test_preview_predict.py::test_bring4_usage_distribution_sums_to_one",
-        "tests/test_information_contract.py::test_information_ledger_labels_own_facts_and_opponent_uncertainty"
-      ],
-      "gap": "no live-mirror test that _bring_beliefs yields a filtered, renormalized distribution over legal brings after a reveal; only preview_predict unit tests exist"
+        "tests/test_information_contract.py::test_information_ledger_labels_own_facts_and_opponent_uncertainty",
+        "tests/test_live_mirror_beliefs.py::test_bring_beliefs_before_any_reveal_is_a_normalized_preview_distribution",
+        "tests/test_live_mirror_beliefs.py::test_bring_beliefs_after_two_reveals_keep_only_compatible_subsets",
+        "tests/test_live_mirror_beliefs.py::test_bring_beliefs_after_four_reveals_is_certain",
+        "tests/test_live_mirror_beliefs.py::test_bring_beliefs_falls_back_to_uniform_compatible_combinations"
+      ]
     },
     {
       "id": "hidden_sleep_confusion_timers",
@@ -143,13 +146,14 @@
     },
     {
       "id": "belief_branch_cap_and_renormalization",
-      "status": "partial",
+      "status": "exact",
       "verification": "combined_hypothesis_audit",
       "tests": [
         "tests/test_hidden_state.py::test_branches_are_capped_and_renormalised_to_a_real_distribution",
-        "tests/test_live_mirror_beliefs.py::test_combined_hidden_configurations_are_capped_and_renormalized"
-      ],
-      "gap": "no branch-sensitivity test/audit that excluded hypotheses cannot change the top action"
+        "tests/test_live_mirror_beliefs.py::test_combined_hidden_configurations_are_capped_and_renormalized",
+        "tests/test_live_mirror_beliefs.py::test_branch_sensitivity_detects_flips_and_accounts_for_mass",
+        "tests/test_live_mirror_beliefs.py::test_branch_sensitivity_audit_populates_flip_mass_on_a_real_position"
+      ]
     },
     {
       "id": "public_information_teacher",

@@ -9,14 +9,25 @@ starting a Showdown worker; the end-to-end behaviour is covered by
 
 from __future__ import annotations
 
+import itertools
 from types import SimpleNamespace
 
 import pytest
 
-from vgc.models import PolicyConfig
+from offline.audit_battle_state_beliefs import run_belief_audit
 from vgc.battle_memory import BattleMemory, SpeedObservation
-from vgc.rl.live_mirror import LiveExactMirror, MirrorHypothesis, _spread_beliefs
+from vgc.config import REPO_ROOT
+from vgc.evaluator import ScoredOrder
+from vgc.models import PolicyConfig
+from vgc.rl.env import DEFAULT_SHOWDOWN_REPO
 from vgc.rl.hidden_state import HiddenStateHypothesis
+from vgc.rl.live_mirror import (
+    LiveExactMirror,
+    MirrorHypothesis,
+    _bring_beliefs,
+    _spread_beliefs,
+    branch_sensitivity,
+)
 
 
 def _battle(*species: str) -> SimpleNamespace:
@@ -221,3 +232,150 @@ def test_combined_hidden_configurations_are_capped_and_renormalized(monkeypatch)
     assert mirror.last_hypothesis_audit["retained_probability_mass"] == pytest.approx(1.0)
     assert 0.0 < mirror.last_hypothesis_audit["direct_representative_mass"] < 1.0
     assert mirror.last_hypothesis_audit["compressed"] is True
+    assert "flipping_mass" not in mirror.last_hypothesis_audit
+    assert len(mirror.last_excluded_hypotheses) == 8
+
+
+class _FakeOrder:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+def _ranking(*pairs: tuple[str, float]) -> list[ScoredOrder]:
+    return [
+        ScoredOrder(_FakeOrder(message), score, {"searched": True})
+        for message, score in pairs
+    ]
+
+
+def _tagged_hypothesis(weight: float, tag: str) -> MirrorHypothesis:
+    return MirrorHypothesis(weight=weight, spreads={tag: ({"spe": 32}, "jolly")})
+
+
+def test_branch_sensitivity_detects_flips_and_accounts_for_mass() -> None:
+    rankings = {
+        "rep": _ranking(("protect", 10.0), ("attack", 1.0)),
+        "agree": _ranking(("protect", 8.0), ("attack", 2.0)),
+        "flip": _ranking(("attack", 9.0), ("protect", 0.0)),
+    }
+
+    def rank_fn(hypothesis: MirrorHypothesis) -> list[ScoredOrder]:
+        return rankings[next(iter(hypothesis.spreads))]
+
+    representatives = [_tagged_hypothesis(0.55, "rep")]
+    no_flip = branch_sensitivity(rank_fn, representatives, [_tagged_hypothesis(0.20, "agree")])
+    assert no_flip.excluded_branches_checked == 1
+    assert no_flip.flipping_branches == 0
+    assert no_flip.flipping_mass == pytest.approx(0.0)
+
+    one_flip = branch_sensitivity(rank_fn, representatives, [_tagged_hypothesis(0.12, "flip")])
+    assert one_flip.excluded_branches_checked == 1
+    assert one_flip.flipping_branches == 1
+    assert one_flip.flipping_mass == pytest.approx(0.12)
+
+    mixed = branch_sensitivity(
+        rank_fn,
+        representatives,
+        [_tagged_hypothesis(0.10, "agree"), _tagged_hypothesis(0.08, "flip")],
+    )
+    assert mixed.excluded_branches_checked == 2
+    assert mixed.flipping_branches == 1
+    assert mixed.flipping_mass == pytest.approx(0.08)
+
+
+_PREVIEW = ["garchomp", "klefki", "incineroar", "sylveon", "torkoal", "farigiraf"]
+_OURS = ["charizard", "whimsicott", "basculegion", "kingambit", "rillaboom", "urshifu"]
+
+
+def _mon(species: str) -> SimpleNamespace:
+    return SimpleNamespace(species=species)
+
+
+def _bring_battle(appeared: tuple[str, ...] = ()) -> SimpleNamespace:
+    preview = [_mon(name) for name in _PREVIEW]
+    return SimpleNamespace(
+        teampreview_opponent_team=preview,
+        teampreview_team=[_mon(name) for name in _OURS],
+        opponent_team={name: _mon(name) for name in appeared},
+    )
+
+
+def _uncapped() -> PolicyConfig:
+    return PolicyConfig(exact_search_bring_hypotheses=15)
+
+
+def test_bring_beliefs_before_any_reveal_is_a_normalized_preview_distribution() -> None:
+    config = PolicyConfig()
+    beliefs = _bring_beliefs(_bring_battle(), config)
+    weights = [weight for weight, _brought in beliefs]
+    subsets = [frozenset(brought) for _weight, brought in beliefs]
+    assert 0 < len(beliefs) <= config.exact_search_bring_hypotheses
+    assert all(len(brought) == 4 for _weight, brought in beliefs)
+    assert all(set(brought).issubset(_PREVIEW) for _weight, brought in beliefs)
+    assert len(subsets) == len(set(subsets))
+    assert all(weight > 0.0 for weight in weights)
+    assert abs(sum(weights) - 1.0) < 1e-9
+
+
+def test_bring_beliefs_after_two_reveals_keep_only_compatible_subsets() -> None:
+    appeared = ("incineroar", "sylveon")
+    beliefs = _bring_beliefs(_bring_battle(appeared), _uncapped())
+    required = set(appeared)
+    compatible = {
+        frozenset(combo)
+        for combo in itertools.combinations(_PREVIEW, 4)
+        if required.issubset(combo)
+    }
+    assert beliefs
+    assert all(required.issubset(brought) for _weight, brought in beliefs)
+    assert {frozenset(brought) for _weight, brought in beliefs} == compatible
+    assert abs(sum(weight for weight, _brought in beliefs) - 1.0) < 1e-9
+    assert all(weight > 0.0 for weight, _brought in beliefs)
+
+
+def test_bring_beliefs_after_four_reveals_is_certain() -> None:
+    appeared = tuple(_PREVIEW[:4])
+    beliefs = _bring_beliefs(_bring_battle(appeared), _uncapped())
+    assert len(beliefs) == 1
+    assert beliefs[0][0] == pytest.approx(1.0)
+    assert set(beliefs[0][1]) == set(appeared)
+
+
+@pytest.mark.parametrize("mode", ["raises", "empty"])
+def test_bring_beliefs_falls_back_to_uniform_compatible_combinations(
+    monkeypatch, mode: str
+) -> None:
+    def fake_predict(*_args, **_kwargs):
+        if mode == "raises":
+            raise ValueError("no preview")
+        return []
+
+    monkeypatch.setattr("vgc.preview_predict.predict_preview_hybrid", fake_predict)
+    appeared = ("garchomp", "klefki")
+    beliefs = _bring_beliefs(_bring_battle(appeared), _uncapped())
+    required = set(appeared)
+    expected = {
+        tuple(combo)
+        for combo in itertools.combinations(_PREVIEW, 4)
+        if required.issubset(combo)
+    }
+    brought = [subset for _weight, subset in beliefs]
+    assert set(brought) == expected
+    assert all(required.issubset(subset) for subset in brought)
+    assert all(weight == pytest.approx(1.0 / len(expected)) for weight, _subset in beliefs)
+    assert abs(sum(weight for weight, _subset in beliefs) - 1.0) < 1e-9
+
+
+@pytest.mark.integration
+def test_branch_sensitivity_audit_populates_flip_mass_on_a_real_position() -> None:
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    result = run_belief_audit(
+        (REPO_ROOT / "teams/meta1.packed.txt").read_text().strip(),
+        (REPO_ROOT / "teams/regmb_rain_balance.packed.txt").read_text().strip(),
+    )
+    audit = result["multi"]["audit"]
+    assert "excluded_branches_checked" in audit
+    assert "flipping_branches" in audit
+    assert 0.0 <= float(audit["flipping_mass"]) <= 1.0
+    assert audit["excluded_branches_checked"] == result["excluded_branches_checked"]

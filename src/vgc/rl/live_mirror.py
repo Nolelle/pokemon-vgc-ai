@@ -11,6 +11,7 @@ rules.  All transitions after the patch are executed by Showdown itself.
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from poke_env.teambuilder.teambuilder import Teambuilder
@@ -22,6 +23,7 @@ from vgc.mechanics_state import snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.opponent_belief import build_opponent_beliefs
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
+from vgc.rl.exact_search import combine_belief_rankings
 from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
 from vgc.sets import (
     load_set_priors,
@@ -432,11 +434,11 @@ def _hypothesis_distance(left: MirrorHypothesis, right: MirrorHypothesis) -> int
 
 def _compress_hypotheses(
     hypotheses: list[MirrorHypothesis], limit: int
-) -> tuple[list[MirrorHypothesis], float]:
+) -> tuple[list[MirrorHypothesis], float, list[MirrorHypothesis]]:
     """Choose diverse legal representatives and assign all belief mass to them."""
 
     if len(hypotheses) <= limit:
-        return hypotheses, sum(entry.weight for entry in hypotheses)
+        return hypotheses, sum(entry.weight for entry in hypotheses), []
     ranked = sorted(hypotheses, key=lambda entry: -entry.weight)
     selected = [ranked[0]]
     while len(selected) < limit:
@@ -449,6 +451,8 @@ def _compress_hypotheses(
             ),
         )
         selected.append(chosen)
+    selected_ids = {id(entry) for entry in selected}
+    excluded = [entry for entry in ranked if id(entry) not in selected_ids]
     direct_mass = sum(entry.weight for entry in selected)
     assigned = [0.0] * len(selected)
     for entry in ranked:
@@ -471,7 +475,52 @@ def _compress_hypotheses(
         )
         for index, entry in enumerate(selected)
     ]
-    return compressed, direct_mass
+    return compressed, direct_mass, excluded
+
+
+@dataclass(frozen=True)
+class BranchSensitivity:
+    """Whether excluded belief branches would have changed the searched top action."""
+
+    excluded_branches_checked: int
+    flipping_branches: int
+    flipping_mass: float
+
+
+def _top_order_message(ranking: Sequence) -> str | None:
+    if not ranking:
+        return None
+    return ranking[0].order.message
+
+
+def branch_sensitivity(
+    rank_fn: Callable[[MirrorHypothesis], Sequence],
+    representatives: Sequence[MirrorHypothesis],
+    excluded: Sequence[MirrorHypothesis],
+) -> BranchSensitivity:
+    """Compare each excluded hypothesis's top action to the representatives' combined top.
+
+    ``rank_fn`` maps one hypothesis to a ranked list of orders. Live play does not call
+    this: searching the dropped branches is an audit cost, not a decision cost.
+    """
+
+    if not representatives:
+        raise ValueError("branch sensitivity needs at least one representative")
+    combined = combine_belief_rankings(
+        [(entry.weight, list(rank_fn(entry))) for entry in representatives]
+    )
+    representative_top = _top_order_message(combined)
+    flipping_branches = 0
+    flipping_mass = 0.0
+    for hypothesis in excluded:
+        if _top_order_message(rank_fn(hypothesis)) != representative_top:
+            flipping_branches += 1
+            flipping_mass += hypothesis.weight
+    return BranchSensitivity(
+        excluded_branches_checked=len(excluded),
+        flipping_branches=flipping_branches,
+        flipping_mass=flipping_mass,
+    )
 
 
 @dataclass
@@ -487,6 +536,8 @@ class LiveExactMirror:
         self._counter = itertools.count()
         self._root_spread_key: tuple | None = None
         self.last_hypothesis_audit: dict[str, object] = {}
+        self.last_excluded_hypotheses: list[MirrorHypothesis] = []
+        self._last_representatives: list[MirrorHypothesis] = []
 
     def hypotheses(self, battle, memory=None) -> list[MirrorHypothesis]:
         """Every hidden-information belief for this observation, most likely first.
@@ -527,7 +578,7 @@ class LiveExactMirror:
         limit = int(self.config.exact_search_total_hypotheses)
         if limit < 1:
             raise ValueError("exact_search_total_hypotheses must be at least 1")
-        kept, direct_mass = _compress_hypotheses(combined, limit)
+        kept, direct_mass, excluded = _compress_hypotheses(combined, limit)
         retained_mass = sum(entry.weight for entry in kept)
         combined = [
             MirrorHypothesis(
@@ -539,6 +590,7 @@ class LiveExactMirror:
             )
             for entry in kept
         ]
+        self.last_excluded_hypotheses = list(excluded)
         self.last_hypothesis_audit = {
             "total_before_cap": total_count,
             "searched": len(combined),
@@ -553,7 +605,25 @@ class LiveExactMirror:
         # Spread-major, then most likely first within a spread: a caller stepping through
         # in order rebuilds the Showdown root once per spread rather than once per branch.
         combined.sort(key=lambda entry: (entry.spread_key, -entry.weight))
+        self._last_representatives = list(combined)
         return combined
+
+    def record_branch_sensitivity(
+        self,
+        rank_fn: Callable[[MirrorHypothesis], Sequence],
+        representatives: Sequence[MirrorHypothesis] | None = None,
+    ) -> BranchSensitivity:
+        """Audit excluded branches against searched representatives. Not used in live play."""
+
+        kept = list(self._last_representatives if representatives is None else representatives)
+        result = branch_sensitivity(rank_fn, kept, self.last_excluded_hypotheses)
+        self.last_hypothesis_audit = {
+            **self.last_hypothesis_audit,
+            "excluded_branches_checked": result.excluded_branches_checked,
+            "flipping_branches": result.flipping_branches,
+            "flipping_mass": result.flipping_mass,
+        }
+        return result
 
     def build(
         self, battle, hypothesis: MirrorHypothesis | HiddenStateHypothesis | None = None

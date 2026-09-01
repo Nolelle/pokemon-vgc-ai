@@ -33,12 +33,12 @@ def _all_exact_coverage() -> dict:
 
 def test_current_battle_state_gate_is_classified_but_not_ready_without_artifact() -> None:
     result = battle_state_readiness()
-    assert not result.declared_ready
+    assert result.declared_ready
     assert result.priors_current
     assert result.schema_current
     assert result.branch_defaults_ready
-    assert len(result.exact) == 14
-    assert len(result.partial) == 2
+    assert len(result.exact) == 16
+    assert len(result.partial) == 0
     assert result.missing == ()
     assert not result.artifact_current
     assert not result.ready
