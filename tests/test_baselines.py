@@ -5,6 +5,14 @@ import pytest
 from vgc.baselines import BASELINES, make_learned_player, make_player
 from vgc.config import FORMAT_ID, TEAMS_DIR
 from vgc.agent import VgcPlayer
+from vgc.models import PolicyConfig
+
+
+def test_default_policy_knows_own_team_but_rejects_opponent_sheet() -> None:
+    config = PolicyConfig()
+
+    assert config.use_own_team_spreads is True
+    assert config.accept_open_team_sheet is False
 
 
 @pytest.mark.parametrize("baseline", sorted(BASELINES))

@@ -31,6 +31,7 @@ from vgc.decision_trace import (
 )
 from vgc.evaluator import score_joint_orders
 from vgc.models import PolicyConfig
+from vgc.opponent_belief import information_boundary_summary
 from vgc.own_team import apply_own_spreads
 from vgc.search import search_joint_orders
 from vgc.team_preview import build_team_order
@@ -198,6 +199,11 @@ class VgcPlayer(Player):
         for any other failure here.
         """
         memory = self._memory_for(battle)
+        if trace_enabled():
+            record_note(
+                "information_boundary",
+                information_boundary_summary(battle, memory, self.config),
+            )
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
             scored = search_joint_orders(battle, self.config)

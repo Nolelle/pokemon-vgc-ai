@@ -344,17 +344,63 @@ def test_teacher_action_index_refuses_approximate_non_showdown_teacher(monkeypat
         _joint(_single(protect), _single(protect)),
         _joint(_single(attack, move_target=1), _single(protect)),
     ]
-    monkeypatch.setattr(
-        "vgc.rl.distill.search_joint_orders_exact",
-        lambda *_args, **_kwargs: [SimpleNamespace(order=orders[1])],
-    )
+    reached = False
+
+    def public_search(*_args, **_kwargs):
+        nonlocal reached
+        reached = True
+        return [SimpleNamespace(order=orders[1])]
+
+    monkeypatch.setattr("vgc.rl.distill.public_information_exact_search", public_search)
     config = SimpleNamespace(use_two_ply_search=True, use_heuristic_evaluator=True)
 
-    # No exact Showdown root is attached, so even a working exact searcher must not be
-    # reached: a label without a real simulator behind it is never minted.
+    # No packed own team was supplied, so a public mirror cannot be constructed and no
+    # teacher label is minted.
     assert teacher_action_index(SimpleNamespace(), config, orders) is None
+    assert reached is False
     # The approximate Python teacher is not merely unused, it is no longer reachable.
     assert not hasattr(distill, "search_joint_orders")
+
+
+def test_teacher_action_index_uses_public_mirror_not_attached_private_root(monkeypatch) -> None:
+    protect = Move("protect", gen=9)
+    attack = Move("dragonclaw", gen=9)
+    orders = [
+        _joint(_single(protect), _single(protect)),
+        _joint(_single(attack, move_target=1), _single(protect)),
+    ]
+    private_root = object()
+    battle = SimpleNamespace(_vgc_direct_root=private_root, _vgc_direct_side="p2")
+    seen = {}
+
+    def public_search(observation, _config, own_team, *, memory=None, mirror=None):
+        seen.update(
+            observation=observation,
+            own_team=own_team,
+            memory=memory,
+            mirror=mirror,
+        )
+        return [SimpleNamespace(order=orders[1])]
+
+    monkeypatch.setattr("vgc.rl.distill.public_information_exact_search", public_search)
+    config = SimpleNamespace(use_two_ply_search=True)
+    memory = object()
+
+    result = teacher_action_index(
+        battle,
+        config,
+        orders,
+        own_packed_team="packed-team",
+        memory=memory,
+    )
+
+    assert result == 1
+    assert seen == {
+        "observation": battle,
+        "own_team": "packed-team",
+        "memory": memory,
+        "mirror": None,
+    }
 
 
 def test_encode_battle_history_captures_longitudinal_signals() -> None:

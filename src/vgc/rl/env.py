@@ -416,7 +416,19 @@ class DirectBattle:
         result = self._apply(response)
         bases = {side: self.battles[side] for side in SIDES}
         if observation_battle is not None:
-            bases[perspective] = observation_battle
+            # Direct offline battles attach their clonable simulator root to the
+            # otherwise public poke-env observation. That root owns a thread lock, so
+            # it must never enter the deep-copied observation used by counterfactual
+            # branches. Live websocket observations do not carry these attributes.
+            private_attributes = {}
+            observation_dict = vars(observation_battle)
+            for name in ("_vgc_direct_root", "_vgc_direct_side"):
+                if name in observation_dict:
+                    private_attributes[name] = observation_dict.pop(name)
+            try:
+                bases[perspective] = copy.deepcopy(observation_battle)
+            finally:
+                observation_dict.update(private_attributes)
             decision_battles = dict(getattr(self, "_decision_battles", {}))
             decision_battles[perspective] = observation_battle
             self._decision_battles = decision_battles

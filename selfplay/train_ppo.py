@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import random
 import secrets
@@ -43,6 +44,7 @@ from vgc.rl.distill import (  # noqa: E402
     evaluate_agreement,
     split_samples_by_battle,
 )
+from vgc.rl.demonstrations import annotate_samples  # noqa: E402
 from vgc.rl.agents import DirectAgent, make_direct_agent  # noqa: E402
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, SimWorker  # noqa: E402
 from vgc.rl.match import play_battle  # noqa: E402
@@ -697,17 +699,30 @@ async def _collect_teacher_worker(
                         start_listening=False,
                     )
                     battle_id = f"bootstrap-{worker_id}-{game_index}"
-                    play_battle(
-                        worker,
-                        battle_id,
-                        {
-                            "p1": DirectAgent(teacher, name="teacher"),
-                            "p2": make_direct_agent("vgc", opponent_team.packed),
-                        },
-                        {"p1": learner_team, "p2": opponent_team.packed},
-                        seed=[worker_id + 1, game_index + 1, 17, 29],
+                    try:
+                        play_battle(
+                            worker,
+                            battle_id,
+                            {
+                                "p1": DirectAgent(teacher, name="teacher"),
+                                "p2": make_direct_agent("vgc", opponent_team.packed),
+                            },
+                            {"p1": learner_team, "p2": opponent_team.packed},
+                            seed=[worker_id + 1, game_index + 1, 17, 29],
+                        )
+                    finally:
+                        teacher.close_public_mirror()
+                    samples.extend(
+                        annotate_samples(
+                            teacher.distillation_samples,
+                            team_id="bootstrap-learner",
+                            opponent_team_id=opponent_team.label,
+                            team_sha256=hashlib.sha256(learner_team.encode()).hexdigest(),
+                            opponent_team_sha256=hashlib.sha256(
+                                opponent_team.packed.encode()
+                            ).hexdigest(),
+                        )
                     )
-                    samples.extend(teacher.distillation_samples)
                     completed += 1
         except Exception as exc:  # noqa: BLE001 - other bootstrap workers remain useful
             error = f"{type(exc).__name__}: {exc}"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -9,8 +11,10 @@ torch = pytest.importorskip("torch")
 
 from vgc.evaluator import ScoredOrder  # noqa: E402
 from vgc.rl.distill import DistillationSample, build_score_metadata  # noqa: E402
+from vgc.rl.distill import PUBLIC_TEACHER_SOURCE_ID  # noqa: E402
 from vgc.rl.mechanics_encoding import MechanicsFeatures  # noqa: E402
 from vgc.rl.demonstrations import (  # noqa: E402
+    INFORMATION_CONTRACT_VERSION,
     load_demonstrations,
     save_demonstrations,
 )
@@ -53,22 +57,49 @@ def test_sample_with_scores_round_trips_through_a_demonstrations_file(tmp_path):
             tactical=np.zeros((2, 42), dtype=np.float32),
         ),
         teacher_action_index=0,
+        decision_index=1,
+        request_kind="move",
         information=InformationFeatures(
             indices=np.zeros(84, dtype=np.int64), scalars=np.zeros(384, dtype=np.float32)
         ),
         mechanics=MechanicsFeatures(
             tokens=np.frombuffer(b"{}", dtype=np.uint8).astype(np.int64) + 1
         ),
-        source_id="exact_showdown_teacher_v1",
+        source_id=PUBLIC_TEACHER_SOURCE_ID,
+        team_id="team-a",
+        opponent_team_id="team-b",
+        team_sha256=hashlib.sha256(b"team-a").hexdigest(),
+        opponent_team_sha256=hashlib.sha256(b"team-b").hexdigest(),
         turn=2,
         legal_action_count=2,
         candidate_myopic_ranks=np.arange(2, dtype=np.int64),
         candidate_tags=np.zeros((2, 5), dtype=np.int8),
         search_scores=np.asarray([9.0, -1.0], dtype=np.float32),
         searched_mask=np.asarray([True, False]),
+        candidate_descriptions=("protect / protect", "tackle@1 / protect"),
+        teacher_action_description="protect / protect",
     )
     path = tmp_path / "demo.pt"
-    save_demonstrations(path, [sample])
+    save_demonstrations(
+        path,
+        [sample],
+        metadata={
+            "created_at_utc": "2026-08-30T00:00:00+00:00",
+            "repository_commit": "a" * 40,
+            "repository_dirty": False,
+            "showdown_commit": "b" * 40,
+            "showdown_dirty": False,
+            "format_id": "gen9championsvgc2026regmb",
+            "collector": "test",
+            "requested_games": 1,
+            "seed": 1,
+            "team_source": "test",
+            "opponents": ["test"],
+            "policy_config": {},
+            "information_contract": INFORMATION_CONTRACT_VERSION,
+            "teacher_source": PUBLIC_TEACHER_SOURCE_ID,
+        },
+    )
     loaded = load_demonstrations(path)
 
     assert len(loaded) == 1

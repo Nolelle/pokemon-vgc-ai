@@ -57,7 +57,7 @@ def run_gate(
     threshold: float,
     battle_format: str = FORMAT_ID,
     *,
-    accept_open_team_sheet: bool = True,
+    accept_open_team_sheet: bool = False,
 ) -> dict[str, object]:
     result = asyncio.run(
         run_matches(
@@ -82,8 +82,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--open-team-sheets",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="make both players accept OTS (default); use --no-open-team-sheets for both to reject",
+        default=False,
+        help="make both players accept OTS; rejected by default to match public ladder play",
     )
     parser.add_argument("--threshold", type=float, default=0.55)
     parser.add_argument(

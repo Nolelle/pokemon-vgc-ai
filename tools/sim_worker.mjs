@@ -430,7 +430,26 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 		}
 	}
 	for (const pokemon of side.pokemon) pokemon.isActive = false;
-	side.active = snapshot.active_species.map((speciesId) => {
+	// poke-env replaces a fainted active with `null` while it waits for that slot's
+	// forced switch. Showdown must keep the fainted Pokemon in the active slot so its
+	// switch request is not mistaken for an already-completed choice. The per-Pokemon
+	// public snapshot retains exactly which fainted Pokemon was active.
+	const forcedSlotSpecies = snapshot.active_species.slice();
+	const usedForcedSpecies = new Set(forcedSlotSpecies.filter(Boolean));
+	for (let index = 0; index < forcedSlotSpecies.length; index++) {
+		if (forcedSlotSpecies[index]) continue;
+		const faintedActive = snapshot.pokemon.find(
+			(candidate) => candidate.active && candidate.fainted &&
+				!usedForcedSpecies.has(candidate.species_id)
+		);
+		if (!faintedActive && snapshot.force_switch[index]) {
+			throw new Error(`cannot identify the fainted active for forced slot ${index}`);
+		}
+		if (!faintedActive) continue;
+		forcedSlotSpecies[index] = faintedActive.species_id;
+		usedForcedSpecies.add(faintedActive.species_id);
+	}
+	side.active = forcedSlotSpecies.map((speciesId) => {
 		if (!speciesId) return null;
 		const pokemon = bySpecies.get(speciesId) || side.pokemon.find(
 			(candidate) => candidate.species.id === speciesId || candidate.baseSpecies.id === speciesId

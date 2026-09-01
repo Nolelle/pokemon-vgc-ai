@@ -9,9 +9,12 @@ decision while all six own sets and fog-safe opponent beliefs are available.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
-from dataclasses import dataclass
+import subprocess
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -25,13 +28,16 @@ from vgc.config import FORMAT_ID, REPO_ROOT
 from vgc.models import PolicyConfig
 from vgc.rl.agents import DirectAgent, make_direct_agent
 from vgc.rl.demonstrations import (
+    INFORMATION_CONTRACT_VERSION,
     annotate_samples,
-    load_demonstrations,
+    load_demonstration_dataset,
     save_demonstrations,
+    save_split_manifest,
     split_samples_grouped,
 )
 from vgc.rl.distill import (
     DistillationConfig,
+    PUBLIC_TEACHER_SOURCE_ID,
     TeacherRecordingPlayer,
     distill_policy,
     evaluate_agreement,
@@ -53,11 +59,22 @@ DEFAULT_OPPONENTS = "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc"
 class TeamEntry:
     label: str
     packed: str
+    sha256: str
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--games", type=int, default=64)
+    parser.add_argument(
+        "--local-smoke",
+        action="store_true",
+        help="use a tiny exact-search budget for validating data collection, not training",
+    )
+    parser.add_argument(
+        "--collect-only",
+        action="store_true",
+        help="save and split demonstrations, then stop before fitting a model",
+    )
     parser.add_argument("--team", type=Path, default=DEFAULT_TEAM)
     parser.add_argument("--team-manifest", type=Path, default=None)
     parser.add_argument("--opponents", default=DEFAULT_OPPONENTS)
@@ -69,7 +86,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--split-by",
         choices=("battle", "team"),
-        default="battle",
+        default="team",
         help="hold out whole battles or whole learner teams",
     )
     parser.add_argument("--eval-games", type=int, default=0)
@@ -122,18 +139,55 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def load_teams(team_path: Path, manifest_path: Path | None) -> list[TeamEntry]:
     if manifest_path is None:
-        return [TeamEntry(label=team_path.stem, packed=team_path.read_text().strip())]
+        packed = team_path.read_text().strip()
+        return [
+            TeamEntry(
+                label=team_path.stem,
+                packed=packed,
+                sha256=hashlib.sha256(packed.encode()).hexdigest(),
+            )
+        ]
     records = json.loads(manifest_path.read_text())
     teams = [
         TeamEntry(
             label=f"{record.get('archetype', 'unknown')}/{Path(record['file']).stem}",
-            packed=(manifest_path.parent / record["file"]).read_text().strip(),
+            packed=(packed := (manifest_path.parent / record["file"]).read_text().strip()),
+            sha256=hashlib.sha256(packed.encode()).hexdigest(),
         )
         for record in records
     ]
     if not teams:
         raise ValueError(f"team manifest is empty: {manifest_path}")
     return teams
+
+
+def split_team_entries(
+    teams: list[TeamEntry], *, val_fraction: float, seed: int
+) -> tuple[list[TeamEntry], list[TeamEntry]]:
+    """Split content-unique teams before games are paired, keeping both sides disjoint."""
+
+    if len({team.sha256 for team in teams}) != len(teams):
+        raise ValueError("team source contains duplicate packed-team contents")
+    if len(teams) < 2:
+        raise ValueError("team-level validation requires at least two content-unique teams")
+    grouped: dict[str, list[TeamEntry]] = {}
+    for team in teams:
+        archetype = team.label.split("/", 1)[0]
+        grouped.setdefault(archetype, []).append(team)
+    train: list[TeamEntry] = []
+    validation: list[TeamEntry] = []
+    for index, archetype in enumerate(sorted(grouped)):
+        choices = sorted(grouped[archetype], key=lambda team: team.label)
+        random.Random(seed + index).shuffle(choices)
+        if len(choices) == 1:
+            train.extend(choices)
+            continue
+        count = max(1, min(len(choices) - 1, round(len(choices) * val_fraction)))
+        validation.extend(choices[:count])
+        train.extend(choices[count:])
+    if not train or not validation:
+        raise ValueError("team-level validation produced an empty partition")
+    return train, validation
 
 
 def collect_demonstrations(
@@ -143,6 +197,8 @@ def collect_demonstrations(
     opponents: list[str],
     games: int,
     seed: int,
+    teacher_config: PolicyConfig,
+    battle_prefix: str = "imitation",
 ) -> list:
     rng = random.Random(seed)
     samples: list = []
@@ -152,7 +208,7 @@ def collect_demonstrations(
         opponent_team = rng.choice(teams)
         opponent_name = opponents[game_index % len(opponents)]
         teacher_player = TeacherRecordingPlayer(
-            config=PolicyConfig(),
+            config=teacher_config,
             team=learner_team.packed,
             battle_format=FORMAT_ID,
             start_listening=False,
@@ -169,14 +225,25 @@ def collect_demonstrations(
             teacher_side: learner_team.packed,
             other_side: opponent_team.packed,
         }
-        battle_id = f"imitation-{game_index:06d}"
-        play_battle(
-            worker,
-            battle_id,
-            agents,
-            teams_by_side,
-            seed=[rng.randrange(1, 2**31) for _ in range(4)],
-        )
+        battle_id = f"{battle_prefix}-{game_index:06d}"
+        try:
+            play_battle(
+                worker,
+                battle_id,
+                agents,
+                teams_by_side,
+                seed=[rng.randrange(1, 2**31) for _ in range(4)],
+            )
+        finally:
+            teacher_player.close_public_mirror()
+        if teacher_player.fallback_count or teacher_player.recording_failures:
+            details = [
+                f"{teacher_player.fallback_count} exception fallbacks",
+                *teacher_player.recording_failures[:5],
+            ]
+            raise RuntimeError(
+                f"teacher collection failed closed in {battle_id}: " + "; ".join(details)
+            )
         game_samples = [
             sample for sample in teacher_player.distillation_samples if sample.battle_id == battle_id
         ]
@@ -185,9 +252,60 @@ def collect_demonstrations(
                 game_samples,
                 team_id=learner_team.label,
                 opponent_team_id=opponent_team.label,
+                team_sha256=learner_team.sha256,
+                opponent_team_sha256=opponent_team.sha256,
             )
         )
     return samples
+
+
+def _git_commit(path: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _git_dirty(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def dataset_metadata(
+    args: argparse.Namespace,
+    *,
+    teacher_config: PolicyConfig,
+    opponents: list[str],
+) -> dict[str, object]:
+    team_source = args.team_manifest or args.team
+    return {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "repository_commit": _git_commit(REPO_ROOT),
+        "repository_dirty": _git_dirty(REPO_ROOT),
+        "showdown_commit": _git_commit(DEFAULT_SHOWDOWN_REPO),
+        "showdown_dirty": _git_dirty(DEFAULT_SHOWDOWN_REPO),
+        "format_id": FORMAT_ID,
+        "collector": "selfplay/train_imitation.py",
+        "requested_games": args.games,
+        "seed": args.seed,
+        "team_source": str(Path(team_source).resolve()),
+        "opponents": opponents,
+        "policy_config": asdict(teacher_config),
+        "information_contract": INFORMATION_CONTRACT_VERSION,
+        "teacher_source": PUBLIC_TEACHER_SOURCE_ID,
+        "collector_fail_closed": True,
+        "local_smoke": bool(args.local_smoke),
+    }
 
 
 def save_model_checkpoint(
@@ -276,29 +394,138 @@ def main(argv: list[str] | None = None) -> None:
     if not opponents:
         raise SystemExit("--opponents must list at least one baseline")
     teams = load_teams(args.team, args.team_manifest)
-    if args.split_by == "team" and len(teams) < 2:
+    if args.split_by == "team" and len(teams) < 2 and args.dataset is None:
         raise SystemExit("--split-by team requires at least two teams")
+    if args.split_by == "team" and args.games < 2 and args.dataset is None:
+        raise SystemExit("--split-by team collection requires at least two games")
+    teacher_config = replace(
+        PolicyConfig(),
+        accept_open_team_sheet=False,
+        **(
+            {
+                "search_our_candidates": 2,
+                "search_opp_candidates": 2,
+                "exact_search_future_samples": 1,
+                "exact_search_state_hypotheses": 1,
+                "exact_search_spread_hypotheses": 1,
+                "use_rolling_horizon": False,
+                "use_value_head": False,
+            }
+            if args.local_smoke
+            else {}
+        ),
+    )
+    if args.dataset is None and not args.local_smoke:
+        dirty_sources = [
+            name
+            for name, path in (
+                ("pokemon-vgc-ai", REPO_ROOT),
+                ("pokemon-showdown", DEFAULT_SHOWDOWN_REPO),
+            )
+            if _git_dirty(path)
+        ]
+        if dirty_sources:
+            raise SystemExit(
+                "large data collection requires clean source checkouts; commit or "
+                f"remove local changes in {', '.join(dirty_sources)}"
+            )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     dataset_path = args.out_dir / "demonstrations.pt"
+    split_manifest_path = args.out_dir / "split_manifest.json"
 
     with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
         if args.dataset is not None:
-            samples = load_demonstrations(args.dataset)
-        else:
-            samples = collect_demonstrations(
-                worker,
-                teams=teams,
-                opponents=opponents,
-                games=args.games,
+            samples, metadata = load_demonstration_dataset(args.dataset)
+            train_samples, validation_samples = split_samples_grouped(
+                samples,
+                val_fraction=args.val_fraction,
                 seed=args.seed,
+                group_by=args.split_by,
             )
-            save_demonstrations(dataset_path, samples)
-        train_samples, validation_samples = split_samples_grouped(
-            samples,
-            val_fraction=args.val_fraction,
-            seed=args.seed,
+            audited_dataset_path = args.dataset
+        else:
+            metadata = dataset_metadata(
+                args,
+                teacher_config=teacher_config,
+                opponents=opponents,
+            )
+            if args.split_by == "team":
+                train_teams, validation_teams = split_team_entries(
+                    teams,
+                    val_fraction=args.val_fraction,
+                    seed=args.seed,
+                )
+                validation_games = max(
+                    1,
+                    min(args.games - 1, round(args.games * args.val_fraction)),
+                )
+                training_games = args.games - validation_games
+                train_samples = collect_demonstrations(
+                    worker,
+                    teams=train_teams,
+                    opponents=opponents,
+                    games=training_games,
+                    seed=args.seed,
+                    teacher_config=teacher_config,
+                    battle_prefix="imitation-train",
+                )
+                validation_samples = collect_demonstrations(
+                    worker,
+                    teams=validation_teams,
+                    opponents=opponents,
+                    games=validation_games,
+                    seed=args.seed + 1_000_000,
+                    teacher_config=teacher_config,
+                    battle_prefix="imitation-validation",
+                )
+                samples = [*train_samples, *validation_samples]
+            else:
+                samples = collect_demonstrations(
+                    worker,
+                    teams=teams,
+                    opponents=opponents,
+                    games=args.games,
+                    seed=args.seed,
+                    teacher_config=teacher_config,
+                )
+                train_samples, validation_samples = split_samples_grouped(
+                    samples,
+                    val_fraction=args.val_fraction,
+                    seed=args.seed,
+                    group_by=args.split_by,
+                )
+            save_demonstrations(dataset_path, samples, metadata=metadata)
+            audited_dataset_path = dataset_path
+        save_split_manifest(
+            split_manifest_path,
+            dataset_path=audited_dataset_path,
+            train=train_samples,
+            validation=validation_samples,
             group_by=args.split_by,
+            seed=args.seed,
+            val_fraction=args.val_fraction,
         )
+
+        if args.collect_only:
+            metrics: dict[str, object] = {
+                "mode": "collect_only",
+                "sample_count": len(samples),
+                "battle_count": len({sample.battle_id for sample in samples}),
+                "team_count": len({sample.team_sha256 for sample in samples}),
+                "opponent_team_count": len(
+                    {sample.opponent_team_sha256 for sample in samples}
+                ),
+                "train_samples": len(train_samples),
+                "validation_samples": len(validation_samples),
+                "dataset_metadata": metadata,
+                "dataset": str(audited_dataset_path),
+                "split_manifest": str(split_manifest_path),
+            }
+            metrics_path = args.out_dir / "collection_summary.json"
+            metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+            print(json.dumps(metrics, indent=2, sort_keys=True))
+            print(f"collection summary: {metrics_path}")
+            return
 
         torch.manual_seed(args.seed)
         model = CandidatePolicyValueNet(
@@ -359,6 +586,8 @@ def main(argv: list[str] | None = None) -> None:
         "team_count": len({sample.team_id for sample in samples}),
         "train_samples": len(train_samples),
         "validation_samples": len(validation_samples),
+        "dataset_metadata": metadata,
+        "split_manifest": str(split_manifest_path),
         "warm_start": warm_start,
         "before": before,
         "training": training,
@@ -373,6 +602,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(json.dumps(metrics, indent=2, sort_keys=True))
     print(f"demonstrations: {dataset_path if args.dataset is None else args.dataset}")
+    print(f"split manifest: {split_manifest_path}")
     print(f"checkpoint: {args.out_dir / 'best.pt'}")
     print(f"metrics: {metrics_path}")
     if not improved:

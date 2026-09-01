@@ -76,9 +76,9 @@ def materialize_nested_subsets(
 ) -> dict[float, Path]:
     """Write one nested demonstrations file per fraction (prefixes of one shuffle)."""
 
-    from vgc.rl.demonstrations import load_demonstrations, save_demonstrations
+    from vgc.rl.demonstrations import load_demonstration_dataset, save_demonstrations
 
-    samples = load_demonstrations(dataset_path)
+    samples, source_metadata = load_demonstration_dataset(dataset_path)
     battle_ids = sorted({sample.battle_id for sample in samples})
     rng = random.Random(seed)
     rng.shuffle(battle_ids)
@@ -91,7 +91,14 @@ def materialize_nested_subsets(
         subset = [sample for sample in samples if sample.battle_id in keep]
         path = data_dir / f"frac_{int(round(fraction * 100)):03d}.pt"
         if not path.exists():
-            save_demonstrations(path, subset)
+            metadata = {
+                **source_metadata,
+                "collector": "offline/run_scaling_curve.py",
+                "parent_dataset": str(dataset_path.resolve()),
+                "subset_fraction": fraction,
+                "subset_seed": seed,
+            }
+            save_demonstrations(path, subset, metadata=metadata)
         paths[fraction] = path
         print(f"fraction {fraction:.2f}: {len(subset)} decisions / {len(keep)} battles")
     return paths

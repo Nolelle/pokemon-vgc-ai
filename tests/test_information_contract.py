@@ -10,7 +10,7 @@ from poke_env.teambuilder.teambuilder import Teambuilder
 from vgc.battle_memory import BattleMemory, DamageObservation, SpeedObservation
 from vgc.config import REPO_ROOT
 from vgc.damage import FieldState, PokemonState, damage_range
-from vgc.opponent_belief import build_opponent_beliefs
+from vgc.opponent_belief import build_opponent_beliefs, information_boundary_summary
 from vgc.rl.encoding import (
     INFORMATION_INDEX_DIM,
     INFORMATION_SCALAR_DIM,
@@ -96,6 +96,91 @@ def test_private_opponent_truth_cannot_change_the_encoded_input() -> None:
     second_encoded = encode_information_context(second, BattleMemory("second"))
     assert np.array_equal(first_encoded.indices, second_encoded.indices)
     assert np.array_equal(first_encoded.scalars, second_encoded.scalars)
+
+
+def test_information_ledger_labels_own_facts_and_opponent_uncertainty() -> None:
+    battle = _battle_with_complete_own_team()
+    ledger = information_boundary_summary(battle, BattleMemory("ledger"))
+
+    assert ledger["opponent_sheet_policy"] == "reject"
+    assert ledger["own_team"]["status"] == "known"
+    assert ledger["own_team"]["set_count"] == 6
+    assert ledger["own_team"]["fields"] == [
+        "species",
+        "moves",
+        "item",
+        "ability",
+        "nature",
+        "stat_points",
+    ]
+    assert len(ledger["own_team"]["sets"]) == 6
+    charizard = ledger["own_team"]["sets"][0]
+    assert charizard["species"] == "charizard"
+    assert charizard["item"] == "charizarditey"
+    assert charizard["ability"] == "blaze"
+    assert charizard["nature"] == "modest"
+    assert charizard["stat_points"] == {
+        "hp": 10,
+        "atk": 0,
+        "def": 0,
+        "spa": 32,
+        "spd": 0,
+        "spe": 24,
+    }
+    assert len(ledger["opponent"]) == 2
+    for opponent in ledger["opponent"]:
+        assert opponent["species"]["status"] == "known"
+        assert opponent["brought"]["status"] == "unknown"
+        assert opponent["moves"]["known"] == []
+        assert opponent["moves"]["unknown_slots"] == 4
+        assert opponent["spread_and_nature"]["status"] == "estimated"
+        assert opponent["current_state"]["status"] == "unknown"
+    assert ledger["opponent_next_action"] == {"status": "unknown"}
+    assert ledger["future_random_outcomes"]["status"] == "unknown"
+
+
+def test_information_ledger_ignores_private_truth_and_promotes_public_reveals() -> None:
+    first = _battle_with_complete_own_team()
+    second = deepcopy(first)
+    first.private_opponent_team = {"garchomp": {"item": "Choice Scarf"}}
+    second.private_opponent_team = {"garchomp": {"item": "Life Orb"}}
+    memory = BattleMemory("ledger")
+
+    assert information_boundary_summary(first, memory) == information_boundary_summary(
+        second, memory
+    )
+
+    appeared = _mon(
+        "Garchomp", moves=("Earthquake",), item="Life Orb", ability="Rough Skin"
+    )
+    first.opponent_team = {"p2: Garchomp": appeared}
+    first.opponent_active_pokemon = [appeared, None]
+    revealed = information_boundary_summary(first, memory)
+    garchomp = next(
+        entry
+        for entry in revealed["opponent"]
+        if entry["species"]["value"] == "garchomp"
+    )
+    assert garchomp["brought"] == {"status": "known", "value": True}
+    assert garchomp["moves"]["known"] == ["earthquake"]
+    assert garchomp["item"] == {"status": "known", "value": "lifeorb"}
+    assert garchomp["ability"] == {"status": "known", "value": "roughskin"}
+
+
+def test_information_ledger_treats_unavailable_public_properties_as_unknown() -> None:
+    class IncompleteBattle:
+        teambuilder_team = []
+        teampreview_opponent_team = []
+        opponent_team = {}
+
+        @property
+        def opponent_active_pokemon(self):
+            raise ValueError("opponent role is not available yet")
+
+    ledger = information_boundary_summary(IncompleteBattle(), BattleMemory("incomplete"))
+    assert ledger["own_team"]["set_count"] == 0
+    assert ledger["opponent"] == []
+    assert ledger["opponent_next_action"] == {"status": "unknown"}
 
 
 def test_revealed_opponent_move_changes_the_input() -> None:

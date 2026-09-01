@@ -41,7 +41,7 @@ async def run_matches(
     team: str,
     battle_format: str = FORMAT_ID,
     *,
-    accept_open_team_sheet: bool = True,
+    accept_open_team_sheet: bool = False,
 ) -> dict[str, object]:
     # Keep both sides on the same OTS setting. Besides making comparisons fair, this
     # avoids accidentally benchmarking an accept/reject protocol race instead of the
@@ -120,8 +120,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--open-team-sheets",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="make both players accept OTS (default); use --no-open-team-sheets for both to reject",
+        default=False,
+        help="make both players accept OTS; rejected by default to match public ladder play",
     )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(

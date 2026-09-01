@@ -7,6 +7,7 @@ actual win/loss rewards.
 
 from __future__ import annotations
 
+import hashlib
 import random
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -26,6 +27,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.actions import describe_order
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
+from vgc.models import PolicyConfig
 from vgc.rl.guided_selection import (
     SAFETY_COLUMN_TAGS,
     SAFETY_TAG_COLUMNS,
@@ -51,7 +53,10 @@ from vgc.rl.mechanics_encoding import (
     encode_mechanics_context,
     pad_mechanics_features,
 )
-from vgc.rl.exact_search import search_joint_orders_exact
+from vgc.rl.exact_search import combine_belief_rankings, search_joint_orders_exact
+from vgc.rl.live_mirror import LiveExactMirror
+
+PUBLIC_TEACHER_SOURCE_ID = "public_mirror_exact_showdown_teacher_v2"
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,10 @@ class DistillationSample:
     history_scalars: np.ndarray
     candidates: CandidateFeatures
     teacher_action_index: int
+    # A battle turn can contain more than one request: for example, replace a fainted
+    # Pokemon and then choose moves without the displayed turn number changing.
+    decision_index: int = 0
+    request_kind: str | None = None
     # Always recorded (regardless of whether the model being distilled uses meta
     # features) -- cheap and lets --meta-features be combined with --bootstrap-games
     # without needing a separate teacher-recording pass.
@@ -141,6 +150,63 @@ class DistillationSample:
     # losses need. Defaulted so older datasets keep loading untouched.
     search_scores: np.ndarray | None = None
     searched_mask: np.ndarray | None = None
+    # Canonical action strings make the saved example independently auditable: the
+    # teacher answer must appear exactly once in the legal candidate set. Feature arrays
+    # alone cannot prove that membership after the original battle object is gone.
+    candidate_descriptions: tuple[str, ...] | None = None
+    teacher_action_description: str | None = None
+    # Content hashes, not filenames, define team-disjoint splits. Two identical packed
+    # teams renamed in different generated pools must still be recognized as overlap.
+    team_sha256: str | None = None
+    opponent_team_sha256: str | None = None
+
+
+def public_information_exact_search(
+    battle,
+    config: PolicyConfig,
+    own_packed_team: str,
+    *,
+    memory=None,
+    mirror: LiveExactMirror | None = None,
+):
+    """Rank from a public reconstruction, never the direct simulator's private root."""
+
+    if not own_packed_team:
+        raise ValueError("the public-information teacher requires its packed own team")
+    owned_mirror = mirror is None
+    live_mirror = mirror or LiveExactMirror(own_packed_team, config)
+    root = None
+    rankings = []
+    try:
+        for belief in live_mirror.hypotheses(battle, memory):
+            root = (
+                live_mirror.rebase(root, battle, belief)
+                if root is not None
+                else live_mirror.build(battle, belief)
+            )
+            rankings.append(
+                (
+                    belief.weight,
+                    search_joint_orders_exact(root, "p1", config),
+                )
+            )
+        return combine_belief_rankings(rankings)
+    finally:
+        if root is not None:
+            root.close()
+        if owned_mirror:
+            live_mirror.close()
+
+
+def _shuffle_for_storage(scored, battle_id: str, decision_index: int):
+    """Deterministically hide the teacher answer's row position in the saved data."""
+
+    stored = list(scored)
+    digest = hashlib.sha256(
+        f"{battle_id}:{decision_index}:candidate-order-v1".encode()
+    ).digest()
+    random.Random(int.from_bytes(digest[:8], "big")).shuffle(stored)
+    return stored
 
 
 class TeacherRecordingPlayer(VgcPlayer):
@@ -148,23 +214,65 @@ class TeacherRecordingPlayer(VgcPlayer):
 
     def __init__(self, **player_kwargs) -> None:
         self.distillation_samples: list[DistillationSample] = []
+        self.recording_failures: list[str] = []
+        self._recording_decision_index = 0
+        supplied_team = player_kwargs.get("team")
+        self._exact_own_packed_team = supplied_team if isinstance(supplied_team, str) else None
+        self._public_exact_mirror: LiveExactMirror | None = None
         super().__init__(**player_kwargs)
+
+    def close_public_mirror(self) -> None:
+        if self._public_exact_mirror is not None:
+            self._public_exact_mirror.close()
+            self._public_exact_mirror = None
+
+    def _battle_finished_callback(self, battle) -> None:
+        self.close_public_mirror()
+        super()._battle_finished_callback(battle)
+
+    def _recording_failure(self, battle, reason: str):
+        self.recording_failures.append(
+            f"{battle.battle_tag} turn {int(getattr(battle, 'turn', 0) or 0)}: {reason}"
+        )
+        return self.choose_random_move(battle)
 
     def decide(self, battle):
         if not isinstance(battle, DoubleBattle):
             return self.choose_random_move(battle)
+        self._recording_decision_index += 1
+        decision_index = self._recording_decision_index
+        request_kind = (
+            "switch" if any(getattr(battle, "force_switch", None) or ()) else "move"
+        )
         memory = self._memory_for(battle)
         state_indices, state_scalars = encode_live_state(battle, self.config)
         history_scalars = encode_battle_history(memory)
         if self.config.use_two_ply_search:
-            root = getattr(battle, "_vgc_direct_root", None)
-            side = getattr(battle, "_vgc_direct_side", None)
-            if root is None or side is None:
-                # Never mint an approximate teacher label. Network collection can keep
-                # playing, but it produces no examples and its caller will fail its
-                # requested sample-count check.
-                return self.choose_random_move(battle)
-            scored = search_joint_orders_exact(root, side, self.config)
+            if not self._exact_own_packed_team:
+                return self._recording_failure(battle, "packed own team is unavailable")
+            if self._public_exact_mirror is None:
+                self._public_exact_mirror = LiveExactMirror(
+                    self._exact_own_packed_team, self.config
+                )
+            try:
+                scored = public_information_exact_search(
+                    battle,
+                    self.config,
+                    self._exact_own_packed_team,
+                    memory=memory,
+                    mirror=self._public_exact_mirror,
+                )
+            except Exception as exc:
+                self.recording_failures.append(
+                    f"{battle.battle_tag} turn "
+                    f"{int(getattr(battle, 'turn', 0) or 0)}: exact search raised {exc!r}; "
+                    f"force_switch={getattr(battle, 'force_switch', None)!r}, "
+                    f"wait={getattr(battle, 'wait', None)!r}, "
+                    f"available_moves={[len(slot) for slot in battle.available_moves]!r}, "
+                    f"available_switches="
+                    f"{[len(slot) for slot in battle.available_switches]!r}"
+                )
+                raise
             # One extra myopic pass per decision: the exchange search reorders candidates
             # by simulated outcome, but the safety-slot replay needs each candidate's
             # position in the CHEAP evaluator's order. Worth its cost at collection time
@@ -172,17 +280,30 @@ class TeacherRecordingPlayer(VgcPlayer):
             myopic_scored = score_joint_orders(battle, self.config) if scored else None
         else:
             # A myopic evaluator is a policy baseline, not a mechanics-exact labeler.
-            return self.choose_random_move(battle)
+            return self._recording_failure(battle, "exact search is disabled")
         if not scored:
-            return self.choose_random_move(battle)
+            return self._recording_failure(battle, "exact search returned no legal ranking")
 
-        # search/evaluator returns the complete legal set in score order. Candidate
-        # position is never encoded, so putting the teacher's choice at index 0 cannot
-        # leak the answer to the network.
-        orders = [entry.order for entry in scored]
+        chosen = scored[0].order
+        teacher_description = describe_order(chosen)
+        stored_scored = _shuffle_for_storage(
+            scored,
+            battle.battle_tag,
+            decision_index,
+        )
+        orders = [entry.order for entry in stored_scored]
+        descriptions = tuple(describe_order(order) for order in orders)
+        teacher_matches = [
+            index for index, description in enumerate(descriptions)
+            if description == teacher_description
+        ]
+        if len(teacher_matches) != 1:
+            return self._recording_failure(
+                battle, "teacher answer did not match exactly one stored legal action"
+            )
         guidance_metadata = build_guidance_metadata(orders, myopic_scored)
         ranks, tags = guidance_metadata if guidance_metadata is not None else (None, None)
-        score_metadata = build_score_metadata(scored)
+        score_metadata = build_score_metadata(stored_scored)
         score_vector, searched_flags = (
             score_metadata if score_metadata is not None else (None, None)
         )
@@ -195,20 +316,23 @@ class TeacherRecordingPlayer(VgcPlayer):
                 candidates=encode_candidates(
                     orders, battle=battle, memory=memory, config=self.config
                 ),
-                teacher_action_index=0,
+                teacher_action_index=teacher_matches[0],
+                decision_index=decision_index,
+                request_kind=request_kind,
                 meta_scalars=encode_meta_context(battle, self.config),
                 information=encode_information_context(battle, memory, self.config),
                 mechanics=encode_mechanics_context(battle),
-                source_id="exact_showdown_teacher_v1",
+                source_id=PUBLIC_TEACHER_SOURCE_ID,
                 turn=int(getattr(battle, "turn", 0) or 0),
                 legal_action_count=len(orders),
                 candidate_myopic_ranks=ranks,
                 candidate_tags=tags,
                 search_scores=score_vector,
                 searched_mask=searched_flags,
+                candidate_descriptions=descriptions,
+                teacher_action_description=teacher_description,
             )
         )
-        chosen = orders[0]
         memory.record_choice(int(getattr(battle, "turn", 0) or 0), describe_order(chosen))
         return chosen
 
@@ -217,7 +341,14 @@ class TeacherRecordingPlayer(VgcPlayer):
         return [sample for sample in self.distillation_samples if sample.battle_id in completed]
 
 
-def teacher_action_index(battle, config, orders) -> int | None:
+def teacher_action_index(
+    battle,
+    config,
+    orders,
+    *,
+    own_packed_team: str | None = None,
+    memory=None,
+) -> int | None:
     """Return the existing policy's preferred action within ``orders``.
 
     The network's candidate order is intentionally independent of the evaluator's
@@ -226,11 +357,14 @@ def teacher_action_index(battle, config, orders) -> int | None:
     """
 
     if config.use_two_ply_search:
-        root = getattr(battle, "_vgc_direct_root", None)
-        side = getattr(battle, "_vgc_direct_side", None)
-        if root is None or side is None:
+        if not own_packed_team:
             return None
-        scored = search_joint_orders_exact(root, side, config)
+        scored = public_information_exact_search(
+            battle,
+            config,
+            own_packed_team,
+            memory=memory,
+        )
     else:
         return None
     if not scored:

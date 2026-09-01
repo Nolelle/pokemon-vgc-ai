@@ -1,8 +1,9 @@
 # pokemon-vgc-ai
 
 Pokemon Showdown VGC bot for `gen9championsvgc2026regmb` -- "[Gen 9 Champions] VGC 2026
-Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed, Open Team Sheets on the Bo1
-ladder. Backed by the local Showdown checkout's `champions` mod (see
+Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed. The format offers mutual-
+consent Open Team Sheets, but this bot rejects them and assumes no opponent sheet on the
+best-of-one ladder. Backed by the local Showdown checkout's `champions` mod (see
 `config/formats.ts` in that repo), not vanilla gen9.
 
 Phase 1 scaffold: project skeleton, data export, poke-env baselines, eval harness.
@@ -269,9 +270,12 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   byte tokens: no hashing, no fixed vocabulary, no truncation, so a newly exposed field
   reaches the network automatically. Every training entry point hardcodes
   `use_mechanics_features=True`.
-- **The approximate Python teacher is gone, not merely unused.** `vgc.rl.distill` will not
-  mint a label without an exact Showdown root (it plays a random move instead), and
-  `vgc.rl.demonstrations` rejects any `source_id` other than `exact_showdown_teacher_v1`.
+- **The approximate Python and private-information teachers are gone, not merely
+  unused.** `vgc.rl.distill` now builds every teaching root through `LiveExactMirror`,
+  using the same public-information boundary as real play, and will not mint a label
+  without an exact Showdown branch. `vgc.rl.demonstrations` accepts only
+  `public_mirror_exact_showdown_teacher_v2`; its v3 dataset format intentionally blocks
+  older private-root files from new training.
   `tests/test_exact_mechanics_contract.py` asserts `resolve_exchange`/`search_joint_orders`
   are unreachable from the exact modules.
 - **Hidden opponent spreads are a distribution, and it is not a confident one.**
@@ -297,31 +301,32 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   (`vgc.search`) and `vgc.evaluator` still use `vgc.sets.opponent_state`'s point estimate
   -- `build_opponent_beliefs` reaches only the neural network's input features
   (`vgc.rl.encoding`) and now the mirror.**
-- **The training-time exact search reads the opponent's PRIVATE battle object**
-  (`vgc.rl.exact_search.py`'s `score_joint_orders(root.battles[other], ...)`), so teacher
-  labels are currently minted with knowledge of the opponent's true moves/item/stats that
-  the deployed agent can never have. On ladder the same root is a `live_mirror`
-  reconstruction, so reading it there is fine. This cannot be fixed by swapping the
-  enumeration source alone: a believed-but-untrue opponent move is illegal in a
-  true-rooted battle and `DirectBattle.step` raises `InvalidChoice`. The clean fix is to
-  build the training search root through `live_mirror` too.
-  **Measured, on 2026-08-28** (`offline/measure_opponent_information_leak.py`, 34 real
-  checkpoints across `data/selfplay/archetype_pool_150`, identical reduced search width on
-  both roots): the search's top pick agrees only 28/34 = 82.4% of the time between the
+- **The teacher's opponent-information leak was measured and then removed.** On
+  2026-08-28, `offline/measure_opponent_information_leak.py` compared 34 real
+  checkpoints across `data/selfplay/archetype_pool_150` with identical reduced search
+  width on both roots. The search's top pick agreed only 28/34 = 82.4% of the time between the
   true root and the reconstruction (Wilson low 66.5%) -- roughly 1 in 6 disagreed, and the
   disagreements are substantive (Protect+switch vs attack, a Weather Ball/Hurricane
   speed-order flip), not tie-break noise. This is frequent enough that the leak is a real
-  problem, not an academic one -- teacher labels are advising moves the deployed agent
-  cannot justify from what it actually sees roughly one turn in six.
+  problem, not an academic one -- the old teacher advised moves the deployed agent could
+  not justify from what it actually saw roughly one turn in six. As of 2026-08-30,
+  `TeacherRecordingPlayer` and PPO's optional teacher anchor both use the public mirror;
+  `docs/data_requirements.md` defines the saved contract and
+  `offline/audit_training_data.py` enforces it.
   **The live_mirror path also costs ~9.6x the search time** at the same reduced width
   (0.10s peek vs 0.99s guess median); at full production search width a single probe
   showed 2.0s vs 28.0s. Rerouting training through `live_mirror` is now justified by the
-  disagreement rate, but the ~10x per-decision cost needs budgeting (narrower search
-  width during training collection, most likely) before it is affordable at scale.
-  Results: `runs/eval/opponent_information_leak.json`. A handful of checkpoints hit a
-  transient `patch_public_state` race (`Choices are done immediately after a request`)
-  and were skipped rather than counted -- a latent bug in the patch path, not yet
-  diagnosed, worth a follow-up before relying on `live_mirror` at high volume.
+  disagreement rate, but the ~10x per-decision cost still needs budgeting before a large
+  collection.
+  Results: `runs/eval/opponent_information_leak.json`. A handful of checkpoints with
+  transient `patch_public_state` failures were skipped rather than counted in that old
+  diagnostic. The fail-closed collector exposed three direct-offline mirror defects: a
+  private simulator root containing a non-copyable thread lock, poke-env's `null` active
+  slot after a faint, and a rebuilt bring-four omitting an already revealed Pokemon.
+  `DirectBattle.patch_public_state`, `tools/sim_worker.mjs`, and `vgc.rl.live_mirror` now
+  handle those cases. The real-Showdown forced-switch/exhausted-bench integration contract
+  and a two-game/14-decision smoke collection both pass; high-volume reliability is still
+  unclaimed.
 - **The gate promises exact transitions, not good judgement.** The final rank still blends
   `vgc.evaluator`'s myopic heuristic score (`search_myopic_weight`, deliberately left at
   1.0 -- zeroing it changes frozen gate-tuned weights and needs a same-session A/B), the

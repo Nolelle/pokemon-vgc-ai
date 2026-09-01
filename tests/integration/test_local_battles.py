@@ -154,8 +154,12 @@ def test_ots_accept_reject_race_completes(local_server, dev_team) -> None:
     """An accepting VgcPlayer must not hang when a stock opponent rejects OTS first."""
 
     async def _run() -> int:
-        accepting = make_player("vgc", dev_team, FORMAT_ID)
-        rejecting = make_player("random", dev_team, FORMAT_ID)
+        accepting = make_player(
+            "vgc", dev_team, FORMAT_ID, accept_open_team_sheet=True
+        )
+        rejecting = make_player(
+            "random", dev_team, FORMAT_ID, accept_open_team_sheet=False
+        )
         assert accepting.accept_open_team_sheet is True
         assert rejecting.accept_open_team_sheet is False
         try:

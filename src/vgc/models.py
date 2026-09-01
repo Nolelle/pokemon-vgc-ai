@@ -26,10 +26,11 @@ class PolicyConfig:
     # Which Showdown format this policy plays. Always the Champions-mod Reg M-B doubles
     # format unless a caller is deliberately testing against something else.
     format_id: str = FORMAT_ID
-    # We WANT to see the opponent's Open Team Sheet (revealed sets/items/abilities/Tera
-    # before team preview) -- poke-env auto-rejects OTS unless this is True, and rejecting
-    # it would throw away free information the ladder format hands us.
-    accept_open_team_sheet: bool = True
+    # Reject Open Team Sheets (OTS) by default. The format supports them only when both
+    # players opt in, but the deployed policy must match ordinary ladder information:
+    # our complete supplied team is known, while opposing moves/items/abilities remain
+    # unknown until battle events reveal them.
+    accept_open_team_sheet: bool = False
     # Fill in our OWN Stat Points/nature from the team file when no Open Team Sheets
     # `showteam` arrives (see `vgc.own_team`). poke-env otherwise leaves `Pokemon.evs`
     # None for our own team on ~99.8% of ladder games, and the evaluator then falls back
@@ -482,16 +483,15 @@ class PolicyConfig:
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
-    # (see tools/build_set_priors.py) -- Open Team Sheets essentially never triggers on
+    # (see tools/build_set_priors.py) -- Open Team Sheets essentially never trigger on
     # the real public ladder (vgc.replay_parse's module docstring: ~0.2% of downloaded
     # replays reveal a full sheet, since this format's "Open Team Sheets" ruleset needs
     # BOTH players to opt in and almost no human ladder opponent does), so most opposing
     # movesets the threat/Protect model sees in a real game are otherwise 0-4 known moves
     # out of the real 4, starving `_opp_protect_probability`/`_best_attacking_move` of the
-    # information they need. Gate-neutral by construction: offline gates run mutual OTS
-    # accept (every move is already revealed there), so filling has nothing left to fill
-    # and this knob is a no-op in that setting -- its real effect only shows up against
-    # real ladder opponents.
+    # information they need. Direct evaluations expose only Showdown's normal fog, and
+    # websocket gates now reject sheets by default, so this prior is evaluated under the
+    # same information boundary used on the public ladder.
     use_set_priors: bool = True
     # Minimum tracked appearances (set_priors.json's per-species "appearances" count)
     # before that species' move-frequency prior is trusted enough to fill unrevealed

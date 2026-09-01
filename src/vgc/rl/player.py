@@ -47,6 +47,8 @@ class PpoVgcPlayer(VgcPlayer):
         self.ppo_config = ppo_config
         self.device = device
         self.deterministic = deterministic
+        supplied_team = player_kwargs.get("team")
+        self._exact_own_packed_team = supplied_team if isinstance(supplied_team, str) else None
         # A private sampling stream, so one player's action draws are reproducible and
         # independent of anything else that touches torch's global RNG (data shuffling,
         # dropout, another player in the same process). None keeps the global RNG.
@@ -142,7 +144,13 @@ class PpoVgcPlayer(VgcPlayer):
         action_index = int(actions.item())
         if self.rollout_buffer is not None:
             teacher_index = (
-                teacher_action_index(battle, self.config, orders)
+                teacher_action_index(
+                    battle,
+                    self.config,
+                    orders,
+                    own_packed_team=self._exact_own_packed_team,
+                    memory=memory,
+                )
                 if self.ppo_config.teacher_anchor_weight > 0.0
                 else None
             )

@@ -175,6 +175,7 @@ class LadderPlayer(VgcPlayer):
             "turns": battle.turn,
             "rating": battle.rating,
             "opponent_rating": battle.opponent_rating,
+            "open_team_sheets": "accept" if self.accept_open_team_sheet else "reject",
             "fallback_count": sum(bool(trace.get("fallback_used")) for trace in traces),
             # Machine-readable A/B tag for the evaluator plus optional BC/value layers.
             "policy": _policy_tag(self.config),
@@ -511,14 +512,14 @@ async def run_local_smoke(
         config=config,
         team=team,
         battle_format=FORMAT_ID,
-        accept_open_team_sheet=True,
+        accept_open_team_sheet=False,
         server_configuration=LocalhostServerConfiguration,
     )
     anchor = make_player(
         opponent,
         team,
         FORMAT_ID,
-        accept_open_team_sheet=True,
+        accept_open_team_sheet=False,
         server_configuration=LocalhostServerConfiguration,
     )
     try:
@@ -577,7 +578,7 @@ async def run_live_session(
                     config=config,
                     team=team,
                     battle_format=FORMAT_ID,
-                    accept_open_team_sheet=True,
+                    accept_open_team_sheet=False,
                     server_configuration=ShowdownServerConfiguration,
                 )
             previous_finished = player.n_finished_battles

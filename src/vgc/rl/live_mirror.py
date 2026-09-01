@@ -123,7 +123,10 @@ def _opponent_sets(
     preview_by_id = {
         _base_species_id(to_id(getattr(mon, "species", None))): mon for mon in preview
     }
-    ordered_ids = _ordered_unique([*active_ids, *preview_by_id])
+    # Once a Pokemon has appeared, it is publicly known to be one of the brought four.
+    # Keep all such species ahead of preview-only possibilities so a later-turn mirror
+    # cannot accidentally leave a fainted former active outside its concrete bring.
+    ordered_ids = _ordered_unique([*active_ids, *known, *preview_by_id])
     priors = load_set_priors()
     species_data = load_species()
     legal_items = load_items()

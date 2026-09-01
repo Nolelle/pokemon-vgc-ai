@@ -17,6 +17,8 @@
       "ready": true,
       "evidence": [
         "complete poke-env property contract",
+        "deployed policy rejects opponent Open Team Sheets",
+        "own team spreads load from the supplied team independently of Open Team Sheets",
         "unknown opponent facts remain unknown",
         "catalog drift test"
       ]
@@ -394,8 +396,12 @@
   ],
   "information_uncertainty": [
     {
+      "id": "hidden_opponent_team_sheet",
+      "handling": "The deployed policy rejects Open Team Sheets. Opponent moves, item, ability, nature, Stat Points, and selected four remain unknown until ordinary public battle events reveal them; set and usage priors provide weighted hypotheses rather than private truth."
+    },
+    {
       "id": "hidden_opponent_spread_and_nature",
-      "handling": "Estimated from usage priors when rebuilding a live mirror. Open Team Sheets reveal species, moves, items, and abilities but never the spread. vgc.sets.opponent_spread_hypotheses exposes the full weighted distribution and PolicyConfig.exact_search_spread_hypotheses builds one Showdown root per belief; it ships at 1 (the most popular spread, treated as a point estimate) because raising it changes gate-tuned behaviour and needs a same-session A/B."
+      "handling": "Estimated from usage priors when rebuilding a live mirror. vgc.sets.opponent_spread_hypotheses exposes the full weighted distribution and PolicyConfig.exact_search_spread_hypotheses builds one Showdown root per belief; it ships at 1 (the most popular spread, treated as a point estimate) because raising it changes gate-tuned behaviour and needs a same-session A/B."
     },
     {
       "id": "hidden_sleep_and_confusion_timers",

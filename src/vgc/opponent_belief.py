@@ -21,7 +21,12 @@ from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.evaluator import field_effective_speed
 from vgc.models import PolicyConfig
 from vgc.sets import load_set_priors, load_usage_spreads, normalize_item, normalize_status
-from vgc.stats import calculate_stats, default_opponent_nature, default_opponent_spread
+from vgc.stats import (
+    STAT_IDS,
+    calculate_stats,
+    default_opponent_nature,
+    default_opponent_spread,
+)
 
 MAX_SPREAD_HYPOTHESES = 3
 _EVIDENCE_MISMATCH_WEIGHT = 0.05
@@ -80,6 +85,131 @@ class PokemonBelief:
 
     def move_probability(self, move_id: str) -> float:
         return float(self.move_probabilities.get(to_id(move_id), 0.0))
+
+
+def _estimated_field(probabilities: dict[str, float]) -> dict[str, object]:
+    """Trace-safe label for one hidden categorical field."""
+
+    ranked = sorted(probabilities.items(), key=lambda entry: (-entry[1], entry[0]))
+    if not ranked:
+        return {"status": "unknown", "possibilities": []}
+    return {
+        "status": "estimated",
+        "possibilities": [
+            {"value": value, "probability": round(float(probability), 6)}
+            for value, probability in ranked[:4]
+        ],
+    }
+
+
+def _public_attr(battle, name: str, default=None):
+    """Read a public battle property without letting an incomplete request break tracing."""
+
+    try:
+        return getattr(battle, name, default)
+    except (AttributeError, ValueError):
+        return default
+
+
+def information_boundary_summary(
+    battle,
+    memory: BattleMemory,
+    config: PolicyConfig | None = None,
+) -> dict[str, object]:
+    """Human-auditable known/estimated/unknown labels for one public observation.
+
+    This deliberately reads through :func:`build_opponent_beliefs`, the same fog-safe
+    path used by the learned input and live mirror. It never inspects a simulator root or
+    any private opponent-team attribute.
+    """
+
+    config = config or PolicyConfig()
+    own_entries = list(_public_attr(battle, "teambuilder_team") or [])[:6]
+    own_sets = [
+        {
+            "species": to_id(getattr(entry, "species", None) or entry.nickname),
+            "moves": [to_id(move) for move in (getattr(entry, "moves", None) or [])],
+            "item": to_id(getattr(entry, "item", None)),
+            "ability": to_id(getattr(entry, "ability", None)),
+            "nature": str(getattr(entry, "nature", None) or "serious").lower(),
+            "stat_points": dict(
+                zip(STAT_IDS, getattr(entry, "evs", None) or [0] * 6, strict=True)
+            ),
+        }
+        for entry in own_entries
+    ]
+    opponents = []
+    for belief in build_opponent_beliefs(battle, memory, config):
+        revealed_moves = set(belief.revealed_moves)
+        estimated_moves = {
+            move_id: probability
+            for move_id, probability in belief.move_probabilities.items()
+            if move_id not in revealed_moves
+        }
+        item = (
+            {"status": "known", "value": to_id(belief.known_item)}
+            if belief.known_item
+            else _estimated_field(belief.item_probabilities)
+        )
+        ability = (
+            {"status": "known", "value": to_id(belief.known_ability)}
+            if belief.known_ability
+            else _estimated_field(belief.ability_probabilities)
+        )
+        opponents.append(
+            {
+                "species": {"status": "known", "value": belief.species_id},
+                "brought": {
+                    "status": "known" if belief.appeared else "unknown",
+                    "value": True if belief.appeared else None,
+                },
+                "moves": {
+                    "known": sorted(revealed_moves),
+                    "estimated": _estimated_field(estimated_moves),
+                    "unknown_slots": max(0, 4 - len(revealed_moves)),
+                },
+                "item": item,
+                "ability": ability,
+                "spread_and_nature": {
+                    "status": "estimated",
+                    "possibilities": [
+                        {
+                            "stat_points": hypothesis.sp,
+                            "nature": hypothesis.nature,
+                            "probability": round(float(hypothesis.probability), 6),
+                        }
+                        for hypothesis in belief.hypotheses
+                    ],
+                },
+                "current_state": {
+                    "status": "known" if belief.appeared else "unknown",
+                },
+            }
+        )
+    return {
+        "contract": "own_exact_opponent_public_beliefs_v1",
+        "opponent_sheet_policy": (
+            "accept" if config.accept_open_team_sheet else "reject"
+        ),
+        "own_team": {
+            "status": "known",
+            "set_count": len(own_entries),
+            "sets": own_sets,
+            "fields": [
+                "species",
+                "moves",
+                "item",
+                "ability",
+                "nature",
+                "stat_points",
+            ],
+        },
+        "opponent": opponents,
+        "opponent_next_action": {"status": "unknown"},
+        "opponent_selected_four": {"status": "unknown_until_revealed"},
+        "future_random_outcomes": {"status": "unknown", "handling": "showdown_branches"},
+        "private_effect_durations": {"status": "estimated", "handling": "weighted_branches"},
+    }
 
 
 def _normalize_hypotheses(
@@ -210,11 +340,11 @@ def _frequency_probabilities(
 
 
 def _preview_species(battle) -> list[str]:
-    preview = list(getattr(battle, "teampreview_opponent_team", None) or [])
+    preview = list(_public_attr(battle, "teampreview_opponent_team") or [])
     species = [to_id(getattr(mon, "species", None)) for mon in preview]
     appeared = [
         to_id(getattr(mon, "species", None))
-        for mon in (getattr(battle, "opponent_team", None) or {}).values()
+        for mon in (_public_attr(battle, "opponent_team") or {}).values()
     ]
     for species_id in appeared:
         if species_id and species_id not in species:
@@ -237,11 +367,11 @@ def build_opponent_beliefs(
     set_priors = load_set_priors() if set_priors is None else set_priors
     observed_by_species = {
         to_id(getattr(mon, "species", None)): mon
-        for mon in (getattr(battle, "opponent_team", None) or {}).values()
+        for mon in (_public_attr(battle, "opponent_team") or {}).values()
     }
     active_species = {
         to_id(getattr(mon, "species", None))
-        for mon in (getattr(battle, "opponent_active_pokemon", None) or [])
+        for mon in (_public_attr(battle, "opponent_active_pokemon") or [])
         if mon is not None and not getattr(mon, "fainted", False)
     }
     beliefs: list[PokemonBelief] = []

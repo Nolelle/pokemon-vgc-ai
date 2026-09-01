@@ -66,9 +66,13 @@ def test_a_recorded_teacher_label_is_backed_by_real_showdown_branches() -> None:
     if not DEFAULT_SHOWDOWN_REPO.exists():
         pytest.skip("local Pokemon Showdown checkout is unavailable")
     from vgc.rl.agents import DirectAgent, make_direct_agent
-    from vgc.rl.distill import TeacherRecordingPlayer
+    from vgc.rl.distill import PUBLIC_TEACHER_SOURCE_ID, TeacherRecordingPlayer
 
-    team = (REPO_ROOT / "teams" / "meta1.packed.txt").read_text().strip()
+    pool = REPO_ROOT / "data" / "selfplay" / "archetype_pool_150"
+    team = (pool / "rain_offense" / "team_11.packed.txt").read_text().strip()
+    opponent_team = (
+        pool / "triple_setup_balance" / "team_02.packed.txt"
+    ).read_text().strip()
     config = replace(
         PolicyConfig(),
         accept_open_team_sheet=False,
@@ -85,12 +89,19 @@ def test_a_recorded_teacher_label_is_backed_by_real_showdown_branches() -> None:
         play_battle(
             worker,
             "exact-contract",
-            {"p1": DirectAgent(teacher, name="teacher"), "p2": make_direct_agent("vgc", team)},
-            {"p1": team, "p2": team},
-            seed=[5, 6, 7, 8],
+            {
+                "p1": DirectAgent(teacher, name="teacher"),
+                "p2": make_direct_agent("vgc_myopic", opponent_team),
+            },
+            {"p1": team, "p2": opponent_team},
+            seed=[1213563605, 541222707, 1838431232, 732752022],
         )
 
     samples = teacher.distillation_samples
     assert samples, "the exact teacher recorded no labels at all"
-    assert {sample.source_id for sample in samples} == {"exact_showdown_teacher_v1"}
+    assert teacher.fallback_count == 0
+    assert teacher.recording_failures == []
+    assert {sample.source_id for sample in samples} == {PUBLIC_TEACHER_SOURCE_ID}
     assert all(sample.mechanics is not None for sample in samples)
+    assert any(sample.request_kind == "switch" for sample in samples)
+    assert any("pass" in sample.teacher_action_description for sample in samples)

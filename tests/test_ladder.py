@@ -520,6 +520,7 @@ def test_make_session_player_defaults_and_unknown_modes(tmp_path):
         start_listening=False,
     )
     assert isinstance(heuristic, LadderPlayer)
+    assert heuristic.accept_open_team_sheet is False
 
     with pytest.raises(ValueError, match="unknown policy_mode"):
         run_ladder_module._make_session_player(
