@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from vgc.mechanics_state import BOOST_IDS, snapshot_battle
+from vgc.mechanics_state import BOOST_IDS, _resolve_item_state, snapshot_battle
 
 
 def _move(move_id: str, *, pp: int, max_pp: int, disabled: bool = False):
@@ -160,6 +160,34 @@ def test_opponent_unknown_item_ability_and_moves_stay_unknown() -> None:
 
     mon = snapshot_battle(battle).opponent_side.pokemon[0]
 
-    assert mon.item_id is None and not mon.item_known
+    assert mon.item_id is None and mon.item_state == "unknown" and not mon.item_known
     assert mon.ability_id is None and not mon.ability_known
     assert mon.moves == ()
+
+
+def test_item_state_classifies_known_consumed_none_and_unknown() -> None:
+    assert _resolve_item_state(
+        SimpleNamespace(item="lifeorb", species="Gengar", revealed=True),
+        opponent=True,
+        revealed_items=None,
+    ) == ("known", "lifeorb")
+    assert _resolve_item_state(
+        SimpleNamespace(item=None, species="Gengar", revealed=True),
+        opponent=True,
+        revealed_items={"gengar": "lifeorb"},
+    ) == ("consumed", None)
+    assert _resolve_item_state(
+        SimpleNamespace(item=None, species="Gengar", revealed=True),
+        opponent=True,
+        revealed_items={},
+    ) == ("unknown", None)
+    assert _resolve_item_state(
+        SimpleNamespace(item=None, species="Gengar", revealed=True),
+        opponent=True,
+        revealed_items=None,
+    ) == ("unknown", None)
+    assert _resolve_item_state(
+        SimpleNamespace(item="unknown_item", species="Gengar", revealed=False),
+        opponent=True,
+        revealed_items=None,
+    ) == ("unknown", None)

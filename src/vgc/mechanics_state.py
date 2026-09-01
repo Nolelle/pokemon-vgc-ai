@@ -149,6 +149,12 @@ class PokemonMechanicsState:
     status_counter: int
     effects: tuple[EffectSnapshot, ...]
     item_id: str | None
+    # ``known`` / ``consumed`` / ``unknown`` for opponents; ``none`` is only reachable
+    # on our own side (we always know our registered team). Opponent ``item is None``
+    # without a recorded original item is never ``none`` -- holding nothing is not
+    # publicly observable except via Open Team Sheets, which poke-env does not distinguish
+    # from ``-enditem`` consumption without extra memory.
+    item_state: str
     item_known: bool
     ability_id: str | None
     base_ability_id: str | None
@@ -172,10 +178,48 @@ class PokemonMechanicsState:
     weight: float | None
 
 
-def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
+def _revealed_items_for(battle: Any) -> dict[str, str] | None:
+    memory = getattr(battle, "_vgc_battle_memory", None)
+    if memory is None:
+        return None
+    return memory.opponent_items
+
+
+def _resolve_item_state(
+    pokemon: Any,
+    *,
+    opponent: bool,
+    revealed_items: Mapping[str, str] | None,
+) -> tuple[str, str | None]:
+    """Classify item knowledge: known, consumed, none (own side only), or unknown."""
+
+    raw_item = getattr(pokemon, "item", None)
+    item_id = normalize_item(raw_item)
+    species_id = to_id(getattr(pokemon, "species", None)) or ""
+
+    if not opponent:
+        return ("known", item_id) if item_id is not None else ("none", None)
+
+    if raw_item == "unknown_item" or item_id is None and not revealed_items:
+        return "unknown", None
+    if item_id is not None:
+        return "known", item_id
+    if revealed_items and species_id in revealed_items:
+        return "consumed", None
+    return "unknown", None
+
+
+def snapshot_pokemon(
+    pokemon: Any,
+    *,
+    opponent: bool,
+    revealed_items: Mapping[str, str] | None = None,
+) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = moves.items() if isinstance(moves, Mapping) else ((move.id, move) for move in moves)
-    item = normalize_item(getattr(pokemon, "item", None))
+    item_state, item = _resolve_item_state(
+        pokemon, opponent=opponent, revealed_items=revealed_items
+    )
     ability = to_id(getattr(pokemon, "ability", None)) or None
     base_ability = to_id(getattr(pokemon, "base_ability", None)) or None
     species_id = to_id(getattr(pokemon, "species", None))
@@ -237,7 +281,8 @@ def snapshot_pokemon(pokemon: Any, *, opponent: bool) -> PokemonMechanicsState:
             getattr(pokemon, "effects", None), counter_kind="elapsed_actions"
         ),
         item_id=item,
-        item_known=not opponent or item is not None,
+        item_state=item_state,
+        item_known=item_state != "unknown",
         ability_id=ability,
         base_ability_id=base_ability,
         temporary_ability_id=to_id(getattr(pokemon, "temporary_ability", None)) or None,
@@ -309,8 +354,12 @@ def _side_snapshot(battle: Any, *, opponent: bool) -> SideMechanicsState:
     active = list(getattr(battle, f"{prefix}active_pokemon", None) or ())
     while len(active) < 2:
         active.append(None)
+    revealed_items = _revealed_items_for(battle) if opponent else None
     return SideMechanicsState(
-        pokemon=tuple(snapshot_pokemon(mon, opponent=opponent) for mon in pokemon_values),
+        pokemon=tuple(
+            snapshot_pokemon(mon, opponent=opponent, revealed_items=revealed_items)
+            for mon in pokemon_values
+        ),
         active_species=tuple(
             to_id(getattr(mon, "species", None)) if mon is not None else None for mon in active
         ),

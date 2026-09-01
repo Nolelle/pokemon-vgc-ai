@@ -44,6 +44,7 @@ def _pokemon(species: str) -> PokemonMechanicsState:
         status_counter=2,
         effects=(EffectSnapshot("confusion", turns=2, raw_value=2),),
         item_id="charizarditey",
+        item_state="known",
         item_known=True,
         ability_id="drought",
         base_ability_id="blaze",

@@ -50,6 +50,7 @@ def make_pokemon_state(
         status_counter=status_counter,
         effects=effects,
         item_id=None,
+        item_state="unknown",
         item_known=False,
         ability_id=ability_id,
         base_ability_id=ability_id,

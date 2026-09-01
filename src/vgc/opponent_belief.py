@@ -314,6 +314,8 @@ def _reweight(
                 evidence_weight *= _EVIDENCE_MISMATCH_WEIGHT
 
         for observation in damage_evidence:
+            if observation.crit:
+                continue
             attacker = PokemonState(
                 species_id=species_id,
                 sp_spread=hypothesis.sp,

@@ -13,7 +13,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from vgc.damage import to_id
+from vgc.damage import _SPREAD_TARGETS, to_id
+from vgc.data import load_moves
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class DamageObservation:
     item: str | None = None
     ability: str | None = None
     num_targets: int = 1
+    crit: bool = False
 
 
 def _side(token: object) -> str | None:
@@ -107,6 +109,8 @@ class BattleMemory:
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
     _protocol_hp: dict[tuple[str, str], float] = field(default_factory=dict, repr=False)
+    _damage_buffer: list[DamageObservation] = field(default_factory=list, repr=False)
+    _pending_crit_targets: set[tuple[str, str]] = field(default_factory=set, repr=False)
 
     @property
     def opponent_role(self) -> str | None:
@@ -128,15 +132,18 @@ class BattleMemory:
             if len(message) < 2:
                 continue
             kind = str(message[1])
-            if kind == "turn" and len(message) > 2:
-                try:
-                    self.current_turn = int(message[2])
-                except (TypeError, ValueError):
-                    pass
-                self._turn_actions.clear()
-                self._last_move = None
+            if kind in {"turn", "upkeep"}:
+                self._finalize_damage_buffer()
+                if kind == "turn" and len(message) > 2:
+                    try:
+                        self.current_turn = int(message[2])
+                    except (TypeError, ValueError):
+                        pass
+                    self._turn_actions.clear()
+                    self._last_move = None
                 continue
             if kind == "move" and len(message) > 3:
+                self._finalize_damage_buffer()
                 actor_role = _side(message[2])
                 actor = self._species_for_ident(message[2])
                 move_id = to_id(message[3]) or "unknown"
@@ -167,6 +174,13 @@ class BattleMemory:
                     # Keep the revealed original item as knowledge even after consumption.
                     self.opponent_items.setdefault(
                         self._species_for_ident(message[2]), to_id(message[3]) or "unknown"
+                    )
+                continue
+            if kind == "-crit" and len(message) > 2:
+                target_role = _side(message[2])
+                if target_role == self.our_role:
+                    self._pending_crit_targets.add(
+                        (target_role or "", self._species_for_ident(message[2]))
                     )
                 continue
             if kind == "-damage" and len(message) > 3:
@@ -256,6 +270,36 @@ class BattleMemory:
             )
         )
 
+    def _spread_target_count(self, move_id: str, hit_count: int) -> int:
+        if hit_count <= 1:
+            return 1
+        move = load_moves().get(move_id) or {}
+        return hit_count if move.get("target") in _SPREAD_TARGETS else 1
+
+    def _finalize_damage_buffer(self) -> None:
+        if not self._damage_buffer:
+            return
+        move_id = self._damage_buffer[0].move_id
+        num_targets = self._spread_target_count(move_id, len(self._damage_buffer))
+        for observation in self._damage_buffer:
+            self.damage_observations.append(
+                DamageObservation(
+                    opponent_species=observation.opponent_species,
+                    move_id=observation.move_id,
+                    target_species=observation.target_species,
+                    damage_fraction=observation.damage_fraction,
+                    target_state=observation.target_state,
+                    weather=observation.weather,
+                    terrain=observation.terrain,
+                    screens=observation.screens,
+                    item=observation.item,
+                    ability=observation.ability,
+                    num_targets=num_targets,
+                    crit=observation.crit,
+                )
+            )
+        self._damage_buffer.clear()
+
     def _observe_damage(self, message: list[object]) -> None:
         if self._last_move is None or any("[from]" in str(part) for part in message[4:]):
             return
@@ -270,14 +314,17 @@ class BattleMemory:
         key = (target_role or "", target_species)
         old_fraction = self._protocol_hp.get(key)
         if old_fraction is None:
-            old_fraction = self.turns[-1].our_hp.get(target_species, 0.0) / 100.0
+            prior_percent = self.turns[-1].our_hp.get(target_species)
+            old_fraction = (prior_percent if prior_percent is not None else 100.0) / 100.0
         self._protocol_hp[key] = new_fraction
         lost = old_fraction - new_fraction
         target_state = self.turns[-1].our_states.get(target_species)
         if lost <= 0.0 or target_state is None:
             return
         snapshot = self.turns[-1]
-        self.damage_observations.append(
+        crit = key in self._pending_crit_targets
+        self._pending_crit_targets.discard(key)
+        self._damage_buffer.append(
             DamageObservation(
                 opponent_species=attacker_species,
                 move_id=move_id,
@@ -289,12 +336,14 @@ class BattleMemory:
                 screens=snapshot.our_screens,
                 item=snapshot.opponent_item.get(attacker_species),
                 ability=snapshot.opponent_ability.get(attacker_species),
+                crit=crit,
             )
         )
 
     def observe_battle(self, battle) -> None:
         """Save one deduplicated live board snapshot for the current decision turn."""
 
+        self._finalize_damage_buffer()
         self.our_role = self.our_role or getattr(battle, "player_role", None)
         turn = int(getattr(battle, "turn", 0) or self.current_turn or 0)
         self.current_turn = max(self.current_turn, turn)
