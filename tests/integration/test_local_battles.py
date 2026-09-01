@@ -17,6 +17,7 @@ import pytest
 
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.agent import VgcPlayer
+from vgc.battle_state_replay import verify_decision_replay_bundle
 from vgc.baselines import make_player
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO, TEAMS_DIR
 from vgc.models import PolicyConfig
@@ -174,6 +175,34 @@ def test_ots_accept_reject_race_completes(local_server, dev_team) -> None:
     assert asyncio.run(_run()) == 1
 
 
+def test_decision_replay_rebuilds_with_open_team_sheets(local_server, dev_team) -> None:
+    async def _run() -> tuple[dict, dict]:
+        config = PolicyConfig(
+            format_id=FORMAT_ID,
+            accept_open_team_sheet=True,
+            use_heuristic_evaluator=False,
+            use_two_ply_search=False,
+        )
+        p1 = VgcPlayer(config=config, team=dev_team, record_decision_replays=True)
+        p2 = VgcPlayer(config=config, team=dev_team, record_decision_replays=True)
+        try:
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=1), timeout=30)
+        finally:
+            await p1.ps_client.stop_listening()
+            await p2.ps_client.stop_listening()
+        battle1 = next(iter(p1.battles.values()))
+        battle2 = next(iter(p2.battles.values()))
+        return p1.decision_replay_bundle(battle1), p2.decision_replay_bundle(battle2)
+
+    bundles = asyncio.run(_run())
+    for bundle in bundles:
+        assert bundle is not None
+        assert bundle["open_team_sheets"] == "accept"
+        assert any(message[1:2] == ["showteam"] for message in bundle["messages"])
+        verification = asyncio.run(verify_decision_replay_bundle(bundle))
+        assert verification.ready, verification.mismatches
+
+
 def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) -> None:
     artifacts = tmp_path / "ladder"
     log_path = tmp_path / "ladder.jsonl"
@@ -195,6 +224,13 @@ def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) 
     trace_files = list((artifacts / "traces").glob("*.json"))
     assert len(trace_files) == 2
     assert all(json.loads(path.read_text()) for path in trace_files)
+    state_replay_files = list((artifacts / "state-replays").glob("*.json"))
+    assert len(state_replay_files) == 2
+    for path in state_replay_files:
+        verification = asyncio.run(
+            verify_decision_replay_bundle(json.loads(path.read_text()))
+        )
+        assert verification.ready, verification.mismatches
 
 
 def test_own_stat_points_are_known_even_when_open_team_sheets_never_fire(

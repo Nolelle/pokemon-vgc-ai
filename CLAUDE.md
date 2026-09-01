@@ -282,14 +282,16 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   `vgc.sets.opponent_spread_hypotheses` returns the weighted Stat Point/nature beliefs
   behind `opponent_state`'s single point estimate (median confidence in the most popular
   spread across the 275-species corpus is 52.4%; no species reaches certainty).
-  `PolicyConfig.exact_search_spread_hypotheses` makes `vgc.rl.live_mirror` build one real
-  Showdown root per belief -- verified reaching the engine as genuinely different stats
+  `PolicyConfig.exact_search_spread_hypotheses` makes `vgc.rl.live_mirror` build real
+  Showdown roots for multiple beliefs -- verified reaching the engine as genuinely different stats
   (`tests/test_exact_search.py::test_hidden_spread_beliefs_reach_showdown_as_different_opponent_stats`
-  shows three near-equally-likely Charizards at Speed 144/152/167). It **ships at 1**, i.e.
-  today's point-estimate behaviour; raising it changes gate-tuned behaviour and needs a
-  same-session A/B, not a default flip. Spreads rebuild the root (Stat Points are baked
-  into the starting team); timers re-patch it, which is why `LiveExactMirror.hypotheses`
-  is ordered spread-major.
+  shows three near-equally-likely Charizards at Speed 144/152/167). Part B now requires
+  two spread, coherent set, and brought-four inputs at the source, then searches two
+  decision-diverse representatives of their joint distribution. Audit metadata preserves
+  the original branch counts and assigns the full probability mass to those
+  representatives. Spreads rebuild the root (Stat Points are baked into the starting
+  team); timers re-patch it, which is why `LiveExactMirror.hypotheses` is ordered
+  spread-major.
 - **Those beliefs are a posterior, not a fixed prior.** `vgc.opponent_belief.
   build_opponent_beliefs` reweights the corpus spreads by what the battle has shown --
   `BattleMemory.speed_observations` (who moved first, at what effective Speed, weather/
@@ -345,6 +347,9 @@ shells on this machine, and `node` may also need an absolute path
 ```bash
 # Mechanics gate -- must PASS before any training or ladder command runs
 .venv/bin/python offline/check_mechanics_readiness.py
+
+# Battle-state gate -- must also PASS before any training or ladder command runs
+.venv/bin/python offline/check_battle_state_readiness.py
 
 # Start the local server (from the showdown repo, port 8000, no auth)
 cd /Users/edmundyu/code/projects/pokemon-showdown && node pokemon-showdown start --no-security

@@ -53,6 +53,7 @@ DEFAULT_OUT_PATH = DATA_DIR.parent / "usage" / "set_priors.json"
 # just its top), so the default keeps essentially every rated game rather than
 # restricting to a high-rating slice the way a "best play" usage stat might.
 DEFAULT_MIN_RATING = 1000
+MAX_JOINT_CONFIGURATIONS_PER_SPECIES = 20
 
 
 def _aggregate_replay(
@@ -61,6 +62,7 @@ def _aggregate_replay(
     item_counts: dict[str, Counter],
     ability_counts: dict[str, Counter],
     appearance_counts: Counter,
+    configuration_counts: dict[str, Counter] | None = None,
 ) -> None:
     """Mutates the four aggregator dicts in place from one replay's decision records
     (`vgc.replay_parse.ParsedReplay.records`).
@@ -91,7 +93,9 @@ def _aggregate_replay(
                     if action and action.get("kind") == "move" and action.get("move_id"):
                         moves_seen[species_id].add(action["move_id"])
             for bench_mon in our.get("bench") or []:
-                appeared.add(bench_mon["species"])
+                species_id = bench_mon.get("species_id") or bench_mon.get("species")
+                if species_id:
+                    appeared.add(species_id)
 
         for species_id in appeared:
             appearance_counts[species_id] += 1
@@ -102,6 +106,13 @@ def _aggregate_replay(
             item_counts[species_id][item] += 1
         for species_id, ability in last_ability.items():
             ability_counts[species_id][ability] += 1
+        if configuration_counts is not None:
+            for species_id in appeared:
+                moves = tuple(sorted(moves_seen.get(species_id, set())))
+                item = last_item.get(species_id, "")
+                ability = last_ability.get(species_id, "")
+                if moves or item or ability:
+                    configuration_counts[species_id][(moves, item, ability)] += 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -141,6 +152,7 @@ def main() -> int:
     item_counts: dict[str, Counter] = defaultdict(Counter)
     ability_counts: dict[str, Counter] = defaultdict(Counter)
     appearance_counts: Counter = Counter()
+    configuration_counts: dict[str, Counter] = defaultdict(Counter)
 
     generated_from = 0
     ratings_seen: list[int] = []
@@ -164,7 +176,12 @@ def main() -> int:
         generated_from += 1
         ratings_seen.append(rating)
         _aggregate_replay(
-            result.records, move_counts, item_counts, ability_counts, appearance_counts
+            result.records,
+            move_counts,
+            item_counts,
+            ability_counts,
+            appearance_counts,
+            configuration_counts,
         )
 
     species_out: dict[str, dict[str, object]] = {}
@@ -174,6 +191,18 @@ def main() -> int:
             "moves": dict(move_counts.get(species_id, {})),
             "items": dict(item_counts.get(species_id, {})),
             "abilities": dict(ability_counts.get(species_id, {})),
+            "configurations": [
+                {
+                    "moves": list(key[0]),
+                    "item": key[1] or None,
+                    "ability": key[2] or None,
+                    "count": count,
+                }
+                for key, count in sorted(
+                    configuration_counts.get(species_id, {}).items(),
+                    key=lambda entry: (-entry[1], entry[0]),
+                )[:MAX_JOINT_CONFIGURATIONS_PER_SPECIES]
+            ],
         }
 
     output = {

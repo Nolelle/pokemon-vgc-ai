@@ -41,6 +41,15 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def _safe_attr(value: Any, name: str, default: Any = None) -> Any:
+    """Read a public property that may be unavailable during an early request."""
+
+    try:
+        return getattr(value, name, default)
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class EffectSnapshot:
     """One status, volatile, side, field, weather, terrain, or slot effect."""
@@ -381,8 +390,8 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         generation=int(getattr(battle, "gen", 9) or 9),
         game_type="doubles",
         turn=int(getattr(battle, "turn", 0) or 0),
-        max_team_size=_optional_int(getattr(battle, "max_team_size", None)),
-        team_size=_optional_int(getattr(battle, "team_size", None)),
+        max_team_size=_optional_int(_safe_attr(battle, "max_team_size")),
+        team_size=_optional_int(_safe_attr(battle, "team_size")),
         team_preview=bool(getattr(battle, "teampreview", False)),
         commanding=bool(getattr(battle, "commanding", False)),
         reviving=bool(getattr(battle, "reviving", False)),

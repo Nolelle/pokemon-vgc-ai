@@ -15,7 +15,7 @@ import pytest
 
 from vgc.models import PolicyConfig
 from vgc.battle_memory import BattleMemory, SpeedObservation
-from vgc.rl.live_mirror import MirrorHypothesis, _spread_beliefs
+from vgc.rl.live_mirror import LiveExactMirror, MirrorHypothesis, _spread_beliefs
 from vgc.rl.hidden_state import HiddenStateHypothesis
 
 
@@ -39,17 +39,11 @@ def fixed_spreads(monkeypatch):
     monkeypatch.setattr("vgc.rl.live_mirror.opponent_spread_hypotheses", fake)
 
 
-def test_default_config_commits_to_one_spread_per_species(fixed_spreads) -> None:
-    # The shipped default must reproduce the old point-estimate behaviour exactly, or
-    # every gate-tuned number moves without an A/B.
+def test_default_config_keeps_multiple_material_spread_possibilities(fixed_spreads) -> None:
     beliefs = _spread_beliefs(_battle("garchomp", "incineroar"), PolicyConfig())
-    assert len(beliefs) == 1
-    weight, assignment = beliefs[0]
-    assert weight == 1.0
-    assert assignment == {
-        "garchomp": ({"atk": 32, "spe": 32}, "jolly"),
-        "incineroar": ({"atk": 32, "spe": 32}, "jolly"),
-    }
+    assert len(beliefs) == 2
+    assert sum(weight for weight, _assignment in beliefs) == pytest.approx(1.0)
+    assert all(0.0 < weight < 1.0 for weight, _assignment in beliefs)
 
 
 def test_raising_the_cap_produces_a_real_distribution(fixed_spreads) -> None:
@@ -190,3 +184,40 @@ def test_no_memory_falls_back_to_the_flat_prior(fixed_spreads) -> None:
     config = PolicyConfig(exact_search_spread_hypotheses=2)
     battle = _battle("garchomp")
     assert _spread_beliefs(battle, config, None) == _spread_beliefs(battle, config)
+
+
+def test_combined_hidden_configurations_are_capped_and_renormalized(monkeypatch) -> None:
+    config = PolicyConfig(exact_search_total_hypotheses=8)
+    mirror = object.__new__(LiveExactMirror)
+    mirror.config = config
+    mirror.last_hypothesis_audit = {}
+    monkeypatch.setattr("vgc.rl.live_mirror.snapshot_battle", lambda _battle: object())
+    monkeypatch.setattr(
+        "vgc.rl.live_mirror.enumerate_hidden_state_hypotheses",
+        lambda _state, _config: [
+            HiddenStateHypothesis(0.6),
+            HiddenStateHypothesis(0.4, {"opponent": {"x": {"sleepTime": 2}}}),
+        ],
+    )
+    monkeypatch.setattr(
+        "vgc.rl.live_mirror._spread_beliefs",
+        lambda _battle, _config, _memory: [(0.7, {"a": ({"spe": 32}, "jolly")}), (0.3, {})],
+    )
+    monkeypatch.setattr(
+        "vgc.rl.live_mirror._set_beliefs",
+        lambda _battle, _config, _memory: [(0.8, {"a": {"moves": ("protect",)}}), (0.2, {})],
+    )
+    monkeypatch.setattr(
+        "vgc.rl.live_mirror._bring_beliefs",
+        lambda _battle, _config: [(0.75, ("a", "b", "c", "d")), (0.25, ("a", "b", "c", "e"))],
+    )
+
+    hypotheses = mirror.hypotheses(object())
+
+    assert len(hypotheses) == 8
+    assert sum(entry.weight for entry in hypotheses) == pytest.approx(1.0)
+    assert mirror.last_hypothesis_audit["total_before_cap"] == 16
+    assert mirror.last_hypothesis_audit["searched"] == 8
+    assert mirror.last_hypothesis_audit["retained_probability_mass"] == pytest.approx(1.0)
+    assert 0.0 < mirror.last_hypothesis_audit["direct_representative_mass"] < 1.0
+    assert mirror.last_hypothesis_audit["compressed"] is True

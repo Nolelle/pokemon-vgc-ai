@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "decision_replay_schema": "vgc-decision-replay-v1",
+  "set_priors_sha256": "0bb8f8891dbdbe740242573230d59d152ebc4fbf669a1410469a4c87c65bcc5b",
+  "release_ready": false,
+  "release_rule": "Every decision is reconstructible from its player-visible prefix and request, private/future facts cannot change its inputs, and material hidden opponent configurations remain probability-weighted branches through search.",
+  "scopes": {
+    "live_observation": true,
+    "decision_replay": true,
+    "temporal_boundary": true,
+    "belief_state": true,
+    "search_input": true,
+    "training_input": true
+  },
+  "families": [
+    {
+      "id": "observable_property_coverage",
+      "status": "exact",
+      "verification": "property_contract",
+      "tests": [
+        "tests/test_mechanics_observation_contract.py",
+        "tests/test_mechanics_state.py::test_snapshot_preserves_all_observable_mechanics_state"
+      ]
+    },
+    {
+      "id": "decision_request_cutoff",
+      "status": "partial",
+      "verification": "same_batch_prefix_test",
+      "tests": [
+        "tests/test_battle_state_replay.py::test_multiline_burst_cannot_leak_lines_after_request_into_memory"
+      ],
+      "gap": "no truncation-equality test: parsing only through decision N must equal the full replay with cutoff N"
+    },
+    {
+      "id": "active_bench_health_status_resources",
+      "status": "exact",
+      "verification": "snapshot_and_replay",
+      "tests": [
+        "tests/test_mechanics_state.py::test_snapshot_preserves_all_observable_mechanics_state",
+        "tests/test_battle_memory.py::test_memory_keeps_turn_history_protocol_actions_and_choices"
+      ]
+    },
+    {
+      "id": "boosts_temporary_field_side_slot_effects",
+      "status": "exact",
+      "verification": "snapshot_and_showdown_integration",
+      "tests": [
+        "tests/test_mechanics_state.py::test_snapshot_preserves_all_observable_mechanics_state",
+        "tests/integration/test_local_battles.py::test_decision_replay_rebuilds_with_open_team_sheets"
+      ]
+    },
+    {
+      "id": "open_team_sheet_reveal_timing",
+      "status": "exact",
+      "verification": "accepted_and_rejected_integration",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_ots_accept_reject_race_completes",
+        "tests/integration/test_local_battles.py::test_decision_replay_rebuilds_with_open_team_sheets",
+        "tests/test_information_contract.py::test_information_ledger_ignores_private_truth_and_promotes_public_reveals"
+      ]
+    },
+    {
+      "id": "decision_replay_bundle",
+      "status": "partial",
+      "verification": "live_bundle_rebuild",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_decision_replay_rebuilds_with_open_team_sheets",
+        "tests/integration/test_local_battles.py::test_ladder_artifact_pipeline_local_smoke",
+        "tests/test_battle_state_replay.py::test_team_preview_records_every_legal_bring_four_order"
+      ],
+      "gap": "no varied rebuild corpus (weather, terrain, Trick Room, Mega, forced replacement, double faint, <4 opponents revealed, OTS accept+reject); only single smoke games rebuild"
+    },
+    {
+      "id": "normal_and_forced_decision_identity",
+      "status": "partial",
+      "verification": "request_sequence_and_phase",
+      "tests": [
+        "tests/test_replay_parse.py::test_forced_switch_after_faint_produces_its_own_record",
+        "tests/test_replay_parse.py::test_forced_switch_record_also_carries_preview_species_and_unseen_count"
+      ],
+      "gap": "no bundle-recorder test that a mid-turn forced switch creates its own decision record with distinct sequence number and phase"
+    },
+    {
+      "id": "private_root_isolation",
+      "status": "exact",
+      "verification": "information_contract",
+      "tests": [
+        "tests/test_information_contract.py::test_private_opponent_truth_cannot_change_the_encoded_input",
+        "tests/test_exact_mechanics_contract.py::test_exact_modules_cannot_reach_the_python_exchange_simulator"
+      ]
+    },
+    {
+      "id": "future_label_isolation",
+      "status": "partial",
+      "verification": "dataset_input_audit",
+      "tests": [
+        "tests/test_training_data_audit.py::test_audit_passes_complete_disjoint_dataset",
+        "tests/test_training_data_audit.py::test_audit_fails_duplicate_decision_and_illegal_teacher_reference"
+      ],
+      "gap": "no label-mutation test: changing winner/future turns/teacher action/score must leave every decision input byte-identical"
+    },
+    {
+      "id": "spread_and_nature_distribution",
+      "status": "exact",
+      "verification": "posterior_and_search_branch_tests",
+      "tests": [
+        "tests/test_live_mirror_beliefs.py::test_observing_that_they_outsped_us_reweights_toward_fast_spreads",
+        "tests/test_live_mirror_beliefs.py::test_contradicted_spreads_are_suppressed_but_not_deleted",
+        "tests/test_information_contract.py::test_move_order_reweights_speed_hypotheses",
+        "tests/test_information_contract.py::test_observed_damage_reweights_attack_hypotheses",
+        "tests/test_exact_search.py::test_hidden_spread_beliefs_reach_showdown_as_different_opponent_stats"
+      ]
+    },
+    {
+      "id": "joint_move_item_ability_configurations",
+      "status": "exact",
+      "verification": "public_replay_joint_prior",
+      "tests": [
+        "tests/test_information_contract.py::test_joint_set_prior_keeps_observed_item_ability_and_moves_together"
+      ]
+    },
+    {
+      "id": "unresolved_brought_four_distribution",
+      "status": "partial",
+      "verification": "preview_distribution_and_public_filter",
+      "tests": [
+        "tests/test_preview_predict.py::test_bring4_distribution_aggregates_by_subset",
+        "tests/test_preview_predict.py::test_bring4_usage_distribution_sums_to_one",
+        "tests/test_information_contract.py::test_information_ledger_labels_own_facts_and_opponent_uncertainty"
+      ],
+      "gap": "no live-mirror test that _bring_beliefs yields a filtered, renormalized distribution over legal brings after a reveal; only preview_predict unit tests exist"
+    },
+    {
+      "id": "hidden_sleep_confusion_timers",
+      "status": "exact",
+      "verification": "showdown_source_weighted_branches",
+      "tests": [
+        "tests/test_hidden_state.py::test_fresh_sleep_keeps_both_champions_durations_with_their_real_prior",
+        "tests/test_hidden_state.py::test_confusion_enumerates_its_uniform_two_to_five_roll",
+        "tests/test_exact_search.py::test_hidden_sleep_beliefs_reach_showdown_as_different_legal_states"
+      ]
+    },
+    {
+      "id": "belief_branch_cap_and_renormalization",
+      "status": "partial",
+      "verification": "combined_hypothesis_audit",
+      "tests": [
+        "tests/test_hidden_state.py::test_branches_are_capped_and_renormalised_to_a_real_distribution",
+        "tests/test_live_mirror_beliefs.py::test_combined_hidden_configurations_are_capped_and_renormalized"
+      ],
+      "gap": "no branch-sensitivity test/audit that excluded hypotheses cannot change the top action"
+    },
+    {
+      "id": "public_information_teacher",
+      "status": "exact",
+      "verification": "teacher_source_v2_audit",
+      "tests": [
+        "tests/test_exact_mechanics_contract.py::test_a_recorded_teacher_label_is_backed_by_real_showdown_branches",
+        "tests/test_demonstrations.py::test_complete_context_validation_rejects_missing_information"
+      ]
+    },
+    {
+      "id": "fail_closed_public_and_training_entrypoints",
+      "status": "exact",
+      "verification": "regression_gate_tests",
+      "tests": [
+        "tests/test_battle_state_gate.py::test_public_and_training_entrypoints_enforce_part_b_gate"
+      ]
+    }
+  ]
+}

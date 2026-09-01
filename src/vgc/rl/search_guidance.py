@@ -526,6 +526,7 @@ class NeuralSearchPlayer(VgcPlayer):
                 # confusion durations. Average over the legal ones instead of picking
                 # the modal duration and calling that exact.
                 beliefs = list(live_mirror.hypotheses(battle, memory))
+                record_note("belief_search", live_mirror.last_hypothesis_audit)
 
         def run_exact(selector):
             """Rank via Showdown, once per hidden-state belief, then combine."""

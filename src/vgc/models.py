@@ -417,12 +417,21 @@ class PolicyConfig:
     exact_search_state_hypotheses: int = 4
     # Number of opponent Stat Point/nature beliefs the live mirror builds a root for.
     # Open Team Sheets never reveal a spread, and the shipped usage corpus names the most
-    # popular one with only ~52% confidence at the median (no species reaches certainty),
-    # so 1 means "treat the most popular spread as fact" -- today's behavior. Raising it
-    # costs one extra Showdown team-preview start per belief and reasons over the
-    # distribution instead. Left at 1 because moving it changes gate-tuned behavior and
-    # needs a same-session A/B, not a default flip.
-    exact_search_spread_hypotheses: int = 1
+    # popular one with only ~52% confidence at the median (no species reaches certainty).
+    # Part B requires at least two materially plausible spreads to reach search instead
+    # of silently hardening the most popular one into fact.
+    exact_search_spread_hypotheses: int = 2
+    # Number of move/item/ability configurations retained from combinations observed
+    # together in public replays. One is a point guess; Part B live/public configurations
+    # use at least two whenever compatible alternatives remain.
+    exact_search_set_hypotheses: int = 2
+    # Number of plausible opponent bring-four configurations retained after filtering
+    # by Pokemon that have publicly appeared.
+    exact_search_bring_hypotheses: int = 2
+    # Hard cap on the combined spread/set/bring/private-timer cross product. The highest
+    # probability branches are kept and renormalized; audit metadata reports retained
+    # mass so compute limits never masquerade as certainty.
+    exact_search_total_hypotheses: int = 2
     # Exact-branch value for applying a major status. Sleep/freeze use the larger
     # control weight below; other statuses share this base currency.
     exact_search_status_weight: float = 18.0

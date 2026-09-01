@@ -241,6 +241,47 @@ def test_observed_damage_reweights_attack_hypotheses() -> None:
     assert by_nature["adamant"] > by_nature["modest"]
 
 
+def test_joint_set_prior_keeps_observed_item_ability_and_moves_together() -> None:
+    battle = _battle_with_complete_own_team()
+    priors = {
+        "species": {
+            "garchomp": {
+                "appearances": 100,
+                "moves": {"earthquake": 80, "protect": 70, "dragonclaw": 40},
+                "items": {"lifeorb": 70, "choicescarf": 30},
+                "abilities": {"roughskin": 70, "sandveil": 30},
+                "configurations": [
+                    {
+                        "moves": ["earthquake", "protect"],
+                        "item": "lifeorb",
+                        "ability": "roughskin",
+                        "count": 70,
+                    },
+                    {
+                        "moves": ["dragonclaw", "protect"],
+                        "item": "choicescarf",
+                        "ability": "sandveil",
+                        "count": 30,
+                    },
+                ],
+            }
+        }
+    }
+
+    belief = build_opponent_beliefs(
+        battle, BattleMemory("sets"), usage={}, set_priors=priors
+    )[0]
+
+    assert len(belief.set_hypotheses) == 2
+    assert belief.set_hypotheses[0].item == "lifeorb"
+    assert belief.set_hypotheses[0].ability == "roughskin"
+    assert "earthquake" in belief.set_hypotheses[0].moves
+    assert belief.set_hypotheses[0].probability == pytest.approx(0.7)
+    assert belief.set_hypotheses[1].item == "choicescarf"
+    assert belief.set_hypotheses[1].ability == "sandveil"
+    assert belief.set_hypotheses[1].probability == pytest.approx(0.3)
+
+
 def test_information_enabled_model_requires_and_accepts_contract_tensors() -> None:
     torch = pytest.importorskip("torch")
     from vgc.bc.encoding import INDEX_DIM, SLOT_FEATURE_DIM, STATE_SCALAR_DIM

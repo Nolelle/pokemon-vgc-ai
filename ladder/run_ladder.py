@@ -61,6 +61,7 @@ from vgc.baselines import BASELINES, make_player  # noqa: E402
 from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
 from vgc.mechanics_gate import enforce_mechanics_gate_for_cli  # noqa: E402
+from vgc.battle_state_gate import enforce_battle_state_gate_for_cli  # noqa: E402
 from vgc.postmortem import classify_loss  # noqa: E402
 
 USERNAME_ENV = "VGC_SHOWDOWN_USERNAME"
@@ -127,15 +128,18 @@ class LadderPlayer(VgcPlayer):
         self.artifacts_dir = artifacts_dir
         self.replay_dir = artifacts_dir / "replays"
         self.trace_dir = artifacts_dir / "traces"
+        self.state_replay_dir = artifacts_dir / "state-replays"
         self.log_path = log_path
         self.session_id = session_id
         self.completed_records: list[dict[str, object]] = []
         self._pending_finished_battles: dict[str, AbstractBattle] = {}
         self.replay_dir.mkdir(parents=True, exist_ok=True)
         self.trace_dir.mkdir(parents=True, exist_ok=True)
+        self.state_replay_dir.mkdir(parents=True, exist_ok=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         player_kwargs.setdefault("save_replays", str(self.replay_dir))
         player_kwargs.setdefault("start_timer_on_battle_start", True)
+        player_kwargs.setdefault("record_decision_replays", True)
         super().__init__(**player_kwargs)
         _deduplicate_poke_env_stream_handlers(self.logger)
 
@@ -162,6 +166,14 @@ class LadderPlayer(VgcPlayer):
         trace_path = self.trace_dir / f"{battle.battle_tag}.json"
         trace_path.write_text(json.dumps(traces, indent=2, sort_keys=True))
 
+        state_replay = self.decision_replay_bundle(battle)
+        state_replay_path = self.state_replay_dir / f"{battle.battle_tag}.json"
+        if state_replay is None:
+            raise RuntimeError(
+                f"missing decision replay bundle for completed battle {battle.battle_tag}"
+            )
+        state_replay_path.write_text(json.dumps(state_replay, indent=2, sort_keys=True))
+
         replay_matches = list(self.replay_dir.glob(f"*{battle.battle_tag}.html"))
         replay_path = replay_matches[0] if replay_matches else None
         record: dict[str, object] = {
@@ -181,6 +193,7 @@ class LadderPlayer(VgcPlayer):
             "policy": _policy_tag(self.config),
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
+            "state_replay_path": str(state_replay_path.resolve()),
         }
         learned_checkpoint = getattr(self, "learned_checkpoint_path", None)
         if learned_checkpoint is not None:
@@ -788,6 +801,7 @@ def main() -> int:
         # Fail closed: public results are not interpretable while legal mechanics remain
         # partial/missing. Local smoke stays available for mechanics development.
         enforce_mechanics_gate_for_cli("public ladder play")
+        enforce_battle_state_gate_for_cli("public ladder play")
         if args.policy_mode != "hybrid" or args.policy_checkpoint is None:
             raise SystemExit(
                 "public ladder play requires --policy-mode hybrid and a mechanics-complete "

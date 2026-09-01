@@ -1,4 +1,7 @@
 from pathlib import Path
+import asyncio
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +16,34 @@ def test_default_policy_knows_own_team_but_rejects_opponent_sheet() -> None:
 
     assert config.use_own_team_spreads is True
     assert config.accept_open_team_sheet is False
+
+
+def test_vgc_transport_keeps_event_loop_responsive_during_slow_choice() -> None:
+    player = VgcPlayer(start_listening=False)
+    battle = SimpleNamespace(_wait=False, teampreview=False, battle_tag="battle-slow")
+    sent: list[tuple[str, str]] = []
+    loop_progressed = False
+
+    def slow_choice(_battle):
+        time.sleep(0.05)
+        return SimpleNamespace(message="/choose default")
+
+    async def send_message(message, battle_tag):
+        sent.append((message, battle_tag))
+
+    async def run() -> None:
+        nonlocal loop_progressed
+        task = asyncio.create_task(player._handle_battle_request(battle))
+        await asyncio.sleep(0.01)
+        loop_progressed = not task.done()
+        await task
+
+    player.choose_move = slow_choice
+    player.ps_client.send_message = send_message
+    asyncio.run(run())
+
+    assert loop_progressed is True
+    assert sent == [("/choose default", "battle-slow")]
 
 
 @pytest.mark.parametrize("baseline", sorted(BASELINES))

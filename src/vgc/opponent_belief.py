@@ -29,6 +29,7 @@ from vgc.stats import (
 )
 
 MAX_SPREAD_HYPOTHESES = 3
+MAX_SET_HYPOTHESES = 3
 _EVIDENCE_MISMATCH_WEIGHT = 0.05
 _DAMAGE_TOLERANCE_PERCENT = 2.0
 
@@ -44,9 +45,21 @@ class SpreadHypothesis:
 
 
 @dataclass(frozen=True)
+class OpponentSetHypothesis:
+    """One move/item/ability combination observed together in prior public data."""
+
+    moves: tuple[str, ...]
+    item: str | None
+    ability: str | None
+    probability: float
+    source: str = "public_replay_configuration_v1"
+
+
+@dataclass(frozen=True)
 class PokemonBelief:
     species_id: str
     hypotheses: tuple[SpreadHypothesis, ...]
+    set_hypotheses: tuple[OpponentSetHypothesis, ...] = ()
     move_probabilities: dict[str, float] = field(default_factory=dict)
     item_probabilities: dict[str, float] = field(default_factory=dict)
     ability_probabilities: dict[str, float] = field(default_factory=dict)
@@ -179,6 +192,19 @@ def information_boundary_summary(
                             "probability": round(float(hypothesis.probability), 6),
                         }
                         for hypothesis in belief.hypotheses
+                    ],
+                },
+                "coherent_set_configurations": {
+                    "status": "estimated" if belief.set_hypotheses else "unknown",
+                    "possibilities": [
+                        {
+                            "moves": list(entry.moves),
+                            "item": entry.item,
+                            "ability": entry.ability,
+                            "probability": round(float(entry.probability), 6),
+                            "source": entry.source,
+                        }
+                        for entry in belief.set_hypotheses
                     ],
                 },
                 "current_state": {
@@ -339,6 +365,95 @@ def _frequency_probabilities(
     }
 
 
+def _set_hypotheses(
+    entry: dict[str, Any] | None,
+    *,
+    revealed_moves: set[str],
+    known_item: str | None,
+    known_ability: str | None,
+) -> tuple[OpponentSetHypothesis, ...]:
+    """Compatible joint public-replay configurations, completed deterministically."""
+
+    entry = entry or {}
+    ranked_moves = [
+        to_id(move_id)
+        for move_id, _count in sorted(
+            (entry.get("moves") or {}).items(), key=lambda row: (-row[1], row[0])
+        )
+        if to_id(move_id)
+    ]
+    ranked_items = [
+        to_id(item_id)
+        for item_id, _count in sorted(
+            (entry.get("items") or {}).items(), key=lambda row: (-row[1], row[0])
+        )
+        if to_id(item_id)
+    ]
+    ranked_abilities = [
+        to_id(ability_id)
+        for ability_id, _count in sorted(
+            (entry.get("abilities") or {}).items(), key=lambda row: (-row[1], row[0])
+        )
+        if to_id(ability_id)
+    ]
+    candidates: list[tuple[tuple[str, ...], str | None, str | None, float, str]] = []
+    for row in entry.get("configurations") or []:
+        row_moves = {to_id(move_id) for move_id in row.get("moves") or [] if to_id(move_id)}
+        row_item = to_id(row.get("item")) or None
+        row_ability = to_id(row.get("ability")) or None
+        if revealed_moves - row_moves and len(row_moves) >= 4:
+            continue
+        if known_item and row_item and known_item != row_item:
+            continue
+        if known_ability and row_ability and known_ability != row_ability:
+            continue
+        moves = list(sorted(revealed_moves | row_moves))
+        moves.extend(move for move in ranked_moves if move not in moves)
+        candidates.append(
+            (
+                tuple(moves[:4]),
+                known_item or row_item or next(iter(ranked_items), None),
+                known_ability or row_ability or next(iter(ranked_abilities), None),
+                max(0.0, float(row.get("count", 0.0))),
+                "public_replay_configuration_v1",
+            )
+        )
+    if not candidates:
+        moves = list(sorted(revealed_moves))
+        moves.extend(move for move in ranked_moves if move not in moves)
+        candidates = [
+            (
+                tuple(moves[:4]),
+                known_item or next(iter(ranked_items), None),
+                known_ability or next(iter(ranked_abilities), None),
+                1.0,
+                "public_replay_marginal_fallback_v1",
+            )
+        ]
+
+    merged: dict[tuple[tuple[str, ...], str | None, str | None], tuple[float, str]] = {}
+    for moves, item, ability, weight, source in candidates:
+        key = (moves, item, ability)
+        old_weight, old_source = merged.get(key, (0.0, source))
+        merged[key] = (old_weight + weight, old_source)
+    ranked = sorted(merged.items(), key=lambda row: (-row[1][0], str(row[0])))[
+        :MAX_SET_HYPOTHESES
+    ]
+    raw_total = sum(weight for _key, (weight, _source) in ranked)
+    equal_weight = raw_total <= 0.0
+    total = float(len(ranked)) if equal_weight else raw_total
+    return tuple(
+        OpponentSetHypothesis(
+            moves=key[0],
+            item=key[1],
+            ability=key[2],
+            probability=((1.0 if equal_weight else weight) / total if total else 1.0),
+            source=source,
+        )
+        for key, (weight, source) in ranked
+    )
+
+
 def _preview_species(battle) -> list[str]:
     preview = list(_public_attr(battle, "teampreview_opponent_team") or [])
     species = [to_id(getattr(mon, "species", None)) for mon in preview]
@@ -407,6 +522,12 @@ def build_opponent_beliefs(
             PokemonBelief(
                 species_id=species_id,
                 hypotheses=hypotheses,
+                set_hypotheses=_set_hypotheses(
+                    prior_entry,
+                    revealed_moves=revealed_moves,
+                    known_item=known_item,
+                    known_ability=known_ability,
+                ),
                 move_probabilities=move_probabilities,
                 item_probabilities=_frequency_probabilities(
                     prior_entry, "items", known=known_item

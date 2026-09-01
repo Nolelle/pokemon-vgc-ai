@@ -611,6 +611,8 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     from vgc.mechanics_gate import enforce_mechanics_gate_for_cli
+    from vgc.battle_state_gate import enforce_battle_state_gate_for_cli
 
     enforce_mechanics_gate_for_cli("model training")
+    enforce_battle_state_gate_for_cli("model training")
     main()
