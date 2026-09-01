@@ -214,14 +214,100 @@ class ReplayVerification:
     mismatches: tuple[str, ...]
 
 
-async def verify_decision_replay_bundle(bundle: dict[str, object]) -> ReplayVerification:
-    """Rebuild every decision through VgcPlayer and compare its exact inputs.
+DECISION_INPUT_FIELDS = (
+    "state",
+    "belief",
+    "legal_actions",
+    "state_sha256",
+    "belief_sha256",
+    "legal_actions_sha256",
+)
 
-    The replay player deliberately makes cheap arbitrary choices: saved server messages
-    already contain the resulting battle, so the submitted replay choice cannot affect
-    parsing.  State capture happens in the final ``choose_move``/``teampreview`` wrappers
-    before those choices are produced, exactly as it does for the live player.
+OUTCOME_LABEL_KEYS = frozenset({"won", "lost", "winner"})
+
+
+def decision_input_snapshot(decision: dict[str, object]) -> dict[str, object]:
+    """Return the saved decision inputs used by leakage and truncation tests."""
+
+    return {key: decision.get(key) for key in DECISION_INPUT_FIELDS}
+
+
+def messages_through_decision_cutoff(
+    bundle: dict[str, object],
+    decision_index: int,
+) -> list[list[str]]:
+    decisions = bundle.get("decisions")
+    messages = bundle.get("messages")
+    if not isinstance(decisions, list) or not isinstance(messages, list):
+        raise ValueError("bundle is missing messages or decisions")
+    if decision_index < 0 or decision_index >= len(decisions):
+        raise IndexError(f"decision index {decision_index} out of range")
+    cutoff = int(decisions[decision_index].get("observation_cutoff", 0) or 0)
+    return [[str(part) for part in raw] for raw in messages[:cutoff]]
+
+
+def decision_records_contain_outcome_labels(decisions: object) -> list[str]:
+    """Return dotted paths of outcome-label keys stored outside canonical inputs.
+
+    ``state``, ``belief``, and ``legal_actions`` may legitimately contain observable
+    ``won``/``lost`` fields from the mechanics snapshot; this audit flags only labels
+    attached elsewhere on the decision record (training answers, bundle metadata).
     """
+
+    paths: list[str] = []
+    canonical_inputs = frozenset({"state", "belief", "legal_actions"})
+
+    def walk(value: object, path: str, *, in_canonical: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                child = f"{path}.{key}" if path else key
+                if not in_canonical and key in OUTCOME_LABEL_KEYS:
+                    paths.append(child)
+                walk(nested, child, in_canonical=in_canonical or key in canonical_inputs)
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                walk(nested, f"{path}[{index}]", in_canonical=in_canonical)
+
+    walk(decisions, "decisions")
+    return paths
+
+
+def _compare_decisions(
+    expected: list[dict[str, object]],
+    rebuilt: list[dict[str, object]],
+    *,
+    through_index: int | None = None,
+) -> tuple[str, ...]:
+    checked_fields = (
+        "turn",
+        "phase",
+        "request_sequence",
+        "observation_cutoff",
+        *DECISION_INPUT_FIELDS,
+    )
+    limit = len(expected) if through_index is None else through_index + 1
+    mismatches: list[str] = []
+    if len(rebuilt) < limit:
+        mismatches.append(
+            f"decision count expected at least {limit} rebuilt {len(rebuilt)}"
+        )
+    for index in range(min(limit, len(rebuilt), len(expected))):
+        wanted = expected[index]
+        actual = rebuilt[index]
+        for key in checked_fields:
+            if wanted.get(key) != actual.get(key):
+                mismatches.append(
+                    f"decision {index} {key}: expected {wanted.get(key)!r}, "
+                    f"rebuilt {actual.get(key)!r}"
+                )
+    return tuple(mismatches)
+
+
+async def rebuild_decisions(
+    bundle: dict[str, object],
+    messages: list[list[str]],
+) -> list[dict[str, object]]:
+    """Replay ``messages`` through the live parser and return rebuilt decision records."""
 
     from poke_env.ps_client.account_configuration import AccountConfiguration
     from poke_env.teambuilder.teambuilder import Teambuilder
@@ -230,14 +316,13 @@ async def verify_decision_replay_bundle(bundle: dict[str, object]) -> ReplayVeri
     from vgc.own_team import apply_own_spreads
 
     if bundle.get("schema") != DECISION_REPLAY_SCHEMA:
-        return ReplayVerification(False, 0, 0, ("unsupported replay schema",))
+        raise ValueError("unsupported replay schema")
     team = bundle.get("own_packed_team")
-    messages = bundle.get("messages")
     expected = bundle.get("decisions")
     if not isinstance(team, str) or not team:
-        return ReplayVerification(False, 0, 0, ("missing own packed team",))
-    if not isinstance(messages, list) or not isinstance(expected, list):
-        return ReplayVerification(False, 0, 0, ("missing messages or decisions",))
+        raise ValueError("missing own packed team")
+    if not isinstance(expected, list):
+        raise ValueError("missing decisions")
 
     raw_config = bundle.get("policy_config") or {}
     allowed = {entry.name for entry in fields(PolicyConfig)}
@@ -288,35 +373,66 @@ async def verify_decision_replay_bundle(bundle: dict[str, object]) -> ReplayVeri
     room = [f">{battle_tag}"]
     for raw in messages:
         if not isinstance(raw, list):
-            return ReplayVerification(False, len(expected), 0, ("malformed message",))
+            raise ValueError("malformed message")
         await player._handle_battle_message([room, [str(part) for part in raw]])
 
     battle = player._battles.get(battle_tag)
     if battle is None:
-        return ReplayVerification(False, len(expected), 0, ("battle was not rebuilt",))
+        raise ValueError("battle was not rebuilt")
     rebuilt_bundle = player.decision_replay_bundle(battle)
-    rebuilt = list((rebuilt_bundle or {}).get("decisions") or [])
-    mismatches: list[str] = []
-    if len(rebuilt) != len(expected):
-        mismatches.append(
-            f"decision count expected {len(expected)} rebuilt {len(rebuilt)}"
-        )
-    checked_fields = (
-        "turn",
-        "phase",
-        "request_sequence",
-        "observation_cutoff",
-        "state_sha256",
-        "belief_sha256",
-        "legal_actions_sha256",
+    return list((rebuilt_bundle or {}).get("decisions") or [])
+
+
+async def verify_decision_prefix(
+    bundle: dict[str, object],
+    decision_index: int,
+) -> ReplayVerification:
+    """Rebuild only through one decision cutoff and compare saved inputs."""
+
+    expected = bundle.get("decisions")
+    if not isinstance(expected, list):
+        return ReplayVerification(False, 0, 0, ("missing decisions",))
+    try:
+        prefix = messages_through_decision_cutoff(bundle, decision_index)
+        rebuilt = await rebuild_decisions(bundle, prefix)
+    except (IndexError, ValueError) as exc:
+        return ReplayVerification(False, decision_index + 1, 0, (str(exc),))
+    mismatches = _compare_decisions(expected, rebuilt, through_index=decision_index)
+    return ReplayVerification(
+        ready=not mismatches,
+        decisions_expected=decision_index + 1,
+        decisions_rebuilt=len(rebuilt),
+        mismatches=mismatches,
     )
-    for index, (wanted, actual) in enumerate(zip(expected, rebuilt, strict=False)):
-        for key in checked_fields:
-            if wanted.get(key) != actual.get(key):
-                mismatches.append(
-                    f"decision {index} {key}: expected {wanted.get(key)!r}, "
-                    f"rebuilt {actual.get(key)!r}"
-                )
+
+
+async def verify_decision_replay_bundle(bundle: dict[str, object]) -> ReplayVerification:
+    """Rebuild every decision through VgcPlayer and compare its exact inputs.
+
+    The replay player deliberately makes cheap arbitrary choices: saved server messages
+    already contain the resulting battle, so the submitted replay choice cannot affect
+    parsing.  State capture happens in the final ``choose_move``/``teampreview`` wrappers
+    before those choices are produced, exactly as it does for the live player.
+    """
+
+    expected = bundle.get("decisions")
+    messages = bundle.get("messages")
+    if bundle.get("schema") != DECISION_REPLAY_SCHEMA:
+        return ReplayVerification(False, 0, 0, ("unsupported replay schema",))
+    if not isinstance(bundle.get("own_packed_team"), str) or not bundle.get("own_packed_team"):
+        return ReplayVerification(False, 0, 0, ("missing own packed team",))
+    if not isinstance(messages, list) or not isinstance(expected, list):
+        return ReplayVerification(False, 0, 0, ("missing messages or decisions",))
+    try:
+        rebuilt = await rebuild_decisions(bundle, messages)
+    except ValueError as exc:
+        return ReplayVerification(False, len(expected), 0, (str(exc),))
+    mismatches = list(_compare_decisions(expected, rebuilt))
+    if len(rebuilt) != len(expected):
+        mismatches.insert(
+            0,
+            f"decision count expected {len(expected)} rebuilt {len(rebuilt)}",
+        )
     return ReplayVerification(
         ready=not mismatches,
         decisions_expected=len(expected),

@@ -37,8 +37,8 @@ def test_current_battle_state_gate_is_classified_but_not_ready_without_artifact(
     assert result.priors_current
     assert result.schema_current
     assert result.branch_defaults_ready
-    assert len(result.exact) == 10
-    assert len(result.partial) == 6
+    assert len(result.exact) == 13
+    assert len(result.partial) == 3
     assert result.missing == ()
     assert not result.artifact_current
     assert not result.ready

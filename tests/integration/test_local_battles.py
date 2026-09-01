@@ -9,6 +9,7 @@ pyproject.toml -- `-m "not integration"`). Run explicitly with:
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import subprocess
 import time
@@ -17,7 +18,12 @@ import pytest
 
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.agent import VgcPlayer
-from vgc.battle_state_replay import verify_decision_replay_bundle
+from vgc.battle_state_replay import (
+    DECISION_INPUT_FIELDS,
+    decision_records_contain_outcome_labels,
+    verify_decision_prefix,
+    verify_decision_replay_bundle,
+)
 from vgc.baselines import make_player
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO, TEAMS_DIR
 from vgc.models import PolicyConfig
@@ -27,6 +33,59 @@ from ladder.run_ladder import run_local_smoke
 pytestmark = pytest.mark.integration
 
 SERVER_READY_TIMEOUT_SECONDS = 30
+
+REPLAY_RECORD_CONFIG = PolicyConfig(
+    format_id=FORMAT_ID,
+    accept_open_team_sheet=False,
+    use_heuristic_evaluator=False,
+    use_two_ply_search=False,
+)
+
+OUTCOME_LABEL_KEYS = frozenset({"won", "lost", "winner"})
+CANONICAL_DECISION_INPUT_KEYS = frozenset({"state", "belief", "legal_actions"})
+
+
+async def record_replay_bundle(
+    dev_team: str,
+    *,
+    opponent: str = "random",
+) -> dict[str, object]:
+    ours = VgcPlayer(
+        config=REPLAY_RECORD_CONFIG,
+        team=dev_team,
+        record_decision_replays=True,
+    )
+    theirs = make_player(opponent, dev_team, FORMAT_ID)
+    try:
+        await asyncio.wait_for(ours.battle_against(theirs, n_battles=1), timeout=45)
+    finally:
+        await ours.ps_client.stop_listening()
+        await theirs.ps_client.stop_listening()
+    battle = next(iter(ours.battles.values()))
+    bundle = ours.decision_replay_bundle(battle)
+    assert bundle is not None
+    return bundle
+
+
+def _saved_digests(decision: dict[str, object]) -> tuple[object, ...]:
+    return tuple(decision.get(key) for key in DECISION_INPUT_FIELDS if key.endswith("_sha256"))
+
+
+def _assert_no_outcome_labels_under_decisions(decisions: object) -> None:
+    assert decision_records_contain_outcome_labels(decisions) == []
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key not in CANONICAL_DECISION_INPUT_KEYS:
+                    assert key not in OUTCOME_LABEL_KEYS
+                if key not in CANONICAL_DECISION_INPUT_KEYS:
+                    walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                walk(nested)
+
+    walk(decisions)
 
 @pytest.fixture(scope="module")
 def local_server():
@@ -231,6 +290,87 @@ def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) 
             verify_decision_replay_bundle(json.loads(path.read_text()))
         )
         assert verification.ready, verification.mismatches
+
+
+def test_prefix_replay_matches_each_decision_cutoff(local_server, dev_team) -> None:
+    bundle = asyncio.run(record_replay_bundle(dev_team))
+    assert len(bundle["decisions"]) >= 2
+    for index in range(len(bundle["decisions"])):
+        verification = asyncio.run(verify_decision_prefix(bundle, index))
+        assert verification.ready, verification.mismatches
+
+
+def test_truncation_independence_survives_suffix_and_detects_prefix_breaks(
+    local_server,
+    dev_team,
+) -> None:
+    bundle = asyncio.run(record_replay_bundle(dev_team))
+    decisions = bundle["decisions"]
+    assert len(decisions) >= 2
+
+    suffix_mutated = copy.deepcopy(bundle)
+    suffix_mutated["messages"].append(["", "turn", "999"])
+    for index in range(len(decisions)):
+        verification = asyncio.run(verify_decision_prefix(suffix_mutated, index))
+        assert verification.ready, verification.mismatches
+
+    probe_index = min(2, len(decisions) - 1)
+    cutoff = int(decisions[probe_index]["observation_cutoff"])
+    if cutoff < 2:
+        probe_index = 1
+        cutoff = int(decisions[probe_index]["observation_cutoff"])
+    prefix_mutated = copy.deepcopy(bundle)
+    prefix_mutated["messages"][cutoff - 2] = ["", "turn", "mutated"]
+    broken = asyncio.run(verify_decision_prefix(prefix_mutated, probe_index))
+    assert not broken.ready
+
+
+def test_future_label_mutations_leave_decision_inputs_unchanged(
+    local_server,
+    dev_team,
+) -> None:
+    bundle = asyncio.run(record_replay_bundle(dev_team))
+    decisions = bundle["decisions"]
+    assert decisions
+    _assert_no_outcome_labels_under_decisions(decisions)
+    original_digests = [_saved_digests(decision) for decision in decisions]
+
+    final_cutoff = int(decisions[-1]["observation_cutoff"])
+    mutated = copy.deepcopy(bundle)
+    mutated["messages"] = list(bundle["messages"])[:final_cutoff]
+    mutated["messages"].append(["", "win", "Opponent"])
+    for decision in mutated["decisions"]:
+        decision["teacher_action"] = "mutated"
+        decision["teacher_score"] = 0.0
+
+    for index in range(len(decisions)):
+        verification = asyncio.run(verify_decision_prefix(mutated, index))
+        assert verification.ready, verification.mismatches
+        assert _saved_digests(mutated["decisions"][index]) == original_digests[index]
+
+
+def test_forced_switch_records_distinct_decision_identity(local_server, dev_team) -> None:
+    bundle = None
+    for _attempt in range(5):
+        candidate = asyncio.run(record_replay_bundle(dev_team, opponent="maxpower"))
+        if any(decision.get("phase") == "forced_switch" for decision in candidate["decisions"]):
+            bundle = candidate
+            break
+    assert bundle is not None, "expected a mid-turn forced switch within five games"
+
+    forced = next(
+        decision for decision in bundle["decisions"] if decision.get("phase") == "forced_switch"
+    )
+    prior = bundle["decisions"][int(forced["decision_sequence"]) - 1]
+    assert prior["phase"] == "move"
+    assert forced["turn"] == prior["turn"]
+    assert forced["request_sequence"] != prior["request_sequence"]
+    assert forced["decision_sequence"] == prior["decision_sequence"] + 1
+    for action in forced["legal_actions"]:
+        lowered = str(action).lower()
+        assert "@" not in lowered
+        assert "move " not in lowered
+        assert "switch" in lowered or "pass" in lowered
 
 
 def test_own_stat_points_are_known_even_when_open_team_sheets_never_fire(

@@ -24,12 +24,13 @@
     },
     {
       "id": "decision_request_cutoff",
-      "status": "partial",
+      "status": "exact",
       "verification": "same_batch_prefix_test",
       "tests": [
-        "tests/test_battle_state_replay.py::test_multiline_burst_cannot_leak_lines_after_request_into_memory"
-      ],
-      "gap": "no truncation-equality test: parsing only through decision N must equal the full replay with cutoff N"
+        "tests/test_battle_state_replay.py::test_multiline_burst_cannot_leak_lines_after_request_into_memory",
+        "tests/integration/test_local_battles.py::test_prefix_replay_matches_each_decision_cutoff",
+        "tests/integration/test_local_battles.py::test_truncation_independence_survives_suffix_and_detects_prefix_breaks"
+      ]
     },
     {
       "id": "active_bench_health_status_resources",
@@ -72,13 +73,13 @@
     },
     {
       "id": "normal_and_forced_decision_identity",
-      "status": "partial",
+      "status": "exact",
       "verification": "request_sequence_and_phase",
       "tests": [
         "tests/test_replay_parse.py::test_forced_switch_after_faint_produces_its_own_record",
-        "tests/test_replay_parse.py::test_forced_switch_record_also_carries_preview_species_and_unseen_count"
-      ],
-      "gap": "no bundle-recorder test that a mid-turn forced switch creates its own decision record with distinct sequence number and phase"
+        "tests/test_replay_parse.py::test_forced_switch_record_also_carries_preview_species_and_unseen_count",
+        "tests/integration/test_local_battles.py::test_forced_switch_records_distinct_decision_identity"
+      ]
     },
     {
       "id": "private_root_isolation",
@@ -91,13 +92,13 @@
     },
     {
       "id": "future_label_isolation",
-      "status": "partial",
+      "status": "exact",
       "verification": "dataset_input_audit",
       "tests": [
         "tests/test_training_data_audit.py::test_audit_passes_complete_disjoint_dataset",
-        "tests/test_training_data_audit.py::test_audit_fails_duplicate_decision_and_illegal_teacher_reference"
-      ],
-      "gap": "no label-mutation test: changing winner/future turns/teacher action/score must leave every decision input byte-identical"
+        "tests/test_training_data_audit.py::test_audit_fails_duplicate_decision_and_illegal_teacher_reference",
+        "tests/integration/test_local_battles.py::test_future_label_mutations_leave_decision_inputs_unchanged"
+      ]
     },
     {
       "id": "spread_and_nature_distribution",
