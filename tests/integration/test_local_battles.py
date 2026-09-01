@@ -13,10 +13,17 @@ import copy
 import json
 import subprocess
 import time
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+from poke_env.battle.double_battle import DoubleBattle
+from poke_env.battle.move import Move
+from poke_env.battle.pokemon import Pokemon
+from poke_env.player.battle_order import ForfeitBattleOrder, SingleBattleOrder
 
 from vgc.actions import describe_order, enumerate_joint_orders
+from vgc.damage import to_id
 from vgc.agent import VgcPlayer
 from vgc.battle_state_replay import (
     DECISION_INPUT_FIELDS,
@@ -43,6 +50,438 @@ REPLAY_RECORD_CONFIG = PolicyConfig(
 
 OUTCOME_LABEL_KEYS = frozenset({"won", "lost", "winner"})
 CANONICAL_DECISION_INPUT_KEYS = frozenset({"state", "belief", "legal_actions"})
+CORPUS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "replay_corpus"
+WEATHER_KINDS = ("SunnyDay", "RainDance", "Sandstorm", "Snow")
+TERRAIN_KINDS = ("Electric Terrain", "Grassy Terrain", "Psychic Terrain", "Misty Terrain")
+WEATHER_STATE_IDS = frozenset({"sunnyday", "raindance", "sandstorm", "snow"})
+TERRAIN_STATE_IDS = frozenset(
+    {"electricterrain", "grassyterrain", "psychicterrain", "mistyterrain"}
+)
+IN_BATTLE_REVEAL_TAGS = frozenset({"move", "-ability", "-item", "-enditem"})
+
+
+class ScriptedPlayer(VgcPlayer):
+    """Play a per-slot move script, then the first legal action, optionally forfeit."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self._slot_scripts = tuple(kwargs.pop("slot_scripts", ()))
+        self._team_order = str(kwargs.pop("team_order", "/team 1234"))
+        self._forfeit_after_moves = kwargs.pop("forfeit_after_moves", None)
+        self._move_counts: dict[str, int] = {}
+        super().__init__(*args, **kwargs)
+
+    def decide_teampreview(self, battle) -> str:
+        members = list(battle.team.values())
+        digits = [int(char) for char in self._team_order if char.isdigit()]
+        for member in members:
+            member._selected_in_teampreview = False
+        for selected in digits:
+            if 1 <= selected <= len(members):
+                members[selected - 1]._selected_in_teampreview = True
+        return self._team_order
+
+    def decide(self, battle):
+        tag = battle.battle_tag
+        force_switch = getattr(battle, "force_switch", False)
+        forced_flags = (
+            list(force_switch)
+            if isinstance(force_switch, (list, tuple)) and force_switch
+            else [bool(force_switch)]
+        )
+        all_forced = bool(forced_flags) and all(forced_flags)
+        any_forced = any(forced_flags)
+        # A partial replacement request is not a scripted turn; counting it ate a
+        # later Protect and let the other side forfeit before terrain persisted.
+        if not any_forced:
+            count = self._move_counts.get(tag, 0)
+            if self._forfeit_after_moves is not None and count >= self._forfeit_after_moves:
+                return ForfeitBattleOrder()
+            self._move_counts[tag] = count + 1
+            script_index = count
+        else:
+            script_index = None
+
+        if not isinstance(battle, DoubleBattle):
+            return self.choose_random_move(battle)
+        orders = enumerate_joint_orders(battle)
+        if not orders:
+            return self.choose_random_move(battle)
+        if all_forced or script_index is None:
+            return orders[0]
+        wanted = [
+            script[script_index] if script_index < len(script) else None
+            for script in self._slot_scripts
+        ]
+        while len(wanted) < 2:
+            wanted.append(None)
+        for order in orders:
+            if _slot_matches(order.first_order, wanted[0]) and _slot_matches(
+                order.second_order, wanted[1]
+            ):
+                return order
+        stay = [
+            order
+            for order in orders
+            if not isinstance(order.first_order.order, Pokemon)
+            and not isinstance(order.second_order.order, Pokemon)
+        ]
+        return (stay or orders)[0]
+
+
+def _slot_matches(order: SingleBattleOrder, wanted: str | None) -> bool:
+    if wanted is None:
+        return True
+    want_mega = wanted.endswith("-mega")
+    move_id = wanted[:-5] if want_mega else wanted
+    target = order.order
+    if not isinstance(target, Move) or to_id(target.id) != to_id(move_id):
+        return False
+    return bool(order.mega) if want_mega else True
+
+
+def _message_lines(bundle: dict[str, object]) -> list[str]:
+    return ["|".join(str(part) for part in message) for message in bundle["messages"]]
+
+
+def _in_battle_decisions(bundle: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        decision
+        for decision in bundle["decisions"]
+        if decision.get("phase") in {"move", "forced_switch"}
+    ]
+
+
+def _decision_states(bundle: dict[str, object]) -> list[dict[str, object]]:
+    return [decision["state"] for decision in _in_battle_decisions(bundle)]
+
+
+def _records(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _effect_ids(effects: object) -> set[str]:
+    return {str(effect.get("id")) for effect in _records(effects)}
+
+
+def _side_pokemon(state: dict[str, object], side: str) -> list[dict[str, object]]:
+    side_state = state.get(side)
+    if not isinstance(side_state, dict):
+        return []
+    return _records(side_state.get("pokemon"))
+
+
+def _all_pokemon(state: dict[str, object]) -> list[dict[str, object]]:
+    return _side_pokemon(state, "our_side") + _side_pokemon(state, "opponent_side")
+
+
+def _protocol_digest(bundle: dict[str, object]) -> list[str]:
+    interesting = (
+        "turn",
+        "move",
+        "switch",
+        "drag",
+        "faint",
+        "-weather",
+        "-fieldstart",
+        "-fieldend",
+        "-mega",
+        "-miss",
+        "-immune",
+        "-boost",
+        "-unboost",
+        "-fail",
+        "-start",
+        "-end",
+        "win",
+    )
+    digest: list[str] = []
+    for line in _message_lines(bundle):
+        parts = line.split("|")
+        tag = parts[1] if len(parts) > 1 else ""
+        if tag in interesting:
+            digest.append(line)
+    return digest
+
+
+def _decision_field_digest(bundle: dict[str, object]) -> list[tuple[object, ...]]:
+    rows: list[tuple[object, ...]] = []
+    for decision in _in_battle_decisions(bundle):
+        state = decision["state"]
+        rows.append(
+            (
+                decision.get("turn"),
+                decision.get("phase"),
+                sorted(_effect_ids(state.get("fields"))),
+                sorted(_effect_ids(state.get("weather"))),
+            )
+        )
+    return rows
+
+
+def _assert_effect_persists_two_turns(
+    bundle: dict[str, object],
+    predicate: Callable[[dict[str, object]], bool],
+) -> None:
+    matching = [
+        decision for decision in _in_battle_decisions(bundle) if predicate(decision["state"])
+    ]
+    assert matching, (_protocol_digest(bundle), bundle["decisions"])
+    first_turn = int(matching[0].get("turn") or 0)
+    assert any(int(decision.get("turn") or 0) >= first_turn + 2 for decision in matching), (
+        first_turn,
+        [(decision.get("turn"), decision.get("phase")) for decision in matching],
+        _decision_field_digest(bundle),
+        _protocol_digest(bundle),
+    )
+
+
+def _assert_weather_set(bundle: dict[str, object]) -> None:
+    lines = _message_lines(bundle)
+    assert any(
+        "-weather" in line and any(kind in line for kind in WEATHER_KINDS) for line in lines
+    ), lines
+
+    def has_weather(state: dict[str, object]) -> bool:
+        return bool(_effect_ids(state.get("weather")) & WEATHER_STATE_IDS)
+
+    assert any(has_weather(state) for state in _decision_states(bundle))
+    _assert_effect_persists_two_turns(bundle, has_weather)
+
+
+def _assert_terrain_set(bundle: dict[str, object]) -> None:
+    lines = _message_lines(bundle)
+    assert any(
+        "-fieldstart" in line and any(kind in line for kind in TERRAIN_KINDS) for line in lines
+    ), lines
+
+    def has_terrain(state: dict[str, object]) -> bool:
+        return bool(_effect_ids(state.get("fields")) & TERRAIN_STATE_IDS)
+
+    assert any(has_terrain(state) for state in _decision_states(bundle))
+    _assert_effect_persists_two_turns(bundle, has_terrain)
+
+
+def _assert_trick_room_active(bundle: dict[str, object]) -> None:
+    lines = _message_lines(bundle)
+    assert any("-fieldstart" in line and "Trick Room" in line for line in lines), lines
+
+    def has_trick_room(state: dict[str, object]) -> bool:
+        return "trickroom" in _effect_ids(state.get("fields"))
+
+    assert any(has_trick_room(state) for state in _decision_states(bundle))
+    _assert_effect_persists_two_turns(bundle, has_trick_room)
+
+
+def _assert_mega_evolution(bundle: dict[str, object]) -> None:
+    assert any(
+        (len(message) > 1 and message[1] == "-mega")
+        or (
+            len(message) > 2
+            and message[1] == "detailschange"
+            and any("-Mega" in part for part in message)
+        )
+        for message in bundle["messages"]
+    ), _message_lines(bundle)
+
+    def has_mega(state: dict[str, object]) -> bool:
+        return any(
+            mon.get("mega_evolved") or "mega" in str(mon.get("species_id") or "")
+            for mon in _all_pokemon(state)
+        )
+
+    assert any(has_mega(state) for state in _decision_states(bundle))
+    _assert_effect_persists_two_turns(bundle, has_mega)
+
+
+def _assert_double_faint(bundle: dict[str, object]) -> None:
+    faint_run = 0
+    found = False
+    for line in _message_lines(bundle):
+        parts = line.split("|")
+        tag = parts[1] if len(parts) > 1 else ""
+        if tag == "turn":
+            faint_run = 0
+        elif tag == "faint":
+            faint_run += 1
+            if faint_run >= 2:
+                found = True
+                break
+    assert found, _message_lines(bundle)
+
+    def has_two_fainted(state: dict[str, object]) -> bool:
+        return any(
+            sum(1 for mon in _side_pokemon(state, side) if mon.get("fainted")) >= 2
+            for side in ("our_side", "opponent_side")
+        )
+
+    assert any(has_two_fainted(state) for state in _decision_states(bundle))
+    _assert_effect_persists_two_turns(bundle, has_two_fainted)
+
+
+def _assert_forced_switch_decision(*bundles: dict[str, object]) -> None:
+    decisions = [decision for bundle in bundles for decision in bundle["decisions"]]
+    assert any(decision.get("phase") == "forced_switch" for decision in decisions)
+
+
+def _appeared_opponent_species(bundle: dict[str, object]) -> set[str]:
+    role = str(bundle.get("player_side") or "")
+    opponent = "p2" if role == "p1" else "p1"
+    seen: set[str] = set()
+    for message in bundle["messages"]:
+        if len(message) < 3 or message[1] not in {"switch", "drag"}:
+            continue
+        ident = message[2]
+        if not ident.startswith(opponent):
+            continue
+        details = message[3] if len(message) > 3 else ident.split(":", 1)[-1]
+        seen.add(str(details).split(",")[0].strip())
+    return seen
+
+
+def _assert_fewer_than_four_revealed(bundle: dict[str, object]) -> None:
+    appeared = _appeared_opponent_species(bundle)
+    assert len(appeared) <= 3, appeared
+    in_battle = _in_battle_decisions(bundle)
+    assert in_battle
+    final_state = in_battle[-1]["state"]
+    revealed = [mon for mon in _side_pokemon(final_state, "opponent_side") if mon.get("revealed")]
+    assert len(revealed) <= 3, revealed
+
+
+def _ability_revealed_in_prefix(bundle: dict[str, object], cutoff: int) -> bool:
+    for message in bundle["messages"][:cutoff]:
+        joined = "|".join(str(part) for part in message)
+        if len(message) > 1 and message[1] == "-ability":
+            return True
+        if "-weather" in joined and "[from] ability:" in joined:
+            return True
+    return False
+
+
+def _cutoff_is_before_in_battle_reveals(bundle: dict[str, object], cutoff: int) -> bool:
+    return not any(
+        len(message) > 1 and message[1] in IN_BATTLE_REVEAL_TAGS
+        for message in bundle["messages"][:cutoff]
+    )
+
+
+def _opponent_set_is_known(mon: dict[str, object]) -> bool:
+    return bool(mon.get("item_known") and mon.get("ability_known") and mon.get("moves"))
+
+
+def _assert_ots_accepted(bundle: dict[str, object]) -> None:
+    assert bundle["open_team_sheets"] == "accept"
+    assert any(message[1:2] == ["showteam"] for message in bundle["messages"])
+    for decision in bundle["decisions"]:
+        if decision.get("phase") not in {"team_preview", "move"}:
+            continue
+        cutoff = int(decision.get("observation_cutoff") or 0)
+        if not _cutoff_is_before_in_battle_reveals(bundle, cutoff):
+            continue
+        known = [
+            mon
+            for mon in _side_pokemon(decision["state"], "opponent_side")
+            if _opponent_set_is_known(mon)
+        ]
+        if known:
+            return
+    raise AssertionError("no pre-reveal decision has opponent moves/item/ability known")
+
+
+def _assert_ots_rejected(bundle: dict[str, object]) -> None:
+    assert bundle["open_team_sheets"] == "reject"
+    assert not any(message[1:2] == ["showteam"] for message in bundle["messages"])
+    first_move = next(
+        decision for decision in bundle["decisions"] if decision.get("phase") == "move"
+    )
+    cutoff = int(first_move.get("observation_cutoff") or 0)
+    ability_revealed = _ability_revealed_in_prefix(bundle, cutoff)
+    opponent = _side_pokemon(first_move["state"], "opponent_side")
+    assert opponent
+    for mon in opponent:
+        assert not mon.get("item_known"), mon
+        assert not mon.get("moves"), mon
+        if not ability_revealed:
+            assert not mon.get("ability_known"), mon
+
+
+PROTOCOL_CHECKS: dict[str, Callable[..., None]] = {
+    "weather": _assert_weather_set,
+    "terrain": _assert_terrain_set,
+    "trick_room": _assert_trick_room_active,
+    "mega": _assert_mega_evolution,
+    "double_faint": _assert_double_faint,
+    "forced_switch": _assert_forced_switch_decision,
+    "few_revealed": _assert_fewer_than_four_revealed,
+    "ots_accept": _assert_ots_accepted,
+    "ots_reject": _assert_ots_rejected,
+}
+
+
+def _packed_team(name: str) -> str:
+    if name in {"dev", "meta1"}:
+        return (TEAMS_DIR / f"{name}.packed.txt").read_text().strip()
+    return (CORPUS_DIR / f"{name}.packed.txt").read_text().strip()
+
+
+def _assert_bundle_rebuilds(bundle: dict[str, object]) -> None:
+    verification = asyncio.run(verify_decision_replay_bundle(bundle))
+    assert verification.ready, verification.mismatches
+    assert verification.mismatches == ()
+    decisions = bundle["decisions"]
+    assert isinstance(decisions, list) and decisions
+    for index in range(len(decisions)):
+        prefix = asyncio.run(verify_decision_prefix(bundle, index))
+        assert prefix.ready, (index, prefix.mismatches)
+
+
+async def record_scripted_bundles(
+    *,
+    our_team: str,
+    their_team: str,
+    our_scripts: tuple[tuple[str, ...], ...],
+    their_scripts: tuple[tuple[str, ...], ...],
+    our_team_order: str,
+    their_team_order: str,
+    accept_ots: bool,
+    our_forfeit_after_moves: int | None = None,
+    their_forfeit_after_moves: int | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    config = PolicyConfig(
+        format_id=FORMAT_ID,
+        accept_open_team_sheet=accept_ots,
+        use_heuristic_evaluator=False,
+        use_two_ply_search=False,
+    )
+    ours = ScriptedPlayer(
+        config=config,
+        team=our_team,
+        record_decision_replays=True,
+        slot_scripts=our_scripts,
+        team_order=our_team_order,
+        forfeit_after_moves=our_forfeit_after_moves,
+    )
+    theirs = ScriptedPlayer(
+        config=config,
+        team=their_team,
+        record_decision_replays=True,
+        slot_scripts=their_scripts,
+        team_order=their_team_order,
+        forfeit_after_moves=their_forfeit_after_moves,
+    )
+    try:
+        await asyncio.wait_for(ours.battle_against(theirs, n_battles=1), timeout=45)
+    finally:
+        await ours.ps_client.stop_listening()
+        await theirs.ps_client.stop_listening()
+    battle1 = next(iter(ours.battles.values()))
+    battle2 = next(iter(theirs.battles.values()))
+    bundle1 = ours.decision_replay_bundle(battle1)
+    bundle2 = theirs.decision_replay_bundle(battle2)
+    assert bundle1 is not None and bundle2 is not None
+    return bundle1, bundle2
 
 
 async def record_replay_bundle(
@@ -86,6 +525,7 @@ def _assert_no_outcome_labels_under_decisions(decisions: object) -> None:
                 walk(nested)
 
     walk(decisions)
+
 
 @pytest.fixture(scope="module")
 def local_server():
@@ -214,18 +654,12 @@ def test_ots_accept_reject_race_completes(local_server, dev_team) -> None:
     """An accepting VgcPlayer must not hang when a stock opponent rejects OTS first."""
 
     async def _run() -> int:
-        accepting = make_player(
-            "vgc", dev_team, FORMAT_ID, accept_open_team_sheet=True
-        )
-        rejecting = make_player(
-            "random", dev_team, FORMAT_ID, accept_open_team_sheet=False
-        )
+        accepting = make_player("vgc", dev_team, FORMAT_ID, accept_open_team_sheet=True)
+        rejecting = make_player("random", dev_team, FORMAT_ID, accept_open_team_sheet=False)
         assert accepting.accept_open_team_sheet is True
         assert rejecting.accept_open_team_sheet is False
         try:
-            await asyncio.wait_for(
-                accepting.battle_against(rejecting, n_battles=1), timeout=20
-            )
+            await asyncio.wait_for(accepting.battle_against(rejecting, n_battles=1), timeout=20)
         finally:
             await accepting.ps_client.stop_listening()
             await rejecting.ps_client.stop_listening()
@@ -286,9 +720,7 @@ def test_ladder_artifact_pipeline_local_smoke(local_server, dev_team, tmp_path) 
     state_replay_files = list((artifacts / "state-replays").glob("*.json"))
     assert len(state_replay_files) == 2
     for path in state_replay_files:
-        verification = asyncio.run(
-            verify_decision_replay_bundle(json.loads(path.read_text()))
-        )
+        verification = asyncio.run(verify_decision_replay_bundle(json.loads(path.read_text())))
         assert verification.ready, verification.mismatches
 
 
@@ -415,3 +847,112 @@ def test_own_stat_points_are_known_even_when_open_team_sheets_never_fire(
     # Symmetrically: this must NOT leak the opponent's spread, which we genuinely do not
     # know without a showteam.
     assert all(evs is None for entry in entries for evs in entry["opponent_evs"])
+
+
+def _run_protocol_checks(
+    checks: tuple[str, ...],
+    ours: dict[str, object],
+    theirs: dict[str, object],
+) -> None:
+    for check in checks:
+        assertion = PROTOCOL_CHECKS[check]
+        if check == "forced_switch":
+            assertion(ours, theirs)
+            continue
+        assertion(ours)
+        assertion(theirs)
+
+
+@pytest.mark.parametrize(
+    (
+        "our_team",
+        "their_team",
+        "our_order",
+        "their_order",
+        "our_scripts",
+        "their_scripts",
+        "accept_ots",
+        "our_forfeit_after",
+        "checks",
+    ),
+    [
+        pytest.param(
+            "dev",
+            "frail_leads",
+            "/team 3124",
+            "/team 1234",
+            # Drought is a switch-in ability. Jolteon (Spe 200) outspeeds every
+            # Pokemon on `dev` (max Whimsicott 184), so Electric Terrain (accuracy
+            # `true`) always lands before Torkoal's Eruption (Spe 36, accuracy 100).
+            # Eruption OHKOs both leads at the minimum damage roll; Charge is a
+            # self-move so it cannot drop Torkoal's SpA or hit Lightning Rod.
+            (
+                ("eruption", "protect", "protect", "protect"),
+                ("protect-mega", "protect", "protect", "protect"),
+            ),
+            (
+                ("electricterrain", "protect", "protect", "protect"),
+                ("charge", "protect", "protect", "protect"),
+            ),
+            False,
+            4,
+            (
+                "weather",
+                "terrain",
+                "mega",
+                "double_faint",
+                "forced_switch",
+                "ots_reject",
+            ),
+            id="weather_terrain_mega_double_faint_forced_ots_reject",
+        ),
+        pytest.param(
+            "meta1",
+            "dev",
+            "/team 2134",
+            "/team 1234",
+            # Trick Room has accuracy `true` and priority -7; both sides only
+            # choose 100% Protect afterward, so nothing can faint Farigiraf first.
+            (
+                ("trickroom", "protect", "protect", "protect"),
+                ("protect", "protect", "protect", "protect"),
+            ),
+            (
+                ("protect", "protect", "protect", "protect"),
+                ("protect", "protect", "protect", "protect"),
+            ),
+            True,
+            4,
+            ("trick_room", "few_revealed", "ots_accept"),
+            id="trick_room_few_revealed_ots_accept",
+        ),
+    ],
+)
+def test_varied_corpus_rebuilds_every_decision(
+    local_server,
+    our_team: str,
+    their_team: str,
+    our_order: str,
+    their_order: str,
+    our_scripts: tuple[tuple[str, ...], ...],
+    their_scripts: tuple[tuple[str, ...], ...],
+    accept_ots: bool,
+    our_forfeit_after: int,
+    checks: tuple[str, ...],
+) -> None:
+    ours, theirs = asyncio.run(
+        record_scripted_bundles(
+            our_team=_packed_team(our_team),
+            their_team=_packed_team(their_team),
+            our_scripts=our_scripts,
+            their_scripts=their_scripts,
+            our_team_order=our_order,
+            their_team_order=their_order,
+            accept_ots=accept_ots,
+            our_forfeit_after_moves=our_forfeit_after,
+            their_forfeit_after_moves=our_forfeit_after,
+        )
+    )
+    _run_protocol_checks(checks, ours, theirs)
+    _assert_bundle_rebuilds(ours)
+    _assert_bundle_rebuilds(theirs)

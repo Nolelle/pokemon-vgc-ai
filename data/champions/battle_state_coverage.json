@@ -62,14 +62,14 @@
     },
     {
       "id": "decision_replay_bundle",
-      "status": "partial",
+      "status": "exact",
       "verification": "live_bundle_rebuild",
       "tests": [
         "tests/integration/test_local_battles.py::test_decision_replay_rebuilds_with_open_team_sheets",
         "tests/integration/test_local_battles.py::test_ladder_artifact_pipeline_local_smoke",
-        "tests/test_battle_state_replay.py::test_team_preview_records_every_legal_bring_four_order"
-      ],
-      "gap": "no varied rebuild corpus (weather, terrain, Trick Room, Mega, forced replacement, double faint, <4 opponents revealed, OTS accept+reject); only single smoke games rebuild"
+        "tests/test_battle_state_replay.py::test_team_preview_records_every_legal_bring_four_order",
+        "tests/integration/test_local_battles.py::test_varied_corpus_rebuilds_every_decision"
+      ]
     },
     {
       "id": "normal_and_forced_decision_identity",

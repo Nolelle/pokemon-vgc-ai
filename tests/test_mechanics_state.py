@@ -150,6 +150,27 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
     assert state.opponent_preview_species == ("gengar",)
 
 
+def test_opponent_mega_is_recorded_from_forme_change_ability() -> None:
+    opponent = _pokemon("Garchomp", opponent=True)
+    opponent.forme_change_ability = "Sand Force"
+    opponent.item = "unknown_item"
+    opponent.ability = None
+    opponent.base_ability = None
+    opponent.moves = {}
+    battle = SimpleNamespace(
+        format="gen9championsvgc2026regmb",
+        gen=9,
+        turn=2,
+        opponent_team={"p2: Garchomp": opponent},
+        opponent_active_pokemon=[opponent, None],
+    )
+
+    mon = snapshot_battle(battle).opponent_side.pokemon[0]
+
+    assert mon.mega_evolved
+    assert mon.species_id == "garchompmega"
+
+
 def test_opponent_unknown_item_ability_and_moves_stay_unknown() -> None:
     opponent = _pokemon("Gengar", opponent=True)
     opponent.moves = {}

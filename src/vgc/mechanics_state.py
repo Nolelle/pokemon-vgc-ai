@@ -17,6 +17,7 @@ from numbers import Real
 from typing import Any, Iterable, Mapping
 
 from vgc.damage import to_id
+from vgc.data import load_species
 from vgc.sets import normalize_item, normalize_status
 
 BOOST_IDS = ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion")
@@ -60,9 +61,7 @@ class EffectSnapshot:
     counter_kind: str = "unknown"
 
 
-_LAYERED_SIDE_CONDITIONS = frozenset(
-    {"spikes", "toxicspikes", "stealthrock", "stickyweb"}
-)
+_LAYERED_SIDE_CONDITIONS = frozenset({"spikes", "toxicspikes", "stealthrock", "stickyweb"})
 
 
 def _effect_snapshots(
@@ -90,8 +89,7 @@ def _effect_snapshots(
                 raw_value=serializable_raw,
                 counter_kind=(
                     "layers"
-                    if counter_kind == "side_start_turn"
-                    and effect_id in _LAYERED_SIDE_CONDITIONS
+                    if counter_kind == "side_start_turn" and effect_id in _LAYERED_SIDE_CONDITIONS
                     else counter_kind
                 ),
             )
@@ -178,6 +176,35 @@ class PokemonMechanicsState:
     weight: float | None
 
 
+def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str | None:
+    """Mega forme poke-env applied without renaming ``species``.
+
+    ``Pokemon.mega_evolve`` / ``forme_change`` load mega dex data with
+    ``store_species=False``, so ``species`` stays the base id. The mega ability is
+    stashed on ``forme_change_ability``; that is the public signal an opponent Mega
+    actually happened.
+    """
+
+    if species_id and "mega" in species_id:
+        return species_id
+    if not species_id or not forme_change_ability_id:
+        return None
+    species = load_species().get(species_id)
+    if not species:
+        return None
+    for forme_name in species.get("otherFormes") or ():
+        forme_id = to_id(forme_name)
+        if not forme_id:
+            continue
+        forme = load_species().get(forme_id)
+        if not forme or not forme.get("isMega"):
+            continue
+        mega_ability = to_id((forme.get("abilities") or {}).get("0"))
+        if mega_ability == forme_change_ability_id:
+            return forme_id
+    return None
+
+
 def _revealed_items_for(battle: Any) -> dict[str, str] | None:
     memory = getattr(battle, "_vgc_battle_memory", None)
     if memory is None:
@@ -216,14 +243,20 @@ def snapshot_pokemon(
     revealed_items: Mapping[str, str] | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
-    move_entries = moves.items() if isinstance(moves, Mapping) else ((move.id, move) for move in moves)
+    move_entries = (
+        moves.items() if isinstance(moves, Mapping) else ((move.id, move) for move in moves)
+    )
     item_state, item = _resolve_item_state(
         pokemon, opponent=opponent, revealed_items=revealed_items
     )
     ability = to_id(getattr(pokemon, "ability", None)) or None
     base_ability = to_id(getattr(pokemon, "base_ability", None)) or None
-    species_id = to_id(getattr(pokemon, "species", None))
+    species_id = to_id(getattr(pokemon, "species", None)) or ""
     base_species_id = to_id(getattr(pokemon, "base_species", None)) or None
+    forme_change_ability_id = to_id(getattr(pokemon, "forme_change_ability", None)) or None
+    mega_forme_id = _mega_forme_id(species_id, forme_change_ability_id)
+    if mega_forme_id:
+        species_id = mega_forme_id
     raw_stats = getattr(pokemon, "stats", None) or {}
     raw_boosts = getattr(pokemon, "boosts", None) or {}
     raw_stat_points = getattr(pokemon, "evs", None)
@@ -259,16 +292,12 @@ def snapshot_pokemon(
         active=bool(getattr(pokemon, "active", False)),
         revealed=bool(getattr(pokemon, "revealed", not opponent)),
         selected_in_preview=bool(getattr(pokemon, "selected_in_teampreview", False)),
-        stats=tuple(
-            sorted((str(key), _optional_int(value)) for key, value in raw_stats.items())
-        ),
+        stats=tuple(sorted((str(key), _optional_int(value)) for key, value in raw_stats.items())),
         stat_points=stat_points,
         individual_values=(
             tuple(
                 (stat_id, _optional_int(value))
-                for stat_id, value in zip(
-                    STAT_POINT_IDS, raw_individual_values, strict=True
-                )
+                for stat_id, value in zip(STAT_POINT_IDS, raw_individual_values, strict=True)
             )
             if raw_individual_values is not None
             else None
@@ -286,15 +315,16 @@ def snapshot_pokemon(
         ability_id=ability,
         base_ability_id=base_ability,
         temporary_ability_id=to_id(getattr(pokemon, "temporary_ability", None)) or None,
-        forme_change_ability_id=to_id(
-            getattr(pokemon, "forme_change_ability", None)
-        )
-        or None,
+        forme_change_ability_id=forme_change_ability_id,
         ability_known=not opponent or ability is not None,
         base_move_ids=tuple(
             sorted(to_id(move) for move in (getattr(pokemon, "base_moves", None) or ()))
         ),
-        moves=tuple(sorted((_move_snapshot(key, move) for key, move in move_entries), key=lambda move: move.id)),
+        moves=tuple(
+            sorted(
+                (_move_snapshot(key, move) for key, move in move_entries), key=lambda move: move.id
+            )
+        ),
         last_move_id=to_id(getattr(getattr(pokemon, "last_move", None), "id", None)) or None,
         mimic_move_id=to_id(
             getattr(getattr(pokemon, "mimic_move", None), "id", None)
@@ -312,7 +342,8 @@ def snapshot_pokemon(
         protect_counter=int(getattr(pokemon, "protect_counter", 0) or 0),
         first_turn=bool(getattr(pokemon, "first_turn", False)),
         transformed=bool(getattr(pokemon, "transformed", False)),
-        mega_evolved="mega" in species_id and species_id != (base_species_id or species_id),
+        mega_evolved=bool(mega_forme_id)
+        or ("mega" in species_id and species_id != (base_species_id or species_id)),
         terastallized=bool(getattr(pokemon, "is_terastallized", False)),
         tera_type=to_id(getattr(pokemon, "tera_type", None)) or None,
         weight=float(getattr(pokemon, "weight", 0.0))
@@ -448,12 +479,8 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         finished=bool(getattr(battle, "finished", False)),
         won=bool(getattr(battle, "won", False)),
         lost=bool(getattr(battle, "lost", False)),
-        fields=_effect_snapshots(
-            getattr(battle, "fields", None), counter_kind="start_turn"
-        ),
-        weather=_effect_snapshots(
-            getattr(battle, "weather", None), counter_kind="start_turn"
-        ),
+        fields=_effect_snapshots(getattr(battle, "fields", None), counter_kind="start_turn"),
+        weather=_effect_snapshots(getattr(battle, "weather", None), counter_kind="start_turn"),
         available_moves=tuple(
             tuple(to_id(getattr(move, "id", move)) for move in slot_moves)
             for slot_moves in raw_available_moves
