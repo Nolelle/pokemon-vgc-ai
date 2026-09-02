@@ -168,11 +168,14 @@
     },
     {
       "id": "targeting_and_retargeting",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_single_target_retargets_after_faint_and_hits_the_incoming_switch",
+        "tests/test_mechanics_families_move_execution.py::test_follow_me_and_rage_powder_redirect_except_grass_and_overcoat",
+        "tests/test_mechanics_families_move_execution.py::test_spread_move_damage_is_three_quarters_when_two_targets_are_hit"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "accuracy_and_evasion",
@@ -218,51 +221,58 @@
     },
     {
       "id": "one_hit_knockout_moves",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_ohko_hits_ko_and_immunities"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "multi_hit_moves",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_multi_hit_counts_skill_link_population_bomb_double_kick"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "secondary_effects",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_thunderbolt_paralysis_serene_grace_sheer_force_shield_dust"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "recoil_drain_and_crash",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_recoil_drain_crash_and_life_orb"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "survival_effects",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_focus_sash_sturdy_endure_and_disguise"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "protect_family",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_protect_blocks_damage_and_consecutive_protect_is_one_in_three",
+        "tests/test_mechanics_families_move_execution.py::test_wide_guard_quick_guard_and_feint"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "side_wide_guards",
@@ -323,11 +333,12 @@
     },
     {
       "id": "poison_and_toxic",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_poison_toxic_immunities_heal_and_corrosion"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "confusion",
@@ -341,35 +352,39 @@
     },
     {
       "id": "flinch_and_fake_out",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_fake_out_inner_focus_and_iron_head_flinch"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "move_restrictions",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_taunt_encore_disable_choice_scarf_imprison_and_zero_pp"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "charge_recharge_and_locks",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_solar_beam_hyper_beam_outrage_and_fly"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "stat_stage_changes",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_stat_stages_boost_damage_cap_and_ability_reactions"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "weather",
@@ -396,11 +411,12 @@
     },
     {
       "id": "rooms_and_field_conditions",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_trick_room_gravity_magic_room_and_wonder_room"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "screens_tailwind_and_side_conditions",
@@ -415,19 +431,21 @@
     },
     {
       "id": "entry_hazards",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_entry_hazards_damage_layers_and_removal"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "switching_trapping_and_phazing",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_switching_happens_before_moves_trapping_pivots_and_phazing"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "items",
@@ -462,35 +480,39 @@
     },
     {
       "id": "form_transform_and_illusion",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_illusion_transform_mega_and_disguise"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "move_flags_and_interactions",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_sound_bullet_powder_substitute_bounce_and_prankster"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "residual_and_end_of_turn_order",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_residual_order_speed_and_weather_duration"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "faint_and_replacement_order",
-      "status": "partial",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_faint_replacement_queued_move_destiny_bond_and_both_sides"
+      ],
       "state": "official_showdown_clone",
-      "verification": "showdown_branch_contract",
-      "tests": [],
-      "gap": "no family-specific Showdown-executed test"
+      "verification": "showdown_branch_contract"
     },
     {
       "id": "random_branch_order",

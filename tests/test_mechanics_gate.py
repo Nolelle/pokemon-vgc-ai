@@ -37,10 +37,12 @@ def test_checked_in_catalog_is_current_and_families_are_classified() -> None:
 
     assert result.catalog_current
     assert result.exact
-    assert result.partial
+    assert not result.partial
     assert not result.missing
     assert result.declared_ready
-    assert not result.ready
+    # Static readiness is complete; `ready` additionally needs a fresh clean-HEAD
+    # artifact from a full gate run, which the unit suite does not produce.
+    assert result.ready == result.artifact_current
 
 
 def test_every_exact_family_names_a_real_engine_and_its_evidence() -> None:
