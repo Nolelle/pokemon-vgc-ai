@@ -380,6 +380,88 @@ untouched). `PolicyConfig.shortlist_belief_hypotheses` controls it and **ships a
   question (Rung 3), not a belief question. Do not raise the default without a new
   hypothesis; the knob exists so Rung 3 can revisit it once the judge changes.
 
+## Rung 3a (signed effect term): the exact search's value function had a sign error
+
+`vgc.rl.exact_search._side_position` scored volatiles and side conditions with
+`len(...)`, so it could not tell a benefit from an injury. Every active effect was worth
++`exact_search_effect_weight` (12.0) whatever it did:
+
+    our own Leech Seed  +12      our own Substitute  +12
+    Stealth Rock, our side  +12  Tailwind, our side  +12
+
+Because `_position_value` is `our_side - opponent_side`, that ran backwards in BOTH
+directions at once -- the search read walking into a Leech Seed as good for us, and read
+landing a Taunt on the opponent as bad for us -- at roughly 12% of a Pokemon's HP per
+effect, which is larger than the gap between many candidate moves. It also paid full
+weight for one-shot ability-activation markers (`aftermath`, `dancer`, `ironbarbs`,
+`quickdraw`) that are not position advantages at all; those dominate poke-env's
+224-member `Effect` vocabulary.
+
+**This was invisible until 2026-09-01.** The public-mirror exact search was a no-op from
+33d3a0e to a30bec3 (see the previous section), so `_position_value` deltas were a constant
+and no wrong sign inside it could move a decision. Fixing the queue bug is what armed this
+one. `vgc/search.py`'s Phase 2c search is NOT affected -- it names Tailwind and the other
+side conditions explicitly rather than counting them.
+
+`vgc.position_effects` fixes the sign and nothing else. `exact_search_effect_weight` keeps
+its frozen value; this is not a calibration change and no new weight was added.
+
+- **The sign is derived, not hand-listed.** A volatile or side condition applied by a
+  FOE-targeting move hurts its holder; one applied by a SELF/ALLY-targeting move helps.
+  `tools/export_champions_data.mjs` now exports `volatileStatus`, `selfVolatileStatus`,
+  `secondaryVolatileStatuses`, `sideCondition` and `slotCondition` alongside `target` so
+  the map regenerates with the data instead of going stale.
+- **The rule cross-checks against something written independently.** Derived
+  "harmful to the side holding it" reproduces `mechanics_state._LAYERED_SIDE_CONDITIONS`
+  (spikes/toxicspikes/stealthrock/stickyweb) exactly, from move targets alone. That
+  assertion is a gate test, so a bad derivation cannot land quietly.
+- **Restricting to LEGAL moves is what makes the derivation complete.** Octolock,
+  Telekinesis, Embargo, Nightmare, Tar Shot, Glaive Rush, Obstruct, Burning Bulwark, Silk
+  Trap, Mist, Lucky Chant, Crafty Shield and Mat Block are all `isNonstandard: "Past"` in
+  this mod -- a vanilla-gen9 derivation would sign a dozen volatiles that can never occur.
+- **Unsignable effects score 0, not +12.** This is deliberate and is itself part of the
+  fix. Two small tables cover what the rule cannot see: `_SUPPLEMENT` for effects no legal
+  move applies (perish counters, `trapped`, `slowstart`, the Protosynthesis/Quark Drive
+  families) and `_OVERRIDES` for the handful the rule mis-signs because they are engine
+  bookkeeping (`sparklingaria` marks targets for burn-curing) or genuinely two-sided
+  (`lockedmove`, `uproar`, `roost`). Every entry is +1/-1/0 -- there are no magnitudes in
+  that module, so it cannot become a tuning surface.
+- `PolicyConfig.exact_search_signed_effects` ships **True**. False is the exact
+  pre-3a behavior, kept only as the legacy control for same-session A/Bs -- the same
+  pattern as `search_respect_our_protect_odds`.
+- Gate family `exact_branch_effect_polarity` (`tests/test_position_effects.py`, 32 tests)
+  is in the mechanics gate. `policy_approximations.exact_branch_position_value` still
+  stands: the weights remain hand-chosen and uncalibrated, which is later work. Only the
+  sign is fixed.
+- **An effect already on the board cannot change the ranking, and this is general.**
+  `search_joint_orders_exact` scores every branch as `_position_value(after) - before`
+  with the SAME `before` for every candidate, so any term that is identical across
+  branches cancels out of the comparison entirely. A pre-existing Leech Seed is invisible
+  to the ranking; only an effect GAINED OR LOST inside the searched turn moves it. This
+  is not specific to the effect term -- it is how the whole exact value function behaves,
+  and it is the reason a diagnostic that counts effects at the ROOT measures the one case
+  that provably cannot matter. The first version of the script did exactly that and
+  returned a meaningless 0/110.
+- `offline/measure_effect_polarity_impact.py` therefore keys off
+  `exchange_values_differ`: did signing the term move any SEARCHED candidate's exchange
+  value at all? Root effect counts are still reported, but only as context. Rates are
+  clustered by our own team file.
+- **Measured impact, 2026-09-02** (`runs/eval/effect_polarity_impact.json`, 110
+  decisions / 43 teams, `archetype_pool_150`, diagnostic width): signing moved a searched
+  candidate's exchange value on **7/110** decisions, with a largest shift of **12.00**
+  points -- exactly `exact_search_effect_weight`, which is the confirmation that the
+  mechanism is live and that one effect flip costs exactly one weight. The top pick
+  changed on **0/110**.
+- **Do not spend a pool A/B on this.** With 0/110 decision changes a win-rate gate is a
+  null by construction and would only buy a wide confidence interval around zero. 3a is a
+  correctness fix held by a gate test, not a strength claim, and that is the whole of its
+  claim. Two real caveats before anyone reads 0/110 as "the effect term does not matter":
+  the pool is offence-heavy (only `triple_setup_balance` sets much up), and the diagnostic
+  budget is far narrower than production (`search_our_candidates=4`,
+  `exact_search_future_samples=1`, one spread hypothesis), so it explores far fewer
+  branches in which an effect could appear or disappear. A targeted board that actually
+  creates hazards/screens/Leech Seed would measure this properly; the pool cannot.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -462,6 +544,11 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 
 # Public ladder (credentials are read from env or .showdown-credentials.json):
 .venv/bin/python ladder/run_ladder.py --n 1
+
+# Rung 3a diagnostic: how often does signing the exact search's effect term change its
+# top pick? Reports an overall rate AND a rate restricted to decisions that actually had
+# a signed effect on the board -- the second is the honest denominator.
+.venv/bin/python offline/measure_effect_polarity_impact.py --pairs 60
 
 # Log an experiment note
 .venv/bin/python offline/log_experiment.py --name "..." --summary "..."

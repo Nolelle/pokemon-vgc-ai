@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "catalog_schema_version": 1,
-  "catalog_sha256": "73df1752f3efbc3df38a3f68da820bf1cce7d30ecf8e58f027f16774c51abfd8",
+  "catalog_sha256": "f18690f49b3836aebd7360b2b6909ebdd41faa629e9675807118d052a0ccd2d2",
   "release_ready": true,
   "release_rule": "Every required family must be resolved by the official Showdown engine on every gated decision path. Strategic weights that rank exactly-simulated outcomes are policy, listed under policy_approximations, and are deliberately not gated here.",
   "readiness_scopes": {
@@ -565,6 +565,23 @@
       ],
       "state": "official_showdown_clone",
       "verification": "integration"
+    },
+    {
+      "id": "exact_branch_effect_polarity",
+      "status": "exact",
+      "what": "The exact-search value function must spend exact_search_effect_weight with a sign: a volatile or side condition that hurts its holder (Leech Seed, Taunt, Stealth Rock on our own side) must score below a clean board and below one that helps (Substitute, Tailwind). Signs are derived from Champions move targets, and effects that cannot be signed score zero rather than a bonus.",
+      "tests": [
+        "tests/test_position_effects.py::test_derivation_reproduces_the_repos_own_hazard_list",
+        "tests/test_position_effects.py::test_being_crippled_and_setting_up_no_longer_score_the_same",
+        "tests/test_position_effects.py::test_hazards_on_our_own_side_cost_us_and_tailwind_pays_us",
+        "tests/test_position_effects.py::test_unsigned_effects_score_nothing_rather_than_a_bonus",
+        "tests/test_position_effects.py::test_bookkeeping_volatiles_are_not_mistaken_for_harm",
+        "tests/test_position_effects.py::test_effects_no_legal_move_applies_are_still_signed",
+        "tests/test_position_effects.py::test_illegal_champions_moves_do_not_contribute_signs",
+        "tests/test_position_effects.py::test_legacy_control_reproduces_the_sign_blind_behaviour_exactly"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "unit"
     }
   ],
   "catalog_surface_classification": {
@@ -595,7 +612,7 @@
     {
       "id": "exact_branch_position_value",
       "where": "vgc.rl.exact_search._position_value",
-      "what": "Scoring a resulting Showdown position uses hand-chosen weights for HP, status, boosts, and active effects.",
+      "what": "Scoring a resulting Showdown position uses hand-chosen weights for HP, status, boosts, and active effects. As of Rung 3a the effect term is signed (vgc.position_effects) rather than a bare count, and effects whose direction cannot be derived from Champions move targets score zero; the weights themselves are still hand-chosen and uncalibrated.",
       "why_not_a_mechanics_gap": "Showdown decides which position is reached; this only says how much that position is liked. It is the value function, and improving it is RL work."
     },
     {

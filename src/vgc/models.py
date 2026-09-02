@@ -446,6 +446,17 @@ class PolicyConfig:
     # effect actually occurred and how long it lasts.
     exact_search_boost_weight: float = 5.0
     exact_search_effect_weight: float = 12.0
+    # Spend exact_search_effect_weight with a SIGN (vgc.position_effects) instead of on a
+    # bare count of active effects. False is the pre-Rung-3a behavior and is a bug, kept
+    # only as the exact legacy control for same-session A/Bs: `len(mon.effects)` scored a
+    # Leech Seed on our own Pokemon and a Substitute we set up identically at +12, and
+    # Stealth Rock on our side identically to Tailwind on our side. Since the value
+    # function is our_side - opponent_side, that ran backwards in both directions at once
+    # -- the search read being crippled as good for us and read crippling them as bad for
+    # us, at ~12% of a Pokemon's HP per effect. It was invisible until a30bec3 because the
+    # public-mirror exact search was a no-op from 2026-08-28, so _position_value deltas
+    # were a constant and no wrong sign inside it could move a decision.
+    exact_search_signed_effects: bool = True
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat

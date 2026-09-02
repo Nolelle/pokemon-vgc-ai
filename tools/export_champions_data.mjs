@@ -79,8 +79,19 @@ counts.species = Object.keys(species).length;
 writeJson("species.json", species);
 
 // --- moves.json -------------------------------------------------------------
+// The volatile/side/slot condition fields below exist so vgc.position_effects can DERIVE
+// whether an effect helps or hurts whoever carries it, instead of a hand-maintained list
+// going stale: a volatile applied by a foe-targeting move hurts its holder, one applied
+// by a self/ally-targeting move helps. `target` is the signal, so both travel together.
 const moves = {};
 for (const m of mod.moves.all()) {
+	const secondaryVolatiles = [];
+	const secondarySelfVolatiles = [];
+	for (const s of [m.secondary, ...(m.secondaries || [])]) {
+		if (!s) continue;
+		if (s.volatileStatus) secondaryVolatiles.push(s.volatileStatus);
+		if (s.self && s.self.volatileStatus) secondarySelfVolatiles.push(s.self.volatileStatus);
+	}
 	moves[m.id] = {
 		id: m.id,
 		name: m.name,
@@ -95,6 +106,12 @@ for (const m of mod.moves.all()) {
 		flags: m.flags || {},
 		secondary: m.secondary || null,
 		secondaries: m.secondaries || null,
+		volatileStatus: m.volatileStatus || null,
+		selfVolatileStatus: (m.self && m.self.volatileStatus) || null,
+		secondaryVolatileStatuses: secondaryVolatiles,
+		secondarySelfVolatileStatuses: secondarySelfVolatiles,
+		sideCondition: m.sideCondition || null,
+		slotCondition: m.slotCondition || null,
 		isNonstandard: m.isNonstandard || null,
 	};
 }

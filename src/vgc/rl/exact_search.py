@@ -19,6 +19,7 @@ from vgc.belief_scoring import belief_ordered_candidates
 from vgc.evaluator import ScoredOrder, score_joint_orders
 from vgc.mechanics_state import BattleMechanicsState, PokemonMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
+from vgc.position_effects import effect_polarity, side_condition_polarity
 from vgc.rl.env import DirectBattle, SIDES, choice_string
 from vgc.rl.mechanics_oracle import evaluate_exact_branches
 from vgc.search import _select_search_candidates, _validate_selected_partition
@@ -54,6 +55,7 @@ def _hp_fraction(mon: PokemonMechanicsState) -> float:
 def _side_position(side, config: PolicyConfig) -> float:
     score = 0.0
     hard_control = {"slp", "frz"}
+    signed = config.exact_search_signed_effects
     for mon in side.pokemon:
         score += 100.0 * _hp_fraction(mon)
         if mon.status:
@@ -64,8 +66,22 @@ def _side_position(side, config: PolicyConfig) -> float:
             )
             score -= weight
         score += config.exact_search_boost_weight * sum(stage for _name, stage in mon.boosts)
-        score += config.exact_search_effect_weight * len(mon.effects)
-    score += config.exact_search_effect_weight * len(side.side_conditions)
+        if signed:
+            # Sign, not size: `exact_search_effect_weight` keeps its frozen value and
+            # `vgc.position_effects` only says which way it points. Effects it cannot
+            # sign contribute nothing, which is the correct score for the one-shot
+            # ability-activation markers that dominate poke-env's volatile vocabulary.
+            score += config.exact_search_effect_weight * sum(
+                effect_polarity(effect) for effect in mon.effects
+            )
+        else:
+            score += config.exact_search_effect_weight * len(mon.effects)
+    if signed:
+        score += config.exact_search_effect_weight * sum(
+            side_condition_polarity(effect) for effect in side.side_conditions
+        )
+    else:
+        score += config.exact_search_effect_weight * len(side.side_conditions)
     return score
 
 
