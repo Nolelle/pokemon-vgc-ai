@@ -1,9 +1,13 @@
 # pokemon-vgc-ai
 
 Pokemon Showdown VGC bot for `gen9championsvgc2026regmb` -- "[Gen 9 Champions] VGC 2026
-Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed, Open Team Sheets on the Bo1
-ladder. Backed by the local Showdown checkout's `champions` mod (see
-`config/formats.ts` in that repo), not vanilla gen9.
+Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed. The format offers mutual-
+consent Open Team Sheets, but the bot rejects them and assumes no opponent sheet on the
+Bo1 ladder (in practice ~0.2% of public games have one). Backed by the local Showdown
+checkout's `champions` mod (see `config/formats.ts` in that repo), not vanilla gen9.
+
+CLAUDE.md is the authoritative, fuller version of this file (gates, parity check,
+exact-mechanics search, closed experiments); when the two disagree, CLAUDE.md wins.
 
 Phase 1 scaffold: project skeleton, data export, poke-env baselines, eval harness.
 

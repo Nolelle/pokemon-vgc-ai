@@ -351,6 +351,14 @@ shells on this machine, and `node` may also need an absolute path
 # Battle-state gate -- must also PASS before any training or ladder command runs
 .venv/bin/python offline/check_battle_state_readiness.py
 
+# Showdown parity -- both gates and the public ladder run this; it fetches origin/master
+# and BLOCKS if the local checkout is dirty, differs from the catalog's pinned commit, or
+# is missing upstream commits on mod/sim paths. To update: in the showdown repo
+# `git pull --ff-only origin master && node build --force` (unforced `node build` can
+# leave a stale dist/sim), then rerun both exporters below and re-pin
+# `mechanics_coverage.json`'s `catalog_sha256`. Last done 2026-09-01 -> 50408e6f9.
+.venv/bin/python offline/check_showdown_parity.py
+
 # Start the local server (from the showdown repo, port 8000, no auth)
 cd /Users/edmundyu/code/projects/pokemon-showdown && node pokemon-showdown start --no-security
 
