@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import offline.check_battle_state_readiness as battle_state_readiness_cli
 from vgc.battle_state_gate import (
     COVERAGE_PATH,
     SET_PRIORS_PATH,
@@ -13,6 +14,7 @@ from vgc.battle_state_gate import (
     battle_state_readiness,
 )
 from vgc.gate_evidence import file_sha256, write_gate_artifact
+from vgc.showdown_parity import ParityReport
 
 FAKE_GIT_HEAD = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
@@ -123,10 +125,22 @@ def test_unknown_test_node_id_blocks_gate_script(
     regressed = tmp_path / "coverage.json"
     regressed.write_text(json.dumps(coverage))
     monkeypatch.setattr("vgc.battle_state_gate.COVERAGE_PATH", regressed)
+    monkeypatch.setattr(
+        battle_state_readiness_cli,
+        "check_showdown_parity",
+        lambda *_args, **_kwargs: ParityReport(
+            local_head="abc",
+            local_dirty=False,
+            pinned_commit="abc",
+            pinned_matches_head=True,
+            upstream_ref="origin/master",
+            fetched=True,
+            fetch_error=None,
+            missing_upstream_commits=(),
+        ),
+    )
 
-    from offline.check_battle_state_readiness import main
-
-    assert main([]) == 1
+    assert battle_state_readiness_cli.main([]) == 1
 
 
 def test_assert_battle_state_ready_requires_current_artifact(

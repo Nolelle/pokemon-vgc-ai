@@ -127,6 +127,8 @@ def write_gate_artifact(
     coverage_hash: str,
     dependency_hash: str,
     tests_run: list[str],
+    showdown_head: str | None = None,
+    parity_checked_utc: str | None = None,
 ) -> dict:
     payload = {
         "git_commit": git_head(),
@@ -135,6 +137,8 @@ def write_gate_artifact(
         "dependency_sha256": dependency_hash,
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "tests_run": tests_run,
+        "showdown_head": showdown_head,
+        "parity_checked_utc": parity_checked_utc,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n")

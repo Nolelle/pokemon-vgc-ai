@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from vgc import battle_state_gate  # noqa: E402
+from vgc.config import SHOWDOWN_REPO  # noqa: E402
 from vgc.gate_evidence import (  # noqa: E402
     file_sha256,
     format_family_status,
@@ -19,6 +21,11 @@ from vgc.gate_evidence import (  # noqa: E402
     pytest_collection_failed,
     run_gate_pytest,
     write_gate_artifact,
+)
+from vgc.showdown_parity import (  # noqa: E402
+    check_showdown_parity,
+    format_parity_report,
+    load_pinned_commit,
 )
 
 
@@ -28,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         "--static-only",
         action="store_true",
         help="skip pytest execution and do not write the gate artifact",
+    )
+    parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="skip git fetch when checking public Showdown parity",
     )
     args = parser.parse_args(argv)
 
@@ -66,6 +78,16 @@ def main(argv: list[str] | None = None) -> int:
         print("verdict: BLOCKED")
         return 1
 
+    parity = check_showdown_parity(
+        SHOWDOWN_REPO,
+        load_pinned_commit(),
+        fetch=not args.no_fetch,
+    )
+    print(format_parity_report(parity))
+    if not parity.ready:
+        print("verdict: BLOCKED")
+        return 1
+
     test_node_ids = battle_state_gate.battle_state_gate_test_node_ids()
     print(f"running {len(test_node_ids)} gate test node(s)")
     completed = run_gate_pytest(test_node_ids)
@@ -85,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         coverage_hash=file_sha256(battle_state_gate.COVERAGE_PATH),
         dependency_hash=file_sha256(battle_state_gate.SET_PRIORS_PATH),
         tests_run=test_node_ids,
+        showdown_head=parity.local_head,
+        parity_checked_utc=datetime.now(UTC).isoformat(),
     )
     refreshed = battle_state_gate.battle_state_readiness()
     print(f"artifact current: {refreshed.artifact_current}")

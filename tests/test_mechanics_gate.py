@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import offline.check_mechanics_readiness as mechanics_readiness_cli
 from vgc.gate_evidence import file_sha256, write_gate_artifact
 from vgc.mechanics_gate import (
     CATALOG_PATH,
@@ -14,6 +15,7 @@ from vgc.mechanics_gate import (
     enforce_mechanics_gate_for_cli,
     mechanics_readiness,
 )
+from vgc.showdown_parity import ParityReport
 
 VALID_ENGINE_STATES = frozenset(
     {
@@ -142,10 +144,22 @@ def test_unknown_test_node_id_blocks_gate_script(
     regressed = tmp_path / "coverage.json"
     regressed.write_text(json.dumps(coverage))
     monkeypatch.setattr("vgc.mechanics_gate.COVERAGE_PATH", regressed)
+    monkeypatch.setattr(
+        mechanics_readiness_cli,
+        "check_showdown_parity",
+        lambda *_args, **_kwargs: ParityReport(
+            local_head="abc",
+            local_dirty=False,
+            pinned_commit="abc",
+            pinned_matches_head=True,
+            upstream_ref="origin/master",
+            fetched=True,
+            fetch_error=None,
+            missing_upstream_commits=(),
+        ),
+    )
 
-    from offline.check_mechanics_readiness import main
-
-    assert main([]) == 1
+    assert mechanics_readiness_cli.main([]) == 1
 
 
 def test_assert_mechanics_ready_requires_current_artifact(
