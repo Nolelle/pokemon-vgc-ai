@@ -11024,7 +11024,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxcannonade": {
     "id": "gmaxcannonade",
@@ -11040,7 +11040,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxcentiferno": {
     "id": "gmaxcentiferno",
@@ -11056,7 +11056,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxchistrike": {
     "id": "gmaxchistrike",
@@ -11072,7 +11072,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxcuddle": {
     "id": "gmaxcuddle",
@@ -11088,7 +11088,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxdepletion": {
     "id": "gmaxdepletion",
@@ -11104,7 +11104,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxdrumsolo": {
     "id": "gmaxdrumsolo",
@@ -11120,7 +11120,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxfinale": {
     "id": "gmaxfinale",
@@ -11136,7 +11136,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxfireball": {
     "id": "gmaxfireball",
@@ -11152,7 +11152,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxfoamburst": {
     "id": "gmaxfoamburst",
@@ -11168,7 +11168,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxgoldrush": {
     "id": "gmaxgoldrush",
@@ -11184,7 +11184,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxgravitas": {
     "id": "gmaxgravitas",
@@ -11200,7 +11200,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxhydrosnipe": {
     "id": "gmaxhydrosnipe",
@@ -11216,7 +11216,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxmalodor": {
     "id": "gmaxmalodor",
@@ -11232,7 +11232,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxmeltdown": {
     "id": "gmaxmeltdown",
@@ -11248,7 +11248,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxoneblow": {
     "id": "gmaxoneblow",
@@ -11264,7 +11264,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxrapidflow": {
     "id": "gmaxrapidflow",
@@ -11280,7 +11280,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxreplenish": {
     "id": "gmaxreplenish",
@@ -11296,7 +11296,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxresonance": {
     "id": "gmaxresonance",
@@ -11312,7 +11312,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxsandblast": {
     "id": "gmaxsandblast",
@@ -11328,7 +11328,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxsmite": {
     "id": "gmaxsmite",
@@ -11344,7 +11344,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxsnooze": {
     "id": "gmaxsnooze",
@@ -11360,7 +11360,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxsteelsurge": {
     "id": "gmaxsteelsurge",
@@ -11376,7 +11376,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxstonesurge": {
     "id": "gmaxstonesurge",
@@ -11392,7 +11392,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxstunshock": {
     "id": "gmaxstunshock",
@@ -11408,7 +11408,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxsweetness": {
     "id": "gmaxsweetness",
@@ -11424,7 +11424,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxtartness": {
     "id": "gmaxtartness",
@@ -11440,7 +11440,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxterror": {
     "id": "gmaxterror",
@@ -11456,7 +11456,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxvinelash": {
     "id": "gmaxvinelash",
@@ -11472,7 +11472,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxvolcalith": {
     "id": "gmaxvolcalith",
@@ -11488,7 +11488,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxvoltcrash": {
     "id": "gmaxvoltcrash",
@@ -11504,7 +11504,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxwildfire": {
     "id": "gmaxwildfire",
@@ -11520,7 +11520,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "gmaxwindrage": {
     "id": "gmaxwindrage",
@@ -11536,7 +11536,7 @@
     "flags": {},
     "secondary": null,
     "secondaries": null,
-    "isNonstandard": "Past"
+    "isNonstandard": "Gmax"
   },
   "grassknot": {
     "id": "grassknot",

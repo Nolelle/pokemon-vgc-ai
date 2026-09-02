@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmb",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "79c04dcc4c055d190a7aba724ec83733ee3f7b38"
+    "showdown_commit": "50408e6f959e7c1f9eea08eb9cb2e764641c4849"
   },
   "format": {
     "game_type": "doubles",
@@ -1648,6 +1648,7 @@
         "onMoveFail": [
           "axekick",
           "highjumpkick",
+          "steelbeam",
           "supercellslam"
         ],
         "condition.onHit": [
@@ -1687,8 +1688,7 @@
         "onAfterMove": [
           "beakblast",
           "sparklingaria",
-          "spitup",
-          "steelbeam"
+          "spitup"
         ],
         "priorityChargeCallback": [
           "beakblast",

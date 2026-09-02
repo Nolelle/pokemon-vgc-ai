@@ -295,7 +295,7 @@ def _compare_decisions(
         wanted = expected[index]
         actual = rebuilt[index]
         for key in checked_fields:
-            if wanted.get(key) != actual.get(key):
+            if canonical_json(wanted.get(key)) != canonical_json(actual.get(key)):
                 mismatches.append(
                     f"decision {index} {key}: expected {wanted.get(key)!r}, "
                     f"rebuilt {actual.get(key)!r}"
