@@ -294,12 +294,70 @@ def parse_args() -> argparse.Namespace:
             "A/B this gate has produced."
         ),
     )
+    parser.add_argument(
+        "--candidate",
+        action="append",
+        default=None,
+        metavar="FIELD=VALUE",
+        help=(
+            "PolicyConfig override for the candidate arm (repeatable). When given, BOTH "
+            "arms start from PolicyConfig defaults instead of the own-spread arm pair: the "
+            "candidate applies these overrides, the incumbent applies only --incumbent."
+        ),
+    )
+    parser.add_argument(
+        "--incumbent",
+        action="append",
+        default=None,
+        metavar="FIELD=VALUE",
+        help="PolicyConfig override for the incumbent arm (repeatable); see --candidate.",
+    )
     return parser.parse_args()
 
 
-def build_arms(null_test: bool) -> dict[str, dict[str, Any]]:
+def parse_overrides(pairs: Sequence[str] | None) -> dict[str, Any]:
+    """`FIELD=VALUE` strings -> PolicyConfig kwargs, typed from the field's default."""
+
+    overrides: dict[str, Any] = {}
+    defaults = PolicyConfig()
+    for pair in pairs or ():
+        field, _, raw = pair.partition("=")
+        if not _ or not hasattr(defaults, field):
+            raise SystemExit(f"unknown PolicyConfig override {pair!r}")
+        default = getattr(defaults, field)
+        if isinstance(default, bool):
+            overrides[field] = raw.lower() in ("1", "true", "yes")
+        elif isinstance(default, int):
+            overrides[field] = int(raw)
+        elif isinstance(default, float):
+            overrides[field] = float(raw)
+        else:
+            overrides[field] = raw
+    return overrides
+
+
+def _arm_name(prefix: str, overrides: dict[str, Any]) -> str:
+    if not overrides:
+        return f"{prefix}_defaults"
+    return prefix + "_" + "_".join(f"{key}_{value}" for key, value in sorted(overrides.items()))
+
+
+def build_arms(
+    null_test: bool,
+    candidate: Sequence[str] | None = None,
+    incumbent: Sequence[str] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Arm name -> PolicyConfig overrides, in report order (first arm is the subject)."""
 
+    if candidate is not None or incumbent is not None:
+        candidate_arm = parse_overrides(candidate)
+        incumbent_arm = parse_overrides(incumbent)
+        if null_test:
+            return {NULL_A_NAME: dict(candidate_arm), NULL_B_NAME: dict(candidate_arm)}
+        return {
+            _arm_name("candidate", candidate_arm): candidate_arm,
+            _arm_name("incumbent", incumbent_arm): incumbent_arm,
+        }
     if null_test:
         return {NULL_A_NAME: dict(CANDIDATE_ARM), NULL_B_NAME: dict(CANDIDATE_ARM)}
     return {CANDIDATE_NAME: dict(CANDIDATE_ARM), INCUMBENT_NAME: dict(INCUMBENT_ARM)}
@@ -311,7 +369,7 @@ def main() -> int:
         raise SystemExit("--games-per-team must be a positive even number of at least 2")
     entries = load_pool(args.manifest)
     chunks = balanced_chunks(entries, args.workers)
-    arms = build_arms(args.null_test)
+    arms = build_arms(args.null_test, args.candidate, args.incumbent)
     total_games = len(entries) * args.games_per_team
     mode = "A/A NULL TEST (both arms identical)" if args.null_test else "A/B gate"
     print(

@@ -180,3 +180,19 @@ def test_null_test_gives_both_arms_the_same_config() -> None:
 
     candidate, incumbent = build_arms(null_test=False).values()
     assert candidate != incumbent
+
+
+def test_override_arms_start_from_defaults_and_type_values() -> None:
+    from offline.evaluate_own_spread_pool import build_arms
+
+    arms = build_arms(null_test=False, candidate=["shortlist_belief_hypotheses=3"])
+    (cand_name, cand), (inc_name, inc) = arms.items()
+    assert cand == {"shortlist_belief_hypotheses": 3}
+    assert inc == {}
+    assert cand_name != inc_name
+
+    null_a, null_b = build_arms(null_test=True, candidate=["use_own_team_spreads=false"]).values()
+    assert null_a == null_b == {"use_own_team_spreads": False}
+
+    with pytest.raises(SystemExit):
+        build_arms(null_test=False, candidate=["not_a_field=1"])
