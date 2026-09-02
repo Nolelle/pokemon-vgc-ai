@@ -16,6 +16,9 @@ from dataclasses import replace
 
 import pytest
 
+from poke_env.battle.field import Field
+from poke_env.battle.side_condition import SideCondition
+
 from vgc.actions import enumerate_joint_orders
 from vgc.config import REPO_ROOT
 from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
@@ -200,3 +203,146 @@ def test_patch_public_leaves_a_playable_request_and_null_stream_error() -> None:
             assert result.lines["p2"]
         finally:
             clone.close()
+
+
+META1 = REPO_ROOT / "teams" / "meta1.packed.txt"
+FARIGIRAF_CHARIZARD = "team 2134"
+
+
+def _meta1_team() -> str:
+    if not META1.is_file():
+        pytest.skip("meta1 packed team is unavailable")
+    return META1.read_text().strip()
+
+
+def _hp_fraction(mon) -> float | None:
+    if mon is None:
+        return None
+    return round(float(mon.current_hp_fraction), 2)
+
+
+def _enum_ids(mapping) -> set[str]:
+    return {getattr(key, "name", str(key)) for key in (mapping or {})}
+
+
+@contextmanager
+def _meta1_trick_room_mirror() -> Iterator[tuple[DirectBattle, DirectBattle]]:
+    """Source game with Farigiraf Trick Room up, then a LiveExactMirror of that view."""
+
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    team = _meta1_team()
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-trick-room-source",
+            team,
+            team,
+            seed=[11, 12, 13, 14],
+        )
+        mirror: LiveExactMirror | None = None
+        root: DirectBattle | None = None
+        try:
+            source.step({"p1": FARIGIRAF_CHARIZARD, "p2": FARIGIRAF_CHARIZARD})
+            source.step(
+                {
+                    "p1": "move psychic 1, move heatwave",
+                    "p2": "move trickroom, move protect",
+                }
+            )
+            observation = source.battles["p1"]
+            assert Field.TRICK_ROOM in observation.fields
+            observation.side_conditions[SideCondition.TAILWIND] = observation.turn
+            mirror = LiveExactMirror(team, COMPACT_CONFIG)
+            root = mirror.build(observation)
+            yield source, root
+        finally:
+            if root is not None:
+                root.close()
+            if mirror is not None:
+                mirror.close()
+            source.close()
+
+
+def test_mirror_p2_base_matches_p1_public_observation() -> None:
+    with _meta1_trick_room_mirror() as (source, root):
+        observation = source.battles["p1"]
+        p2 = root.battles["p2"]
+        assert Field.TRICK_ROOM in p2.fields
+        assert _enum_ids(p2.fields) == _enum_ids(observation.fields)
+        assert _enum_ids(p2.weather) == _enum_ids(observation.weather)
+        assert p2.turn == observation.turn
+        assert SideCondition.TAILWIND in p2.opponent_side_conditions
+        assert _enum_ids(p2.side_conditions) == _enum_ids(observation.opponent_side_conditions)
+        assert _enum_ids(p2.opponent_side_conditions) == _enum_ids(observation.side_conditions)
+        assert [_hp_fraction(mon) for mon in p2.active_pokemon] == [
+            _hp_fraction(mon) for mon in observation.opponent_active_pokemon
+        ]
+        assert [_hp_fraction(mon) for mon in p2.opponent_active_pokemon] == [
+            _hp_fraction(mon) for mon in observation.active_pokemon
+        ]
+
+
+def test_mirror_trick_room_survives_fieldend_on_p2_parser() -> None:
+    with _meta1_trick_room_mirror() as (_source, root):
+        assert Field.TRICK_ROOM in root.battles["p2"].fields
+        ended = False
+        for _ in range(6):
+            choices = _joint_choices(root, 1)[0]
+            branches = evaluate_exact_branches(root, [choices])
+            lines = dict(branches[0].public_lines)["p1"]
+            ended = any("-fieldend" in line and "Trick Room" in line for line in lines)
+            if ended:
+                break
+            root.step(dict(choices))
+        assert ended, "Trick Room never ended on the mirrored root"
+
+
+def test_mirror_stale_preparing_does_not_lock_search_to_solarbeam() -> None:
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    team = _meta1_team()
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-stale-solarbeam-source",
+            team,
+            team,
+            seed=[21, 22, 23, 24],
+        )
+        mirror: LiveExactMirror | None = None
+        root: DirectBattle | None = None
+        try:
+            source.step({"p1": "team 1234", "p2": "team 1234"})
+            observation = source.battles["p1"]
+            charizard = next(
+                mon
+                for mon in observation.active_pokemon
+                if mon is not None and "charizard" in (mon.species or "")
+            )
+            slot = 0 if observation.active_pokemon[0] is charizard else 1
+            charizard.prepare("solarbeam", True)
+            assert charizard.preparing
+            assert len(observation.available_moves[slot]) >= 2
+            mirror = LiveExactMirror(team, COMPACT_CONFIG)
+            root = mirror.build(observation)
+            search_config = replace(COMPACT_CONFIG, search_our_candidates=6)
+            scored = search_joint_orders_exact(root, "p1", search_config)
+            searched = [entry for entry in scored if entry.breakdown.get("searched")]
+            assert searched
+            unlocked = [
+                entry
+                for entry in searched
+                if "solarbeam"
+                not in choice_string(entry.order).split(",")[slot].lower()
+            ]
+            assert unlocked, (
+                "stale Solar Beam lock trapped search; expected a non-solarbeam "
+                f"order in { [choice_string(entry.order) for entry in searched] }"
+            )
+        finally:
+            if root is not None:
+                root.close()
+            if mirror is not None:
+                mirror.close()
+            source.close()

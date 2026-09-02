@@ -65,6 +65,48 @@ WORKER_SCRIPT = Path(__file__).resolve().parents[3] / "tools" / "sim_worker.mjs"
 
 SIDES: tuple[str, str] = ("p1", "p2")
 
+
+def _mirror_public_pokemon(source, target) -> None:
+    """Copy public HP/status/boosts from one poke-env Pokemon onto another."""
+
+    if source is None or target is None:
+        return
+    if source.fainted:
+        target.faint()
+        return
+    current_hp = getattr(source, "current_hp", None)
+    max_hp = getattr(source, "max_hp", None)
+    if current_hp is not None and max_hp:
+        target.set_hp(f"{int(current_hp)}/{int(max_hp)}")
+    target.boosts = dict(getattr(source, "boosts", None) or {})
+    target.status = getattr(source, "status", None)
+
+
+def _mirror_public_board(target: DoubleBattle, observation: DoubleBattle) -> None:
+    """Copy the observation's public board onto the non-perspective parser.
+
+    ``patchPublic`` mutates Showdown but does not replay ``-fieldstart`` /
+    ``-weather`` / ``-damage`` into the other side's poke-env parser. Clones start
+    from that parser, so a later ``-fieldend|Trick Room`` KeyErrors on a blank
+    template, and opponent-response scoring sees turn-1 HP and no field.
+    """
+
+    target.turn = int(getattr(observation, "turn", 0) or 0)
+    target._fields = dict(observation.fields)
+    target._weather = dict(observation.weather)
+    target._side_conditions = dict(observation.opponent_side_conditions)
+    target._opponent_side_conditions = dict(observation.side_conditions)
+    for source_mon, dest_mon in zip(
+        list(observation.opponent_active_pokemon or ()),
+        list(target.active_pokemon or ()),
+    ):
+        _mirror_public_pokemon(source_mon, dest_mon)
+    for source_mon, dest_mon in zip(
+        list(observation.active_pokemon or ()),
+        list(target.opponent_active_pokemon or ()),
+    ):
+        _mirror_public_pokemon(source_mon, dest_mon)
+
 # Protocol tags the direct sim emits that carry no battle state and that poke-env's
 # parse_message would raise NotImplementedError on (it has no default branch). Kept as a
 # short EXPLICIT allowlist rather than "skip anything unrecognized" so that a genuinely
@@ -383,6 +425,7 @@ class DirectBattle:
             clone.battles = {
                 side: copy.deepcopy(clone_bases[side]) for side in SIDES
             }
+            clone._patch_perspective = getattr(self, "_patch_perspective", None)
             payload["omitTranscript"] = True
         if seed is not None:
             payload["seed"] = list(seed)
@@ -420,6 +463,8 @@ class DirectBattle:
         )
         result = self._apply(response)
         bases = {side: self.battles[side] for side in SIDES}
+        self._patch_perspective = perspective
+        other = "p2" if perspective == "p1" else "p1"
         if observation_battle is not None:
             # Direct offline battles attach their clonable simulator root to the
             # otherwise public poke-env observation. That root owns a thread lock, so
@@ -437,6 +482,7 @@ class DirectBattle:
             decision_battles = dict(getattr(self, "_decision_battles", {}))
             decision_battles[perspective] = observation_battle
             self._decision_battles = decision_battles
+            _mirror_public_board(bases[other], observation_battle)
         self._clone_battle_bases = bases
         return result
 
@@ -558,7 +604,16 @@ class DirectBattle:
             elif tag in _COSMETIC_MESSAGES:
                 continue
             else:
-                battle.parse_message(split)
+                try:
+                    battle.parse_message(split)
+                except Exception as exc:
+                    perspective = getattr(self, "_patch_perspective", None)
+                    if perspective is not None and side != perspective:
+                        raise RuntimeError(
+                            f"poke-env parser failed on non-perspective {side} in "
+                            f"battle {self.battle_id}: {type(exc).__name__}: {exc}"
+                        ) from exc
+                    raise
         if not saw_request:
             # No new request for this side this step means the simulator is not waiting
             # on it (it is mid-resolution, or the battle just ended).

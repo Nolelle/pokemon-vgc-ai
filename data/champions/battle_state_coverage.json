@@ -19,7 +19,9 @@
       "verification": "property_contract",
       "tests": [
         "tests/test_mechanics_observation_contract.py",
-        "tests/test_mechanics_state.py::test_snapshot_preserves_all_observable_mechanics_state"
+        "tests/test_mechanics_state.py::test_snapshot_preserves_all_observable_mechanics_state",
+        "tests/test_mechanics_state.py::test_snapshot_drops_stale_preparing_when_available_moves_are_unrestricted",
+        "tests/test_mechanics_state.py::test_snapshot_keeps_preparing_when_request_offers_only_that_move"
       ]
     },
     {
@@ -165,7 +167,10 @@
         "tests/test_live_mirror_branches.py::test_mirror_clone_step_emits_protocol_and_advances_public_state",
         "tests/test_live_mirror_branches.py::test_mirror_exact_branches_diverge_from_each_other_and_the_root",
         "tests/test_live_mirror_branches.py::test_mirror_exact_search_exchange_values_are_not_constant",
-        "tests/test_live_mirror_branches.py::test_patch_public_leaves_a_playable_request_and_null_stream_error"
+        "tests/test_live_mirror_branches.py::test_patch_public_leaves_a_playable_request_and_null_stream_error",
+        "tests/test_live_mirror_branches.py::test_mirror_p2_base_matches_p1_public_observation",
+        "tests/test_live_mirror_branches.py::test_mirror_trick_room_survives_fieldend_on_p2_parser",
+        "tests/test_live_mirror_branches.py::test_mirror_stale_preparing_does_not_lock_search_to_solarbeam"
       ]
     },
     {

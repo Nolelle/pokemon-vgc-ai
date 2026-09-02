@@ -236,11 +236,38 @@ def _resolve_item_state(
     return "unknown", None
 
 
+def _request_confirmed_preparing(
+    *,
+    opponent: bool,
+    preparing: bool,
+    preparing_move_id: str | None,
+    available_move_ids: tuple[str, ...] | None,
+) -> tuple[bool, str | None]:
+    """Whether a two-turn lock is actually in force on this observation.
+
+    poke-env can leave ``Pokemon.preparing`` set after a sun Solar Beam that skipped
+    its charge turn, while ``available_moves`` still lists every move. The REQUEST is
+    the public observation of a genuine lock: our active slot is preparing only when
+    that slot's available moves are exactly the charging move. Opponent Pokemon have
+    no request on this battle object, so their poke-env flag is kept as-is.
+    """
+
+    if opponent:
+        return preparing, preparing_move_id if preparing else None
+    if not preparing or not preparing_move_id or available_move_ids is None:
+        return False, None
+    offered = tuple(move_id for move_id in available_move_ids if move_id)
+    if offered == (preparing_move_id,):
+        return True, preparing_move_id
+    return False, None
+
+
 def snapshot_pokemon(
     pokemon: Any,
     *,
     opponent: bool,
     revealed_items: Mapping[str, str] | None = None,
+    available_move_ids: tuple[str, ...] | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -272,6 +299,21 @@ def snapshot_pokemon(
     preparing_target = getattr(pokemon, "preparing_target", None)
     if preparing_target is not None and not isinstance(preparing_target, (str, int)):
         preparing_target = str(preparing_target)
+    preparing_move_id = (
+        to_id(
+            getattr(getattr(pokemon, "preparing_move", None), "id", None)
+            or getattr(pokemon, "preparing_move", None)
+        )
+        or None
+    )
+    preparing, preparing_move_id = _request_confirmed_preparing(
+        opponent=opponent,
+        preparing=bool(getattr(pokemon, "preparing", False)),
+        preparing_move_id=preparing_move_id,
+        available_move_ids=available_move_ids,
+    )
+    if not preparing:
+        preparing_target = None
     return PokemonMechanicsState(
         species_id=species_id,
         base_species_id=base_species_id,
@@ -331,13 +373,9 @@ def snapshot_pokemon(
             or getattr(pokemon, "mimic_move", None)
         )
         or None,
-        preparing_move_id=to_id(
-            getattr(getattr(pokemon, "preparing_move", None), "id", None)
-            or getattr(pokemon, "preparing_move", None)
-        )
-        or None,
+        preparing_move_id=preparing_move_id,
         preparing_target=preparing_target,
-        preparing=bool(getattr(pokemon, "preparing", False)),
+        preparing=preparing,
         must_recharge=bool(getattr(pokemon, "must_recharge", False)),
         protect_counter=int(getattr(pokemon, "protect_counter", 0) or 0),
         first_turn=bool(getattr(pokemon, "first_turn", False)),
@@ -378,7 +416,34 @@ def _bool_tuple(value: Any, length: int = 2) -> tuple[bool | None, ...]:
     return tuple(bool(value) for _ in range(length))
 
 
-def _side_snapshot(battle: Any, *, opponent: bool) -> SideMechanicsState:
+def _active_index(active: list[Any], pokemon: Any) -> int | None:
+    for index, candidate in enumerate(active):
+        if candidate is pokemon:
+            return index
+    return None
+
+
+def _slot_available_move_ids(
+    *,
+    opponent: bool,
+    active: list[Any],
+    pokemon: Any,
+    available_move_ids: tuple[tuple[str, ...], ...],
+) -> tuple[str, ...] | None:
+    if opponent:
+        return None
+    slot = _active_index(active, pokemon)
+    if slot is None or slot >= len(available_move_ids):
+        return None
+    return available_move_ids[slot]
+
+
+def _side_snapshot(
+    battle: Any,
+    *,
+    opponent: bool,
+    available_move_ids: tuple[tuple[str, ...], ...] = (),
+) -> SideMechanicsState:
     prefix = "opponent_" if opponent else ""
     team = getattr(battle, f"{prefix}team", None) or {}
     pokemon_values = team.values() if isinstance(team, Mapping) else team
@@ -388,7 +453,17 @@ def _side_snapshot(battle: Any, *, opponent: bool) -> SideMechanicsState:
     revealed_items = _revealed_items_for(battle) if opponent else None
     return SideMechanicsState(
         pokemon=tuple(
-            snapshot_pokemon(mon, opponent=opponent, revealed_items=revealed_items)
+            snapshot_pokemon(
+                mon,
+                opponent=opponent,
+                revealed_items=revealed_items,
+                available_move_ids=_slot_available_move_ids(
+                    opponent=opponent,
+                    active=active,
+                    pokemon=mon,
+                    available_move_ids=available_move_ids,
+                ),
+            )
             for mon in pokemon_values
         ),
         active_species=tuple(
@@ -465,6 +540,10 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         )
     except (AttributeError, RuntimeError, TypeError, ValueError):
         last_request_json = None
+    available_moves = tuple(
+        tuple(to_id(getattr(move, "id", move)) for move in slot_moves)
+        for slot_moves in raw_available_moves
+    )
     return BattleMechanicsState(
         format_id=to_id(getattr(battle, "format", None)),
         generation=int(getattr(battle, "gen", 9) or 9),
@@ -481,10 +560,7 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         lost=bool(getattr(battle, "lost", False)),
         fields=_effect_snapshots(getattr(battle, "fields", None), counter_kind="start_turn"),
         weather=_effect_snapshots(getattr(battle, "weather", None), counter_kind="start_turn"),
-        available_moves=tuple(
-            tuple(to_id(getattr(move, "id", move)) for move in slot_moves)
-            for slot_moves in raw_available_moves
-        ),
+        available_moves=available_moves,
         available_switches=tuple(
             tuple(to_id(getattr(mon, "species", mon)) for mon in slot_switches)
             for slot_switches in raw_available_switches
@@ -499,6 +575,8 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
             to_id(getattr(mon, "species", mon))
             for mon in (getattr(battle, "teampreview_opponent_team", None) or ())
         ),
-        our_side=_side_snapshot(battle, opponent=False),
+        our_side=_side_snapshot(
+            battle, opponent=False, available_move_ids=available_moves
+        ),
         opponent_side=_side_snapshot(battle, opponent=True),
     )

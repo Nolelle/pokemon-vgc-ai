@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from vgc.mechanics_state import BOOST_IDS, _resolve_item_state, snapshot_battle
+from vgc.mechanics_state import (
+    BOOST_IDS,
+    _resolve_item_state,
+    snapshot_battle,
+    snapshot_pokemon,
+)
 
 
 def _move(move_id: str, *, pp: int, max_pp: int, disabled: bool = False):
@@ -212,3 +217,63 @@ def test_item_state_classifies_known_consumed_none_and_unknown() -> None:
         opponent=True,
         revealed_items=None,
     ) == ("unknown", None)
+
+
+def _preparing_charizard_battle(*, available_move_ids: tuple[str, ...]):
+    ours = _pokemon("Charizard")
+    ours.preparing = True
+    ours.preparing_move = SimpleNamespace(id="solarbeam")
+    moves = [_move(move_id, pp=8, max_pp=8) for move_id in available_move_ids]
+    return ours, SimpleNamespace(
+        format="gen9championsvgc2026regmb",
+        gen=9,
+        team={"p1: Charizard": ours},
+        active_pokemon=[ours, None],
+        opponent_team={},
+        opponent_active_pokemon=[None, None],
+        available_moves=[moves, []],
+    )
+
+
+def test_snapshot_drops_stale_preparing_when_available_moves_are_unrestricted() -> None:
+    ours, battle = _preparing_charizard_battle(
+        available_move_ids=("heatwave", "weatherball", "solarbeam", "protect")
+    )
+    direct = snapshot_pokemon(ours, opponent=False)
+    from_battle = snapshot_battle(battle).our_side.pokemon[0]
+
+    assert direct.preparing is False
+    assert direct.preparing_move_id is None
+    assert from_battle.preparing is False
+    assert from_battle.preparing_move_id is None
+
+
+def test_snapshot_keeps_preparing_when_request_offers_only_that_move() -> None:
+    ours, battle = _preparing_charizard_battle(available_move_ids=("solarbeam",))
+    direct = snapshot_pokemon(
+        ours, opponent=False, available_move_ids=("solarbeam",)
+    )
+    from_battle = snapshot_battle(battle).our_side.pokemon[0]
+
+    assert direct.preparing is True
+    assert direct.preparing_move_id == "solarbeam"
+    assert from_battle.preparing is True
+    assert from_battle.preparing_move_id == "solarbeam"
+
+
+def test_snapshot_keeps_opponent_preparing_without_our_request() -> None:
+    opponent = _pokemon("Gengar", opponent=True)
+    opponent.preparing = True
+    opponent.preparing_move = SimpleNamespace(id="solarbeam")
+    battle = SimpleNamespace(
+        opponent_team={"p2: Gengar": opponent},
+        opponent_active_pokemon=[opponent, None],
+        team={},
+        active_pokemon=[None, None],
+        available_moves=[(_move("heatwave", pp=8, max_pp=8),), ()],
+    )
+
+    mon = snapshot_battle(battle).opponent_side.pokemon[0]
+
+    assert mon.preparing is True
+    assert mon.preparing_move_id == "solarbeam"
