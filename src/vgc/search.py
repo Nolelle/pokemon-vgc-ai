@@ -11,13 +11,13 @@ before it).
 ## Pipeline
 
 1. `vgc.evaluator.score_joint_orders(battle, config)` for the myopic ranking. Empty in,
-   empty out (mirrors that function's own documented contract).
-2. Prune to the top `config.search_our_candidates` myopic orders -- searching every legal
-   order (dozens, once switches/megas/targeting variants are enumerated) would multiply
-   an already nontrivial per-order cost by too much; orders outside the myopic top-K are
-   essentially never actually best, so they keep their myopic score (scaled by
-   `search_myopic_weight`) and the returned list stays complete and consistently
-   comparable (see `search_joint_orders`'s docstring for the exact blend).
+   empty out (mirrors that function's own documented contract). `belief_ordered_candidates`
+   then re-sorts that list by the spread-belief mixture when
+   `shortlist_belief_hypotheses > 1` (identity at the shipped default of 1).
+2. Prune to the top `config.search_our_candidates` of that ranked list -- searching every
+   legal order (dozens, once switches/megas/targeting variants are enumerated) would
+   multiply an already nontrivial per-order cost by too much; orders outside the shortlist
+   keep a capped tail score (see `search_joint_orders`'s docstring for the exact blend).
 3. `_enumerate_opp_responses(ctx, config)` builds a capped set of plausible opponent
    joint responses: per opponent slot, top known damaging moves/targets, Protect,
    strategic utility/control (setup, speed control, denial, redirection, screens), and
@@ -117,6 +117,7 @@ from vgc.bc.policy import (
     position_value,
     position_values_batch,
 )
+from vgc.belief_scoring import belief_ordered_candidates
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves
 from vgc.decision_trace import record_note
@@ -1671,6 +1672,10 @@ def search_joint_orders(
     if not myopic:
         return []
 
+    # Shortlist membership follows the belief-mixture ranking; every score, the
+    # opponent-response enumeration below, and the searched count stay point-estimate.
+    ranked = belief_ordered_candidates(battle, myopic, config)
+
     ctx = build_context(battle, config)
     responses = _enumerate_opp_responses(ctx, config)
 
@@ -1695,10 +1700,10 @@ def search_joint_orders(
             )
 
     if candidate_selector is None:
-        searched, unsearched = _select_search_candidates(myopic, config)
+        searched, unsearched = _select_search_candidates(ranked, config)
     else:
-        searched, unsearched = candidate_selector(list(myopic), config)
-        _validate_selected_partition(myopic, searched, unsearched, config)
+        searched, unsearched = candidate_selector(list(ranked), config)
+        _validate_selected_partition(ranked, searched, unsearched, config)
 
     # Every (candidate, response) exchange is resolved FIRST, across the whole searched
     # block, so the value head (if active) can be scored in ONE batched forward pass
@@ -1846,6 +1851,10 @@ def search_joint_orders(
 
     # Always non-empty here: `searched` has at least one entry whenever `myopic` is
     # non-empty (cutoff = max(1, ...)), and we already returned early for empty myopic.
+    # Unsearched entries keep the order `_select_search_candidates` (or the experimental
+    # selector) returned them. That walk follows `ranked` -- belief-mixture order when
+    # shortlist_belief_hypotheses > 1, myopic order otherwise -- so the tail cap below
+    # (`min_searched_final - 1.0 - tail_index`) is still strictly descending.
     min_searched_final = min(searched_finals)
     for tail_index, entry in enumerate(unsearched):
         breakdown = dict(entry.breakdown)

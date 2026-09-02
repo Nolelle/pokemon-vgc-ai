@@ -6,8 +6,11 @@ enumerated list against a capped, renormalised posterior over those hidden sprea
 the same joint-hypothesis construction `vgc.rl.live_mirror` uses for Showdown roots,
 keyed here by active slot rather than species id, and without importing `vgc.rl`.
 
-Nothing here is wired into a play path. `PolicyConfig.shortlist_belief_hypotheses`
-ships at 1 (the mode) until a later rung selects the shortlist against the mixture.
+`belief_ordered_candidates` is the play-path hook: it re-sorts the already-scored
+myopic list by the mixture so the search shortlist can follow belief rank. Order
+`.score` values stay the point-estimate numbers; only the list order (and an audit
+breakdown) change. `PolicyConfig.shortlist_belief_hypotheses` ships at 1, which
+returns the myopic list object unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from poke_env.player.battle_order import DoubleBattleOrder
 from vgc.actions import enumerate_joint_orders
 from vgc.battle_memory import BattleMemory
 from vgc.damage import PokemonState, to_id
+from vgc.decision_trace import record_note
 from vgc.evaluator import (
     ScoredOrder,
     _record_trace,
@@ -161,6 +165,101 @@ def _opp_states_for_hypothesis(
     return override
 
 
+def _spread_nature_key(spread: dict[str, int], nature: str | None) -> tuple:
+    return (tuple(sorted(dict(spread).items())), nature)
+
+
+def _mode_assignment(battle, usage: dict, meta_team) -> _SpreadAssignment:
+    """Per-slot (sp, nature) that `opponent_state` / `build_context` would pick."""
+
+    assignment: _SpreadAssignment = {}
+    for idx, mon in _active_opponent_slots(battle):
+        meta_nature = known_nature(meta_team, mon)
+        state = opponent_state(mon, usage=usage, nature_override=meta_nature)
+        assignment[idx] = (dict(state.sp_spread or {}), state.nature)
+    return assignment
+
+
+def _effective_assignment(battle, assignment: _SpreadAssignment, meta_team) -> _SpreadAssignment:
+    """(sp, nature) actually scored for a hypothesis after meta-nature resolution."""
+
+    actives = list(getattr(battle, "opponent_active_pokemon", None) or [])
+    effective: _SpreadAssignment = {}
+    for idx, (spread, nature) in assignment.items():
+        if idx >= len(actives):
+            continue
+        mon = actives[idx]
+        if mon is None or getattr(mon, "fainted", False):
+            continue
+        meta_nature = known_nature(meta_team, mon)
+        effective[idx] = (dict(spread), meta_nature or nature)
+    return effective
+
+
+def _assignments_equal(left: _SpreadAssignment, right: _SpreadAssignment) -> bool:
+    if left.keys() != right.keys():
+        return False
+    return all(
+        _spread_nature_key(*left[idx]) == _spread_nature_key(*right[idx]) for idx in left
+    )
+
+
+def _mixture_over_orders(
+    battle,
+    joint_orders: Sequence[DoubleBattleOrder],
+    config: PolicyConfig,
+    *,
+    memory: BattleMemory | None,
+    mode_aligned_scores: Sequence[float] | None = None,
+) -> tuple[list[float], list[float], list[list[float]], list[_JointHypothesis]]:
+    """Probability-weighted scores aligned to `joint_orders`, plus per-hypothesis rows.
+
+    When `mode_aligned_scores` is provided and a joint hypothesis equals the
+    `opponent_state` point estimate (same Stat Points and resolved nature per slot),
+    those scores are reused instead of rebuilding the mode context. If no hypothesis
+    matches -- a posterior that dropped the usage-mode spread, or a meta-team nature
+    that no corpus (sp, nature) pair equals even after `known_nature` resolution --
+    every hypothesis is scored and the mode list is not substituted.
+    """
+    hypotheses = joint_spread_hypotheses(
+        battle, memory, config, limit=config.shortlist_belief_hypotheses
+    )
+    usage = load_usage_spreads()
+    meta_team = recognize_meta_team(_preview_team(battle))
+    mode = (
+        _mode_assignment(battle, usage, meta_team)
+        if mode_aligned_scores is not None
+        else None
+    )
+
+    weights: list[float] = []
+    per_hypothesis_aligned: list[list[float]] = []
+    for weight, assignment in hypotheses:
+        weights.append(weight)
+        if (
+            mode_aligned_scores is not None
+            and mode is not None
+            and _assignments_equal(_effective_assignment(battle, assignment, meta_team), mode)
+        ):
+            per_hypothesis_aligned.append(list(mode_aligned_scores))
+            continue
+        override = _opp_states_for_hypothesis(battle, assignment, usage, meta_team)
+        ctx = build_context(
+            battle, config, opp_state_override=override if override else None
+        )
+        scored = score_joint_orders_in_context(joint_orders, ctx, config)
+        per_hypothesis_aligned.append(_scores_in_enumerate_order(joint_orders, scored))
+
+    mixed_scores = [
+        sum(
+            weight * row[index]
+            for weight, row in zip(weights, per_hypothesis_aligned, strict=True)
+        )
+        for index in range(len(joint_orders))
+    ]
+    return mixed_scores, weights, per_hypothesis_aligned, hypotheses
+
+
 def score_joint_orders_under_beliefs(
     battle: DoubleBattle,
     config: PolicyConfig | None = None,
@@ -170,7 +269,8 @@ def score_joint_orders_under_beliefs(
     """Score each legal joint order as a probability-weighted mean over spread beliefs.
 
     Enumerates once, scores the same list under each joint hypothesis, and returns one
-    `ScoredOrder` per order whose `score` is the mixture. Not wired into play.
+    `ScoredOrder` per order whose `score` is the mixture. The mode hypothesis reuses a
+    single default-context pass when it matches `opponent_state`.
     """
     config = config or PolicyConfig()
     limit = config.shortlist_belief_hypotheses
@@ -185,36 +285,30 @@ def score_joint_orders_under_beliefs(
     if not joint_orders:
         return []
 
-    hypotheses = joint_spread_hypotheses(battle, memory, config, limit=limit)
-    usage = load_usage_spreads()
-    meta_team = recognize_meta_team(_preview_team(battle))
-
-    weights: list[float] = []
-    per_hypothesis_aligned: list[list[float]] = []
-    for weight, assignment in hypotheses:
-        override = _opp_states_for_hypothesis(battle, assignment, usage, meta_team)
-        ctx = build_context(
-            battle, config, opp_state_override=override if override else None
-        )
-        scored = score_joint_orders_in_context(joint_orders, ctx, config)
-        weights.append(weight)
-        per_hypothesis_aligned.append(_scores_in_enumerate_order(joint_orders, scored))
+    mode_ctx = build_context(battle, config)
+    mode_scored = score_joint_orders_in_context(joint_orders, mode_ctx, config)
+    mode_aligned = _scores_in_enumerate_order(joint_orders, mode_scored)
+    mixed_scores, weights, per_hypothesis_aligned, hypotheses = _mixture_over_orders(
+        battle,
+        joint_orders,
+        config,
+        memory=memory,
+        mode_aligned_scores=mode_aligned,
+    )
 
     mixed: list[ScoredOrder] = []
     for index, order in enumerate(joint_orders):
-        per_hypothesis_scores = [row[index] for row in per_hypothesis_aligned]
-        score = sum(
-            weight * value for weight, value in zip(weights, per_hypothesis_scores, strict=True)
-        )
         mixed.append(
             ScoredOrder(
                 order=order,
-                score=score,
+                score=mixed_scores[index],
                 breakdown={
                     "belief_mixture": {
                         "hypotheses": len(hypotheses),
                         "weights": list(weights),
-                        "per_hypothesis_scores": per_hypothesis_scores,
+                        "per_hypothesis_scores": [
+                            row[index] for row in per_hypothesis_aligned
+                        ],
                     }
                 },
             )
@@ -222,3 +316,77 @@ def score_joint_orders_under_beliefs(
     mixed.sort(key=lambda scored_order: scored_order.score, reverse=True)
     _record_trace(mixed, config)
     return mixed
+
+
+def belief_ordered_candidates(
+    battle: DoubleBattle,
+    myopic: list[ScoredOrder],
+    config: PolicyConfig,
+    *,
+    memory: BattleMemory | None = None,
+) -> list[ScoredOrder]:
+    """Re-sort `myopic` by belief-mixture score for shortlist selection.
+
+    Returns the same list object, unchanged, when `shortlist_belief_hypotheses <= 1`.
+    Otherwise returns the same `ScoredOrder` objects (identity and `.score` preserved)
+    ordered by mixture descending, ties broken by original myopic position. Attaches
+    `entry.breakdown["belief_mixture"]` as the 2a audit dict plus `mixture_score` and
+    `myopic_rank`. Missing `memory` (and no `_vgc_battle_memory` on the battle) falls
+    back to the corpus prior, matching `score_joint_orders_under_beliefs`.
+    """
+    if memory is None:
+        memory = getattr(battle, "_vgc_battle_memory", None)
+    if config.shortlist_belief_hypotheses <= 1:
+        record_note(
+            "belief_shortlist",
+            {
+                "hypotheses": config.shortlist_belief_hypotheses,
+                "reordered": 0,
+                "top_changed": False,
+            },
+        )
+        return myopic
+    if not myopic:
+        record_note(
+            "belief_shortlist",
+            {"hypotheses": 0, "reordered": 0, "top_changed": False},
+        )
+        return myopic
+
+    joint_orders = [entry.order for entry in myopic]
+    mode_aligned = [entry.score for entry in myopic]
+    mixed_scores, weights, per_hypothesis_aligned, hypotheses = _mixture_over_orders(
+        battle,
+        joint_orders,
+        config,
+        memory=memory,
+        mode_aligned_scores=mode_aligned,
+    )
+    for original_rank, entry in enumerate(myopic):
+        entry.breakdown["belief_mixture"] = {
+            "hypotheses": len(hypotheses),
+            "weights": list(weights),
+            "per_hypothesis_scores": [row[original_rank] for row in per_hypothesis_aligned],
+            "mixture_score": mixed_scores[original_rank],
+            "myopic_rank": original_rank,
+        }
+
+    new_order = [
+        index
+        for index, _entry in sorted(
+            enumerate(myopic), key=lambda pair: -mixed_scores[pair[0]]
+        )
+    ]
+    ranked = [myopic[index] for index in new_order]
+    reordered = sum(
+        1 for new_rank, old_rank in enumerate(new_order) if new_rank != old_rank
+    )
+    record_note(
+        "belief_shortlist",
+        {
+            "hypotheses": len(hypotheses),
+            "reordered": reordered,
+            "top_changed": bool(new_order) and new_order[0] != 0,
+        },
+    )
+    return ranked

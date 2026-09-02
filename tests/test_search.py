@@ -15,6 +15,7 @@ from poke_env.battle.pokemon import Pokemon
 
 import vgc.agent as agent_module
 import vgc.search as search_module
+from vgc.actions import describe_order
 from vgc.agent import VgcPlayer
 from vgc.damage import PokemonState
 from vgc.evaluator import ScoredOrder, _Context, _ThreatInfo
@@ -1262,3 +1263,41 @@ def test_diverse_candidate_pruning_keeps_a_switch_line() -> None:
     assert attack in searched
     assert switch in searched
     assert protect in unsearched
+
+
+def _search_identity_pairs(scored: list[ScoredOrder]) -> list[tuple[str, float]]:
+    return [(describe_order(entry.order), entry.score) for entry in scored]
+
+
+def test_search_joint_orders_hypotheses_1_matches_identity_helper(monkeypatch) -> None:
+    orders = {tag: _tagged_fake_order(tag) for tag in "abc"}
+    myopic = [
+        ScoredOrder(order=orders["a"], score=50.0, breakdown={}),
+        ScoredOrder(order=orders["b"], score=30.0, breakdown={}),
+        ScoredOrder(order=orders["c"], score=10.0, breakdown={}),
+    ]
+    monkeypatch.setattr(search_module, "score_joint_orders", lambda _battle, _config: myopic)
+    monkeypatch.setattr(search_module, "build_context", lambda _battle, _config: object())
+    fake_response = OppResponse(
+        slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none")
+    )
+    monkeypatch.setattr(
+        search_module, "_enumerate_opp_responses", lambda _ctx, _config: [fake_response]
+    )
+    monkeypatch.setattr(
+        search_module, "resolve_exchange", lambda *_args, **_kwargs: ExchangeResult()
+    )
+    config = PolicyConfig(
+        shortlist_belief_hypotheses=1,
+        search_our_candidates=2,
+        search_diverse_candidates=False,
+        use_rolling_horizon=False,
+    )
+    baseline = search_module.search_joint_orders(object(), config)
+    monkeypatch.setattr(
+        search_module,
+        "belief_ordered_candidates",
+        lambda _battle, scored, _config, memory=None: scored,
+    )
+    identity = search_module.search_joint_orders(object(), config)
+    assert _search_identity_pairs(baseline) == _search_identity_pairs(identity)

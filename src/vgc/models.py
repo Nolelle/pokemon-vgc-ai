@@ -357,11 +357,10 @@ class PolicyConfig:
     # were harmless -- so admit the network's discoveries only when they clear a real
     # margin. 0 disables arbitration entirely (pure argmax over the searched set).
     guided_upset_margin: float = 10.0
-    # Number of joint opponent-spread hypotheses the belief-aware shortlist scorer
-    # (`vgc.belief_scoring.score_joint_orders_under_beliefs`) averages over. 1 = the
-    # single most likely posterior spread (the same point estimate `opponent_state`
-    # already uses). Ships at 1 and is NOT yet wired into any play path -- Rung 2b
-    # wires it into shortlist selection, Rung 2c gates it.
+    # Number of joint opponent-spread hypotheses used to ORDER the search shortlist
+    # (`vgc.belief_scoring.belief_ordered_candidates`). Scores, opponent-response
+    # enumeration, and searched count stay on the point-estimate evaluator. 1 = return
+    # the myopic list unchanged (byte-identical). Rung 2c gates raising this.
     shortlist_belief_hypotheses: int = 1
     # Points per 1% of a Pokemon's max HP lost during a simulated exchange -- the same
     # currency as damage_percent_weight, so exchange-derived and myopic-derived HP

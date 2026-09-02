@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 from typing import Callable, Sequence
 
+from vgc.belief_scoring import belief_ordered_candidates
 from vgc.evaluator import ScoredOrder, score_joint_orders
 from vgc.mechanics_state import BattleMechanicsState, PokemonMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
@@ -105,11 +106,12 @@ def search_joint_orders_exact(
     myopic = score_joint_orders(battle, config)
     if not myopic:
         return []
+    ranked = belief_ordered_candidates(battle, myopic, config)
     if candidate_selector is None:
-        searched, unsearched = _select_search_candidates(myopic, config)
+        searched, unsearched = _select_search_candidates(ranked, config)
     else:
-        searched, unsearched = candidate_selector(list(myopic), config)
-        _validate_selected_partition(myopic, searched, unsearched, config)
+        searched, unsearched = candidate_selector(list(ranked), config)
+        _validate_selected_partition(ranked, searched, unsearched, config)
 
     expected = root.sides_to_move()
     other = "p2" if side == "p1" else "p1"

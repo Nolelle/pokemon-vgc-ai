@@ -87,6 +87,23 @@ def test_neural_guidance_keeps_exact_k_and_reserves_safety_inside_budget() -> No
     assert selected[0] is entries[0]
 
 
+def test_hybrid_safety_leader_follows_belief_list_position() -> None:
+    entries = _strategic_entries()
+    myopic_leader = entries[0]
+    belief_leader = entries[4]
+    ranked = [belief_leader, *[entry for entry in entries if entry is not belief_leader]]
+    selected, _tail, safety = select_neural_guided_candidates(
+        ranked,
+        PolicyConfig(search_our_candidates=10),
+        _ranking(ranked),
+        requested_safety_slots=4,
+    )
+    assert safety[0]["reason"] == "heuristic_top"
+    assert safety[0]["action"] == describe_order(belief_leader.order)
+    assert selected[0] is belief_leader
+    assert selected[0] is not myopic_leader
+
+
 def test_hybrid_five_caps_safety_at_half_the_budget() -> None:
     entries = _strategic_entries()
     selected, _tail, safety = select_neural_guided_candidates(

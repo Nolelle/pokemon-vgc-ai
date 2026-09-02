@@ -13,12 +13,19 @@ import pytest
 from poke_env.battle.move import Move
 from poke_env.player.battle_order import SingleBattleOrder
 
+import vgc.search as search_module
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.battle_memory import BattleMemory, SpeedObservation
-from vgc.belief_scoring import joint_spread_hypotheses, score_joint_orders_under_beliefs
+from vgc.belief_scoring import (
+    belief_ordered_candidates,
+    joint_spread_hypotheses,
+    score_joint_orders_under_beliefs,
+)
 from vgc.damage import PokemonState
+from vgc.decision_trace import finish_trace, start_trace
 from vgc.evaluator import build_context, score_joint_orders, score_joint_orders_in_context
 from vgc.models import PolicyConfig
+from vgc.search import ExchangeResult
 from vgc.sets import opponent_spread_hypotheses, opponent_state
 from vgc.stats import calculate_stats
 
@@ -148,6 +155,56 @@ def _straddle_battle() -> SimpleNamespace:
         valid_orders=(
             [_move_order("earthquake", 1), _move_order("protect")],
             [_move_order("protect")],
+        ),
+    )
+
+
+_CROSSING_K = 15
+_CROSSING_ORDER = "protect / protect"
+
+
+def _crossing_battle() -> SimpleNamespace:
+    """Straddle fixture with enough legal orders that the mixture crosses K=15.
+
+    Corpus Charizard Spe 144/152/167 vs our Garchomp Spe 154. Mixture lifts
+    `protect / protect` from myopic rank 15 into the K=15 shortlist (belief rank 14),
+    displacing `swordsdance / knockoff@1`.
+    """
+
+    garchomp = _our_garchomp()
+    garchomp.moves = {
+        move: None
+        for move in ("earthquake", "protect", "rockslide", "dragonclaw", "swordsdance")
+    }
+    incineroar = _our_incineroar()
+    incineroar.moves = {
+        move: None
+        for move in ("protect", "fakeout", "flareblitz", "partingshot", "knockoff")
+    }
+    return _battle(
+        our_active=[garchomp, incineroar],
+        opp_active=[
+            _opp_mon(
+                "charizard",
+                moves=("heatwave", "protect", "hurricane"),
+                ability="blaze",
+            )
+        ],
+        valid_orders=(
+            [
+                _move_order("earthquake", 1),
+                _move_order("protect"),
+                _move_order("rockslide"),
+                _move_order("dragonclaw", 1),
+                _move_order("swordsdance"),
+            ],
+            [
+                _move_order("protect"),
+                _move_order("fakeout", 1),
+                _move_order("flareblitz", 1),
+                _move_order("partingshot", 1),
+                _move_order("knockoff", 1),
+            ],
         ),
     )
 
@@ -343,3 +400,149 @@ def test_shortlist_belief_hypotheses_below_one_is_rejected() -> None:
         score_joint_orders_under_beliefs(
             battle, PolicyConfig(shortlist_belief_hypotheses=0)
         )
+
+
+# --- Rung 2b: belief-ordered shortlist ------------------------------------------------
+
+
+def test_belief_ordered_candidates_hypotheses_1_returns_the_same_list() -> None:
+    battle = _straddle_battle()
+    myopic = score_joint_orders(battle)
+    ranked = belief_ordered_candidates(
+        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=1)
+    )
+    assert ranked is myopic
+    assert all("belief_mixture" not in entry.breakdown for entry in ranked)
+
+
+def test_belief_mixture_crosses_the_shortlist_boundary() -> None:
+    battle = _crossing_battle()
+    myopic = score_joint_orders(battle)
+    scores_before = [entry.score for entry in myopic]
+    ranked = belief_ordered_candidates(
+        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+    )
+    assert len(ranked) == len(myopic)
+    assert {id(entry) for entry in ranked} == {id(entry) for entry in myopic}
+    for entry, original in zip(myopic, scores_before, strict=True):
+        assert entry.score == original
+    assert [id(entry) for entry in ranked] != [id(entry) for entry in myopic]
+
+    k = _CROSSING_K
+    myopic_descs = [describe_order(entry.order) for entry in myopic]
+    ranked_descs = [describe_order(entry.order) for entry in ranked]
+    assert _CROSSING_ORDER not in myopic_descs[:k]
+    assert _CROSSING_ORDER in ranked_descs[:k]
+    assert myopic_descs.index(_CROSSING_ORDER) == k
+    assert ranked_descs.index(_CROSSING_ORDER) == k - 1
+    for entry in ranked:
+        mixture = entry.breakdown["belief_mixture"]
+        assert mixture["hypotheses"] == 3
+        assert "mixture_score" in mixture
+        assert mixture["myopic_rank"] == myopic_descs.index(describe_order(entry.order))
+
+
+def test_belief_ordered_candidates_does_not_rescore_the_mode_hypothesis(
+    monkeypatch,
+) -> None:
+    battle = _straddle_battle()
+    myopic = score_joint_orders(battle)
+    calls = {"n": 0}
+    real = score_joint_orders_in_context
+
+    def wrapped(orders, ctx, config):
+        calls["n"] += 1
+        return real(orders, ctx, config)
+
+    monkeypatch.setattr("vgc.belief_scoring.score_joint_orders_in_context", wrapped)
+    belief_ordered_candidates(
+        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+    )
+    # Three Charizard spreads; the timid mode matches opponent_state and is skipped.
+    assert calls["n"] == 2
+
+
+def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
+    monkeypatch,
+) -> None:
+    battle = _crossing_battle()
+    seen_responses: list[list[str]] = []
+    original_enumerate = search_module._enumerate_opp_responses
+
+    def spy_responses(ctx, config):
+        result = original_enumerate(ctx, config)
+        seen_responses.append([response.describe() for response in result])
+        return result
+
+    monkeypatch.setattr(search_module, "_enumerate_opp_responses", spy_responses)
+    monkeypatch.setattr(
+        search_module, "resolve_exchange", lambda *_args, **_kwargs: ExchangeResult()
+    )
+
+    config_one = PolicyConfig(
+        shortlist_belief_hypotheses=1,
+        search_our_candidates=_CROSSING_K,
+        search_diverse_candidates=False,
+        use_rolling_horizon=False,
+        search_opp_candidates=4,
+    )
+    config_three = PolicyConfig(
+        shortlist_belief_hypotheses=3,
+        search_our_candidates=_CROSSING_K,
+        search_diverse_candidates=False,
+        use_rolling_horizon=False,
+        search_opp_candidates=4,
+    )
+    result_one = search_module.search_joint_orders(battle, config_one)
+    result_three = search_module.search_joint_orders(battle, config_three)
+
+    searched_one = {
+        describe_order(entry.order)
+        for entry in result_one
+        if entry.breakdown.get("searched")
+    }
+    searched_three = {
+        describe_order(entry.order)
+        for entry in result_three
+        if entry.breakdown.get("searched")
+    }
+    assert searched_one != searched_three
+    assert _CROSSING_ORDER not in searched_one
+    assert _CROSSING_ORDER in searched_three
+    assert len(seen_responses) == 2
+    assert seen_responses[0] == seen_responses[1]
+
+
+def test_belief_shortlist_trace_note_appears_once_per_decision(monkeypatch) -> None:
+    monkeypatch.setenv("VGC_TRACE", "1")
+    battle = _crossing_battle()
+    myopic = score_joint_orders(battle)
+    token = start_trace()
+    belief_ordered_candidates(
+        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+    )
+    trace = finish_trace(token)
+    assert trace is not None
+    note = trace.notes["belief_shortlist"]
+    assert note["hypotheses"] == 3
+    assert note["reordered"] >= 1
+    assert note["top_changed"] is False
+
+    token = start_trace()
+    monkeypatch.setattr(
+        search_module, "resolve_exchange", lambda *_args, **_kwargs: ExchangeResult()
+    )
+    search_module.search_joint_orders(
+        battle,
+        PolicyConfig(
+            shortlist_belief_hypotheses=3,
+            search_our_candidates=_CROSSING_K,
+            search_diverse_candidates=False,
+            use_rolling_horizon=False,
+            search_opp_candidates=2,
+        ),
+    )
+    search_trace = finish_trace(token)
+    assert search_trace is not None
+    assert "belief_shortlist" in search_trace.notes
+    assert search_trace.notes["belief_shortlist"]["hypotheses"] == 3
