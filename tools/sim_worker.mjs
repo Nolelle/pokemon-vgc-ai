@@ -96,11 +96,18 @@ function attachDrain(entry, side) {
 					entry.buffers[side].push(line);
 					entry.transcript[side].push(line);
 					entry.lineCount++;
+					if (line.startsWith("|error|")) {
+						entry.lastError = line.slice("|error|".length) || line;
+					}
 				}
 			}
 		}
-	})().catch(() => {
-		// Stream torn down by `close` -- nothing to report, the battle is gone.
+	})().catch((err) => {
+		// Stream torn down by `close` is normal. A throw inside `go()` used to vanish
+		// here, so a patched battle's next choose returned no lines and no request.
+		if (!entry.lastError && err) {
+			entry.lastError = err.message || String(err);
+		}
 	});
 }
 
@@ -109,7 +116,9 @@ function attachOmniscient(entry) {
 		for await (const chunk of entry.streams.omniscient) {
 			for (const line of chunk.split("\n")) {
 				if (line) entry.lineCount++;
-				if (line.startsWith("|win|")) {
+				if (line.startsWith("|error|")) {
+					entry.lastError = line.slice("|error|".length) || line;
+				} else if (line.startsWith("|win|")) {
 					entry.winner = line.slice(5).trim();
 					entry.ended = true;
 					// NB: the draw line is a bare `|tie` (or `|tie|`). Do NOT use
@@ -121,7 +130,11 @@ function attachOmniscient(entry) {
 				}
 			}
 		}
-	})().catch(() => {});
+	})().catch((err) => {
+		if (!entry.lastError && err) {
+			entry.lastError = err.message || String(err);
+		}
+	});
 }
 
 function makeEntry(stream, transcript = { p1: [], p2: [] }) {
@@ -134,6 +147,7 @@ function makeEntry(stream, transcript = { p1: [], p2: [] }) {
 		winner: null,
 		ended: false,
 		lineCount: 0,
+		lastError: null,
 	};
 	attachDrain(entry, "p1");
 	attachDrain(entry, "p2");
@@ -275,6 +289,7 @@ function handleInspect(msg) {
 			p1: entry.transcript.p1.length,
 			p2: entry.transcript.p2.length,
 		},
+		error: entry.lastError || null,
 	};
 }
 
@@ -527,7 +542,10 @@ async function handlePatchPublic(msg) {
 		}
 	}
 	battle.midTurn = false;
-	battle.queue = [];
+	// `queue` is a BattleQueue, not an array. Replacing it with `[]` used to make the
+	// next `go()` throw inside the stream (swallowed by the drains), so every choose on
+	// a patched battle produced no output and no new request -- the branch never moved.
+	battle.queue.clear();
 	battle.faintQueue = [];
 	battle.clearRequest();
 	const forcedSwitch = [state.our_side, state.opponent_side].some(
@@ -558,6 +576,8 @@ async function handleChoose(msg) {
 function respond(msg, entry) {
 	const battle = entry.stream.battle;
 	const buffers = drainBuffers(entry);
+	const error = entry.lastError || null;
+	entry.lastError = null;
 	return {
 		id: msg.id,
 		p1: buffers.p1,
@@ -565,6 +585,7 @@ function respond(msg, entry) {
 		requestState: battle ? battle.requestState : "",
 		ended: entry.ended || Boolean(battle && battle.ended),
 		winner: entry.winner,
+		error,
 	};
 }
 

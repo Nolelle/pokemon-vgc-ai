@@ -549,6 +549,19 @@
       ],
       "state": "official_showdown_clone",
       "verification": "integration"
+    },
+    {
+      "id": "live_mirror_branch_execution",
+      "status": "exact",
+      "what": "A LiveExactMirror-patched Showdown root must emit protocol and change public state when cloned and stepped; exact-search exchange values cannot be a constant offset of the myopic score.",
+      "tests": [
+        "tests/test_live_mirror_branches.py::test_mirror_clone_step_emits_protocol_and_advances_public_state",
+        "tests/test_live_mirror_branches.py::test_mirror_exact_branches_diverge_from_each_other_and_the_root",
+        "tests/test_live_mirror_branches.py::test_mirror_exact_search_exchange_values_are_not_constant",
+        "tests/test_live_mirror_branches.py::test_patch_public_leaves_a_playable_request_and_null_stream_error"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
     }
   ],
   "catalog_surface_classification": {

@@ -140,7 +140,11 @@ class SimWorker:
             raise SimWorkerError(
                 f"response rid {response.get('rid')} does not match request {payload['rid']}"
             )
-        if "error" in response:
+        # Protocol `|error|` lines ride on an otherwise-normal respond as `error`
+        # (null when none). Dispatch failures are the only payload and have no
+        # requestState -- those still fail here. A silent no-op (error set, no lines)
+        # is raised in DirectBattle._apply so the caller sees the battle id.
+        if response.get("error") and "requestState" not in response:
             raise SimWorkerError(response["error"])
         return response
 
@@ -202,6 +206,7 @@ class StepResult:
     ended: bool
     winner: str | None
     lines: dict[str, list[str]] = field(default_factory=dict)
+    error: str | None = None
 
 
 class DirectBattle:
@@ -458,7 +463,7 @@ class DirectBattle:
     def apply_response(self, response: dict[str, Any]) -> StepResult:
         """Apply a worker response obtained out of band (i.e. from a batch)."""
 
-        if "error" in response:
+        if response.get("error") and "requestState" not in response:
             raise SimWorkerError(f"battle {self.battle_id}: {response['error']}")
         return self._apply(response)
 
@@ -480,10 +485,16 @@ class DirectBattle:
     # --- internals -------------------------------------------------------------------
 
     def _apply(self, response: dict[str, Any]) -> StepResult:
+        lines = {side: list(response.get(side) or []) for side in SIDES}
+        error = response.get("error") or None
+        if error and not any(lines.values()):
+            raise RuntimeError(
+                f"battle {self.battle_id} produced no protocol lines after a sim error: "
+                f"{error}"
+            )
         self.request_state = response.get("requestState", "")
         self.ended = bool(response.get("ended"))
         self.winner = response.get("winner")
-        lines = {side: list(response.get(side) or []) for side in SIDES}
         self.last_lines = lines
         for side in SIDES:
             self._ingest(side, lines[side])
@@ -494,6 +505,7 @@ class DirectBattle:
             ended=self.ended,
             winner=self.winner,
             lines=lines,
+            error=error,
         )
 
     def start_payload(
