@@ -337,6 +337,48 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   `policy_approximations`; hidden opponent spreads/nature/bring are under
   `information_uncertainty`. Do not let "mechanics are exact" drift into "the search is
   optimal" -- they are different claims and the file keeps them apart.
+- **The public-mirror exact search was a no-op from 33d3a0e (2026-08-28) to a30bec3
+  (2026-09-01).** `handlePatchPublic` replaced Showdown's `BattleQueue` with `[]`; the
+  next `go()` threw inside the stream, the worker drains swallowed it, and every `choose`
+  on a `LiveExactMirror` root returned no lines and an unchanged state. `exchange_value`
+  was therefore identical for every candidate and the ranking was the myopic evaluator
+  plus a constant -- on 16/16 diagnostic and 4/4 production-width decisions. Nothing
+  caught it because every test checked stats and structure, not that a branch MOVED.
+  Treat any live_mirror result from that window (ladder hybrid sessions, the leak
+  measurement's "guess" side, post-08-30 teacher labels) as myopic-evaluator output.
+  `tests/test_live_mirror_branches.py` (in both gates, family
+  `live_mirror_branch_execution`) now asserts branches emit protocol, diverge, and give
+  non-constant exact values; `DirectBattle._apply` raises on a silent no-op step. Two
+  further mirror defects fell out of the same run and are fixed in 7590c4f: a stale
+  poke-env `preparing` flag after a charge-skipped Solar Beam was materialised as a real
+  two-turn lock (snapshot now trusts the request, not the flag), and the non-perspective
+  clone base was a blank turn-1 parser (no Trick Room/weather/HP), which both KeyError'd
+  on `-fieldend` and fed opponent-response scoring a wrong board. Open: 2/140 recall-gate
+  decisions still skip with `Can't switch: trapped` on a mirror root; not yet diagnosed.
+
+## Rung 2 (belief-aware shortlist): built, gated, not enabled
+
+`vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the
+opponent's posterior Stat Point spreads (`joint_spread_hypotheses` +
+`score_joint_orders_under_beliefs`), and `belief_ordered_candidates` re-sorts the myopic
+list by that mixture before top-K selection in both `vgc.search` and
+`vgc.rl.exact_search` (same objects, scores untouched, opponent-response enumeration
+untouched). `PolicyConfig.shortlist_belief_hypotheses` controls it and **ships at 1**
+(identity). Evidence, 2026-09-01:
+
+- `offline/evaluate_belief_shortlist_recall.py` (derived gate: does the winner of a
+  wide exact search on the public mirror survive into K=10?) -- 138 decisions / 46
+  teams: point estimate 0.971, mixture 0.978, paired diff +0.007 [-0.007, +0.022],
+  `verdict: PASS` (pre-registered non-inferiority, margin 0.02). Winner was myopic rank
+  1 in only 82/138, so exact search does overturn the myopic pick ~40% of the time; the
+  misses sit at myopic rank 18-48 under BOTH selectors.
+- `offline/evaluate_own_spread_pool.py --candidate shortlist_belief_hypotheses=3`
+  (160 teams, 2880 games, `vgc.search` path): 1427/2880 = 49.5%, cluster-robust
+  [0.476, 0.515]; A/A null 50.8% OK. A wash, not a drop.
+- Conclusion: the shortlist is not the bottleneck at K=10 (97% recall). The remaining
+  recall loss is orders the myopic evaluator ranks very low, which is a search/value
+  question (Rung 3), not a belief question. Do not raise the default without a new
+  hypothesis; the knob exists so Rung 3 can revisit it once the judge changes.
 
 ## Commands
 
