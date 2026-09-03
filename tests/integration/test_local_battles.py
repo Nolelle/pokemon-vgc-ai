@@ -865,14 +865,25 @@ def test_encored_moves_are_absent_from_live_enumeration(local_server) -> None:
             if int(getattr(battle, "turn", 0) or 0) == 1 and isinstance(
                 battle, DoubleBattle
             ):
+                encore = None
+                guard = None
                 for order in enumerate_joint_orders(battle):
-                    single = order.first_order
+                    first, second = order.first_order, order.second_order
                     if (
-                        isinstance(single.order, Move)
-                        and to_id(single.order.id) == "encore"
-                        and single.move_target == 1
+                        isinstance(first.order, Move)
+                        and to_id(first.order.id) == "encore"
+                        and first.move_target == 1
                     ):
-                        return order
+                        encore = encore or first
+                    if (
+                        isinstance(second.order, Move)
+                        and to_id(second.order.id) == "protect"
+                    ):
+                        guard = guard or second
+                if encore is not None and guard is not None:
+                    from poke_env.player.battle_order import DoubleBattleOrder
+
+                    return DoubleBattleOrder(encore, guard)
             return super().decide(battle)
 
     async def _run():
@@ -939,6 +950,102 @@ def test_encored_moves_are_absent_from_live_enumeration(local_server) -> None:
     assert found_locked_slot, [
         decision["legal_actions"] for decision in locked
     ]
+
+
+def test_trapped_slot_offers_no_switch_live(local_server) -> None:
+    """Problem C exclusion gate: a trapped slot cannot switch.
+
+    Toxapex's Infestation traps foe slot 1 (Jolteon), which must attack on turn
+    1 (Protect would block the trap). On later turns Jolteon's request marks it
+    trapped and poke-env drops that slot's switches from `valid_orders`, while
+    the untrapped slot keeps its switches -- the control that proves the
+    absence is trapping, not an empty bench.
+    """
+
+    class FoeInfestationPlayer(ScriptedPlayer):
+        def decide(self, battle):
+            if int(getattr(battle, "turn", 0) or 0) == 1 and isinstance(
+                battle, DoubleBattle
+            ):
+                trap = None
+                guard = None
+                for order in enumerate_joint_orders(battle):
+                    first, second = order.first_order, order.second_order
+                    if (
+                        isinstance(first.order, Move)
+                        and to_id(first.order.id) == "infestation"
+                        and first.move_target == 1
+                    ):
+                        trap = first
+                    if (
+                        isinstance(second.order, Move)
+                        and to_id(second.order.id) == "protect"
+                    ):
+                        guard = guard or second
+                if trap is not None and guard is not None:
+                    from poke_env.player.battle_order import DoubleBattleOrder
+
+                    return DoubleBattleOrder(trap, guard)
+            return super().decide(battle)
+
+    async def _run():
+        config = PolicyConfig(
+            format_id=FORMAT_ID,
+            accept_open_team_sheet=False,
+            use_heuristic_evaluator=False,
+            use_two_ply_search=False,
+        )
+        ours = FoeInfestationPlayer(
+            config=config,
+            team=_packed_team("trapper"),
+            record_decision_replays=True,
+            slot_scripts=(("protect", "protect", "protect"),) * 2,
+            team_order="/team 6123",
+            forfeit_after_moves=4,
+        )
+        theirs = ScriptedPlayer(
+            config=config,
+            team=_packed_team("frail_leads"),
+            record_decision_replays=True,
+            slot_scripts=(
+                ("thunderbolt", "protect", "protect", "protect"),
+                ("protect", "protect", "protect", "protect"),
+            ),
+            team_order="/team 1234",
+            forfeit_after_moves=4,
+        )
+        try:
+            await asyncio.wait_for(ours.battle_against(theirs, n_battles=1), timeout=45)
+        finally:
+            await ours.ps_client.stop_listening()
+            await theirs.ps_client.stop_listening()
+        battle1 = next(iter(ours.battles.values()))
+        battle2 = next(iter(theirs.battles.values()))
+        return ours.decision_replay_bundle(battle1), theirs.decision_replay_bundle(
+            battle2
+        )
+
+    ours, theirs = asyncio.run(_run())
+    assert ours is not None and theirs is not None
+    trap_lines = [
+        line for line in _message_lines(theirs) if "partiallytrapped" in line
+    ]
+    assert trap_lines, "expected Infestation to trap foe slot 1 on turn 1"
+    trapped = [
+        decision
+        for decision in theirs["decisions"]
+        if decision.get("phase") == "move" and int(decision.get("turn") or 0) >= 2
+    ]
+    assert trapped, "expected post-trap move decisions"
+    for decision in trapped:
+        halves = [str(action).split(" / ") for action in decision["legal_actions"]]
+        assert all(len(half) == 2 for half in halves)
+        assert not any(
+            half[0].startswith("switch") for half in halves
+        ), decision["legal_actions"]
+        assert any(
+            half[1].startswith("switch") for half in halves
+        ), decision["legal_actions"]
 
 
 def test_mega_and_switch_pair_properties_hold_live(local_server) -> None:

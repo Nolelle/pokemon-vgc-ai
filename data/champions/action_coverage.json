@@ -25,7 +25,8 @@
       "tests": [
         "tests/integration/test_local_battles.py::test_joint_order_enumeration_during_real_battle",
         "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully",
-        "tests/integration/test_local_battles.py::test_encored_moves_are_absent_from_live_enumeration"
+        "tests/integration/test_local_battles.py::test_encored_moves_are_absent_from_live_enumeration",
+        "tests/integration/test_local_battles.py::test_trapped_slot_offers_no_switch_live"
       ]
     },
     {
