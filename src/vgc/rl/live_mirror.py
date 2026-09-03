@@ -263,8 +263,8 @@ def _spread_beliefs(battle, config: PolicyConfig, memory=None) -> list[tuple[flo
     ranking. Benched species keep `opponent_state`'s point estimate.
 
     Returns ``(probability, {species_id: (spread, nature)})`` pairs, most likely first
-    and renormalized after the cap. A cap of 1 -- the shipped default -- returns exactly
-    one belief holding each species' most likely spread, i.e. today's behavior.
+    and renormalized after the cap. A cap of 1 returns exactly one belief holding
+    each species' most likely spread; the shipped default keeps multiple.
     """
 
     limit = config.exact_search_spread_hypotheses

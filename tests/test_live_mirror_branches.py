@@ -346,3 +346,45 @@ def test_mirror_stale_preparing_does_not_lock_search_to_solarbeam() -> None:
             if mirror is not None:
                 mirror.close()
             source.close()
+
+
+def test_public_teacher_labels_from_p2_seat_without_keyerror() -> None:
+    """Regression: teacher collection failed closed for every p2-seat game.
+
+    `patch_public_state` reused the teacher's battle object as the perspective
+    side's parser base. From the p2 seat that put p2-keyed team dicts under p1
+    request lines, so the first clone step raised `KeyError: 'p1: ...'` and the
+    whole game recorded nothing. Multi-hypothesis defaults are kept on: the
+    single-hypothesis path never broke.
+    """
+    from vgc.rl.distill import public_information_exact_search
+
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    team = _meta1_team()
+    search_config = replace(
+        COMPACT_CONFIG,
+        search_our_candidates=4,
+        exact_search_spread_hypotheses=2,
+        exact_search_set_hypotheses=2,
+        exact_search_bring_hypotheses=2,
+        exact_search_total_hypotheses=2,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-p2-seat-source",
+            team,
+            team,
+            seed=[31, 32, 33, 34],
+        )
+        try:
+            source.step({"p1": "team 1234", "p2": "team 1234"})
+            assert set(source.sides_to_move()) == {"p1", "p2"}
+            scored = public_information_exact_search(
+                source.battles["p2"], search_config, team
+            )
+            assert scored, "p2-seat teacher labeling returned no orders"
+            assert all(entry.order.message for entry in scored)
+        finally:
+            source.close()

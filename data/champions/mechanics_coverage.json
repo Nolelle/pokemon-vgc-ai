@@ -567,6 +567,16 @@
       "verification": "integration"
     },
     {
+      "id": "live_mirror_seat_parity",
+      "status": "exact",
+      "what": "Teacher labeling from the p2 seat must build the same working mirror as from p1: the observation may only seed the parser base whose wire format it shares, otherwise clone steps KeyError on crossed idents and collection fails closed.",
+      "tests": [
+        "tests/test_live_mirror_branches.py::test_public_teacher_labels_from_p2_seat_without_keyerror"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
       "id": "exact_branch_effect_polarity",
       "status": "exact",
       "what": "The exact-search value function must spend exact_search_effect_weight with a sign: a volatile or side condition that hurts its holder (Leech Seed, Taunt, Stealth Rock on our own side) must score below a clean board and below one that helps (Substitute, Tailwind). Signs are derived from Champions move targets, and effects that cannot be signed score zero rather than a bonus.",

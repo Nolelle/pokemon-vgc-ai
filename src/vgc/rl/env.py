@@ -475,14 +475,26 @@ class DirectBattle:
             for name in ("_vgc_direct_root", "_vgc_direct_side"):
                 if name in observation_dict:
                     private_attributes[name] = observation_dict.pop(name)
+            # The observation's wire format (p1:/p2: idents) belongs to the seat it
+            # was observed from. Reusing it as the perspective side's parser is only
+            # valid when the two coincide -- e.g. a p2-seat teacher's battle parsed
+            # p1-side request lines into KeyErrors ('p1: X' missing from p2-keyed
+            # team dicts). On a mismatch the parser bases stay template-built and
+            # clones replay the full transcript, exactly the pre-Part-B behavior.
+            view = getattr(observation_battle, "player_role", None) or perspective
             try:
-                bases[perspective] = copy.deepcopy(observation_battle)
+                if view == perspective:
+                    bases[perspective] = copy.deepcopy(observation_battle)
             finally:
                 observation_dict.update(private_attributes)
             decision_battles = dict(getattr(self, "_decision_battles", {}))
-            decision_battles[perspective] = observation_battle
+            decision_battles[view] = observation_battle
             self._decision_battles = decision_battles
-            _mirror_public_board(bases[other], observation_battle)
+            if view == perspective:
+                _mirror_public_board(bases[other], observation_battle)
+            else:
+                self._clone_battle_bases = None
+                return result
         self._clone_battle_bases = bases
         return result
 
