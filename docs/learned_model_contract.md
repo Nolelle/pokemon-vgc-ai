@@ -114,31 +114,52 @@ Problem E is complete only when all gates hold in the current checkout:
 - Authority wiring untouched: BC blend and value head still default off,
   upset margin still 10, no learned Q in the agent.
 
-### Open items
+### Open items (verified 2026-09-03, commit `f0c741a`)
 
-1. **Recall re-confirmation (cheap, this checkout).** The August recall numbers
-   predate the current tree. Nothing in the intervening diffs touches the
-   recall path, but the contract requires the number to be re-measured, not
-   inherited. Run: `offline/evaluate_shortlist_recall.py` on the expanded
-   holdout with the deployed checkpoint.
-2. **Checkpoint durability (the real gap).** The gated hybrid checkpoint is
-   `runs/full_pipeline/teacher_5x_model/best.pt` (sha256 `968c4730...`) --
-   gitignored scratch space. `data/models/*.pt` are committed but none of
-   them IS that file, and the default `bc_checkpoint_path` still points at
-   `bc_policy_v3sp.pt`. If `runs/` is cleaned, the strength-approved model is
-   gone while its verdict file claims it exists. Fix: copy the gated file
-   into `data/models/` under a descriptive name, point the ladder smoke docs
-   at it, and record the sha here. Do NOT retrain; just preserve the file.
-3. **Strength re-gate: on demand, not on schedule.** The 1,500-pair gate is
-   the most expensive check in this contract. Rerun it only when search
-   weights, the encoder, or the checkpoint change -- none have. A passing
-   recall re-confirmation plus the unchanged-code audit above is sufficient
-   to carry the August strength verdict forward.
+1. **The gated hybrid checkpoint does not load (BLOCKING).** The August
+   strength verdict's checkpoint, `runs/full_pipeline/teacher_5x_model/best.pt`
+   (sha256 `968c4730...`), is tagged `candidate-policy-value-v3-meta`. The
+   current `load_snapshot` (v4-only since commit `33d3a0e`) refuses it --
+   verified by running the shadow gate's loader against it. A sweep of every
+   `best.pt` in `runs/` and `data/` found **zero** v4-mechanics checkpoints:
+   all 20+ are v3-meta. Consequences:
+   - `offline/evaluate_neural_search.py` (shadow + hybrid gates) cannot run at
+     all: it loads the checkpoint up front and fails for every file that
+     exists. Gates 1 (recall, shadow flavor) and 2 (strength) are unrunnable,
+     not merely stale.
+   - Public ladder play is unrunnable: it requires `--policy-mode hybrid`
+     plus a checkpoint, and no loadable checkpoint exists.
+   - Copying the v3 file into `data/models/` would NOT fix this -- the bytes
+     would still be refused. The fix is a fresh train that writes the v4
+     architecture (today's `train_imitation` already stamps
+     `RL_ARCHITECTURE_VERSION` at save time), followed by the recall +
+     strength gates on the new file.
+2. **The offline recall screen is blocked on data, correctly.** The 18,209-
+   decision expanded holdout exists only as
+   `runs/full_pipeline/teacher_holdout_expanded.pt` in v1 demonstration
+   format, which the loader now refuses (private-root teacher -- see Problem
+   B). Re-running recall on it would violate the information boundary, so the
+   refusal is the gate working, not a tooling bug. Fresh v3 (public-mirror)
+   demonstrations are needed for any offline recall number.
+3. **What still works.** The BC-rerank path (`score_orders` + `data/models/`
+   `*.pt`, default-off) loads under the current code -- verified `v3sp`
+   (legacy v2 layout) and `v4` (current) both load, with 93 policy tests
+   green. Only the `NeuralSearchPlayer`/snapshot path (shadow, hybrid,
+   ladder-hybrid) is stranded.
+4. **Strength re-gate: blocked behind items 1-2.** It needs a loadable
+   checkpoint first. No retrain is proposed here; that is the first real
+   training decision of Problem E/F and needs its own plan (teacher
+   collection cost is ~10x per decision at reduced width).
 
 ## 7. Implementation order
 
 1. Freeze this contract (this file). No behavior changes.
-2. Recall re-confirmation on the expanded holdout with current code.
-3. Durability fix: preserve the gated checkpoint + recipe reference.
+2. Restore a loadable guided checkpoint: train (imitation, v4 arch) on
+   public-mirror teacher demonstrations, then run the recall + strength
+   gates on the new file. This is the first training run of Problem E/F and
+   needs a costed collection plan first (teacher labels cost ~10x per
+   decision; the 76k-decision scale of last time is the reference).
+3. Durability: store the new gated checkpoint, its dataset reference, and its
+   recipe outside gitignored scratch.
 4. Record the numbers here; Problem E passes when gates 1-5 are green.
-   Strength re-gate only on search/encoder/checkpoint change.
+   Problem E is **not passed** until then: gates 1-2 are unrunnable today.
