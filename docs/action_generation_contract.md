@@ -2,8 +2,8 @@
 
 This document defines what counts as a legal choice, where legality comes from,
 and how we prove that every logged action can be turned back into a command
-Pokemon Showdown accepts. The current checkout partially passes this contract;
-the gaps and the closing order are recorded below.
+Pokemon Showdown accepts. The current checkout passes this contract; the evidence
+is recorded below.
 
 ## Takeaway
 
@@ -196,48 +196,66 @@ Problem C is complete only when all gates pass in the same clean checkout:
    changes, preview membership, and fallback accounting are all tested live,
    not on hand-built fixtures alone.
 
-## 9. Current checkout audit (2026-09-03, commit `7e44b18`)
+## 9. Current checkout audit (2026-09-03, commit `a91c1c0`)
 
 ### Confirmed implementation
 
 - `vgc.actions.enumerate_joint_orders` combines `battle.valid_orders`
-  through `DoubleBattleOrder.join_orders` (`src/vgc/actions.py:18`).
+  through `DoubleBattleOrder.join_orders` (`src/vgc/actions.py:32`).
 - `vgc.actions.describe_order` provides the display label
-  (`src/vgc/actions.py:50`).
+  (`src/vgc/actions.py:64`); `vgc.actions.choice_wire_message` provides the
+  sendable wire message (`src/vgc/actions.py:18`).
 - `VgcPlayer.decide` returns the top searched/scored joint order or a legal
   random move (`src/vgc/agent.py:274`); `decide_teampreview` returns
   `build_team_order` or poke-env random preview (`src/vgc/agent.py:323`).
 - Exception-safe wrappers guarantee a legal fallback and count it
   (`choose_move` -> `choose_random_move`, `teampreview` -> `/team 1234`,
-  `src/vgc/agent.py:334,376`).
+  `src/vgc/agent.py:334,381`).
 - `vgc.team_preview.build_team_order` scores 90 candidates and returns
   `/team XXXX` with leads first (`src/vgc/team_preview.py:121`).
 - `vgc.battle_state_replay._legal_actions` saves 360 preview wire strings
   and the sorted in-battle display list plus digests
   (`src/vgc/battle_state_replay.py:65`); `_phase` separates move from forced
   switch (`src/vgc/battle_state_replay.py:56`).
+- Every decision saves both `chosen_order` (display) and
+  `chosen_order_wire` (sendable), via `DecisionReplayRecorder.record_choice`.
+- `vgc.battle_state_replay.legal_wire_messages` lists the sendable commands
+  for the same request the display list covers.
 - `vgc.rl.env.choice_string` converts an order to bare sim input
   (`src/vgc/rl/env.py:230`).
-- Mechanics family `legal_action_enumeration` is exact, verified by
-  `test_joint_order_enumeration_during_real_battle` (live 2-game drive).
-- Forced-switch identity and preview-membership (360 distinct orders) are
-  tested live.
+- `vgc.action_gate` pins the action coverage; `offline/check_action_readiness.py`
+  prints the gate; ladder and all six training entry points refuse to run
+  unless it says PASS.
 
-### Known gaps (why this contract is not yet PASS)
+### Verification evidence
 
-- No round-trip test: saved display labels are never converted back to wire
-  messages against a rebuilt request. Gate 3 is partial.
-- No exhaustion/exclusion test: disabled, zero-Power-Point, trapped, and
-  double-Mega absence are not asserted on a live turn. Gate 2 is partial.
-- No empty-list fallback test and no per-move target-coverage assertion.
-  Gate 4 is partial.
+- Coverage: 7 exact families, 0 partial, 0 missing; all four scopes ready.
+- Gate tests: 15 passed (4 live against the local server, 11 unit).
+- Live: chosen wire is always a member of the legal wire set and the saved
+  wire matches the sent wire on every decision of a full game, with zero
+  fallbacks; forced-switch lists hold only switches/passes; one move with
+  2+ targets observed across two games; preview choice is a member of the
+  saved 360-entry list.
+- Unit: double-Mega, double-pass, and same-switch pairs excluded; empty
+  enumeration returns `[]`; wire helper returns sendable messages;
+  exception fallback is counted.
 
-## 10. Implementation order
+Run the fail-closed gate with:
 
-1. Freeze this contract (this file). No behavior changes.
-2. Add the round-trip path: one function from saved choice to wire message,
-   reused by live play logging and the verifier.
-3. Add hard-case live tests: exclusion, phase purity, target coverage,
-   empty-list fallback, preview membership.
-4. Add a fail-closed action gate alongside the mechanics and battle-state
-   gates, and require it in training and ladder entry points.
+```bash
+.venv/bin/python offline/check_action_readiness.py
+```
+
+Problem C is **complete for action generation**. This does not claim the bot
+chooses well, only that every choice it can produce is legal and every saved
+choice replays as an accepted Showdown command.
+
+## 10. Implementation order (completed)
+
+1. ~~Freeze this contract (this file). No behavior changes.~~ Done `04ceacd`.
+2. ~~Add the round-trip path: one function from saved choice to wire message,
+   reused by live play logging and the verifier.~~ Done `bded541`.
+3. ~~Add hard-case live tests: exclusion, phase purity, target coverage,
+   empty-list fallback, preview membership.~~ Done `9ffffab`.
+4. ~~Add a fail-closed action gate alongside the mechanics and battle-state
+   gates, and require it in training and ladder entry points.~~ Done `a91c1c0`.
