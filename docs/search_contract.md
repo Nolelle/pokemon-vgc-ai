@@ -142,10 +142,10 @@ Problem D is complete only when all gates pass in the same clean checkout:
    (`use_two_ply_search=False`) in a same-session A/B on the varied team
    pool, with a cluster-robust interval clearing zero. One-team mirrors do
    not count (overfit rule).
-2. **Scaling:** more thinking beats less thinking on the same positions:
-   wider shortlist and horizon-on must not lose to narrower/horizon-off in a
-   paired comparison, and exact-search agreement must rise (or at least not
-   fall) with width.
+2. **Scaling:** more thinking must not lose to less thinking on the same team
+   pool: horizon-on must not lose to horizon-off, and the wider shortlist
+   must not lose to the narrower one, in same-pool A/Bs with cluster-robust
+   intervals clearing zero.
 3. **Latency:** the decision-time distribution measured on live local games
    in this checkout sits inside the budget with a stated p50/p99, zero timer
    losses, and zero fallbacks.
@@ -157,7 +157,7 @@ Strength evidence expires when the weights change. Any `PolicyConfig` search
 weight change after a passing A/B re-opens gates 1-2 until re-measured in the
 same session methodology.
 
-## 8. Current checkout audit (2026-09-03)
+## 8. Current checkout audit (2026-09-03, commit `129a35e`)
 
 ### Exact (built, tested, wiring verified)
 

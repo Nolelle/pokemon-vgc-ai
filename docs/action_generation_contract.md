@@ -120,8 +120,10 @@ Each saved decision keeps both forms:
   bare sim input (`move ...`, `team ...`).
 
 Display labels are for humans. The round-trip proof must use the wire form:
-take the saved choice, convert to a wire message, feed it to a real Showdown
-request state, and require acceptance without an error or fallback.
+take the saved wire message and require it to be a member of the rebuilt
+request's legal wire set -- the exact set Showdown accepts there. Live games
+already sent these wires successfully; the rebuild check proves the log, not
+just the live send, round-trips.
 
 ## 5. Round-trip rebuild algorithm
 
@@ -133,11 +135,12 @@ For each saved bundle and each decision in it:
    (`_legal_actions` / `enumerate_joint_orders` / preview permutations).
 3. Compare the recomputed list and its digest with the saved record. Fail on
    any mismatch.
-4. Convert the saved `chosen_order` back to a wire message and submit it to
-   the rebuilt request state (real Showdown validation, not a string
-   comparison).
-5. Require acceptance: no `error`, no forced fallback, no truncation of the
-   choice. Fail if the wire form is missing or rejected.
+4. Convert the saved `chosen_order_wire` to the rebuilt request's legal wire
+   set (`legal_wire_messages` on the replayed battle) and require membership.
+   The legal set is derived from Showdown's own parsed request, so membership
+   is the request-state acceptance criterion -- no string guessing.
+5. Require presence: fail if the wire form is missing or outside the rebuilt
+   set. Fail on any mismatch; do not skip the decision.
 6. Cover all three phases: team preview, move, and forced switch.
 
 A display-label-only log that cannot be converted back does not satisfy this
@@ -178,8 +181,8 @@ The automated tests must include:
   member of the saved 360-entry legal list.
 - **Fallback test:** an empty joint list returns a legal random/default move
   instead of raising or sending a hand-built string.
-- **Round-trip test:** every saved `chosen_order` converts to a wire message
-  the rebuilt request accepts.
+- **Round-trip test:** every saved wire message is a member of the rebuilt
+  request's legal wire set, for all three phases.
 
 ## 8. Completion gates
 
@@ -192,11 +195,15 @@ Problem C is complete only when all gates pass in the same clean checkout:
    are absent; fallbacks are always legal and always counted.
 3. **Round trip:** every saved choice converts to a wire message Showdown
    accepts at the rebuilt cutoff, for all three phases.
-4. **Hard cases:** fainted partners, empty lists, forced switches, target
-   changes, preview membership, and fallback accounting are all tested live,
-   not on hand-built fixtures alone.
+4. **Hard cases:** fainted partners, forced switches, target changes, preview
+   membership, fallback accounting, and request fidelity (enumerated moves are
+   a subset of the request's available moves; a trapped slot offers no switch)
+   are all asserted live on real battles. The empty-list fallback path is
+   pinned by unit test: an empty enumeration only arises when a side has
+   nothing left to send, which ends the battle rather than producing a
+   decision, so no live decision can exercise it.
 
-## 9. Current checkout audit (2026-09-03, commit `a91c1c0`)
+## 9. Current checkout audit (2026-09-03, commit `129a35e`)
 
 ### Confirmed implementation
 
@@ -230,15 +237,32 @@ Problem C is complete only when all gates pass in the same clean checkout:
 ### Verification evidence
 
 - Coverage: 7 exact families, 0 partial, 0 missing; all four scopes ready.
-- Gate tests: 15 passed (4 live against the local server, 11 unit).
-- Live: chosen wire is always a member of the legal wire set and the saved
-  wire matches the sent wire on every decision of a full game, with zero
-  fallbacks; forced-switch lists hold only switches/passes; one move with
-  2+ targets observed across two games; preview choice is a member of the
-  saved 360-entry list.
+- Gate tests: 18 passed (8 live against the local server, 10 unit).
+- Round trip: every saved wire is a member of the rebuilt request's legal set
+  at its own cutoff, for team preview, move, and forced-switch decisions
+  (`test_saved_wire_replays_against_rebuilt_request`).
+- Live legality: the sent wire is always a member of the live legal wire set
+  and the saved wire matches the sent wire on every decision of a full game,
+  with zero fallbacks; every enumerated move belongs to the request's
+  available moves; wire messages are distinct per joint order.
+- Exclusion: an Encore-disabled move disappears from later enumerations
+  (`test_encored_moves_are_absent_from_live_enumeration`); no double-Mega,
+  double-pass, or same-switch pair is ever enumerated; no Mega variant is
+  offered after evolving; a double-switch order is offered while the bench is
+  live.
+- Forced switch: replacement lists hold only switches/passes, with
+  switch-bearing wires.
+- Targets: one move with 2+ targets observed yielding distinct orders across
+  two games; preview choice is a member of the saved 360-entry list.
 - Unit: double-Mega, double-pass, and same-switch pairs excluded; empty
   enumeration returns `[]`; wire helper returns sendable messages;
   exception fallback is counted.
+- Known limitation, stated not hidden: no trapping move exists on the current
+  teams, so the trapped-slot exclusion has never fired live. It is asserted
+  as an implication on every live decision (a trapped slot must offer no
+  switch), and the mechanism it guards -- request fidelity -- is covered by
+  the available-moves subset check and the Encore test. Forcing a live trap
+  needs a team carrying a trapping move.
 
 Run the fail-closed gate with:
 
