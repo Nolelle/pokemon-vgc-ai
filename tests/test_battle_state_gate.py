@@ -33,8 +33,10 @@ def _all_exact_coverage() -> dict:
     return coverage
 
 
-def test_current_battle_state_gate_is_classified_but_not_ready_without_artifact() -> None:
-    result = battle_state_readiness()
+def test_current_battle_state_gate_is_classified_but_not_ready_without_artifact(
+    tmp_path: Path,
+) -> None:
+    result = battle_state_readiness(artifact_path=tmp_path / "battle_state_gate.json")
     assert result.declared_ready
     assert result.priors_current
     assert result.schema_current
