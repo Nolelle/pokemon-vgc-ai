@@ -62,6 +62,7 @@ from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
 from vgc.mechanics_gate import enforce_mechanics_gate_for_cli  # noqa: E402
 from vgc.battle_state_gate import enforce_battle_state_gate_for_cli  # noqa: E402
+from vgc.action_gate import enforce_action_gate_for_cli  # noqa: E402
 from vgc.showdown_parity import enforce_showdown_parity_for_cli  # noqa: E402
 from vgc.postmortem import classify_loss  # noqa: E402
 
@@ -803,6 +804,7 @@ def main() -> int:
         # partial/missing. Local smoke stays available for mechanics development.
         enforce_mechanics_gate_for_cli("public ladder play")
         enforce_battle_state_gate_for_cli("public ladder play")
+        enforce_action_gate_for_cli("public ladder play")
         enforce_showdown_parity_for_cli("public ladder play")
         if args.policy_mode != "hybrid" or args.policy_checkpoint is None:
             raise SystemExit(

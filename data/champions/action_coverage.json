@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "release_ready": true,
+  "release_rule": "Every decision lists its full legal set from the Showdown request, never produces an illegal action, and saves its pick as a wire message Showdown accepts at the rebuilt cutoff.",
+  "scopes": {
+    "team_preview": true,
+    "move": true,
+    "forced_switch": true,
+    "logging": true
+  },
+  "families": [
+    {
+      "id": "team_preview_enumeration",
+      "status": "exact",
+      "verification": "wire_level_permutations_and_live_membership",
+      "tests": [
+        "tests/test_battle_state_replay.py::test_team_preview_records_every_legal_bring_four_order",
+        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully"
+      ]
+    },
+    {
+      "id": "joint_move_enumeration",
+      "status": "exact",
+      "verification": "live_request_combination",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_joint_order_enumeration_during_real_battle",
+        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully"
+      ]
+    },
+    {
+      "id": "forced_switch_enumeration",
+      "status": "exact",
+      "verification": "live_double_faint_script",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_forced_switch_legal_lists_hold_only_switches",
+        "tests/integration/test_local_battles.py::test_forced_switch_records_distinct_decision_identity"
+      ]
+    },
+    {
+      "id": "mutual_exclusion",
+      "status": "exact",
+      "verification": "unit_join_orders_contract",
+      "tests": [
+        "tests/test_action_generation.py::test_join_orders_excludes_double_mega",
+        "tests/test_action_generation.py::test_join_orders_excludes_double_pass_and_same_switch",
+        "tests/test_action_generation.py::test_enumerate_empty_valid_orders_yields_empty_list"
+      ]
+    },
+    {
+      "id": "wire_roundtrip",
+      "status": "exact",
+      "verification": "unit_helpers_and_live_fidelity",
+      "tests": [
+        "tests/test_action_generation.py::test_choice_wire_message_is_sendable_not_display",
+        "tests/test_battle_state_replay.py::test_choice_wire_message_passes_preview_strings_through",
+        "tests/test_battle_state_replay.py::test_choice_wire_message_returns_sendable_order_message",
+        "tests/test_battle_state_replay.py::test_preview_wire_list_matches_legal_actions",
+        "tests/test_battle_state_replay.py::test_record_choice_stores_display_and_wire",
+        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully"
+      ]
+    },
+    {
+      "id": "fallback_accounting",
+      "status": "exact",
+      "verification": "unit_exception_path_and_empty_enumeration",
+      "tests": [
+        "tests/test_search.py::test_exception_fallback_is_counted_even_when_detailed_tracing_is_off",
+        "tests/test_action_generation.py::test_enumerate_empty_valid_orders_yields_empty_list"
+      ]
+    },
+    {
+      "id": "target_coverage",
+      "status": "exact",
+      "verification": "live_multi_target_battle",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_target_variants_cover_offered_targets"
+      ]
+    }
+  ]
+}
