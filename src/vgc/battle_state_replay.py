@@ -94,6 +94,27 @@ def _legal_actions(
     return sorted(describe_order(order) for order in enumerate_joint_orders(battle))
 
 
+def legal_wire_messages(
+    battle: Any,
+    *,
+    team_preview: bool,
+    request_message: list[str] | None = None,
+) -> list[str]:
+    """Return the sendable wire messages for the same request `_legal_actions` covers.
+
+    Team preview reuses `_legal_actions` directly (those entries already are wire
+    strings). In battle, each joint order contributes its `order.message`, the exact
+    string sent to Showdown. Sorted for stable digests.
+    """
+    from vgc.actions import choice_wire_message
+
+    if team_preview:
+        return _legal_actions(battle, team_preview=True, request_message=request_message)
+    if not isinstance(battle, DoubleBattle):
+        return []
+    return sorted(choice_wire_message(order) for order in enumerate_joint_orders(battle))
+
+
 def decision_state_payload(battle: Any) -> dict[str, object]:
     """Canonical public mechanics state at one player decision."""
 
@@ -167,12 +188,24 @@ class DecisionReplayRecorder:
                 "legal_actions": legal_actions,
                 "legal_actions_sha256": payload_digest(legal_actions),
                 "chosen_order": None,
+                "chosen_order_wire": None,
             }
         )
         return sequence
 
-    def record_choice(self, battle_tag: str, decision_sequence: int, choice: str) -> None:
-        self._stream(battle_tag).decisions[decision_sequence]["chosen_order"] = choice
+    def record_choice(
+        self,
+        battle_tag: str,
+        decision_sequence: int,
+        choice: str,
+        *,
+        wire: str | None = None,
+    ) -> None:
+        record = self._stream(battle_tag).decisions[decision_sequence]
+        record["chosen_order"] = choice
+        if wire is None and isinstance(choice, str) and choice.startswith("/"):
+            wire = choice
+        record["chosen_order_wire"] = wire
 
     def bundle(
         self,

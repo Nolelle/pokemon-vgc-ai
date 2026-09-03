@@ -12,7 +12,21 @@ from __future__ import annotations
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
-from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
+from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder, SingleBattleOrder
+
+
+def choice_wire_message(order: BattleOrder | str) -> str:
+    """Return the exact string sent to Showdown for one choice.
+
+    This is the round-trip form: `DoubleBattleOrder.message` for in-battle
+    orders (`/choose move ...`), the `/team ...` string unchanged for preview.
+    Display labels from `describe_order` are for humans and must never be sent.
+    Plain strings pass through so preview choices and fallbacks work unchanged.
+    """
+    if isinstance(order, str):
+        return order
+    message = order.message
+    return message if isinstance(message, str) else str(message)
 
 
 def enumerate_joint_orders(battle: DoubleBattle) -> list[DoubleBattleOrder]:

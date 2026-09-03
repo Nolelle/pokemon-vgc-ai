@@ -21,7 +21,7 @@ from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
-from vgc.actions import describe_order
+from vgc.actions import choice_wire_message, describe_order
 from vgc.battle_state_replay import DecisionReplayRecorder
 from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
@@ -357,6 +357,11 @@ class VgcPlayer(Player):
                     (
                         describe_order(chosen_order)
                         if isinstance(chosen_order, DoubleBattleOrder)
+                        else str(chosen_order)
+                    ),
+                    wire=(
+                        choice_wire_message(chosen_order)
+                        if isinstance(chosen_order, BattleOrder)
                         else str(chosen_order)
                     ),
                 )
