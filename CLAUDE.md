@@ -475,6 +475,10 @@ shells on this machine, and `node` may also need an absolute path
 # Battle-state gate -- must also PASS before any training or ladder command runs
 .venv/bin/python offline/check_battle_state_readiness.py
 
+# Action-generation gate (Problem C) -- must also PASS before any training or
+# ladder command runs. Full write-up: `docs/action_generation_contract.md`.
+.venv/bin/python offline/check_action_readiness.py
+
 # Showdown parity -- both gates and the public ladder run this; it fetches origin/master
 # and BLOCKS if the local checkout is dirty, differs from the catalog's pinned commit, or
 # is missing upstream commits on mod/sim paths. To update: in the showdown repo
