@@ -483,3 +483,51 @@ def test_mirror_reproduces_choice_lock_from_snapshot() -> None:
             if mirror is not None:
                 mirror.close()
             source.close()
+
+
+def test_mirror_branches_survive_a_patched_encore_volatile() -> None:
+    """Regression: branching a mirror with a patched Encore crashed the sim.
+
+    The patch restored the `encore` volatile without the engine's locked-move
+    field, so the first branch step crashed reading flags off undefined
+    (`failencore`) and the whole decision recorded nothing. Whimsicott Encores
+    a Follow-Me Clefable turn 1; turn 2 the mirrored exact search must run to
+    a ranking instead of raising.
+    """
+    from vgc.rl.distill import public_information_exact_search
+
+    dev = (REPO_ROOT / "teams" / "dev.packed.txt").read_text().strip()
+    frail = (REPO_ROOT / "tests" / "fixtures" / "replay_corpus" / "frail_leads.packed.txt").read_text().strip()
+    if not dev or not frail:
+        pytest.skip("dev/frail_leads teams are unavailable")
+    search_config = replace(
+        COMPACT_CONFIG,
+        search_our_candidates=4,
+        exact_search_spread_hypotheses=1,
+        exact_search_set_hypotheses=1,
+        exact_search_bring_hypotheses=1,
+        exact_search_total_hypotheses=1,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-encore-branch-source",
+            dev,
+            frail,
+            seed=[51, 52, 53, 54],
+        )
+        try:
+            source.step({"p1": "team 4123", "p2": "team 3412"})
+            source.step(
+                {
+                    "p1": "move encore 1, move protect",
+                    "p2": "move followme, move protect",
+                }
+            )
+            assert set(source.sides_to_move()) == {"p1", "p2"}
+            scored = public_information_exact_search(
+                source.battles["p1"], search_config, dev
+            )
+            assert scored, "exact search over an encored position returned no orders"
+        finally:
+            source.close()
