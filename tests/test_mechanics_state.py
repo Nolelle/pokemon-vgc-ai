@@ -155,6 +155,29 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
     assert state.opponent_preview_species == ("gengar",)
 
 
+def test_unoffered_known_moves_are_marked_request_disabled() -> None:
+    """A choice-locked (or otherwise request-withheld) move must reach the snapshot.
+
+    The mirror rebuilds move availability from these flags; without them it
+    offers moves the real battle forbids and the teacher can submit an illegal
+    order.
+    """
+    from vgc.mechanics_state import snapshot_pokemon
+
+    mon = _pokemon("Sylveon")
+    for move in mon.moves.values():
+        move.entry = {}
+
+    offered = snapshot_pokemon(mon, opponent=False, available_move_ids=("hypervoice",))
+    by_id = {move.id: move for move in offered.moves}
+    assert not by_id["hypervoice"].disabled
+    assert by_id["protect"].disabled
+    assert by_id["protect"].disabled_reason == "request"
+
+    unrequested = snapshot_pokemon(mon, opponent=False, available_move_ids=None)
+    assert not any(move.disabled for move in unrequested.moves)
+
+
 def test_opponent_mega_is_recorded_from_forme_change_ability() -> None:
     opponent = _pokemon("Garchomp", opponent=True)
     opponent.forme_change_ability = "Sand Force"

@@ -577,6 +577,17 @@
       "verification": "integration"
     },
     {
+      "id": "mirror_move_availability",
+      "status": "exact",
+      "what": "Request-withheld moves (Choice lock, Encore, Disable, PP exhaustion) must reach the mirror root as disabled: the snapshot marks known-but-unoffered moves from the live request, and the patched sim reproduces the lock, so exact search never ranks a forbidden move.",
+      "tests": [
+        "tests/test_mechanics_state.py::test_unoffered_known_moves_are_marked_request_disabled",
+        "tests/test_live_mirror_branches.py::test_mirror_reproduces_choice_lock_from_snapshot"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
       "id": "exact_branch_effect_polarity",
       "status": "exact",
       "what": "The exact-search value function must spend exact_search_effect_weight with a sign: a volatile or side condition that hurts its holder (Leech Seed, Taunt, Stealth Rock on our own side) must score below a clean board and below one that helps (Substitute, Tailwind). Signs are derived from Champions move targets, and effects that cannot be signed score zero rather than a bonus.",

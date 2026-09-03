@@ -107,10 +107,17 @@ class MoveSnapshot:
     last_used: bool
 
 
-def _move_snapshot(move_id: Any, move: Any) -> MoveSnapshot:
+def _move_snapshot(move_id: Any, move: Any, *, unavailable: bool = False) -> MoveSnapshot:
     entry = getattr(move, "entry", None) or {}
-    disabled = bool(getattr(move, "disabled", False) or entry.get("disabled", False))
+    disabled = bool(
+        unavailable or getattr(move, "disabled", False) or entry.get("disabled", False)
+    )
     reason = entry.get("disabledSource") or entry.get("disabled_reason")
+    if unavailable and not reason:
+        # The request did not offer this known move (choice lock, Encore, Disable,
+        # PP exhaustion, recharge...). The reason is deliberately generic: the
+        # request is the authority that it is unavailable, not why.
+        reason = "request"
     return MoveSnapshot(
         id=to_id(getattr(move, "id", None) or move_id),
         current_pp=_optional_int(getattr(move, "current_pp", None)),
@@ -364,7 +371,18 @@ def snapshot_pokemon(
         ),
         moves=tuple(
             sorted(
-                (_move_snapshot(key, move) for key, move in move_entries), key=lambda move: move.id
+                (
+                    _move_snapshot(
+                        key,
+                        move,
+                        unavailable=(
+                            available_move_ids is not None
+                            and to_id(key) not in set(available_move_ids)
+                        ),
+                    )
+                    for key, move in move_entries
+                ),
+                key=lambda move: move.id,
             )
         ),
         last_move_id=to_id(getattr(getattr(pokemon, "last_move", None), "id", None)) or None,

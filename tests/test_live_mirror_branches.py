@@ -388,3 +388,98 @@ def test_public_teacher_labels_from_p2_seat_without_keyerror() -> None:
             assert all(entry.order.message for entry in scored)
         finally:
             source.close()
+
+
+def test_mirror_reproduces_choice_lock_from_snapshot() -> None:
+    """Regression: the mirror offered moves a Choice-locked mon cannot use.
+
+    The snapshot never marked request-withheld moves disabled, so the patched
+    root offered the full moveset, exact search ranked a forbidden move, and
+    the teacher submitted it into an InvalidChoice crash. Basculegion fires
+    Aqua Jet turn 1 (into a Protect, so nothing faints and no RNG matters);
+    turn 2 the mirror must offer only Aqua Jet for that slot, matching live.
+    """
+    from poke_env.battle.move import Move
+
+    from vgc.damage import to_id
+
+    pool_team = POOL / "gardevoir_maushold" / "team_17.packed.txt"
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    if not pool_team.is_file():
+        pytest.skip("archetype_pool_150 teams are unavailable")
+    team = pool_team.read_text().strip()
+    search_config = replace(
+        COMPACT_CONFIG,
+        search_our_candidates=4,
+        exact_search_spread_hypotheses=1,
+        exact_search_set_hypotheses=1,
+        exact_search_bring_hypotheses=1,
+        exact_search_total_hypotheses=1,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-choicelock-source",
+            team,
+            team,
+            seed=[41, 42, 43, 44],
+        )
+        mirror: LiveExactMirror | None = None
+        try:
+            source.step({"p1": "team 3124", "p2": "team 1234"})
+            live = source.battles["p1"]
+            locked_slot = next(
+                index
+                for index, mon in enumerate(live.active_pokemon or ())
+                if mon is not None and to_id(mon.species) == "basculegion"
+            )
+            live_locked = {
+                to_id(move.id) for move in live.available_moves[locked_slot]
+            }
+            assert live_locked, "expected Basculegion to move on turn 1"
+            first_move = sorted(live_locked)[0]
+            source.step(
+                {
+                    "p1": (
+                        f"move {first_move} 1, move protect"
+                        if locked_slot == 0
+                        else f"move protect, move {first_move} 1"
+                    ),
+                    "p2": "move protect, move protect",
+                }
+            )
+            live = source.battles["p1"]
+            live_locked = {to_id(move.id) for move in live.available_moves[locked_slot]}
+            assert len(live_locked) == 1, (
+                f"expected a Choice lock after turn 1, offered {sorted(live_locked)}"
+            )
+            mirror = LiveExactMirror(team, search_config)
+            root = mirror.build(live, mirror.hypotheses(live)[0])
+            try:
+                mirror_locked = {
+                    to_id(move.id)
+                    for move in root.battles["p1"].available_moves[locked_slot]
+                }
+                assert mirror_locked == live_locked, (
+                    f"mirror offers {sorted(mirror_locked)} but live offers "
+                    f"{sorted(live_locked)}"
+                )
+                offered = {
+                    to_id(single.order.id)
+                    for order in enumerate_joint_orders(root.battles["p1"])
+                    for single in (
+                        order.first_order if locked_slot == 0 else order.second_order,
+                    )
+                    if isinstance(single.order, Move)
+                }
+                assert offered <= live_locked, (
+                    f"mirror enumerates {sorted(offered - live_locked)} "
+                    "that live forbids"
+                )
+            finally:
+                root.close()
+        finally:
+            if mirror is not None:
+                mirror.close()
+            source.close()
