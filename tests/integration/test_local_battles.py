@@ -31,7 +31,11 @@ from vgc.damage import to_id
 from vgc.agent import VgcPlayer
 from vgc.battle_state_replay import (
     DECISION_INPUT_FIELDS,
+    _legal_actions,
     decision_records_contain_outcome_labels,
+    legal_wire_messages,
+    messages_through_decision_cutoff,
+    replay_battle_at_cutoff,
     verify_decision_prefix,
     verify_decision_replay_bundle,
 )
@@ -638,7 +642,6 @@ def test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully(
     Captures the legal wire set beside every live decision, then aligns those
     captures with the saved replay bundle by decision sequence.
     """
-    from vgc.battle_state_replay import legal_wire_messages
 
     captured: list[dict[str, object]] = []
 
@@ -654,6 +657,29 @@ def test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully(
             wires = sorted(choice_wire_message(order) for order in orders)
             assert len(wires) == len(orders)
             assert len(set(wires)) == len(wires), "wire messages must be distinct"
+            if isinstance(battle, DoubleBattle):
+                for slot in (0, 1):
+                    available = {
+                        to_id(move.id) for move in battle.available_moves[slot]
+                    }
+                    for order in orders:
+                        single = (
+                            order.first_order if slot == 0 else order.second_order
+                        )
+                        if isinstance(single.order, Move):
+                            assert to_id(single.order.id) in available, (
+                                single.order.id,
+                                available,
+                            )
+                    if battle.trapped[slot]:
+                        for order in orders:
+                            single = (
+                                order.first_order if slot == 0 else order.second_order
+                            )
+                            assert not isinstance(single.order, Pokemon), (
+                                "trapped slot offered a switch",
+                                describe_order(order),
+                            )
             if not orders:
                 captured.append({"phase": "empty", "legal": [], "wire": None})
                 return self.choose_random_move(battle)
@@ -791,6 +817,187 @@ def test_target_variants_cover_offered_targets(local_server, dev_team) -> None:
     finished = asyncio.run(_run())
     assert finished == 2
     assert seen_multi_target, "expected one move with 2+ targets across two games"
+
+
+def test_saved_wire_replays_against_rebuilt_request(local_server, dev_team) -> None:
+    """Problem C gate 3: the saved wire is legal at the rebuilt cutoff.
+
+    Replays each decision prefix through the live parser (same path Problem B
+    verifies) and requires the saved wire message to be a member of the rebuilt
+    request's legal wire set -- the exact set Showdown accepts there -- for all
+    three phases.
+    """
+    bundle = asyncio.run(record_replay_bundle(dev_team))
+    decisions = bundle["decisions"]
+    assert len(decisions) >= 2
+    for index, decision in enumerate(decisions):
+        phase = decision.get("phase")
+        wire = decision.get("chosen_order_wire")
+        assert isinstance(wire, str) and wire, (index, decision)
+        battle = asyncio.run(replay_battle_at_cutoff(bundle, index))
+        if phase == "team_preview":
+            prefix = messages_through_decision_cutoff(bundle, index)
+            legal = _legal_actions(
+                battle, team_preview=True, request_message=prefix[-1] if prefix else None
+            )
+        else:
+            legal = legal_wire_messages(battle, team_preview=False)
+        if legal:
+            assert wire in legal, (index, phase, wire)
+        else:
+            assert "default" in wire, (index, phase, wire)
+
+
+def test_encored_moves_are_absent_from_live_enumeration(local_server) -> None:
+    """Problem C exclusion gate: a disabled move never appears in the enumeration.
+
+    Whimsicott's Encore targets foe slot 1 (Clefable), which opens with Follow
+    Me (+3, ahead of Encore's Prankster +1), so on later turns Clefable's request
+    marks every other move disabled and poke-env drops them from `valid_orders`.
+    The joint list must follow. (The opener must be a +2-or-faster move: Encore
+    fails against a target that has not moved yet, and Protect would block the
+    Encore itself. The Encore target is pinned explicitly because the default
+    order aims at our own ally.)
+    """
+
+    class FoeEncorePlayer(ScriptedPlayer):
+        def decide(self, battle):
+            if int(getattr(battle, "turn", 0) or 0) == 1 and isinstance(
+                battle, DoubleBattle
+            ):
+                for order in enumerate_joint_orders(battle):
+                    single = order.first_order
+                    if (
+                        isinstance(single.order, Move)
+                        and to_id(single.order.id) == "encore"
+                        and single.move_target == 1
+                    ):
+                        return order
+            return super().decide(battle)
+
+    async def _run():
+        config = PolicyConfig(
+            format_id=FORMAT_ID,
+            accept_open_team_sheet=False,
+            use_heuristic_evaluator=False,
+            use_two_ply_search=False,
+        )
+        ours = FoeEncorePlayer(
+            config=config,
+            team=_packed_team("dev"),
+            record_decision_replays=True,
+            slot_scripts=(("protect", "protect", "protect"),) * 2,
+            team_order="/team 4123",
+            forfeit_after_moves=4,
+        )
+        theirs = ScriptedPlayer(
+            config=config,
+            team=_packed_team("frail_leads"),
+            record_decision_replays=True,
+            slot_scripts=(
+                ("followme", "protect", "protect", "protect"),
+                ("protect", "protect", "protect", "protect"),
+            ),
+            team_order="/team 3412",
+            forfeit_after_moves=4,
+        )
+        try:
+            await asyncio.wait_for(ours.battle_against(theirs, n_battles=1), timeout=45)
+        finally:
+            await ours.ps_client.stop_listening()
+            await theirs.ps_client.stop_listening()
+        battle1 = next(iter(ours.battles.values()))
+        battle2 = next(iter(theirs.battles.values()))
+        return ours.decision_replay_bundle(battle1), theirs.decision_replay_bundle(
+            battle2
+        )
+
+    ours, theirs = asyncio.run(_run())
+    assert ours is not None and theirs is not None
+    used = [
+        line
+        for line in _message_lines(theirs)
+        if line.split("|")[1:2] == ["move"] and "Encore" in line
+    ]
+    assert used, "expected Whimsicott to actually use Encore on turn 1"
+    locked = [
+        decision
+        for decision in theirs["decisions"]
+        if decision.get("phase") == "move" and int(decision.get("turn") or 0) >= 2
+    ]
+    assert locked, "expected post-Encore move decisions"
+    found_locked_slot = False
+    for decision in locked:
+        halves = [str(action).split(" / ") for action in decision["legal_actions"]]
+        for slot in (0, 1):
+            slot_moves = {
+                half[slot].split("@")[0] for half in halves if len(half) == 2
+            }
+            non_switch = {move for move in slot_moves if not move.startswith("switch")}
+            if non_switch and non_switch <= {"followme", "pass"}:
+                found_locked_slot = True
+    assert found_locked_slot, [
+        decision["legal_actions"] for decision in locked
+    ]
+
+
+def test_mega_and_switch_pair_properties_hold_live(local_server) -> None:
+    """Problem C pair gates: no double-Mega ever; a double switch is offered;
+    after evolving, no Mega variant is offered again."""
+    ours, _theirs = asyncio.run(
+        record_scripted_bundles(
+            our_team=_packed_team("dev"),
+            their_team=_packed_team("frail_leads"),
+            our_scripts=(
+                ("eruption", "protect", "protect", "protect"),
+                ("protect-mega", "protect", "protect", "protect"),
+            ),
+            their_scripts=(
+                ("electricterrain", "protect", "protect", "protect"),
+                ("charge", "protect", "protect", "protect"),
+            ),
+            our_team_order="/team 3124",
+            their_team_order="/team 1234",
+            accept_ots=False,
+            our_forfeit_after_moves=4,
+            their_forfeit_after_moves=4,
+        )
+    )
+    move_decisions = [
+        decision for decision in ours["decisions"] if decision.get("phase") == "move"
+    ]
+    assert move_decisions
+    assert any(
+        "-mega" in str(action)
+        for decision in move_decisions
+        for action in decision["legal_actions"]
+    ), "expected the Mega variant to be offered"
+    assert not any(
+        sum(1 for half in str(action).split(" / ") if half.endswith("-mega")) >= 2
+        for decision in move_decisions
+        for action in decision["legal_actions"]
+    ), "a double-Mega pair must never be enumerated"
+    assert any(
+        all(half.startswith("switch") for half in str(action).split(" / "))
+        for decision in move_decisions
+        for action in decision["legal_actions"]
+    ), "expected a double-switch joint order while the bench is live"
+    mega_turns = [
+        int(decision.get("turn") or 0)
+        for decision in move_decisions
+        if any(str(action).split(" / ")[1].endswith("-mega") for action in decision["legal_actions"])
+    ]
+    later = [
+        decision
+        for decision in move_decisions
+        if mega_turns and int(decision.get("turn") or 0) > min(mega_turns)
+    ]
+    if later:
+        assert not any(
+            "-mega" in str(action)
+            for decision in later
+            for action in decision["legal_actions"]
+        ), "after evolving, no Mega variant may be offered again"
 
 
 def test_vgc_vs_random_battles_complete(local_server, dev_team) -> None:

@@ -342,6 +342,30 @@ async def rebuild_decisions(
 ) -> list[dict[str, object]]:
     """Replay ``messages`` through the live parser and return rebuilt decision records."""
 
+    player, battle_tag = _replay_player(bundle)
+    battle = await _feed_messages(player, battle_tag, messages)
+    rebuilt_bundle = player.decision_replay_bundle(battle)
+    return list((rebuilt_bundle or {}).get("decisions") or [])
+
+
+async def replay_battle_at_cutoff(
+    bundle: dict[str, object],
+    decision_index: int,
+) -> Any:
+    """Replay saved messages only through one decision cutoff and return the battle.
+
+    This is the same prefix ``verify_decision_prefix`` rebuilds, but instead of
+    comparing fingerprints it hands back the live parser state, so tests can ask
+    the rebuilt request what is legal there -- e.g. whether the saved wire
+    message is a member of the rebuilt legal set.
+    """
+
+    player, battle_tag = _replay_player(bundle)
+    prefix = messages_through_decision_cutoff(bundle, decision_index)
+    return await _feed_messages(player, battle_tag, prefix)
+
+
+def _replay_player(bundle: dict[str, object]):
     from poke_env.ps_client.account_configuration import AccountConfiguration
     from poke_env.teambuilder.teambuilder import Teambuilder
 
@@ -403,6 +427,10 @@ async def rebuild_decisions(
 
     player.ps_client.send_message = _noop
     battle_tag = str(bundle.get("battle_tag") or "")
+    return player, battle_tag
+
+
+async def _feed_messages(player, battle_tag: str, messages: list[list[str]]):
     room = [f">{battle_tag}"]
     for raw in messages:
         if not isinstance(raw, list):
@@ -412,8 +440,7 @@ async def rebuild_decisions(
     battle = player._battles.get(battle_tag)
     if battle is None:
         raise ValueError("battle was not rebuilt")
-    rebuilt_bundle = player.decision_replay_bundle(battle)
-    return list((rebuilt_bundle or {}).get("decisions") or [])
+    return battle
 
 
 async def verify_decision_prefix(

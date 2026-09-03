@@ -24,7 +24,8 @@
       "verification": "live_request_combination",
       "tests": [
         "tests/integration/test_local_battles.py::test_joint_order_enumeration_during_real_battle",
-        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully"
+        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully",
+        "tests/integration/test_local_battles.py::test_encored_moves_are_absent_from_live_enumeration"
       ]
     },
     {
@@ -39,11 +40,12 @@
     {
       "id": "mutual_exclusion",
       "status": "exact",
-      "verification": "unit_join_orders_contract",
+      "verification": "unit_join_orders_contract_and_live_pair_properties",
       "tests": [
         "tests/test_action_generation.py::test_join_orders_excludes_double_mega",
         "tests/test_action_generation.py::test_join_orders_excludes_double_pass_and_same_switch",
-        "tests/test_action_generation.py::test_enumerate_empty_valid_orders_yields_empty_list"
+        "tests/test_action_generation.py::test_enumerate_empty_valid_orders_yields_empty_list",
+        "tests/integration/test_local_battles.py::test_mega_and_switch_pair_properties_hold_live"
       ]
     },
     {
@@ -56,7 +58,8 @@
         "tests/test_battle_state_replay.py::test_choice_wire_message_returns_sendable_order_message",
         "tests/test_battle_state_replay.py::test_preview_wire_list_matches_legal_actions",
         "tests/test_battle_state_replay.py::test_record_choice_stores_display_and_wire",
-        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully"
+        "tests/integration/test_local_battles.py::test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully",
+        "tests/integration/test_local_battles.py::test_saved_wire_replays_against_rebuilt_request"
       ]
     },
     {
