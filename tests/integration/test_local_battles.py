@@ -22,7 +22,11 @@ from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
 from poke_env.player.battle_order import ForfeitBattleOrder, SingleBattleOrder
 
-from vgc.actions import describe_order, enumerate_joint_orders
+from vgc.actions import (
+    choice_wire_message,
+    describe_order,
+    enumerate_joint_orders,
+)
 from vgc.damage import to_id
 from vgc.agent import VgcPlayer
 from vgc.battle_state_replay import (
@@ -623,6 +627,170 @@ def test_joint_order_enumeration_during_real_battle(local_server, dev_team) -> N
 
     assert finished == 2
     assert observed_orders, "expected enumerate_joint_orders to yield orders across turns"
+
+
+def test_chosen_wire_is_in_legal_wire_set_and_saved_faithfully(
+    local_server, dev_team
+) -> None:
+    """Problem C gate 3 (live half): the sent command is always legal, and the saved
+    wire matches what was sent.
+
+    Captures the legal wire set beside every live decision, then aligns those
+    captures with the saved replay bundle by decision sequence.
+    """
+    from vgc.battle_state_replay import legal_wire_messages
+
+    captured: list[dict[str, object]] = []
+
+    class WireAuditPlayer(VgcPlayer):
+        def decide_teampreview(self, battle) -> str:
+            choice = "/team 1234"
+            captured.append({"phase": "team_preview", "wire": choice})
+            return choice
+
+        def decide(self, battle):
+            orders = enumerate_joint_orders(battle)
+            assert isinstance(orders, list)
+            wires = sorted(choice_wire_message(order) for order in orders)
+            assert len(wires) == len(orders)
+            assert len(set(wires)) == len(wires), "wire messages must be distinct"
+            if not orders:
+                captured.append({"phase": "empty", "legal": [], "wire": None})
+                return self.choose_random_move(battle)
+            choice = orders[0]
+            wire = choice_wire_message(choice)
+            assert wire in wires
+            force_switch = getattr(battle, "force_switch", False)
+            forced = (
+                any(force_switch)
+                if isinstance(force_switch, (list, tuple))
+                else bool(force_switch)
+            )
+            captured.append(
+                {
+                    "phase": "forced_switch" if forced else "move",
+                    "legal": wires,
+                    "wire": wire,
+                }
+            )
+            return choice
+
+    async def _run():
+        p1 = WireAuditPlayer(
+            config=PolicyConfig(format_id=FORMAT_ID),
+            team=dev_team,
+            battle_format=FORMAT_ID,
+            record_decision_replays=True,
+        )
+        p2 = make_player("random", dev_team, FORMAT_ID)
+        try:
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=1), timeout=45)
+        finally:
+            await p1.ps_client.stop_listening()
+            await p2.ps_client.stop_listening()
+        battle = next(iter(p1.battles.values()))
+        return p1.decision_replay_bundle(battle), p1.fallback_count
+
+    bundle, fallbacks = asyncio.run(_run())
+    assert bundle is not None
+    decisions = bundle["decisions"]
+    assert len(captured) == len(decisions), (len(captured), len(decisions))
+    assert fallbacks == 0
+    for entry, decision in zip(captured, decisions):
+        assert entry["phase"] == decision.get("phase"), (entry, decision)
+        assert decision.get("chosen_order_wire") == entry["wire"]
+        if entry["phase"] == "team_preview":
+            legal = decision.get("legal_actions")
+            assert isinstance(legal, list) and len(legal) == 360, len(legal or [])
+            assert entry["wire"] in legal
+            assert decision.get("chosen_order") in legal
+        elif entry["phase"] == "empty":
+            assert decision.get("chosen_order_wire") is None
+        else:
+            assert entry["wire"] in entry["legal"]
+
+
+def test_forced_switch_legal_lists_hold_only_switches(local_server) -> None:
+    """Problem C gate 4 (live half): forced-switch lists never contain moves."""
+    ours, theirs = asyncio.run(
+        record_scripted_bundles(
+            our_team=_packed_team("dev"),
+            their_team=_packed_team("frail_leads"),
+            our_scripts=(
+                ("eruption", "protect", "protect", "protect"),
+                ("protect-mega", "protect", "protect", "protect"),
+            ),
+            their_scripts=(
+                ("electricterrain", "protect", "protect", "protect"),
+                ("charge", "protect", "protect", "protect"),
+            ),
+            our_team_order="/team 3124",
+            their_team_order="/team 1234",
+            accept_ots=False,
+            our_forfeit_after_moves=4,
+            their_forfeit_after_moves=4,
+        )
+    )
+    forced = [
+        decision
+        for bundle in (ours, theirs)
+        for decision in bundle["decisions"]
+        if decision.get("phase") == "forced_switch"
+    ]
+    assert forced, "expected the double-faint script to force a replacement"
+    for decision in forced:
+        for action in decision["legal_actions"]:
+            lowered = str(action).lower()
+            assert "switch" in lowered or "pass" in lowered, action
+            assert "move " not in lowered
+            assert "@" not in lowered
+        wire = decision.get("chosen_order_wire")
+        assert isinstance(wire, str) and wire.startswith("/choose "), wire
+
+
+def test_target_variants_cover_offered_targets(local_server, dev_team) -> None:
+    """Problem C gate 4 (live half): one move with several targets yields several orders."""
+    from poke_env.battle.move import Move
+
+    seen_multi_target: list[tuple[str, set[int | None]]] = []
+
+    class TargetAuditPlayer(VgcPlayer):
+        def decide(self, battle):
+            orders = enumerate_joint_orders(battle)
+            if orders:
+                grouped: dict[tuple[str, str], set[int | None]] = {}
+                for order in orders:
+                    for single in (order.first_order, order.second_order):
+                        target = single.order
+                        if isinstance(target, Move):
+                            key = (
+                                "first" if single is order.first_order else "second",
+                                str(target.id),
+                            )
+                            grouped.setdefault(key, set()).add(single.move_target)
+                for key, targets in grouped.items():
+                    if len(targets) >= 2:
+                        seen_multi_target.append((key[1], targets))
+                return orders[0]
+            return self.choose_random_move(battle)
+
+    async def _run() -> int:
+        p1 = TargetAuditPlayer(
+            config=PolicyConfig(format_id=FORMAT_ID),
+            team=dev_team,
+            battle_format=FORMAT_ID,
+        )
+        p2 = make_player("random", dev_team, FORMAT_ID)
+        try:
+            await asyncio.wait_for(p1.battle_against(p2, n_battles=2), timeout=45)
+        finally:
+            await p1.ps_client.stop_listening()
+            await p2.ps_client.stop_listening()
+        return p1.n_finished_battles
+
+    finished = asyncio.run(_run())
+    assert finished == 2
+    assert seen_multi_target, "expected one move with 2+ targets across two games"
 
 
 def test_vgc_vs_random_battles_complete(local_server, dev_team) -> None:
