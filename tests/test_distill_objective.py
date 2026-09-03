@@ -263,3 +263,76 @@ def test_soft_targets_train_without_crash_on_mixed_batches():
 
     assert metrics["loss"] >= 0.0
     assert np.isfinite(metrics["loss"])
+
+
+def _bare_teacher():
+    from vgc.models import PolicyConfig
+    from vgc.rl.distill import TeacherRecordingPlayer
+
+    player = TeacherRecordingPlayer.__new__(TeacherRecordingPlayer)
+    player.config = PolicyConfig()
+    player.distillation_samples = []
+    player.recording_failures = []
+    player.skipped_fallback_to_search = 0
+    player.skipped_fallback_to_random = 0
+    player.fallback_count = 0
+    player._recording_decision_index = 0
+    return player
+
+
+def test_recording_failure_prefers_shipped_search_over_random(monkeypatch) -> None:
+    import logging
+
+    from poke_env.battle.double_battle import DoubleBattle
+
+    import vgc.rl.distill as distill_module
+    from vgc.evaluator import ScoredOrder
+
+    sentinel = object()
+    battle = DoubleBattle("battle-skip-search", "user", logging.getLogger(__name__), 9)
+    player = _bare_teacher()
+    monkeypatch.setattr(
+        distill_module,
+        "search_joint_orders",
+        lambda battle_arg, config: [
+            ScoredOrder(order=sentinel, score=1.0, breakdown={})
+        ],
+    )
+
+    assert player._recording_failure(battle, "boom") is sentinel
+    assert len(player.recording_failures) == 1
+    assert player.skipped_fallback_to_search == 1
+    assert player.skipped_fallback_to_random == 0
+    assert player.attempted_decisions() == 0
+    assert player.skipped_decisions() == 1
+
+
+def test_recording_failure_uses_random_only_when_search_fails(monkeypatch) -> None:
+    import logging
+
+    from poke_env.battle.double_battle import DoubleBattle
+
+    import vgc.rl.distill as distill_module
+
+    sentinel = object()
+    battle = DoubleBattle("battle-skip-random", "user", logging.getLogger(__name__), 9)
+    player = _bare_teacher()
+
+    def _raise(battle_arg, config):
+        raise RuntimeError("search exploded")
+
+    monkeypatch.setattr(distill_module, "search_joint_orders", _raise)
+    monkeypatch.setattr(player, "choose_random_move", lambda battle_arg: sentinel)
+
+    assert player._recording_failure(battle, "boom") is sentinel
+    assert player.skipped_fallback_to_search == 0
+    assert player.skipped_fallback_to_random == 1
+
+
+def test_check_collection_skip_rate_gates_only_above_threshold() -> None:
+    from selfplay.train_imitation import check_collection_skip_rate
+
+    assert check_collection_skip_rate(attempted=100, skipped=0, max_skip_rate=0.0) == 0.0
+    assert check_collection_skip_rate(attempted=100, skipped=5, max_skip_rate=0.05) == 0.05
+    with pytest.raises(RuntimeError, match="skip rate"):
+        check_collection_skip_rate(attempted=100, skipped=6, max_skip_rate=0.05)

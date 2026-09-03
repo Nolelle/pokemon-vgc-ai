@@ -33,7 +33,7 @@ from vgc.rl.guided_selection import (
     SAFETY_TAG_COLUMNS,
     select_guided_candidate_indices,
 )
-from vgc.search import _order_tags
+from vgc.search import _order_tags, search_joint_orders
 from vgc.rl.encoding import (
     META_SCALAR_DIM,
     CandidateFeatures,
@@ -215,11 +215,19 @@ class TeacherRecordingPlayer(VgcPlayer):
     def __init__(self, **player_kwargs) -> None:
         self.distillation_samples: list[DistillationSample] = []
         self.recording_failures: list[str] = []
+        self.skipped_fallback_to_search: int = 0
+        self.skipped_fallback_to_random: int = 0
         self._recording_decision_index = 0
         supplied_team = player_kwargs.get("team")
         self._exact_own_packed_team = supplied_team if isinstance(supplied_team, str) else None
         self._public_exact_mirror: LiveExactMirror | None = None
         super().__init__(**player_kwargs)
+
+    def skipped_decisions(self) -> int:
+        return len(self.recording_failures)
+
+    def attempted_decisions(self) -> int:
+        return self._recording_decision_index
 
     def close_public_mirror(self) -> None:
         if self._public_exact_mirror is not None:
@@ -231,9 +239,31 @@ class TeacherRecordingPlayer(VgcPlayer):
         super()._battle_finished_callback(battle)
 
     def _recording_failure(self, battle, reason: str):
+        """Skip this decision's label but keep playing a sane move.
+
+        A skipped decision records its cause visibly and the game continues on
+        the shipped Python search (random only if that also fails), so one
+        unlabelable position cannot abort a whole collection run. Skips bias
+        the dataset toward labelable positions -- `collect_demonstrations`
+        callers must report the skip rate by cause and gate on it instead of
+        pretending every position was teachable.
+        """
+
         self.recording_failures.append(
             f"{battle.battle_tag} turn {int(getattr(battle, 'turn', 0) or 0)}: {reason}"
         )
+        try:
+            searched = (
+                search_joint_orders(battle, self.config)
+                if isinstance(battle, DoubleBattle)
+                else []
+            )
+        except Exception:
+            searched = []
+        if searched:
+            self.skipped_fallback_to_search += 1
+            return searched[0].order
+        self.skipped_fallback_to_random += 1
         return self.choose_random_move(battle)
 
     def decide(self, battle):

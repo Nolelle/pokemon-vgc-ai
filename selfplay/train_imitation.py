@@ -109,6 +109,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--hard-example-rank", type=int, default=10)
     parser.add_argument(
+        "--max-skip-rate",
+        type=float,
+        default=0.05,
+        help="fail the run when skipped teacher decisions (exact-search failures "
+        "with a shipped-search fallback played instead) exceed this fraction of "
+        "attempted decisions. Skips are always reported by cause; 0 restores the "
+        "original fail-on-any-skip behavior.",
+    )
+    parser.add_argument(
         "--balance-action-count-bins",
         action="store_true",
         help="equalize expected draws across the legal-action-count bins so rare "
@@ -190,6 +199,20 @@ def split_team_entries(
     return train, validation
 
 
+def check_collection_skip_rate(
+    *, attempted: int, skipped: int, max_skip_rate: float
+) -> float:
+    """Fail closed when too many teacher decisions went unlabeled."""
+
+    skip_rate = skipped / attempted if attempted else 0.0
+    if skip_rate > max_skip_rate:
+        raise RuntimeError(
+            f"teacher collection skip rate {skip_rate:.3%} exceeds --max-skip-rate "
+            f"{max_skip_rate:.3%} over {attempted} decisions"
+        )
+    return skip_rate
+
+
 def collect_demonstrations(
     worker: SimWorker,
     *,
@@ -199,9 +222,15 @@ def collect_demonstrations(
     seed: int,
     teacher_config: PolicyConfig,
     battle_prefix: str = "imitation",
+    max_skip_rate: float = 0.0,
 ) -> list:
     rng = random.Random(seed)
     samples: list = []
+    attempted = 0
+    skipped = 0
+    search_fallbacks = 0
+    random_fallbacks = 0
+    skip_causes: dict[str, int] = {}
     for game_index in range(games):
         random.seed(seed + game_index * 1_000_003)
         learner_team = rng.choice(teams)
@@ -236,13 +265,17 @@ def collect_demonstrations(
             )
         finally:
             teacher_player.close_public_mirror()
-        if teacher_player.fallback_count or teacher_player.recording_failures:
-            details = [
-                f"{teacher_player.fallback_count} exception fallbacks",
-                *teacher_player.recording_failures[:5],
-            ]
+        attempted += teacher_player.attempted_decisions()
+        skipped += teacher_player.skipped_decisions()
+        search_fallbacks += teacher_player.skipped_fallback_to_search
+        random_fallbacks += teacher_player.skipped_fallback_to_random
+        for failure in teacher_player.recording_failures:
+            cause = failure.split("exact search raised", 1)[-1].strip()[:80] if "exact search raised" in failure else failure.rsplit(":", 1)[-1].strip()[:80]
+            skip_causes[cause] = skip_causes.get(cause, 0) + 1
+        if teacher_player.fallback_count:
             raise RuntimeError(
-                f"teacher collection failed closed in {battle_id}: " + "; ".join(details)
+                f"teacher collection failed closed in {battle_id}: "
+                f"{teacher_player.fallback_count} exception fallbacks"
             )
         game_samples = [
             sample for sample in teacher_player.distillation_samples if sample.battle_id == battle_id
@@ -256,6 +289,17 @@ def collect_demonstrations(
                 opponent_team_sha256=opponent_team.sha256,
             )
         )
+    skip_rate = check_collection_skip_rate(
+        attempted=attempted, skipped=skipped, max_skip_rate=max_skip_rate
+    )
+    print(
+        f"collection skips: {skipped}/{attempted} decisions "
+        f"({skip_rate:.3%}; {search_fallbacks} continued on shipped search, "
+        f"{random_fallbacks} on random)",
+        flush=True,
+    )
+    for cause, count in sorted(skip_causes.items(), key=lambda row: -row[1])[:10]:
+        print(f"  skip cause x{count}: {cause}", flush=True)
     return samples
 
 
@@ -468,6 +512,7 @@ def main(argv: list[str] | None = None) -> None:
                     seed=args.seed,
                     teacher_config=teacher_config,
                     battle_prefix="imitation-train",
+                    max_skip_rate=args.max_skip_rate,
                 )
                 validation_samples = collect_demonstrations(
                     worker,
@@ -477,6 +522,7 @@ def main(argv: list[str] | None = None) -> None:
                     seed=args.seed + 1_000_000,
                     teacher_config=teacher_config,
                     battle_prefix="imitation-validation",
+                    max_skip_rate=args.max_skip_rate,
                 )
                 samples = [*train_samples, *validation_samples]
             else:
@@ -487,6 +533,7 @@ def main(argv: list[str] | None = None) -> None:
                     games=args.games,
                     seed=args.seed,
                     teacher_config=teacher_config,
+                    max_skip_rate=args.max_skip_rate,
                 )
                 train_samples, validation_samples = split_samples_grouped(
                     samples,

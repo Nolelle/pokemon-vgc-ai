@@ -422,6 +422,17 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 			disabledSource: publicMove.disabled_reason || '',
 		};
 	});
+	if (pokemon.volatiles.encore && !pokemon.volatiles.encore.move) {
+		// A patched Encore arrives without the engine's `move` field (the snapshot
+		// carries durations, not locked-move ids). Branching with it crashes the
+		// engine when it reads the undefined move's flags. Encore always leaves
+		// exactly the locked move enabled, so derive it; fall back to lastMove.
+		const enabled = pokemon.moveSlots.filter((slot) => !slot.disabled);
+		const locked = enabled.length === 1
+			? enabled[0]
+			: pokemon.moveSlots.find((slot) => pokemon.lastMove && slot.id === pokemon.lastMove.id);
+		if (locked) pokemon.volatiles.encore.move = locked.id;
+	}
 }
 
 function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
