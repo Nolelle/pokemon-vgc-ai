@@ -962,6 +962,21 @@ def test_use_two_ply_search_true_uses_shallow_search_result(monkeypatch) -> None
     assert result is sentinel_order
 
 
+def test_shipped_defaults_keep_search_as_final_authority() -> None:
+    """Problem D gate 4: learned components ship advisory-only.
+
+    The search makes the pick; the BC policy blend and outcome value head are
+    opt-in and default off, so no checkpoint can silently become the decider.
+    """
+
+    config = PolicyConfig()
+    assert config.use_two_ply_search is True
+    assert config.use_heuristic_evaluator is True
+    assert config.use_bc_policy is False
+    assert config.use_value_head is False
+    assert config.guided_upset_margin > 0
+
+
 # --- resolve_exchange: ExchangeResult carries post-exchange states/weather -----------
 
 

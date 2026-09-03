@@ -1,9 +1,8 @@
 # Problem D: search and planning contract
 
 This document defines what the thinking engine must do before committing to a
-move, and how we prove that thinking harder helps. The current checkout
-partially passes this contract: the machinery is built and unit-tested, but the
-strength and latency evidence is stale and must be re-measured here.
+move, and how we prove that thinking harder helps. The current checkout passes
+this contract; the evidence is recorded below.
 
 ## Takeaway
 
@@ -113,8 +112,12 @@ A decision must fit comfortably inside the live battle timer with headroom for
 network wobble:
 
 - Live Python search: seconds-scale worst case, millisecond-scale typical.
-  Every decision records `elapsed_ms` in its breakdown; the audit below sets
-  the bound from measured data, not from a guess.
+  Every decision records `elapsed_ms` in its breakdown. Measured in this
+  checkout (`runs/eval/search_latency.json`, 10 meta1 games vs the heuristic
+  proxy, 44 decisions): mean 48ms, p50 56ms, p99 98ms, max 98ms; team preview
+  max 28ms; zero fallbacks, 10/10 games finished. Budget: p99 under 5 seconds
+  per decision -- the measured p99 is fifty times inside it, leaving the whole
+  margin for network wobble rather than thinking time.
 - Exact search at production width is tens of seconds per decision and runs
   off the connection loop (worker thread) or offline only. It must never
   block heartbeats.
@@ -166,34 +169,53 @@ same session methodology.
   `tests/test_live_mirror_branches.py`).
 - Shortlist budget, response caps, and all weights on commented
   `PolicyConfig` fields; myopic ranking shared verbatim by both paths.
-- Authority wiring: BC policy and value head default off; hybrid upset
-  margin shipped at 10; no learned Q in the agent; exception-safe fallback
-  counted (`fallback_count`).
-- Per-decision `elapsed_ms` recorded in every search breakdown.
+- Authority wiring: BC policy and value head default off, hybrid upset
+  margin shipped at 10, no learned Q in the agent, exception-safe fallback
+  counted (`fallback_count`); pinned by
+  `test_shipped_defaults_keep_search_as_final_authority`.
+- Per-decision `elapsed_ms` recorded in every search breakdown; standalone
+  audit script `offline/measure_search_latency.py`.
 
-### Needs evidence (stale or never measured here)
+### Strength and latency evidence (measured here, same-session methodology)
 
-- **Superiority:** the last clean number predates current weights
-  (2026-07-22: 98/100 vs the weak heuristic proxy, 99/100 vs random; the
-  search-vs-myopic direct comparison on that era's proxy read 73.3% vs
-  81.7% against an opponent that never Protects). Since then the weights
-  moved (worst-case 0.25 -> 0.4, repeat-Protect odds, utility/switch modeling)
-  with only same-session delta A/Bs, never a fresh full superiority run.
-- **Scaling:** shortlist width and horizon on/off have isolation unit tests
-  (zero-weight controls) but no paired strength comparison in this checkout.
-- **Latency:** point samples exist (6.5ms/decision in July; 0.48s vs 0.78s
-  state-handling audit in September) but no decision-time distribution on
-  the current default config.
+All A/Bs below ran on the 160-team varied pool
+(`data/selfplay/archetype_pool_150`) with cluster-robust intervals by team,
+via `offline/evaluate_own_spread_pool.py --candidate/--incumbent` overrides.
+`runs/` is gitignored; rerun before claiming these are current.
 
-## 9. Implementation order
+- **Superiority (gate 1): PASS.** Shipped search vs myopic-only, two
+  independent seeds. Screen (seed 20260903, 960 games): 653/960 = 68.0%,
+  cluster-robust CI [0.639, 0.721]. Certification (seed 20260904, 2880
+  games): 1904/2880 = 66.1%, CI [0.622, 0.700]. Both `passed: True` (lower
+  bound above 0.50, no Holm-flagged losing archetype). Evidence:
+  `runs/eval/search_vs_myopic_screen.json`,
+  `runs/eval/search_vs_myopic_gate.json`.
+- **Scaling (gate 2): PASS.** Horizon-on vs horizon-off (seed 20260905, 960
+  games): 553/960 = 57.6%, CI [0.535, 0.617]. Shortlist width 10 vs 4 (seed
+  20260906, 960 games): 523/960 = 54.5%, CI [0.504, 0.586]. Neither narrower
+  configuration wins; both lower bounds clear 0.50. Evidence:
+  `runs/eval/search_horizon_scaling.json`,
+  `runs/eval/search_width_scaling.json`.
+- **Latency (gate 3): PASS.** See section 5: p99 98ms against a 5s budget,
+  zero timer losses, zero fallbacks.
+- **Authority (gate 4): PASS.** Learned components default off and the
+  hybrid margin is positive, pinned by unit test; ladder requires
+  mechanics-complete hybrid with search as decider.
 
-1. Freeze this contract (this file). No behavior changes.
-2. Latency audit: decision-time distribution for the shipped default on live
-   local games; publish p50/p99 and the budget.
-3. Superiority A/B: shipped search vs myopic-only, same session, varied team
-   pool with cluster-robust interval (`offline/evaluate_own_spread_pool.py`
-   `--candidate`/`--incumbent` overrides).
-4. Scaling probe: shortlist width and horizon on/off paired comparisons on
-   the same positions.
-5. Record the numbers here; Problem D passes when gates 1-4 are green
-   together. Any later search-weight change re-opens gates 1-2.
+Problem D is **complete for search and planning**. This does not claim the
+search is optimal -- the position weights are hand-chosen and uncalibrated,
+opponent modeling is heuristic, and the strength edge is measured against the
+myopic player and the heuristic proxy, not against 1700-rated humans. Those
+are Problem E/G concerns (stronger opponents, calibration), not this gate.
+
+## 9. Implementation order (completed)
+
+1. ~~Freeze this contract (this file). No behavior changes.~~
+2. ~~Latency audit: decision-time distribution for the shipped default on live
+   local games; publish p50/p99 and the budget.~~ p50 56ms, p99 98ms.
+3. ~~Superiority A/B: shipped search vs myopic-only, same session, varied team
+   pool with cluster-robust interval.~~ 66.1%, CI [0.622, 0.700].
+4. ~~Scaling probe: shortlist width and horizon on/off paired comparisons on
+   the same positions.~~ Horizon +7.6pts, width +4.5pts, both clear zero.
+5. ~~Record the numbers here; Problem D passes when gates 1-4 are green
+   together.~~ Done. Any later search-weight change re-opens gates 1-2.
