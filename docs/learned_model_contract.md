@@ -114,7 +114,24 @@ Problem E is complete only when all gates hold in the current checkout:
 - Authority wiring untouched: BC blend and value head still default off,
   upset margin still 10, no learned Q in the agent.
 
-### Open items (verified 2026-09-03, commit `f0c741a`)
+### Collection blocker: found and fixed (2026-09-03, commit `68540e1`)
+
+The first costing probe failed closed on turn 1 of every p2-seat game
+(`KeyError: 'p1: ...'`, plus bring-four overflow errors on pool teams).
+Root cause: `patch_public_state` installed the teacher's battle object as the
+perspective side's parser base without checking seats. From the p2 seat that
+put p2-keyed team dicts under p1 request lines, so the first clone step raised
+and the game recorded nothing. Single-hypothesis configs collected fine, which
+is why the defect hid: it is in the multi-belief parser reuse added after the
+August collections, not in the beliefs themselves.
+Fix: reuse the observation as parser state only when its view matches the
+perspective side; otherwise fall back to transcript replay (pre-Part-B
+behavior). Pinned by `test_public_teacher_labels_from_p2_seat_without_keyerror`
+(new `live_mirror_seat_parity` mechanics family) plus a 4-game pool-team
+collection probe: 19 samples, zero fail-closed errors. Collection is
+unblocked; per-decision costing is next.
+
+### Open items
 
 1. **The gated hybrid checkpoint does not load (BLOCKING).** The August
    strength verdict's checkpoint, `runs/full_pipeline/teacher_5x_model/best.pt`
