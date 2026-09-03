@@ -157,7 +157,7 @@ Strength evidence expires when the weights change. Any `PolicyConfig` search
 weight change after a passing A/B re-opens gates 1-2 until re-measured in the
 same session methodology.
 
-## 8. Current checkout audit (2026-09-03, commit `129a35e`)
+## 8. Current checkout audit (2026-09-03, commit `a96ec07`)
 
 ### Exact (built, tested, wiring verified)
 

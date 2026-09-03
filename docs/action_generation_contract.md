@@ -203,7 +203,7 @@ Problem C is complete only when all gates pass in the same clean checkout:
    nothing left to send, which ends the battle rather than producing a
    decision, so no live decision can exercise it.
 
-## 9. Current checkout audit (2026-09-03, commit `129a35e`)
+## 9. Current checkout audit (2026-09-03, commit `a96ec07`)
 
 ### Confirmed implementation
 
@@ -237,7 +237,7 @@ Problem C is complete only when all gates pass in the same clean checkout:
 ### Verification evidence
 
 - Coverage: 7 exact families, 0 partial, 0 missing; all four scopes ready.
-- Gate tests: 18 passed (8 live against the local server, 10 unit).
+- Gate tests: 19 passed (9 live against the local server, 10 unit).
 - Round trip: every saved wire is a member of the rebuilt request's legal set
   at its own cutoff, for team preview, move, and forced-switch decisions
   (`test_saved_wire_replays_against_rebuilt_request`).
@@ -245,11 +245,12 @@ Problem C is complete only when all gates pass in the same clean checkout:
   and the saved wire matches the sent wire on every decision of a full game,
   with zero fallbacks; every enumerated move belongs to the request's
   available moves; wire messages are distinct per joint order.
-- Exclusion: an Encore-disabled move disappears from later enumerations
-  (`test_encored_moves_are_absent_from_live_enumeration`); no double-Mega,
-  double-pass, or same-switch pair is ever enumerated; no Mega variant is
-  offered after evolving; a double-switch order is offered while the bench is
-  live.
+- Exclusion: an Encore-disabled move disappears from later enumerations;
+  an Infestation-trapped slot offers no switches while the untrapped slot
+  keeps its own (`test_trapped_slot_offers_no_switch_live`, on a validated
+  `trapper` team fixture); no double-Mega, double-pass, or same-switch pair
+  is ever enumerated; no Mega variant is offered after evolving; a
+  double-switch order is offered while the bench is live.
 - Forced switch: replacement lists hold only switches/passes, with
   switch-bearing wires.
 - Targets: one move with 2+ targets observed yielding distinct orders across
@@ -257,12 +258,6 @@ Problem C is complete only when all gates pass in the same clean checkout:
 - Unit: double-Mega, double-pass, and same-switch pairs excluded; empty
   enumeration returns `[]`; wire helper returns sendable messages;
   exception fallback is counted.
-- Known limitation, stated not hidden: no trapping move exists on the current
-  teams, so the trapped-slot exclusion has never fired live. It is asserted
-  as an implication on every live decision (a trapped slot must offer no
-  switch), and the mechanism it guards -- request fidelity -- is covered by
-  the available-moves subset check and the Encore test. Forcing a live trap
-  needs a team carrying a trapping move.
 
 Run the fail-closed gate with:
 
