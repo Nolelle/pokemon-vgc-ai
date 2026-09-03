@@ -238,6 +238,21 @@ class TeacherRecordingPlayer(VgcPlayer):
         self.close_public_mirror()
         super()._battle_finished_callback(battle)
 
+    def _fallback_move(self, battle):
+        try:
+            myopic = (
+                score_joint_orders(battle, self.config)
+                if isinstance(battle, DoubleBattle)
+                else []
+            )
+        except Exception:
+            myopic = []
+        if myopic:
+            self.skipped_fallback_to_myopic += 1
+            return myopic[0].order
+        self.skipped_fallback_to_random += 1
+        return self.choose_random_move(battle)
+
     def _recording_failure(self, battle, reason: str):
         """Skip this decision's label but keep playing a sane move.
 
@@ -255,19 +270,7 @@ class TeacherRecordingPlayer(VgcPlayer):
         self.recording_failures.append(
             f"{battle.battle_tag} turn {int(getattr(battle, 'turn', 0) or 0)}: {reason}"
         )
-        try:
-            myopic = (
-                score_joint_orders(battle, self.config)
-                if isinstance(battle, DoubleBattle)
-                else []
-            )
-        except Exception:
-            myopic = []
-        if myopic:
-            self.skipped_fallback_to_myopic += 1
-            return myopic[0].order
-        self.skipped_fallback_to_random += 1
-        return self.choose_random_move(battle)
+        return self._fallback_move(battle)
 
     def decide(self, battle):
         if not isinstance(battle, DoubleBattle):
@@ -305,7 +308,7 @@ class TeacherRecordingPlayer(VgcPlayer):
                     f"available_switches="
                     f"{[len(slot) for slot in battle.available_switches]!r}"
                 )
-                raise
+                return self._fallback_move(battle)
             # One extra myopic pass per decision: the exchange search reorders candidates
             # by simulated outcome, but the safety-slot replay needs each candidate's
             # position in the CHEAP evaluator's order. Worth its cost at collection time
