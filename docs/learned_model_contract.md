@@ -114,22 +114,38 @@ Problem E is complete only when all gates hold in the current checkout:
 - Authority wiring untouched: BC blend and value head still default off,
   upset margin still 10, no learned Q in the agent.
 
-### Collection blocker: found and fixed (2026-09-03, commit `68540e1`)
+### Collection blockers: found and fixed (2026-09-03, commits `68540e1`, `52747c2`)
 
 The first costing probe failed closed on turn 1 of every p2-seat game
 (`KeyError: 'p1: ...'`, plus bring-four overflow errors on pool teams).
 Root cause: `patch_public_state` installed the teacher's battle object as the
 perspective side's parser base without checking seats. From the p2 seat that
 put p2-keyed team dicts under p1 request lines, so the first clone step raised
-and the game recorded nothing. Single-hypothesis configs collected fine, which
-is why the defect hid: it is in the multi-belief parser reuse added after the
-August collections, not in the beliefs themselves.
-Fix: reuse the observation as parser state only when its view matches the
-perspective side; otherwise fall back to transcript replay (pre-Part-B
-behavior). Pinned by `test_public_teacher_labels_from_p2_seat_without_keyerror`
-(new `live_mirror_seat_parity` mechanics family) plus a 4-game pool-team
-collection probe: 19 samples, zero fail-closed errors. Collection is
-unblocked; per-decision costing is next.
+and the game recorded nothing. Pinned by
+`test_public_teacher_labels_from_p2_seat_without_keyerror` (new
+`live_mirror_seat_parity` mechanics family).
+
+The second probe then crashed live play outright: the teacher submitted a
+move the real battle had disabled (`InvalidChoice: ... Dragon Pulse is
+disabled`). Root cause: the snapshot never marked request-withheld moves
+disabled -- Choice lock, Encore-out moves, and anything else the request
+merely withholds never appeared in `MoveSnapshot.disabled` -- so the patched
+mirror root offered the full moveset and exact search ranked a forbidden
+move. Fixed in `snapshot_pokemon`: a known move the live request does not
+offer is now snapshotted `disabled` with reason `"request"`, which the worker
+patch already carried into the sim's move slots. Pinned by unit test plus
+`test_mirror_reproduces_choice_lock_from_snapshot` (new
+`mirror_move_availability` mechanics family).
+
+### Collection cost (measured 2026-09-03, fixed tree)
+
+10 pool-team games vs the heuristic proxy, default production teacher config:
+72 decisions in 156.6s = **2.17 s/decision**, zero fail-closed errors.
+Reference scales (single-threaded): ~12k decisions ≈ 7h; ~77k (August scale)
+≈ 46h. August sharded across ~8 collections, so plan on comparable
+parallelism: 12k ≈ 1h at 8-way, 77k ≈ 6h at 8-way. Training time is on top
+(CPU torch; August recipe: lr 3e-4, hard-example weight 2.0, bin balancing,
+recall-selected checkpoint).
 
 ### Open items
 
