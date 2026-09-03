@@ -273,14 +273,14 @@ def _bare_teacher():
     player.config = PolicyConfig()
     player.distillation_samples = []
     player.recording_failures = []
-    player.skipped_fallback_to_search = 0
+    player.skipped_fallback_to_myopic = 0
     player.skipped_fallback_to_random = 0
     player.fallback_count = 0
     player._recording_decision_index = 0
     return player
 
 
-def test_recording_failure_prefers_shipped_search_over_random(monkeypatch) -> None:
+def test_recording_failure_prefers_myopic_over_random(monkeypatch) -> None:
     import logging
 
     from poke_env.battle.double_battle import DoubleBattle
@@ -293,7 +293,7 @@ def test_recording_failure_prefers_shipped_search_over_random(monkeypatch) -> No
     player = _bare_teacher()
     monkeypatch.setattr(
         distill_module,
-        "search_joint_orders",
+        "score_joint_orders",
         lambda battle_arg, config: [
             ScoredOrder(order=sentinel, score=1.0, breakdown={})
         ],
@@ -301,7 +301,7 @@ def test_recording_failure_prefers_shipped_search_over_random(monkeypatch) -> No
 
     assert player._recording_failure(battle, "boom") is sentinel
     assert len(player.recording_failures) == 1
-    assert player.skipped_fallback_to_search == 1
+    assert player.skipped_fallback_to_myopic == 1
     assert player.skipped_fallback_to_random == 0
     assert player.attempted_decisions() == 0
     assert player.skipped_decisions() == 1
@@ -319,13 +319,13 @@ def test_recording_failure_uses_random_only_when_search_fails(monkeypatch) -> No
     player = _bare_teacher()
 
     def _raise(battle_arg, config):
-        raise RuntimeError("search exploded")
+        raise RuntimeError("evaluator exploded")
 
-    monkeypatch.setattr(distill_module, "search_joint_orders", _raise)
+    monkeypatch.setattr(distill_module, "score_joint_orders", _raise)
     monkeypatch.setattr(player, "choose_random_move", lambda battle_arg: sentinel)
 
     assert player._recording_failure(battle, "boom") is sentinel
-    assert player.skipped_fallback_to_search == 0
+    assert player.skipped_fallback_to_myopic == 0
     assert player.skipped_fallback_to_random == 1
 
 

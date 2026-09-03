@@ -113,7 +113,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=0.05,
         help="fail the run when skipped teacher decisions (exact-search failures "
-        "with a shipped-search fallback played instead) exceed this fraction of "
+        "with a myopic-evaluator fallback played instead) exceed this fraction of "
         "attempted decisions. Skips are always reported by cause; 0 restores the "
         "original fail-on-any-skip behavior.",
     )
@@ -228,7 +228,7 @@ def collect_demonstrations(
     samples: list = []
     attempted = 0
     skipped = 0
-    search_fallbacks = 0
+    myopic_fallbacks = 0
     random_fallbacks = 0
     skip_causes: dict[str, int] = {}
     for game_index in range(games):
@@ -267,7 +267,7 @@ def collect_demonstrations(
             teacher_player.close_public_mirror()
         attempted += teacher_player.attempted_decisions()
         skipped += teacher_player.skipped_decisions()
-        search_fallbacks += teacher_player.skipped_fallback_to_search
+        myopic_fallbacks += teacher_player.skipped_fallback_to_myopic
         random_fallbacks += teacher_player.skipped_fallback_to_random
         for failure in teacher_player.recording_failures:
             cause = failure.split("exact search raised", 1)[-1].strip()[:80] if "exact search raised" in failure else failure.rsplit(":", 1)[-1].strip()[:80]
@@ -294,7 +294,7 @@ def collect_demonstrations(
     )
     print(
         f"collection skips: {skipped}/{attempted} decisions "
-        f"({skip_rate:.3%}; {search_fallbacks} continued on shipped search, "
+        f"({skip_rate:.3%}; {myopic_fallbacks} continued on myopic evaluator, "
         f"{random_fallbacks} on random)",
         flush=True,
     )
