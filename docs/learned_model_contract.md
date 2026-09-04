@@ -161,6 +161,22 @@ short-transcript parsers (tolerated in ingest with a counter). One
 `more choices than unfainted` branch rejection remains OPEN (seen once);
 it is skip-counted, not silent.
 
+### Option A collection (2026-09-04, `runs/collect_a3_*`, this tree)
+
+8 shards x 200 games on `archetype_pool_150`, `--split-by battle
+--collect-only --max-skip-rate 0.08`: **11,759 v3 samples across 160 teams**,
+merged via `offline/merge_collection_shards.py` (same-pool invariant check;
+the stock merger correctly refuses partitioned manifests). Skip rates per
+shard 0-0.6%, all green. One shard's save died silently mid-write and was
+recollected; per-shard datasets verified loadable before merge.
+Fresh v3 holdout: 220 games on `expanded_holdout` (content-disjoint from all
+train pools) -> **1,637 decisions, 0 skips**, `runs/collect_a3_holdout`.
+First train (`runs/train_a3`, August recipe, 12 epochs): validation recall@10
+34.8% -> **93.5%**; holdout guided@10 LCB **0.948** -- short of the 0.98 bar,
+close to August's 11.5k operating point (96.3%/0.954). A 24-epoch rerun
+(`runs/train_a3_24ep`) is testing the plateau hypothesis; soft targets at
+this scale and full Option B (~77k) are the next levers if it plateaus.
+
 ### Open items
 
 1. **The gated hybrid checkpoint does not load (BLOCKING).** The August
