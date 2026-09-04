@@ -270,7 +270,7 @@ def collect_demonstrations(
         myopic_fallbacks += teacher_player.skipped_fallback_to_myopic
         random_fallbacks += teacher_player.skipped_fallback_to_random
         for failure in teacher_player.recording_failures:
-            cause = failure.split("exact search raised", 1)[-1].strip()[:80] if "exact search raised" in failure else failure.rsplit(":", 1)[-1].strip()[:80]
+            cause = failure.split("exact search raised", 1)[-1].strip()[:300] if "exact search raised" in failure else failure.rsplit(":", 1)[-1].strip()[:300]
             skip_causes[cause] = skip_causes.get(cause, 0) + 1
         if teacher_player.fallback_count:
             raise RuntimeError(
