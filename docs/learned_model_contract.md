@@ -201,12 +201,16 @@ it is skip-counted, not silent.
 ## 7. Implementation order
 
 1. Freeze this contract (this file). No behavior changes.
-2. Restore a loadable guided checkpoint: train (imitation, v4 arch) on
-   public-mirror teacher demonstrations, then run the recall + strength
-   gates on the new file. This is the first training run of Problem E/F and
-   needs a costed collection plan first (teacher labels cost ~10x per
-   decision; the 76k-decision scale of last time is the reference).
-3. Durability: store the new gated checkpoint, its dataset reference, and its
-   recipe outside gitignored scratch.
-4. Record the numbers here; Problem E passes when gates 1-5 are green.
-   Problem E is **not passed** until then: gates 1-2 are unrunnable today.
+2. **Scale-up collection (Option A, running 2026-09-04):** 8 shards x 200
+   games on `archetype_pool_150` (byte-disjoint from the holdout below),
+   `--split-by battle --collect-only --max-skip-rate 0.08`, seeds
+   31001-31008, out `runs/collect_a3_s{1..8}` (~12k decisions expected).
+   Shard manifests: `data/selfplay/collect_a3/shard_{1..8}.json` (20 teams
+   each, regenerated from the pool manifest; all scratch, gitignored).
+3. Fresh v3 holdout demonstrations on `data/selfplay/expanded_holdout`
+   (150 teams, disjoint by content hash) for the recall verdict.
+4. Merge (`offline/merge_demonstrations.py`) + train with the August recipe
+   (lr 3e-4, `--hard-example-weight 2.0`, `--balance-action-count-bins`,
+   recall-selected) to a v4 checkpoint in durable storage.
+5. Recall gate on the fresh holdout, then the powered strength gate.
+   Record the numbers here; Problem E passes when gates 1-5 are green.
