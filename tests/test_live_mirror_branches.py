@@ -531,3 +531,48 @@ def test_mirror_branches_survive_a_patched_encore_volatile() -> None:
             assert scored, "exact search over an encored position returned no orders"
         finally:
             source.close()
+
+
+def test_p2_seat_labeling_survives_field_end_without_start() -> None:
+    """Regression: p2-seat mirror branches died on Trick Room expiry.
+
+    The p2 seat reuses short-transcript parsers that never saw the field
+    start, so the first `-fieldend` raised `KeyError(Field.TRICK_ROOM)` out of
+    clone stepping and the decision recorded nothing. End-without-start is now
+    tolerated in ingest (the outcome matches the message either way); anything
+    else still fails loudly.
+    """
+    from vgc.rl.distill import public_information_exact_search
+
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    meta1 = (REPO_ROOT / "teams" / "meta1.packed.txt").read_text().strip()
+    dev = (REPO_ROOT / "teams" / "dev.packed.txt").read_text().strip()
+    search_config = replace(
+        COMPACT_CONFIG,
+        search_our_candidates=4,
+        exact_search_spread_hypotheses=1,
+        exact_search_set_hypotheses=1,
+        exact_search_bring_hypotheses=1,
+        exact_search_total_hypotheses=1,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-p2-fieldend-source",
+            meta1,
+            dev,
+            seed=[61, 62, 63, 64],
+        )
+        try:
+            source.step({"p1": "team 2134", "p2": "team 1234"})
+            source.step(
+                {"p1": "move trickroom, move protect", "p2": "move protect, move protect"}
+            )
+            assert set(source.sides_to_move()) == {"p1", "p2"}
+            scored = public_information_exact_search(
+                source.battles["p2"], search_config, dev
+            )
+            assert scored, "p2-seat labeling with an active field returned no orders"
+        finally:
+            source.close()

@@ -107,9 +107,16 @@ def _mirror_public_board(target: DoubleBattle, observation: DoubleBattle) -> Non
     ):
         _mirror_public_pokemon(source_mon, dest_mon)
 
+# Protocol end-messages that only remove state. A mirror-root parser rebased
+# mid-game may never have seen the matching start (short transcript), and the
+# engine never ends what it did not start -- so dropping a removal for untracked
+# state leaves the parser exactly where the message would have left it. Anything
+# else still fails loudly: tolerance here must never mask a real desync.
+_TOLERATED_END_WITHOUT_START = frozenset({"-fieldend", "-sideend"})
+
 # Protocol tags the direct sim emits that carry no battle state and that poke-env's
-# parse_message would raise NotImplementedError on (it has no default branch). Kept as a
-# short EXPLICIT allowlist rather than "skip anything unrecognized" so that a genuinely
+# parse_message would raise NotImplementedError on (it has no default branch). Kept as an
+# explicit allowlist rather than "skip anything unrecognized" so that a genuinely
 # unparsed state-carrying message fails loudly instead of corrupting observations.
 #
 # The membership here was found empirically, not guessed: a discovery run over 12
@@ -618,6 +625,19 @@ class DirectBattle:
             else:
                 try:
                     battle.parse_message(split)
+                except KeyError as exc:
+                    if split[1] in _TOLERATED_END_WITHOUT_START:
+                        self._tolerated_end_without_start = (
+                            getattr(self, "_tolerated_end_without_start", 0) + 1
+                        )
+                        _LOGGER.debug(
+                            "battle %s tolerated %s without tracked start: %s",
+                            self.battle_id,
+                            split[1],
+                            exc,
+                        )
+                        continue
+                    raise
                 except Exception as exc:
                     perspective = getattr(self, "_patch_perspective", None)
                     if perspective is not None and side != perspective:

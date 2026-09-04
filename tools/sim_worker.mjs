@@ -249,6 +249,22 @@ async function handleClone(msg) {
 	// Round-trip through JSON so sibling clones cannot share mutable Pokemon/set state.
 	const serialized = JSON.parse(JSON.stringify(sourceBattle.toJSON()));
 	stream.battle = Battle.fromJSON(serialized);
+	// Deserialization leaves `lastMove`/`lastMoveUsed` as unresolved "[DataMove:...]"
+	// reference strings. Encore's start handler reads `lastMove.flags`, which crashes
+	// on a string (`failencore`), so resolve them back to dex objects. Anything
+	// unresolvable keeps its serialized form rather than inventing a move.
+	for (const side of stream.battle.sides) {
+		for (const pokemon of side.pokemon) {
+			for (const field of ['lastMove', 'lastMoveUsed', 'lastMoveEncore']) {
+				const value = pokemon[field];
+				const match = typeof value === 'string' && value.match(/^\[DataMove:(.+)\]$/);
+				if (match) {
+					const resolved = stream.battle.dex.moves.get(match[1]);
+					if (resolved && resolved.exists !== false) pokemon[field] = resolved;
+				}
+			}
+		}
+	}
 	stream.battle.restart((type, data) => {
 		if (Array.isArray(data)) data = data.join("\n");
 		stream.pushMessage(type, data);
