@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import random
+import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -299,9 +301,14 @@ class TeacherRecordingPlayer(VgcPlayer):
                     mirror=self._public_exact_mirror,
                 )
             except Exception as exc:
+                frames = traceback.extract_tb(exc.__traceback__, limit=4)
+                location = " <- ".join(
+                    f"{Path(frame.filename).name}:{frame.lineno}" for frame in frames
+                )
                 self.recording_failures.append(
                     f"{battle.battle_tag} turn "
                     f"{int(getattr(battle, 'turn', 0) or 0)}: exact search raised {exc!r}; "
+                    f"at {location}; "
                     f"force_switch={getattr(battle, 'force_switch', None)!r}, "
                     f"wait={getattr(battle, 'wait', None)!r}, "
                     f"available_moves={[len(slot) for slot in battle.available_moves]!r}, "
