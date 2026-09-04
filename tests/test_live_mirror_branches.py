@@ -576,3 +576,52 @@ def test_p2_seat_labeling_survives_field_end_without_start() -> None:
             assert scored, "p2-seat labeling with an active field returned no orders"
         finally:
             source.close()
+
+
+def test_mirror_activates_custom_mega_forme_by_base_species() -> None:
+    """Regression: patching a mega-evolved custom forme failed activation.
+
+    The snapshot reports the mega id (`floettemega`) while the template sim
+    still carries the pre-evolution id (`floetteeternal`), so exact matching
+    found nothing and `patchSide` threw `cannot activate ...`. Matching falls
+    back to dex base species, under which both ids agree.
+    """
+    from vgc.rl.distill import public_information_exact_search
+
+    pool_team = POOL / "gardevoir_maushold" / "team_06.packed.txt"
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    if not pool_team.is_file():
+        pytest.skip("archetype_pool_150 teams are unavailable")
+    team = pool_team.read_text().strip()
+    search_config = replace(
+        COMPACT_CONFIG,
+        search_our_candidates=4,
+        exact_search_spread_hypotheses=1,
+        exact_search_set_hypotheses=1,
+        exact_search_bring_hypotheses=1,
+        exact_search_total_hypotheses=1,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker,
+            "live-mirror-custom-mega-source",
+            team,
+            team,
+            seed=[71, 72, 73, 74],
+        )
+        try:
+            source.step({"p1": "team 4123", "p2": "team 1234"})
+            source.step(
+                {
+                    "p1": "move dazzlinggleam mega, move protect",
+                    "p2": "move protect, move protect",
+                }
+            )
+            assert set(source.sides_to_move()) == {"p1", "p2"}
+            scored = public_information_exact_search(
+                source.battles["p1"], search_config, team
+            )
+            assert scored, "labeling a mega-evolved custom forme returned no orders"
+        finally:
+            source.close()

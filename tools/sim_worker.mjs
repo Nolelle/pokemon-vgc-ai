@@ -349,13 +349,34 @@ function effectState(id, target, snapshot, battle, hidden = {}) {
 	return state;
 }
 
+function dexBaseId(battle, speciesId) {
+	if (!speciesId) return '';
+	const entry = battle.dex.species.get(speciesId);
+	const base = entry && entry.exists !== false && entry.baseSpecies
+		? String(entry.baseSpecies).toLowerCase().replace(/[^a-z0-9]/g, '')
+		: '';
+	return base || String(speciesId).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function findPokemon(side, snapshot, used) {
 	const ids = new Set([snapshot.species_id, snapshot.base_species_id].filter(Boolean));
+	const battle = side.battle;
 	for (const pokemon of side.pokemon) {
 		if (used.has(pokemon)) continue;
 		if (ids.has(pokemon.species.id) || ids.has(pokemon.baseSpecies.id)) {
 			used.add(pokemon);
 			return pokemon;
+		}
+		if (battle) {
+			const want = dexBaseId(battle, snapshot.base_species_id || snapshot.species_id);
+			if (
+				want &&
+				(dexBaseId(battle, pokemon.species.id) === want ||
+					dexBaseId(battle, pokemon.baseSpecies.id) === want)
+			) {
+				used.add(pokemon);
+				return pokemon;
+			}
 		}
 	}
 	return null;
@@ -496,7 +517,9 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 		const pokemon = bySpecies.get(speciesId) || side.pokemon.find(
 			(candidate) => candidate.species.id === speciesId || candidate.baseSpecies.id === speciesId
 		);
-		if (!pokemon) throw new Error(`cannot activate ${speciesId} on ${side.id}`);
+		if (!pokemon) {
+			throw new Error(`cannot activate ${speciesId} on ${side.id}`);
+		}
 		pokemon.isActive = true;
 		return pokemon;
 	});
