@@ -147,6 +147,20 @@ parallelism: 12k ≈ 1h at 8-way, 77k ≈ 6h at 8-way. Training time is on top
 (CPU torch; August recipe: lr 3e-4, hard-example weight 2.0, bin balancing,
 recall-selected checkpoint).
 
+### Pilot run (2026-09-04, `runs/pilot_v4`, this tree)
+
+60 pool games, default 6-opponent mix, production teacher config, 1 CPU epoch:
+**457 v3-public-information samples across 52 teams (369 train / 88
+validation), both split skip-rate gates green, checkpoint saved as
+`candidate-policy-value-v4-mechanics`**. Validation recall@10 37.5% -> 52.3%
+and teacher-rank median 21.5 -> 8.0 from random init -- the pipeline learns
+end to end. Wall time ~20 min all-in. Two more defect classes appeared on the
+way here and are now covered: clone `lastMove` deserialization (Encore-branch
+sim crash; fixed in the worker clone path) and end-without-start on
+short-transcript parsers (tolerated in ingest with a counter). One
+`more choices than unfainted` branch rejection remains OPEN (seen once);
+it is skip-counted, not silent.
+
 ### Open items
 
 1. **The gated hybrid checkpoint does not load (BLOCKING).** The August
