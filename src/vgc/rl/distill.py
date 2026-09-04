@@ -301,7 +301,7 @@ class TeacherRecordingPlayer(VgcPlayer):
                     mirror=self._public_exact_mirror,
                 )
             except Exception as exc:
-                frames = traceback.extract_tb(exc.__traceback__, limit=4)
+                frames = traceback.extract_tb(exc.__traceback__, limit=6)
                 location = " <- ".join(
                     f"{Path(frame.filename).name}:{frame.lineno}" for frame in frames
                 )
