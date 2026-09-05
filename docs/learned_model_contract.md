@@ -174,9 +174,12 @@ train pools) -> **1,637 decisions, 0 skips**, `runs/collect_a3_holdout`.
 First train (`runs/train_a3`, August recipe, 12 epochs): validation recall@10
 34.8% -> **93.5%**; holdout guided@10 LCB **0.948** -- short of the 0.98 bar,
 close to August's 11.5k operating point (96.3%/0.954). The 24-epoch rerun
-(`runs/train_a3_24ep`) plateaued flat at ~93% from epoch 5, so epochs are
-spent as a lever. Soft-target training at this scale (`runs/train_a3_soft`,
-running) is next; full Option B (~77k) after that if needed.
+(`runs/train_a3_24ep`) plateaued flat at ~93% from epoch 5, and soft targets
+at this scale (`runs/train_a3_soft`) read 94.0% val / **0.951** holdout LCB --
+indistinguishable from hard labels. Three recipes agree near ~0.95: data
+scale binds, not training choices. Full Option B (~77k, August's clearing
+scale) is the remaining lever; it needs ~9 GB of disk (currently ~2 GB free)
+plus the deferred deletions, and ~6h at 8-way sharding.
 
 ### Open items
 
