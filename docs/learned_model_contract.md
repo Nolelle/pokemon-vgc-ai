@@ -173,9 +173,10 @@ Fresh v3 holdout: 220 games on `expanded_holdout` (content-disjoint from all
 train pools) -> **1,637 decisions, 0 skips**, `runs/collect_a3_holdout`.
 First train (`runs/train_a3`, August recipe, 12 epochs): validation recall@10
 34.8% -> **93.5%**; holdout guided@10 LCB **0.948** -- short of the 0.98 bar,
-close to August's 11.5k operating point (96.3%/0.954). A 24-epoch rerun
-(`runs/train_a3_24ep`) is testing the plateau hypothesis; soft targets at
-this scale and full Option B (~77k) are the next levers if it plateaus.
+close to August's 11.5k operating point (96.3%/0.954). The 24-epoch rerun
+(`runs/train_a3_24ep`) plateaued flat at ~93% from epoch 5, so epochs are
+spent as a lever. Soft-target training at this scale (`runs/train_a3_soft`,
+running) is next; full Option B (~77k) after that if needed.
 
 ### Open items
 
