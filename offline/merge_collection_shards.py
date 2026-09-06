@@ -57,9 +57,13 @@ def load_shard_datasets(paths: Sequence[Path]) -> tuple[list, list[dict[str, obj
     for path in paths:
         chunk, metadata = load_demonstration_dataset(path)
         print(f"{path}: {len(chunk)} samples", flush=True)
-        stem = path.stem
+        # Namespace by parent directory (shard id): every shard file is named
+        # demonstrations.pt and numbers its games from zero, so the stem alone
+        # does not disambiguate.
+        namespace = path.parent.name
         merged.extend(
-            replace(sample, battle_id=f"{stem}:{sample.battle_id}") for sample in chunk
+            replace(sample, battle_id=f"{namespace}:{sample.battle_id}")
+            for sample in chunk
         )
         source_metadata.append(metadata)
     for field in INVARIANT_FIELDS:

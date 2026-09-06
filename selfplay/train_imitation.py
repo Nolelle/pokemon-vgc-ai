@@ -13,6 +13,7 @@ import hashlib
 import json
 import random
 import subprocess
+import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
     ) from exc
 
 from vgc.config import FORMAT_ID, REPO_ROOT
+
+sys.path.insert(0, str(REPO_ROOT))  # sibling `offline/` tooling (shard loading)
 from vgc.models import PolicyConfig
 from vgc.rl.agents import DirectAgent, make_direct_agent
 from vgc.rl.demonstrations import (

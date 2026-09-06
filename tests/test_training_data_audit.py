@@ -160,8 +160,10 @@ def _shard_pair(tmp_path):
     """Two shard files sharing one battle id, as real sharded collection does."""
     from offline.merge_collection_shards import load_shard_datasets
 
-    first = tmp_path / "shard-a.pt"
-    second = tmp_path / "shard-b.pt"
+    first = tmp_path / "shard-a" / "demonstrations.pt"
+    second = tmp_path / "shard-b" / "demonstrations.pt"
+    first.parent.mkdir()
+    second.parent.mkdir()
     save_demonstrations(
         first, [_sample("imitation-train-000000", "team-a", "team-b")], metadata=_metadata()
     )
@@ -251,8 +253,10 @@ def test_audit_fails_multi_file_fingerprint_mismatch(tmp_path) -> None:
 def test_load_training_dataset_single_keeps_ids_multi_namespaces(tmp_path) -> None:
     from selfplay.train_imitation import load_training_dataset
 
-    first = tmp_path / "shard-a.pt"
-    second = tmp_path / "shard-b.pt"
+    first = tmp_path / "shard-a" / "demonstrations.pt"
+    second = tmp_path / "shard-b" / "demonstrations.pt"
+    first.parent.mkdir()
+    second.parent.mkdir()
     save_demonstrations(first, [_sample("game-0", "team-a", "team-b")], metadata=_metadata())
     save_demonstrations(second, [_sample("game-0", "team-c", "team-d")], metadata=_metadata())
 
