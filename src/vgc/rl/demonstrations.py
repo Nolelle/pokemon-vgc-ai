@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import random
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -233,24 +234,40 @@ def _split_group(sample: DistillationSample, group_by: SplitGroup) -> str:
 def save_split_manifest(
     path: Path,
     *,
-    dataset_path: Path,
+    dataset_path: Path | None = None,
+    dataset_paths: Sequence[Path] | None = None,
     train: list[DistillationSample],
     validation: list[DistillationSample],
     group_by: SplitGroup,
     seed: int,
     val_fraction: float,
 ) -> None:
+    """Record which groups went where. Single-file callers pass `dataset_path`
+    (behavior unchanged); multi-file training passes `dataset_paths` and gets
+    the same schema with per-file fingerprints instead of one.
+    """
+
+    if (dataset_path is None) == (dataset_paths is None):
+        raise ValueError("pass exactly one of dataset_path and dataset_paths")
     train_groups = sorted({_split_group(sample, group_by) for sample in train})
     validation_groups = sorted({_split_group(sample, group_by) for sample in validation})
     if set(train_groups) & set(validation_groups):
         raise ValueError("training and validation groups overlap")
+    if dataset_paths is None:
+        assert dataset_path is not None
+        dataset_field: object = str(dataset_path.resolve())
+        sha_field: object = file_sha256(dataset_path)
+    else:
+        resolved = sorted(str(entry.resolve()) for entry in dataset_paths)
+        dataset_field = resolved
+        sha_field = {entry: file_sha256(Path(entry)) for entry in resolved}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "schema": SPLIT_MANIFEST_VERSION,
-                "dataset": str(dataset_path.resolve()),
-                "dataset_sha256": file_sha256(dataset_path),
+                "dataset": dataset_field,
+                "dataset_sha256": sha_field,
                 "group_by": group_by,
                 "seed": seed,
                 "validation_fraction": val_fraction,

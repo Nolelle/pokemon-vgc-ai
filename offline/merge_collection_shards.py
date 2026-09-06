@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,25 +41,43 @@ INVARIANT_FIELDS = (
 )
 
 
+def load_shard_datasets(paths: Sequence[Path]) -> tuple[list, list[dict[str, object]]]:
+    """Load shard files, enforcing the same-pool invariants. Shared by merge and
+    multi-file training so both paths accept exactly the same inputs.
+
+    Battle ids are namespaced by shard file stem: every shard numbers its games
+    from zero (`imitation-train-000000` exists in each one), so without this the
+    audit's duplicate-decision check false-positives across shards.
+    """
+
+    from dataclasses import replace
+
+    merged: list = []
+    source_metadata: list[dict[str, object]] = []
+    for path in paths:
+        chunk, metadata = load_demonstration_dataset(path)
+        print(f"{path}: {len(chunk)} samples", flush=True)
+        stem = path.stem
+        merged.extend(
+            replace(sample, battle_id=f"{stem}:{sample.battle_id}") for sample in chunk
+        )
+        source_metadata.append(metadata)
+    for field in INVARIANT_FIELDS:
+        values = {repr(metadata[field]) for metadata in source_metadata}
+        if len(values) != 1:
+            raise SystemExit(f"shard datasets disagree on {field}")
+    return merged, source_metadata
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("inputs", type=Path, nargs="+")
     args = parser.parse_args()
 
-    merged: list = []
-    source_metadata: list[dict[str, object]] = []
-    for path in args.inputs:
-        chunk, metadata = load_demonstration_dataset(path)
-        print(f"{path}: {len(chunk)} samples", flush=True)
-        merged.extend(chunk)
-        source_metadata.append(metadata)
+    merged, source_metadata = load_shard_datasets(args.inputs)
     battles = len({sample.battle_id for sample in merged})
     teams = len({sample.team_id for sample in merged if sample.team_id})
-    for field in INVARIANT_FIELDS:
-        values = {repr(metadata[field]) for metadata in source_metadata}
-        if len(values) != 1:
-            raise SystemExit(f"shard datasets disagree on {field}")
     metadata = {
         **source_metadata[0],
         "created_at_utc": datetime.now(UTC).isoformat(),

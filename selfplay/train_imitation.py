@@ -13,6 +13,7 @@ import hashlib
 import json
 import random
 import subprocess
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,7 +79,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--team", type=Path, default=DEFAULT_TEAM)
     parser.add_argument("--team-manifest", type=Path, default=None)
     parser.add_argument("--opponents", default=DEFAULT_OPPONENTS)
-    parser.add_argument("--dataset", type=Path, default=None, help="reuse a saved .pt dataset")
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="reuse saved .pt datasets (several paths train on their concatenation, "
+        "which must pass the same-pool invariant check as merge_collection_shards)",
+    )
     parser.add_argument("--bc-checkpoint", type=Path, default=DEFAULT_BC_CHECKPOINT)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -428,6 +436,27 @@ def evaluate_games(
     return results
 
 
+def load_training_dataset(paths: Sequence[Path]) -> tuple[list, dict[str, object]]:
+    """Load one dataset file or concatenate several shard files.
+
+    Multi-file inputs pass the same same-pool invariant check as
+    `offline/merge_collection_shards.py`, and battle ids are namespaced per
+    shard file so the audit cannot mistake identically-numbered games for
+    duplicated decisions.
+    """
+
+    if len(paths) == 1:
+        return load_demonstration_dataset(paths[0])
+    from offline.merge_collection_shards import load_shard_datasets
+
+    samples, shard_metadata = load_shard_datasets(paths)
+    metadata = {
+        **shard_metadata[0],
+        "source_datasets": [str(path.resolve()) for path in paths],
+    }
+    return samples, metadata
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     if args.games <= 0 and args.dataset is None:
@@ -479,14 +508,14 @@ def main(argv: list[str] | None = None) -> None:
 
     with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
         if args.dataset is not None:
-            samples, metadata = load_demonstration_dataset(args.dataset)
+            samples, metadata = load_training_dataset(args.dataset)
             train_samples, validation_samples = split_samples_grouped(
                 samples,
                 val_fraction=args.val_fraction,
                 seed=args.seed,
                 group_by=args.split_by,
             )
-            audited_dataset_path = args.dataset
+            audited_dataset_path = args.dataset[0] if len(args.dataset) == 1 else None
         else:
             metadata = dataset_metadata(
                 args,
@@ -543,15 +572,36 @@ def main(argv: list[str] | None = None) -> None:
                 )
             save_demonstrations(dataset_path, samples, metadata=metadata)
             audited_dataset_path = dataset_path
-        save_split_manifest(
-            split_manifest_path,
-            dataset_path=audited_dataset_path,
-            train=train_samples,
-            validation=validation_samples,
-            group_by=args.split_by,
-            seed=args.seed,
-            val_fraction=args.val_fraction,
-        )
+        if args.dataset is not None and len(args.dataset) == 1:
+            save_split_manifest(
+                split_manifest_path,
+                dataset_path=args.dataset[0],
+                train=train_samples,
+                validation=validation_samples,
+                group_by=args.split_by,
+                seed=args.seed,
+                val_fraction=args.val_fraction,
+            )
+        elif args.dataset is not None:
+            save_split_manifest(
+                split_manifest_path,
+                dataset_paths=args.dataset,
+                train=train_samples,
+                validation=validation_samples,
+                group_by=args.split_by,
+                seed=args.seed,
+                val_fraction=args.val_fraction,
+            )
+        else:
+            save_split_manifest(
+                split_manifest_path,
+                dataset_path=audited_dataset_path,
+                train=train_samples,
+                validation=validation_samples,
+                group_by=args.split_by,
+                seed=args.seed,
+                val_fraction=args.val_fraction,
+            )
 
         if args.collect_only:
             metrics: dict[str, object] = {
@@ -565,7 +615,11 @@ def main(argv: list[str] | None = None) -> None:
                 "train_samples": len(train_samples),
                 "validation_samples": len(validation_samples),
                 "dataset_metadata": metadata,
-                "dataset": str(audited_dataset_path),
+                "dataset": (
+                    str(audited_dataset_path)
+                    if audited_dataset_path is not None
+                    else sorted(str(path.resolve()) for path in (args.dataset or ()))
+                ),
                 "split_manifest": str(split_manifest_path),
             }
             metrics_path = args.out_dir / "collection_summary.json"

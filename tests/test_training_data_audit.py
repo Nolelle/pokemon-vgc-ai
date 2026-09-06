@@ -154,3 +154,114 @@ def test_audit_fails_duplicate_decision_and_illegal_teacher_reference(tmp_path) 
     assert report["verdict"] == "FAIL"
     assert any("teacher action does not match" in error for error in report["errors"])
     assert any("duplicate battle/decision" in error for error in report["errors"])
+
+
+def _shard_pair(tmp_path):
+    """Two shard files sharing one battle id, as real sharded collection does."""
+    from offline.merge_collection_shards import load_shard_datasets
+
+    first = tmp_path / "shard-a.pt"
+    second = tmp_path / "shard-b.pt"
+    save_demonstrations(
+        first, [_sample("imitation-train-000000", "team-a", "team-b")], metadata=_metadata()
+    )
+    save_demonstrations(
+        second, [_sample("imitation-train-000000", "team-c", "team-d")], metadata=_metadata()
+    )
+    return first, second, load_shard_datasets
+
+
+def test_shard_loader_namespaces_colliding_battle_ids(tmp_path) -> None:
+    first, second, load_shard_datasets = _shard_pair(tmp_path)
+
+    samples, _ = load_shard_datasets([first, second])
+
+    assert [sample.battle_id for sample in samples] == [
+        "shard-a:imitation-train-000000",
+        "shard-b:imitation-train-000000",
+    ]
+
+
+def test_shard_loader_rejects_heterogeneous_metadata(tmp_path) -> None:
+    first, second, load_shard_datasets = _shard_pair(tmp_path)
+    import torch
+
+    payload = torch.load(second, map_location="cpu", weights_only=False)
+    payload["metadata"] = {**payload["metadata"], "format_id": "something-else"}
+    torch.save(payload, second)
+
+    with pytest.raises(SystemExit, match="disagree on format_id"):
+        load_shard_datasets([first, second])
+
+
+def test_audit_passes_multi_file_manifest(tmp_path) -> None:
+    first = tmp_path / "shard-a.pt"
+    second = tmp_path / "shard-b.pt"
+    manifest = tmp_path / "split_manifest.json"
+    train = [_sample("battle-a", "team-a", "team-b")]
+    validation = [_sample("battle-b", "team-c", "team-d")]
+    save_demonstrations(first, train, metadata=_metadata())
+    save_demonstrations(second, validation, metadata=_metadata())
+    save_split_manifest(
+        manifest,
+        dataset_paths=[first, second],
+        train=train,
+        validation=validation,
+        group_by="team",
+        seed=1,
+        val_fraction=0.5,
+    )
+
+    report = audit([first, second], manifest)
+
+    assert report["verdict"] == "PASS", report["errors"]
+    assert report["counts"]["sample_count"] == 2
+    assert isinstance(report["dataset"], list)
+
+
+def test_audit_fails_multi_file_fingerprint_mismatch(tmp_path) -> None:
+    import torch
+
+    first = tmp_path / "shard-a.pt"
+    second = tmp_path / "shard-b.pt"
+    manifest = tmp_path / "split_manifest.json"
+    train = [_sample("battle-a", "team-a", "team-b")]
+    validation = [_sample("battle-b", "team-c", "team-d")]
+    save_demonstrations(first, train, metadata=_metadata())
+    save_demonstrations(second, validation, metadata=_metadata())
+    save_split_manifest(
+        manifest,
+        dataset_paths=[first, second],
+        train=train,
+        validation=validation,
+        group_by="team",
+        seed=1,
+        val_fraction=0.5,
+    )
+    payload = torch.load(second, map_location="cpu", weights_only=False)
+    payload["samples"].append(_sample("battle-c", "team-c", "team-d"))
+    torch.save(payload, second)
+
+    report = audit([first, second], manifest)
+
+    assert report["verdict"] == "FAIL"
+    assert any("fingerprint does not match" in error for error in report["errors"])
+
+
+def test_load_training_dataset_single_keeps_ids_multi_namespaces(tmp_path) -> None:
+    from selfplay.train_imitation import load_training_dataset
+
+    first = tmp_path / "shard-a.pt"
+    second = tmp_path / "shard-b.pt"
+    save_demonstrations(first, [_sample("game-0", "team-a", "team-b")], metadata=_metadata())
+    save_demonstrations(second, [_sample("game-0", "team-c", "team-d")], metadata=_metadata())
+
+    single_samples, _ = load_training_dataset([first])
+    assert [sample.battle_id for sample in single_samples] == ["game-0"]
+
+    multi_samples, multi_metadata = load_training_dataset([first, second])
+    assert [sample.battle_id for sample in multi_samples] == [
+        "shard-a:game-0",
+        "shard-b:game-0",
+    ]
+    assert len(multi_metadata["source_datasets"]) == 2

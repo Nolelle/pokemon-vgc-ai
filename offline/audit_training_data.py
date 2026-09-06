@@ -21,12 +21,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--dataset", type=Path, nargs="+", required=True)
     parser.add_argument(
         "--split-manifest",
         type=Path,
         default=None,
-        help="default: split_manifest.json beside --dataset",
+        help="default: split_manifest.json beside the (single) --dataset",
     )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
@@ -42,7 +42,9 @@ def _split_group(sample, group_by: str) -> str:
     return sample.battle_id if group_by == "battle" else str(sample.team_sha256)
 
 
-def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
+def audit(
+    dataset_paths: Path | list[Path], split_manifest_path: Path
+) -> dict[str, Any]:
     import torch
 
     from vgc.rl.demonstrations import (
@@ -53,41 +55,77 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
         validate_sample,
     )
 
+    if isinstance(dataset_paths, Path):
+        dataset_paths = [dataset_paths]
+    label = (
+        str(dataset_paths[0].resolve())
+        if len(dataset_paths) == 1
+        else f"{len(dataset_paths)} datasets starting with {dataset_paths[0].resolve()}"
+    )
+
+    def _fail(message: str) -> dict[str, Any]:
+        return {
+            "schema": "vgc-training-data-audit-v1",
+            "dataset": label,
+            "verdict": "FAIL",
+            "errors": [message],
+            "counts": {},
+            "examples": [],
+        }
+
     errors: list[str] = []
-    try:
-        payload = torch.load(dataset_path, map_location="cpu", weights_only=False)
-    except Exception as exc:  # noqa: BLE001 - the audit should report, not traceback
-        return {
-            "schema": "vgc-training-data-audit-v1",
-            "dataset": str(dataset_path.resolve()),
-            "verdict": "FAIL",
-            "errors": [f"dataset could not be read: {type(exc).__name__}: {exc}"],
-            "counts": {},
-            "examples": [],
-        }
+    payloads: list[dict] = []
+    for dataset_path in dataset_paths:
+        try:
+            payload = torch.load(dataset_path, map_location="cpu", weights_only=False)
+        except Exception as exc:  # noqa: BLE001 - the audit should report, not traceback
+            return _fail(f"dataset could not be read: {type(exc).__name__}: {exc}")
+        if not isinstance(payload, dict):
+            return _fail(
+                f"dataset payload must be a mapping, got {type(payload).__name__}"
+            )
+        payloads.append(payload)
 
-    if not isinstance(payload, dict):
-        return {
-            "schema": "vgc-training-data-audit-v1",
-            "dataset": str(dataset_path.resolve()),
-            "verdict": "FAIL",
-            "errors": [f"dataset payload must be a mapping, got {type(payload).__name__}"],
-            "counts": {},
-            "examples": [],
-        }
-
-    if payload.get("format") != DEMONSTRATION_FORMAT_VERSION:
-        errors.append(
-            f"unsupported dataset format {payload.get('format')!r}; "
-            f"expected {DEMONSTRATION_FORMAT_VERSION!r}"
-        )
-    metadata = dict(payload.get("metadata") or {})
+    for payload in payloads:
+        if payload.get("format") != DEMONSTRATION_FORMAT_VERSION:
+            errors.append(
+                f"unsupported dataset format {payload.get('format')!r}; "
+                f"expected {DEMONSTRATION_FORMAT_VERSION!r}"
+            )
+    metadata = dict(payloads[0].get("metadata") or {})
     try:
         validate_metadata(metadata)
     except ValueError as exc:
         errors.append(str(exc))
 
-    samples = list(payload.get("samples") or [])
+    samples = [sample for payload in payloads for sample in (payload.get("samples") or [])]
+
+    def _payload_counts(payload: dict) -> dict[str, int]:
+        file_samples = list(payload.get("samples") or [])
+        return {
+            "sample_count": len(file_samples),
+            "battle_count": len(
+                {
+                    sample.battle_id
+                    for sample in file_samples
+                    if isinstance(getattr(sample, "battle_id", None), str)
+                }
+            ),
+            "team_count": len(
+                {
+                    sample.team_sha256
+                    for sample in file_samples
+                    if isinstance(getattr(sample, "team_sha256", None), str)
+                }
+            ),
+        }
+
+    for path, payload in zip(dataset_paths, payloads):
+        for field, actual in _payload_counts(payload).items():
+            if payload.get(field) != actual:
+                errors.append(
+                    f"{path.name}: stored {field}={payload.get(field)!r}, actual={actual}"
+                )
     invalid_examples = 0
     valid_samples = []
     for index, sample in enumerate(samples):
@@ -114,6 +152,8 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
     if duplicate_decisions:
         errors.append(f"{duplicate_decisions} duplicate battle/decision ids")
 
+    # Combined counts are reported below; each file's stored counts were
+    # already checked against its own samples above.
     recorded_counts = {
         "sample_count": len(samples),
         "battle_count": len(
@@ -131,9 +171,6 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
             }
         ),
     }
-    for field, actual in recorded_counts.items():
-        if payload.get(field) != actual:
-            errors.append(f"stored {field}={payload.get(field)!r}, actual={actual}")
 
     split_counts: dict[str, int] = {}
     split_team_counts: dict[str, int] = {}
@@ -150,8 +187,26 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
                 f"unsupported split manifest {manifest.get('schema')!r}; "
                 f"expected {SPLIT_MANIFEST_VERSION!r}"
             )
-        if manifest.get("dataset_sha256") != file_sha256(dataset_path):
-            errors.append("split manifest dataset fingerprint does not match the dataset")
+        manifest_dataset_field = manifest.get("dataset")
+        single_file_manifest = isinstance(manifest_dataset_field, str)
+        manifest_datasets = (
+            [manifest_dataset_field] if single_file_manifest else (manifest_dataset_field or [])
+        )
+        if sorted(str(entry) for entry in manifest_datasets) != sorted(
+            str(path.resolve()) for path in dataset_paths
+        ):
+            errors.append("split manifest dataset list does not match the audited files")
+        else:
+            manifest_shas = manifest.get("dataset_sha256")
+            for dataset_path in dataset_paths:
+                if single_file_manifest:
+                    expected_sha = manifest_shas
+                else:
+                    expected_sha = (manifest_shas or {}).get(str(dataset_path.resolve()))
+                if expected_sha != file_sha256(dataset_path):
+                    errors.append(
+                        f"split manifest fingerprint does not match {dataset_path.name}"
+                    )
         group_by = manifest.get("group_by")
         if group_by not in ("battle", "team"):
             errors.append(f"split manifest has invalid group_by {group_by!r}")
@@ -241,8 +296,18 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
     ]
     return {
         "schema": "vgc-training-data-audit-v1",
-        "dataset": str(dataset_path.resolve()),
-        "dataset_sha256": file_sha256(dataset_path),
+        "dataset": (
+            str(dataset_paths[0].resolve())
+            if len(dataset_paths) == 1
+            else sorted(str(path.resolve()) for path in dataset_paths)
+        ),
+        "dataset_sha256": (
+            file_sha256(dataset_paths[0])
+            if len(dataset_paths) == 1
+            else {
+                str(path.resolve()): file_sha256(path) for path in dataset_paths
+            }
+        ),
         "split_manifest": str(split_manifest_path.resolve()),
         "verdict": "PASS" if not errors else "FAIL",
         "errors": errors,
@@ -254,7 +319,12 @@ def audit(dataset_path: Path, split_manifest_path: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    split_manifest = args.split_manifest or args.dataset.parent / "split_manifest.json"
+    if args.split_manifest is not None:
+        split_manifest = args.split_manifest
+    elif len(args.dataset) == 1:
+        split_manifest = args.dataset[0].parent / "split_manifest.json"
+    else:
+        raise SystemExit("--split-manifest is required with several --dataset files")
     report = audit(args.dataset, split_manifest)
     visible = dict(report)
     visible["examples"] = report["examples"][: max(0, args.show_examples)]
