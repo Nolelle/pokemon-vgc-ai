@@ -29,7 +29,6 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.actions import describe_order
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
-from vgc.models import PolicyConfig
 from vgc.rl.guided_selection import (
     SAFETY_COLUMN_TAGS,
     SAFETY_TAG_COLUMNS,
@@ -55,8 +54,8 @@ from vgc.rl.mechanics_encoding import (
     encode_mechanics_context,
     pad_mechanics_features,
 )
-from vgc.rl.exact_search import combine_belief_rankings, search_joint_orders_exact
 from vgc.rl.live_mirror import LiveExactMirror
+from vgc.rl.public_search import public_information_exact_search
 
 PUBLIC_TEACHER_SOURCE_ID = "public_mirror_exact_showdown_teacher_v2"
 
@@ -94,14 +93,13 @@ class DistillationConfig:
     # this, the rare 201+ bin (~6% of collected decisions) contributes too few gradient
     # updates to move the stratum that fails most. False keeps plain uniform shuffling.
     balance_action_count_bins: bool = False
-    # Train against the teacher's full score distribution (softmax of the stored
-    # `search_scores` at `soft_target_temperature`) instead of its argmax. Measured tie
-    # mass on the 5x collection: ~23% of decisions hold a top-2 gap under 10 points --
-    # argmax labels there are close to coin flips, and hard cross-entropy spends real
-    # gradient defending arbitrary choices while recall@K cares about the whole shortlist.
-    # Samples whose dataset predates stored scores fall back to hard labels per-row.
+    # Add relative preference teaching only over searched actions. Unsearched tail
+    # scores are artificial ranks, never measured action quality. Disabled by default.
     soft_targets: bool = False
     soft_target_temperature: float = 16.0
+    # Default-off auxiliary ranking term over genuinely searched actions only.
+    # Hard teacher-choice copying remains the reference term on every row.
+    soft_target_weight: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -142,9 +140,8 @@ class DistillationSample:
     candidate_myopic_ranks: np.ndarray | None = None
     candidate_tags: np.ndarray | None = None
     # Schema-v2.x guidance metadata, aligned with the candidate rows. `search_scores`
-    # is the teacher's COMPLETE comparable score vector -- `search_joint_orders`
-    # re-scores searched actions from simulated exchanges and leaves unsearched ones
-    # at their (scaled) myopic score, so all values share one currency -- and
+    # includes measured searched scores AND artificial ranks for unsearched actions;
+    # only searched rows are comparable measured action quality. The
     # `searched_mask` marks which rows are exchange-refined. This is what lets later
     # experiments (soft targets over near-tied actions, tie-mass measurement,
     # regret-weighted mining) work on THIS collection instead of requiring yet
@@ -161,43 +158,9 @@ class DistillationSample:
     # teams renamed in different generated pools must still be recognized as overlap.
     team_sha256: str | None = None
     opponent_team_sha256: str | None = None
-
-
-def public_information_exact_search(
-    battle,
-    config: PolicyConfig,
-    own_packed_team: str,
-    *,
-    memory=None,
-    mirror: LiveExactMirror | None = None,
-):
-    """Rank from a public reconstruction, never the direct simulator's private root."""
-
-    if not own_packed_team:
-        raise ValueError("the public-information teacher requires its packed own team")
-    owned_mirror = mirror is None
-    live_mirror = mirror or LiveExactMirror(own_packed_team, config)
-    root = None
-    rankings = []
-    try:
-        for belief in live_mirror.hypotheses(battle, memory):
-            root = (
-                live_mirror.rebase(root, battle, belief)
-                if root is not None
-                else live_mirror.build(battle, belief)
-            )
-            rankings.append(
-                (
-                    belief.weight,
-                    search_joint_orders_exact(root, "p1", config),
-                )
-            )
-        return combine_belief_rankings(rankings)
-    finally:
-        if root is not None:
-            root.close()
-        if owned_mirror:
-            live_mirror.close()
+    # Stable collection identity survives copies, renames, and merged storage.
+    source_collection_id: str | None = None
+    original_battle_id: str | None = None
 
 
 def _shuffle_for_storage(scored, battle_id: str, decision_index: int):
@@ -516,6 +479,35 @@ def soft_target_distribution(
     return torch.softmax(masked / float(temperature), dim=1)
 
 
+def searched_relative_loss(logits, scores, searched, legal, temperature):
+    """Compare only measured actions; unknown tail logits/scores have no influence."""
+    if not np.isfinite(temperature) or temperature <= 0:
+        raise ValueError("soft target temperature must be finite and positive")
+    if not (logits.shape == scores.shape == searched.shape == legal.shape):
+        raise ValueError("searched target arrays must have equal shapes")
+    searched = searched.bool()
+    if bool((searched & ~legal.bool()).any()):
+        raise ValueError("searched action is not legal")
+    if bool((searched & ~torch.isfinite(scores)).any()):
+        raise ValueError("searched action has no finite measured score")
+    rows = searched.sum(dim=1) >= 2
+    output = logits.new_zeros(logits.shape[0])
+    if bool(rows.any()):
+        mask = searched[rows]
+        targets = soft_target_distribution(scores[rows], mask, temperature)
+        measured_logits = logits[rows].masked_fill(~mask, float("-inf"))
+        log_probs = nn.functional.log_softmax(measured_logits, dim=1).masked_fill(~mask, 0)
+        output[rows] = -(targets * log_probs).sum(dim=1)
+    return output, rows
+
+
+def _padded_searched(sample, width):
+    result = np.zeros(width, dtype=np.bool_)
+    if sample.searched_mask is not None:
+        result[:len(sample.searched_mask)] = sample.searched_mask
+    return result
+
+
 def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, torch.Tensor]:
     moves, targets, species, flags, mask = pad_candidate_features(
         [sample.candidates for sample in samples]
@@ -560,6 +552,10 @@ def _tensor_batch(samples: list[DistillationSample], device: str) -> dict[str, t
             ),
             dtype=torch.float32,
             device=device,
+        ),
+        "searched_mask": torch.as_tensor(
+            np.stack([_padded_searched(s, moves.shape[1]) for s in samples]),
+            dtype=torch.bool, device=device,
         ),
         # Hand-built samples (e.g. in tests) may not set meta_scalars -- fall back to a
         # well-formed zero vector rather than requiring every caller to populate it.
@@ -913,24 +909,13 @@ def distill_policy(
                     logits, batch["teacher_actions"], reduction="none"
                 )
                 if config.soft_targets:
-                    # Subset FIRST: building the distribution over rows without stored
-                    # scores would run softmax on all -inf inputs, and even where()
-                    # masking cannot stop those NaNs from leaking into gradients.
-                    has_scores = torch.isfinite(batch["search_scores"]).any(dim=1)
-                    if bool(has_scores.any()):
-                        sub_logits = logits[has_scores]
-                        sub_mask = batch["candidate_mask"][has_scores].bool()
-                        targets = soft_target_distribution(
-                            batch["search_scores"][has_scores],
-                            sub_mask,
-                            config.soft_target_temperature,
-                        )
-                        log_probs = nn.functional.log_softmax(sub_logits, dim=1)
-                        log_probs = log_probs.masked_fill(~sub_mask, 0.0)
-                        soft = -(targets * log_probs).sum(dim=1)
-                        index = torch.nonzero(has_scores, as_tuple=True)[0]
-                        per_sample = per_sample.clone()
-                        per_sample[index] = soft
+                    relative, _eligible = searched_relative_loss(
+                        logits, batch["search_scores"], batch["searched_mask"],
+                        batch["candidate_mask"], config.soft_target_temperature,
+                    )
+                    if not np.isfinite(config.soft_target_weight) or config.soft_target_weight < 0:
+                        raise ValueError("soft target weight must be finite and nonnegative")
+                    per_sample = per_sample + config.soft_target_weight * relative
                 if sample_weights is not None:
                     # Weighted mean, not plain mean: keeps the loss scale comparable to
                     # the unweighted case while spending proportionally more gradient

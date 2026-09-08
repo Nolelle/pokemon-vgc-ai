@@ -53,9 +53,11 @@ from vgc.rl.encoding import (
     pad_candidate_tactical_features,
 )
 from vgc.rl.guided_selection import select_guided_candidate_indices
-from vgc.rl.exact_search import combine_belief_rankings, search_joint_orders_exact
-from vgc.rl.live_mirror import LiveExactMirror
 from vgc.rl.mechanics_encoding import MechanicsFeatures, encode_mechanics_context
+from vgc.rl.public_search import (
+    PUBLIC_SEARCH_CONTRACT_VERSION,
+    public_information_exact_search,
+)
 from vgc.search import _order_tags, _select_search_candidates, search_joint_orders
 
 GuidanceMode = Literal["shadow", "hybrid"]
@@ -511,53 +513,24 @@ class NeuralSearchPlayer(VgcPlayer):
             raise RuntimeError("neural ranking did not retain its encoded observation")
         encoded = ranking.encoded
         selection_audit: dict[str, object] = {}
-        exact_root = None
-        live_mirror = None
-        exact_side = getattr(battle, "_vgc_direct_side", None)
-        beliefs: list[object | None] = [None]
         if self.model.use_mechanics_features:
-            exact_root = getattr(battle, "_vgc_direct_root", None)
-            if exact_root is None:
-                if not self._exact_own_packed_team:
-                    raise RuntimeError("mechanics-complete hybrid requires its packed own team")
-                live_mirror = LiveExactMirror(self._exact_own_packed_team, self.config)
-                exact_side = "p1"
-                # A rebuilt live root has to assume the privately rolled sleep and
-                # confusion durations. Average over the legal ones instead of picking
-                # the modal duration and calling that exact.
-                beliefs = list(live_mirror.hypotheses(battle, memory))
-                record_note("belief_search", live_mirror.last_hypothesis_audit)
+            if not self._exact_own_packed_team:
+                raise RuntimeError("mechanics-complete hybrid requires its packed own team")
 
         def run_exact(selector):
-            """Rank via Showdown, once per hidden-state belief, then combine."""
+            """Rank through the shared public-information Showdown reconstruction."""
 
-            nonlocal exact_root
-            rankings = []
-            try:
-                for belief in beliefs:
-                    if live_mirror is not None:
-                        exact_root = (
-                            live_mirror.rebase(exact_root, battle, belief)
-                            if exact_root is not None
-                            else live_mirror.build(battle, belief)
-                        )
-                    rankings.append(
-                        (
-                            getattr(belief, "weight", 1.0),
-                            search_joint_orders_exact(
-                                exact_root,
-                                exact_side,
-                                self.config,
-                                candidate_selector=selector,
-                            ),
-                        )
-                    )
-            finally:
-                if live_mirror is not None:
-                    if exact_root is not None:
-                        exact_root.close()
-                    live_mirror.close()
-            return combine_belief_rankings(rankings)
+            belief_audit: dict[str, object] = {}
+            result = public_information_exact_search(
+                battle,
+                self.config,
+                self._exact_own_packed_team,
+                memory=memory,
+                candidate_selector=selector,
+                audit=belief_audit,
+            )
+            record_note("belief_search", belief_audit)
+            return result
 
         if self.mode == "hybrid":
             captured_defaults: dict[str, set[str]] = {}
@@ -647,6 +620,7 @@ class NeuralSearchPlayer(VgcPlayer):
         search_metrics = dict(scored[0].breakdown.get("search_metrics", {}))
         record = {
             "schema": "vgc-neural-search-decision-v1",
+            "information_contract": PUBLIC_SEARCH_CONTRACT_VERSION,
             "mode": self.mode,
             "battle_id": battle.battle_tag,
             "team_id": self.team_id,

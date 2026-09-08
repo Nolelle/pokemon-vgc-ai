@@ -111,6 +111,7 @@ def search_joint_orders_exact(
     config: PolicyConfig | None = None,
     *,
     candidate_selector: ExactCandidateSelector | None = None,
+    randomness_key: str | None = None,
 ) -> list[ScoredOrder]:
     """Rank a direct battle's legal orders using exact Showdown transitions."""
 
@@ -156,7 +157,7 @@ def search_joint_orders_exact(
     # This is already the player's fog-safe state; no simulator internals escape.
     before = _position_value(snapshot_battle(battle), config)
     future_seeds = _future_seeds(
-        root.battle_id,
+        randomness_key or root.battle_id,
         int(getattr(battle, "turn", 0) or 0),
         config.exact_search_future_samples,
     )

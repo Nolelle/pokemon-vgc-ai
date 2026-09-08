@@ -1,10 +1,11 @@
 # Full VGC learning pipeline
 
-## What is finished
+## Current status (2026-09-07)
 
-The code now supports the complete route from exact game rules to an explicitly selected
-learned ladder player. The current learned model is **not promoted**: the pipeline works,
-but its tiny smoke evaluations are not evidence that it is stronger than the shipped bot.
+The current learned models are **experimental**. A3/B1 models load, but the audit
+found data-split and offline/live search defects, and B1 still fails recorded retention
+requirements. See `docs/audit_implementation_plan_2026-09-07.md` for the repair sequence
+and `data/models/registry.json` for saved model identities. No new model is approved.
 
 Think of the stages as teaching a driver. The simulator supplies the laws of physics and
 the car's exact controls. Strong replays demonstrate useful habits. A search teacher then
@@ -29,7 +30,11 @@ sheet. Therefore replay training is used to warm-start the shared state represen
 it is not treated as a complete joint-action teacher. Complete action labels are collected
 afterward inside the fog-safe simulator, where our own team is known exactly.
 
-## Reproducible stages
+## Historical pipeline commands — not a current execution plan
+
+The following commands document the earlier pipeline. Do not execute them as a new
+training or deployment recipe: current data recovery, audits, and release requirements
+take precedence. The failed outcome-based scaling recipe is closed pending a new hypothesis.
 
 Install the training dependency first:
 
@@ -127,9 +132,10 @@ After the promotion gate passes and the local smoke has zero fallbacks:
   --policy-checkpoint runs/full_pipeline/rl/best.pt
 ```
 
-Without `--policy-checkpoint`, the ladder runner still uses the shipped heuristic. Each
-learned-policy result records the checkpoint path and SHA-256 fingerprint beside its
-replay and decision trace.
+Current public play requires hybrid mode, a compatible named checkpoint, and readiness
+checks; a model file existing is not approval. The historical command above is insufficient
+for current deployment. Release enforcement is part of the repair plan. Local diagnostic
+play remains separate from public approval.
 
 ## Neural-guided search experiment
 
@@ -168,7 +174,7 @@ the encoded observation and candidate arrays needed for later training. The RL v
 output is logged but is not connected to
 hypothetical search positions in this milestone.
 
-## Current measured evidence
+## Historical measured evidence (2026-08-15)
 
 The 2026-08-15 pipeline build produced these development results:
 

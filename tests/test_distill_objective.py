@@ -265,6 +265,45 @@ def test_soft_targets_train_without_crash_on_mixed_batches():
     assert np.isfinite(metrics["loss"])
 
 
+def test_relative_teaching_ignores_unknown_tail_scores_and_logits():
+    from vgc.rl.distill import searched_relative_loss
+
+    logits = torch.tensor([[0.0, 1.0, 100.0]], requires_grad=True)
+    measured = torch.tensor([[True, True, False]])
+    legal = torch.ones_like(measured)
+    scores = torch.tensor([[10.0, 8.0, -1000.0]])
+    first, eligible = searched_relative_loss(logits, scores, measured, legal, 16.0)
+    altered_scores = scores.clone()
+    altered_scores[0, 2] = 1000000.0
+    second, _ = searched_relative_loss(logits, altered_scores, measured, legal, 16.0)
+    assert torch.equal(first, second)
+    assert eligible.tolist() == [True]
+    first.sum().backward()
+    assert logits.grad[0, 2].item() == 0.0
+    assert logits.grad[0, :2].abs().sum().item() > 0.0
+
+
+def test_relative_teaching_skips_rows_without_comparable_actions():
+    from vgc.rl.distill import searched_relative_loss
+
+    loss, eligible = searched_relative_loss(
+        torch.zeros(2, 3), torch.ones(2, 3),
+        torch.tensor([[False, False, False], [True, False, False]]),
+        torch.ones(2, 3, dtype=torch.bool), 16.0,
+    )
+    assert loss.tolist() == [0.0, 0.0]
+    assert eligible.tolist() == [False, False]
+
+
+def test_relative_teaching_rejects_searched_illegal_action():
+    from vgc.rl.distill import searched_relative_loss
+
+    with pytest.raises(ValueError, match="not legal"):
+        searched_relative_loss(torch.zeros(1, 2), torch.ones(1, 2),
+                               torch.tensor([[True, True]]),
+                               torch.tensor([[True, False]]), 16.0)
+
+
 def _bare_teacher():
     from vgc.models import PolicyConfig
     from vgc.rl.distill import TeacherRecordingPlayer

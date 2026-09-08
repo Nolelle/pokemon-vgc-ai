@@ -1,5 +1,11 @@
 # RL roadmap (frozen 2026-08-09, amended 2026-08-11)
 
+**Current direction (2026-09-07) supersedes the historical objective below:** build
+trustworthy data and training, then demonstrate 1700+ Elo on the public Champions
+Reg M-B ladder. Elo is the ladder's playing-strength rating. A specific learning method
+is a means to that goal, not the goal itself. Follow the September audit implementation
+plan first. Coaching app work stays deferred until the battle goal is demonstrated.
+
 The scope-narrowing plan that replaces the ad-hoc PPO experiments in `runs/ppo/`.
 Read this before proposing any change to `vgc.rl` or `selfplay/train_ppo.py`.
 

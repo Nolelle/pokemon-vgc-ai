@@ -22,55 +22,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from vgc.rl.demonstrations import (  # noqa: E402
-    load_demonstration_dataset,
     save_demonstrations,
 )
 
-# Fields that must match byte-for-byte across shards. Deliberately excludes
-# `team_source`, `seed`, and `requested_games`, which differ per partition.
-INVARIANT_FIELDS = (
-    "repository_commit",
-    "repository_dirty",
-    "showdown_commit",
-    "showdown_dirty",
-    "format_id",
-    "opponents",
-    "policy_config",
-    "information_contract",
-    "teacher_source",
-)
-
-
 def load_shard_datasets(paths: Sequence[Path]) -> tuple[list, list[dict[str, object]]]:
-    """Load shard files, enforcing the same-pool invariants. Shared by merge and
-    multi-file training so both paths accept exactly the same inputs.
+    """Use the same copy-safe source identities as training and the auditor."""
+    from vgc.rl.demonstrations import load_datasets
 
-    Battle ids are namespaced by shard file stem: every shard numbers its games
-    from zero (`imitation-train-000000` exists in each one), so without this the
-    audit's duplicate-decision check false-positives across shards.
-    """
-
-    from dataclasses import replace
-
-    merged: list = []
-    source_metadata: list[dict[str, object]] = []
-    for path in paths:
-        chunk, metadata = load_demonstration_dataset(path)
-        print(f"{path}: {len(chunk)} samples", flush=True)
-        # Namespace by parent directory (shard id): every shard file is named
-        # demonstrations.pt and numbers its games from zero, so the stem alone
-        # does not disambiguate.
-        namespace = path.parent.name
-        merged.extend(
-            replace(sample, battle_id=f"{namespace}:{sample.battle_id}")
-            for sample in chunk
-        )
-        source_metadata.append(metadata)
-    for field in INVARIANT_FIELDS:
-        values = {repr(metadata[field]) for metadata in source_metadata}
-        if len(values) != 1:
-            raise SystemExit(f"shard datasets disagree on {field}")
-    return merged, source_metadata
+    try:
+        return load_datasets(paths)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main() -> int:

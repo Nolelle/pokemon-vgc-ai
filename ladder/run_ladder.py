@@ -747,6 +747,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--model-release",
+        type=Path,
+        default=None,
+        help="verified release evidence for the exact model; required for public play",
+    )
+    parser.add_argument(
         "--policy-mode",
         choices=("deterministic", "hybrid"),
         default="deterministic",
@@ -822,6 +828,14 @@ def main() -> int:
                 "public ladder play requires a checkpoint trained with the complete "
                 "mechanics input"
             )
+        from vgc.model_release import enforce_model_release_for_cli
+
+        enforce_model_release_for_cli(
+            args.model_release,
+            args.policy_checkpoint,
+            config,
+            safety_slots=args.safety_slots,
+        )
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(

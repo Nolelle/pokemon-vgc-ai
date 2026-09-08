@@ -1,11 +1,10 @@
 # Problem E: learned-models contract
 
-This document defines what the learned components may do, what they must never
-do, and how we prove they help. The current checkout substantially passes this
-contract: the action-ranking model and its hybrid deployment are built, gated,
-and strength-approved, with August evidence on file. Two items are open: the
-recall bar must be re-confirmed under the current code, and the deployed
-checkpoint is not durably stored.
+The current learned player is **experimental, not approved for public deployment**.
+New v4 models load, but their recorded retention checks fail and current strength
+approval is absent. August approval belongs to a different, incompatible model.
+The current inventory is `data/models/registry.json`; implementation and validation
+progress is tracked in `docs/audit_implementation_plan_2026-09-07.md` and the worklog.
 
 ## Takeaway
 
@@ -25,10 +24,11 @@ visited.
 
 ## 1. Terms and authority
 
-- **Action-ranking model:** `vgc.bc.model.BcPolicyNet`, trained by
-  `selfplay/train_imitation.py` on search-teacher demonstrations. Input: the
-  whole mechanics state as tokens (`vgc.bc.encoding`, layout v4). Output: per
-  move/target log-probabilities per slot, plus an optional outcome value head.
+- **Action-ranking model:** `vgc.rl.model.CandidatePolicyValueNet`, trained by
+  `selfplay/train_imitation.py` to rank complete legal doubles orders. It uses
+  `BcPolicyNet` as its shared starting representation, plus own-team, public-opponent,
+  history, tactical, and mechanics inputs. Mechanics tokens are byte-sized pieces of
+  the serialized public state. Its winning-chance output is not trained by imitation.
 - **BC rerank blend** (`use_bc_policy`, ships **off**): re-scores the heuristic
   top-K with network log-probabilities. Advisory only.
 - **Guided shortlist** (`vgc.rl.guided_selection`, the deployed path): up to
@@ -49,25 +49,19 @@ a learned component more authority needs its own powered gate, not an argument.
 
 | Component | State | Evidence |
 |---|---|---|
-| Action ranking (BC net, v4 encoding) | Built, gated | Guided recall §5 |
-| Guided shortlist + upset arbitration | Deployed path, gated | Powered re-gate §5 |
+| Action ranking (candidate model, v4 mechanics) | Built, experimental | Current B1 retention fails |
+| Guided shortlist + upset arbitration | Built, unapproved currently | August evidence is historical |
 | Position value head | Built, **off**, unpromoted | Needs its own gate before any authority |
 | Opponent-response model | **Closed** | +0.0011 ± 0.0013 headroom; do not rebuild without a new hypothesis (CLAUDE.md) |
 | Learned Q / value blending in the agent | **Closed** | 9 configs flat vs search; pure-RL 100k scale failed promotion |
 | Hidden-info estimator | Usage priors + belief builder (Problem B), not learned | No learned hidden-info model exists or is planned |
 
-## 3. Training progression (where we stand)
+## 3. Training progression
 
-1. ~~Imitate strong search decisions (behavior cloning).~~ Done: 76,801 v2.x
-   teacher decisions, recall-selected checkpoint + hard-example weight 2.0 +
-   action-count bin balancing.
-2. ~~Self-play practice data.~~ Done: v4-selfplay corpus and checkpoint exist;
-   the recipe, not any single file, is the asset.
-3. ~~Improve search speed/strength while keeping search in charge.~~ Done via
-   hybrid shortlist guidance (§5).
-4. **More authority only after conservative evaluations pass.** Not granted and
-   not requested: the search remains the decider. This is the correct
-   end-state for Problem E, not unfinished business.
+The historical experiments below established useful methods, not current approval.
+Current work repairs offline/live information parity, both-role team separation,
+mandatory auditing, and evidence identity before another training experiment.
+No conclusion that more data alone will solve current retention failures is established.
 
 ## 4. Completion gates
 
@@ -99,20 +93,15 @@ Problem E is complete only when all gates hold in the current checkout:
   on 0.77% of decisions). Verdict: `runs/eval/neural_search_5x_regate.json`.
 - Hybrid latency at gate width: total mean 62ms, p95 150ms; compute reduction
   recorded in the verdict file.
-- Public smoke: 6-4 with zero fallbacks; hybrid is the live ladder policy
+- Public smoke: 6-4 with zero fallbacks; hybrid was used in that historical ladder session
   (`ladder/run_ladder.py --policy-checkpoint <ckpt> --policy-mode hybrid`).
 
-## 6. Current checkout audit (2026-09-03)
+## 6. Historical development notes (2026-09-03 through 2026-09-04)
 
-### Verified unchanged since the August gates
-
-- `vgc.search` (the hybrid path's engine): no behavior change since the gates
-  -- Rung 2 ships at shortlist identity (1) and Rung 3a touched exact-search
-  values only, which the hybrid path never calls.
-- Encoder layout v4 and `BcPolicyNet` untouched; all five `data/models/*.pt`
-  (committed) still load under the current code.
-- Authority wiring untouched: BC blend and value head still default off,
-  upset margin still 10, no learned Q in the agent.
+These notes describe past runs. They do not certify current behavior. In particular,
+the current mechanics-enabled hybrid calls exact search, and the September 7 audit
+found an offline private-root shortcut that must be removed. Old model compatibility
+and strength claims do not transfer to the current candidate architecture.
 
 ### Collection blockers: found and fixed (2026-09-03, commits `68540e1`, `52747c2`)
 
@@ -176,61 +165,26 @@ First train (`runs/train_a3`, August recipe, 12 epochs): validation recall@10
 close to August's 11.5k operating point (96.3%/0.954). The 24-epoch rerun
 (`runs/train_a3_24ep`) plateaued flat at ~93% from epoch 5, and soft targets
 at this scale (`runs/train_a3_soft`) read 94.0% val / **0.951** holdout LCB --
-indistinguishable from hard labels. Three recipes agree near ~0.95: data
-scale binds, not training choices. Full Option B (~77k, August's clearing
-scale) is the remaining lever; it needs ~9 GB of disk (currently ~2 GB free)
-plus the deferred deletions, and ~6h at 8-way sharding.
+close to the hard-label result. This does not isolate data volume as the bottleneck.
+The later B1 run contains 41,543 examples and still fails the external retention bar.
+The audit found both-role team overlap in its internal validation split; retain those
+numbers only as historical development evidence.
 
-### Open items
+### Current status (2026-09-07)
 
-1. **The gated hybrid checkpoint does not load (BLOCKING).** The August
-   strength verdict's checkpoint, `runs/full_pipeline/teacher_5x_model/best.pt`
-   (sha256 `968c4730...`), is tagged `candidate-policy-value-v3-meta`. The
-   current `load_snapshot` (v4-only since commit `33d3a0e`) refuses it --
-   verified by running the shadow gate's loader against it. A sweep of every
-   `best.pt` in `runs/` and `data/` found **zero** v4-mechanics checkpoints:
-   all 20+ are v3-meta. Consequences:
-   - `offline/evaluate_neural_search.py` (shadow + hybrid gates) cannot run at
-     all: it loads the checkpoint up front and fails for every file that
-     exists. Gates 1 (recall, shadow flavor) and 2 (strength) are unrunnable,
-     not merely stale.
-   - Public ladder play is unrunnable: it requires `--policy-mode hybrid`
-     plus a checkpoint, and no loadable checkpoint exists.
-   - Copying the v3 file into `data/models/` would NOT fix this -- the bytes
-     would still be refused. The fix is a fresh train that writes the v4
-     architecture (today's `train_imitation` already stamps
-     `RL_ARCHITECTURE_VERSION` at save time), followed by the recall +
-     strength gates on the new file.
-2. **The offline recall screen is blocked on data, correctly.** The 18,209-
-   decision expanded holdout exists only as
-   `runs/full_pipeline/teacher_holdout_expanded.pt` in v1 demonstration
-   format, which the loader now refuses (private-root teacher -- see Problem
-   B). Re-running recall on it would violate the information boundary, so the
-   refusal is the gate working, not a tooling bug. Fresh v3 (public-mirror)
-   demonstrations are needed for any offline recall number.
-3. **What still works.** The BC-rerank path (`score_orders` + `data/models/`
-   `*.pt`, default-off) loads under the current code -- verified `v3sp`
-   (legacy v2 layout) and `v4` (current) both load, with 93 policy tests
-   green. Only the `NeuralSearchPlayer`/snapshot path (shadow, hybrid,
-   ladder-hybrid) is stranded.
-4. **Strength re-gate: blocked behind items 1-2.** It needs a loadable
-   checkpoint first. No retrain is proposed here; that is the first real
-   training decision of Problem E/F and needs its own plan (teacher
-   collection cost is ~10x per decision at reduced width).
+- The historical August model remains incompatible with the current loader.
+- A3 and B1 v4-mechanics checkpoints exist and load. B1's recorded guided retention
+  is 96.46%, with a conservative lower bound of 95.49%, below the required 98%.
+- B1 and soft B1 contain no battle-strength evaluation in their training reports.
+- The external A3 holdout has separate team content but has been used for recipe
+  comparison. It is development validation, not an untouched final test.
+- The old private-root demonstration data remains ineligible for new promotion.
+- No current model has release approval. The model register preserves current file
+  fingerprints and identifies which older reports lack exact model binding.
 
 ## 7. Implementation order
 
-1. Freeze this contract (this file). No behavior changes.
-2. **Scale-up collection (Option A, running 2026-09-04):** 8 shards x 200
-   games on `archetype_pool_150` (byte-disjoint from the holdout below),
-   `--split-by battle --collect-only --max-skip-rate 0.08`, seeds
-   31001-31008, out `runs/collect_a3_s{1..8}` (~12k decisions expected).
-   Shard manifests: `data/selfplay/collect_a3/shard_{1..8}.json` (20 teams
-   each, regenerated from the pool manifest; all scratch, gitignored).
-3. Fresh v3 holdout demonstrations on `data/selfplay/expanded_holdout`
-   (150 teams, disjoint by content hash) for the recall verdict.
-4. Merge (`offline/merge_demonstrations.py`) + train with the August recipe
-   (lr 3e-4, `--hard-example-weight 2.0`, `--balance-action-count-bins`,
-   recall-selected) to a v4 checkpoint in durable storage.
-5. Recall gate on the fresh holdout, then the powered strength gate.
-   Record the numbers here; Problem E passes when gates 1-5 are green.
+Follow `docs/audit_implementation_plan_2026-09-07.md`: truthful status, shared public
+search, mandatory both-role data auditing, target/evidence repair, small diagnostic
+experiments, justified training, and enforced release approval. Do not launch the old
+large-run recipe merely because it appears in historical instructions.

@@ -1,5 +1,22 @@
 # pokemon-vgc-ai
 
+## Current priority — 2026-09-07
+
+Build and verify a strong battle bot before developing the coaching app. The target
+is **1700+ Elo on the public Champions Reg M-B ladder**; Elo is the ladder's playing-strength
+rating. Current models are experimental and have not demonstrated that target.
+
+Work proceeds through trustworthy data and training, current offline strength checks,
+local battle checks, and then controlled public ladder sessions with saved replays,
+results, and exact model identities. Copying the teacher or passing offline checks does
+not establish the target rating; actual ladder results must do that. Coaching interface
+and product work are deferred until the playing goal is demonstrated.
+
+Current repair plan: [audit implementation plan](docs/audit_implementation_plan_2026-09-07.md).
+Current model inventory: [model register](data/models/registry.json).
+The older pipeline and commands below describe historical development and must not be
+treated as current release approval.
+
 A rules-first Pokémon Showdown bot for the Champions VGC 2026 Reg M-B doubles ladder.
 It uses the Champions mod's exported data, a simulator-checked damage engine, and an
 explicit one-turn evaluator before any learned components are introduced.

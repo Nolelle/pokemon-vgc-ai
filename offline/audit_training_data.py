@@ -51,8 +51,10 @@ def audit(
         DEMONSTRATION_FORMAT_VERSION,
         SPLIT_MANIFEST_VERSION,
         file_sha256,
-        validate_metadata,
         validate_sample,
+        canonical_samples,
+        validate_source_compatibility,
+        partition_errors,
     )
 
     if isinstance(dataset_paths, Path):
@@ -94,11 +96,18 @@ def audit(
             )
     metadata = dict(payloads[0].get("metadata") or {})
     try:
-        validate_metadata(metadata)
+        validate_source_compatibility([dict(p.get("metadata") or {}) for p in payloads])
     except ValueError as exc:
         errors.append(str(exc))
 
-    samples = [sample for payload in payloads for sample in (payload.get("samples") or [])]
+    samples = []
+    seen_files = set()
+    for path, payload in zip(dataset_paths, payloads):
+        digest = file_sha256(path)
+        if digest in seen_files:
+            errors.append("duplicate dataset source file")
+        seen_files.add(digest)
+        samples.extend(canonical_samples(payload.get("samples") or [], str((payload.get("metadata") or {}).get("collection_id") or digest)))
 
     def _payload_counts(payload: dict) -> dict[str, int]:
         file_samples = list(payload.get("samples") or [])
@@ -235,11 +244,9 @@ def audit(
                     continue
                 assigned[destinations[0]].append(sample)
 
-            train_battles = {sample.battle_id for sample in assigned["train"]}
-            validation_battles = {sample.battle_id for sample in assigned["validation"]}
-            battle_overlap = train_battles & validation_battles
-            if battle_overlap:
-                errors.append(f"{len(battle_overlap)} battles cross the split")
+            errors.extend(partition_errors(
+                assigned["train"], assigned["validation"], group_by=group_by
+            ))
             team_hashes = {
                 name: {
                     fingerprint
@@ -248,11 +255,6 @@ def audit(
                 }
                 for name, partition in assigned.items()
             }
-            team_overlap = team_hashes["train"] & team_hashes["validation"]
-            if group_by == "team" and team_overlap:
-                errors.append(
-                    f"{len(team_overlap)} packed-team fingerprints cross the team split"
-                )
             split_counts = {name: len(partition) for name, partition in assigned.items()}
             split_team_counts = {
                 name: len(fingerprints) for name, fingerprints in team_hashes.items()

@@ -12,6 +12,7 @@ pytest.importorskip("torch")
 from offline.audit_training_data import audit
 from vgc.rl.demonstrations import (
     INFORMATION_CONTRACT_VERSION,
+    file_sha256,
     save_demonstrations,
     save_split_manifest,
 )
@@ -179,8 +180,8 @@ def test_shard_loader_namespaces_colliding_battle_ids(tmp_path) -> None:
     samples, _ = load_shard_datasets([first, second])
 
     assert [sample.battle_id for sample in samples] == [
-        "shard-a:imitation-train-000000",
-        "shard-b:imitation-train-000000",
+        f"{file_sha256(first)}:imitation-train-000000",
+        f"{file_sha256(second)}:imitation-train-000000",
     ]
 
 
@@ -261,11 +262,11 @@ def test_load_training_dataset_single_keeps_ids_multi_namespaces(tmp_path) -> No
     save_demonstrations(second, [_sample("game-0", "team-c", "team-d")], metadata=_metadata())
 
     single_samples, _ = load_training_dataset([first])
-    assert [sample.battle_id for sample in single_samples] == ["game-0"]
+    assert [sample.battle_id for sample in single_samples] == [f"{file_sha256(first)}:game-0"]
 
     multi_samples, multi_metadata = load_training_dataset([first, second])
     assert [sample.battle_id for sample in multi_samples] == [
-        "shard-a:game-0",
-        "shard-b:game-0",
+        f"{file_sha256(first)}:game-0",
+        f"{file_sha256(second)}:game-0",
     ]
     assert len(multi_metadata["source_datasets"]) == 2

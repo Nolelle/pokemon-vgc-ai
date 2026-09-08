@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import random
+import os
+import tempfile
+import subprocess
+import numpy as np
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +27,101 @@ DEMONSTRATION_FORMAT_VERSION = "vgc-joint-demonstrations-v3-public-information"
 SPLIT_MANIFEST_VERSION = "vgc-demonstration-split-v1"
 INFORMATION_CONTRACT_VERSION = "public_observation_only_v1"
 SplitGroup = Literal["battle", "team"]
+
+INVARIANT_FIELDS = (
+    "repository_commit", "repository_dirty", "showdown_commit", "showdown_dirty",
+    "format_id", "opponents", "policy_config", "information_contract", "teacher_source",
+)
+
+
+def atomic_torch_save(payload, path: Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            torch.save(payload, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def canonical_samples(samples, source_identity: str):
+    """Idempotent across merging and relocation; original source travels with each row."""
+    result = []
+    for sample in samples:
+        source = getattr(sample, "source_collection_id", None) or source_identity
+        original = getattr(sample, "original_battle_id", None) or sample.battle_id
+        result.append(replace(
+            sample, source_collection_id=source, original_battle_id=original,
+            battle_id=f"{source}:{original}",
+        ))
+    return result
+
+
+def validate_source_compatibility(metadata: Sequence[dict]) -> None:
+    for source in metadata:
+        validate_metadata(source)
+    for field in INVARIANT_FIELDS:
+        if len({repr(source[field]) for source in metadata}) > 1:
+            if field == "repository_commit":
+                # Different documentation commits may have identical collection code.
+                # Verify tracked trees rather than trusting a caller's equivalence flag.
+                try:
+                    signatures = {
+                        subprocess.check_output(
+                            ["git", "rev-parse", *[
+                                f"{source[field]}:{tree}" for tree in ("src/vgc", "tools", "selfplay")
+                            ]], cwd=Path(__file__).resolve().parents[3],
+                            text=True, stderr=subprocess.DEVNULL,
+                        ).strip() for source in metadata
+                    }
+                    if len(signatures) == 1:
+                        continue
+                except subprocess.CalledProcessError:
+                    pass
+            raise ValueError(f"dataset sources disagree on {field}")
+
+
+def load_datasets(paths: Sequence[Path]) -> tuple[list[DistillationSample], list[dict]]:
+    samples, metadata = [], []
+    seen_files = set()
+    seen_decisions = set()
+    for path in paths:
+        digest = file_sha256(path)
+        if digest in seen_files:
+            raise ValueError("duplicate dataset source file")
+        seen_files.add(digest)
+        chunk, source = load_demonstration_dataset(path)
+        for sample in chunk:
+            key = (sample.battle_id, sample.decision_index, sample.team_sha256)
+            if key in seen_decisions:
+                raise ValueError("duplicate battle/decision identity across dataset sources")
+            seen_decisions.add(key)
+        samples.extend(chunk)
+        metadata.append(source)
+    validate_source_compatibility(metadata)
+    return samples, metadata
+
+
+def partition_errors(train, validation, *, group_by: str) -> list[str]:
+    errors = []
+    if not train or not validation:
+        errors.append("training and validation must both contain samples")
+    overlap = {s.battle_id for s in train} & {s.battle_id for s in validation}
+    if overlap:
+        errors.append(f"{len(overlap)} battles cross the split")
+    teams = [
+        {h for s in part for h in (s.team_sha256, s.opponent_team_sha256)}
+        for part in (train, validation)
+    ]
+    if group_by == "team" and teams[0] & teams[1]:
+        errors.append(f"{len(teams[0] & teams[1])} packed-team fingerprints cross the team split")
+    return errors
 
 REQUIRED_METADATA_FIELDS = (
     "created_at_utc",
@@ -76,9 +174,7 @@ def _valid_sha256(value: object) -> bool:
 
 
 def _numeric_array_is_valid(array) -> bool:
-    return getattr(array, "ndim", 0) > 0 and all(
-        math.isfinite(float(value)) for value in array.reshape(-1)
-    )
+    return getattr(array, "ndim", 0) > 0 and bool(np.isfinite(array).all())
 
 
 def validate_sample(sample: DistillationSample) -> None:
@@ -183,7 +279,7 @@ def save_demonstrations(
     for sample in samples:
         validate_sample(sample)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
+    atomic_torch_save(
         {
             "format": DEMONSTRATION_FORMAT_VERSION,
             "metadata": metadata,
@@ -211,7 +307,7 @@ def load_demonstration_dataset(
     samples = list(payload.get("samples") or [])
     for sample in samples:
         validate_sample(sample)
-    return samples, metadata
+    return canonical_samples(samples, str(metadata.get("collection_id") or file_sha256(path))), metadata
 
 
 def load_demonstrations(path: Path) -> list[DistillationSample]:
@@ -253,6 +349,11 @@ def save_split_manifest(
     validation_groups = sorted({_split_group(sample, group_by) for sample in validation})
     if set(train_groups) & set(validation_groups):
         raise ValueError("training and validation groups overlap")
+    # Legacy callers may still supply pre-save rows for a single-file battle split.
+    if group_by == "battle" and dataset_path is not None:
+        identity = file_sha256(dataset_path)
+        train_groups = sorted({s.battle_id for s in canonical_samples(train, identity)})
+        validation_groups = sorted({s.battle_id for s in canonical_samples(validation, identity)})
     if dataset_paths is None:
         assert dataset_path is not None
         dataset_field: object = str(dataset_path.resolve())
@@ -308,4 +409,7 @@ def split_samples_grouped(
     validation_groups = set(groups[:val_count])
     train = [sample for sample in samples if key(sample) not in validation_groups]
     validation = [sample for sample in samples if key(sample) in validation_groups]
+    errors = partition_errors(train, validation, group_by=group_by)
+    if errors:
+        raise ValueError("; ".join(errors) + "; use separately collected validation datasets")
     return train, validation

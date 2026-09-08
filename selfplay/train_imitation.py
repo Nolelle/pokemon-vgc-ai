@@ -14,7 +14,9 @@ import json
 import random
 import subprocess
 import sys
+import uuid
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +36,11 @@ from vgc.rl.agents import DirectAgent, make_direct_agent
 from vgc.rl.demonstrations import (
     INFORMATION_CONTRACT_VERSION,
     annotate_samples,
+    atomic_torch_save,
+    partition_errors,
+    validate_source_compatibility,
+    canonical_samples,
+    file_sha256,
     load_demonstration_dataset,
     save_demonstrations,
     save_split_manifest,
@@ -90,6 +97,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="reuse saved .pt datasets (several paths train on their concatenation, "
         "which must pass the same-pool invariant check as merge_collection_shards)",
     )
+    parser.add_argument("--validation-dataset", type=Path, nargs="+", default=None,
+                        help="separate development validation files; requires --dataset")
+    parser.add_argument("--audit-only", action="store_true",
+                        help="write and audit the split, then stop before fitting")
     parser.add_argument("--bc-checkpoint", type=Path, default=DEFAULT_BC_CHECKPOINT)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -153,6 +164,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=16.0,
         help="softmax temperature in evaluator points; higher flattens the target",
     )
+    parser.add_argument("--soft-target-weight", type=float, default=1.0)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     return parser.parse_args(argv)
 
@@ -344,6 +356,7 @@ def dataset_metadata(
 ) -> dict[str, object]:
     team_source = args.team_manifest or args.team
     return {
+        "collection_id": str(uuid.uuid4()),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "repository_commit": _git_commit(REPO_ROOT),
         "repository_dirty": _git_dirty(REPO_ROOT),
@@ -372,8 +385,12 @@ def save_model_checkpoint(
     args: argparse.Namespace,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
+    atomic_torch_save(
         {
+            "trained_outputs": {"action_preferences": True, "winning_chance": False},
+            "training_audit_sha256": metrics.get("training_audit_sha256"),
+            "development_team_sha256": metrics.get("development_team_sha256", []),
+            "artifact_evidence": metrics.get("artifact_evidence"),
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
@@ -456,12 +473,18 @@ def load_training_dataset(paths: Sequence[Path]) -> tuple[list, dict[str, object
     metadata = {
         **shard_metadata[0],
         "source_datasets": [str(path.resolve()) for path in paths],
+        "source_metadata": shard_metadata,
+        "requested_games": sum(int(m["requested_games"]) for m in shard_metadata),
     }
     return samples, metadata
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.validation_dataset and not args.dataset:
+        raise SystemExit("--validation-dataset requires --dataset")
+    if args.validation_dataset and args.split_by != "team":
+        raise SystemExit("explicit validation requires --split-by team")
     if args.games <= 0 and args.dataset is None:
         raise SystemExit("--games must be positive when --dataset is not supplied")
     if args.epochs <= 0 or args.batch_size <= 0:
@@ -509,15 +532,27 @@ def main(argv: list[str] | None = None) -> None:
     dataset_path = args.out_dir / "demonstrations.pt"
     split_manifest_path = args.out_dir / "split_manifest.json"
 
-    with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
+    worker_context = SimWorker(DEFAULT_SHOWDOWN_REPO) if args.dataset is None or args.eval_games else nullcontext(None)
+    with worker_context as worker:
         if args.dataset is not None:
             samples, metadata = load_training_dataset(args.dataset)
-            train_samples, validation_samples = split_samples_grouped(
-                samples,
-                val_fraction=args.val_fraction,
-                seed=args.seed,
-                group_by=args.split_by,
-            )
+            if args.validation_dataset:
+                train_samples = samples
+                validation_samples, validation_metadata = load_training_dataset(args.validation_dataset)
+                validate_source_compatibility([
+                    *metadata.get("source_metadata", [metadata]),
+                    *validation_metadata.get("source_metadata", [validation_metadata]),
+                ])
+                errors = partition_errors(train_samples, validation_samples, group_by="team")
+                if errors:
+                    raise ValueError("; ".join(errors))
+                samples = [*train_samples, *validation_samples]
+                metadata["validation_metadata"] = validation_metadata
+            else:
+                train_samples, validation_samples = split_samples_grouped(
+                    samples, val_fraction=args.val_fraction, seed=args.seed,
+                    group_by=args.split_by,
+                )
             audited_dataset_path = args.dataset[0] if len(args.dataset) == 1 else None
         else:
             metadata = dataset_metadata(
@@ -575,36 +610,40 @@ def main(argv: list[str] | None = None) -> None:
                 )
             save_demonstrations(dataset_path, samples, metadata=metadata)
             audited_dataset_path = dataset_path
-        if args.dataset is not None and len(args.dataset) == 1:
-            save_split_manifest(
-                split_manifest_path,
-                dataset_path=args.dataset[0],
-                train=train_samples,
-                validation=validation_samples,
-                group_by=args.split_by,
-                seed=args.seed,
-                val_fraction=args.val_fraction,
-            )
-        elif args.dataset is not None:
-            save_split_manifest(
-                split_manifest_path,
-                dataset_paths=args.dataset,
-                train=train_samples,
-                validation=validation_samples,
-                group_by=args.split_by,
-                seed=args.seed,
-                val_fraction=args.val_fraction,
-            )
-        else:
-            save_split_manifest(
-                split_manifest_path,
-                dataset_path=audited_dataset_path,
-                train=train_samples,
-                validation=validation_samples,
-                group_by=args.split_by,
-                seed=args.seed,
-                val_fraction=args.val_fraction,
-            )
+        all_dataset_paths = (
+            [*args.dataset, *(args.validation_dataset or [])]
+            if args.dataset else [dataset_path]
+        )
+        # Rows collected in this process acquire the same stable identity as reloaded rows.
+        if args.dataset is None:
+            identity = str(metadata.get("collection_id") or file_sha256(dataset_path))
+            train_samples = canonical_samples(train_samples, identity)
+            validation_samples = canonical_samples(validation_samples, identity)
+            samples = [*train_samples, *validation_samples]
+        save_split_manifest(
+            split_manifest_path,
+            dataset_paths=all_dataset_paths,
+            train=train_samples, validation=validation_samples,
+            group_by=args.split_by, seed=args.seed, val_fraction=args.val_fraction,
+        )
+        from offline.audit_training_data import audit
+        from vgc.artifact_evidence import atomic_write_json, file_reference, decision_evidence
+
+        audit_path = args.out_dir / "training_audit.json"
+        audit_report = audit(all_dataset_paths, split_manifest_path)
+        atomic_write_json(audit_path, audit_report)
+        if audit_report["verdict"] != "PASS":
+            raise SystemExit("training data audit failed: " + "; ".join(audit_report["errors"]))
+        if not args.collect_only and not args.local_smoke:
+            sources = [*metadata.get("source_metadata", [metadata])]
+            if args.validation_dataset:
+                sources.extend(validation_metadata.get("source_metadata", [validation_metadata]))
+            if any(m.get("repository_dirty") or m.get("showdown_dirty") or m.get("local_smoke") for m in sources):
+                raise SystemExit("dirty/smoke collection is not a training corpus")
+        if args.audit_only:
+            print(f"training audit: PASS ({len(train_samples)} train / {len(validation_samples)} validation)")
+            print(f"audit: {audit_path}")
+            return
 
         if args.collect_only:
             metrics: dict[str, object] = {
@@ -663,6 +702,7 @@ def main(argv: list[str] | None = None) -> None:
                 balance_action_count_bins=args.balance_action_count_bins,
                 soft_targets=args.soft_targets,
                 soft_target_temperature=args.soft_target_temperature,
+                soft_target_weight=args.soft_target_weight,
             ),
             device=args.device,
             val_samples=validation_samples,
@@ -685,6 +725,16 @@ def main(argv: list[str] | None = None) -> None:
         or after["loss"] < before["loss"]
     )
     metrics: dict[str, object] = {
+        "training_audit_sha256": file_sha256(audit_path),
+        "development_team_sha256": sorted({h for sample in samples for h in
+                                           (sample.team_sha256, sample.opponent_team_sha256)}),
+        "artifact_evidence": {
+            "datasets": [file_reference(p) for p in all_dataset_paths],
+            "split": file_reference(split_manifest_path),
+            "warm_start": file_reference(args.bc_checkpoint) if args.bc_checkpoint.is_file() else None,
+            "warm_start_exposure": "unknown" if args.bc_checkpoint.is_file() else "none",
+            "decision_evidence": decision_evidence(teacher_config, safety_slots=4),
+        },
         "sample_count": len(samples),
         "battle_count": len({sample.battle_id for sample in samples}),
         "team_count": len({sample.team_id for sample in samples}),
