@@ -568,6 +568,22 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario.json
 ```
 
+## Testing and iteration preference (2026-09-07)
+
+Prioritize getting the battle bot running and iterating on data and training. Do not
+write unit tests for everything. Add tests only for critical behavior where a failure
+would invalidate a run, silently corrupt its evidence, or stop the bot from playing.
+Examples include public/private information boundaries, training/evaluation separation,
+legal battle choices, correct model loading, and essential training/battle execution.
+
+Prefer existing checks and small end-to-end trial runs over expanding the test suite.
+For low-impact helpers, formatting, routine plumbing, and reversible changes, use a
+quick manual check and debug problems when they occur. Do not add tests that merely
+repeat implementation details or delay a useful experiment to chase exhaustive coverage.
+Run the checks affected by a change; broaden testing when a failure or material risk
+justifies it. Preserve critical readiness checks and honest strength measurements.
+This preference does not require deleting existing tests or relaxing release criteria.
+
 ## Conventions
 
 - `uv` for the environment (`uv sync --extra dev`); `.venv/bin/python`, never a bare

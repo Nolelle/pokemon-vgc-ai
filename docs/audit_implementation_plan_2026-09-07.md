@@ -111,6 +111,14 @@ Restore the release bundle to a separate location, verify fingerprints and loadi
 
 **Done when:** A release can be reproduced and the ladder runner rejects an unapproved or altered candidate. Strong ladder-rating claims still require actual ladder evidence.
 
+## Testing scope clarification (2026-09-07)
+
+The user prioritizes iteration over exhaustive unit-test coverage. Test lists in this
+plan identify critical risks, not a requirement to test every helper or permutation.
+Use existing checks and small real runs wherever they provide sufficient evidence.
+Add a focused test for a critical run failure or silent evidence error; debug lower-impact
+issues as they arise. Do not let incidental test expansion block setting up the bot.
+
 ## Work sequence and reporting
 
 Suggested review units: (1) status/register; (2) public-search parity; (3) shared dataset identity/audit; (4) both-role splitting and recovery manifest; (5) target semantics and evidence fingerprints; (6) diagnostic harness/report; (7) justified training and final evaluations; (8) enforced release/restore check. Stage 7 enforcement code can be built immediately after evidence schemas stabilize, before any model qualifies.
