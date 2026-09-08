@@ -108,6 +108,16 @@ def test_session_config_with_search_enables_two_ply_search() -> None:
     assert config.use_two_ply_search is True
     assert config.use_bc_policy is False
     assert config.log_decisions is True
+    assert config.use_rolling_horizon is True
+    assert config.search_diverse_candidates is True
+
+
+def test_session_config_can_keep_search_but_disable_horizon() -> None:
+    config = session_config(search=True, horizon=False)
+
+    assert config.use_two_ply_search is True
+    assert config.use_rolling_horizon is False
+    assert config.search_diverse_candidates is False
 
 
 def test_session_config_with_bc_enables_bc_policy() -> None:
@@ -123,14 +133,18 @@ def test_session_config_search_and_bc_are_composable() -> None:
     assert config.use_bc_policy is True
 
 
-def test_session_config_search_flag_is_the_only_difference() -> None:
+def test_session_config_search_flag_enables_search_and_its_horizon() -> None:
     without_search = session_config(search=False)
     with_search = session_config(search=True)
-    # dataclasses.replace should only ever touch use_two_ply_search here -- every other
-    # field stays at PolicyConfig's own default.
+    # Turning search off also turns off its dependent horizon/candidate widening.
     from dataclasses import replace
 
-    assert with_search == replace(without_search, use_two_ply_search=True)
+    assert with_search == replace(
+        without_search,
+        use_two_ply_search=True,
+        use_rolling_horizon=True,
+        search_diverse_candidates=True,
+    )
 
 
 def test_session_config_bc_flag_is_the_only_difference() -> None:
@@ -141,11 +155,14 @@ def test_session_config_bc_flag_is_the_only_difference() -> None:
     assert with_bc == replace(without_bc, use_bc_policy=True)
 
 
-def test_policy_label_matches_use_two_ply_search_and_use_bc_policy() -> None:
+def test_policy_label_matches_search_horizon_and_bc_policy() -> None:
     assert policy_label(session_config(search=False)) == "myopic evaluator"
-    assert policy_label(session_config(search=True)) == "2-ply search"
+    assert policy_label(session_config(search=True)) == "2-ply search + rolling horizon"
     assert policy_label(session_config(search=False, bc=True)) == "myopic evaluator + BC re-rank"
-    assert policy_label(session_config(search=True, bc=True)) == "2-ply search + BC re-rank"
+    assert (
+        policy_label(session_config(search=True, bc=True))
+        == "2-ply search + rolling horizon + BC re-rank"
+    )
 
 
 # --- session_config: --value opt-in maps to PolicyConfig.use_value_head, composably --
@@ -174,10 +191,13 @@ def test_session_config_search_bc_value_are_all_composable() -> None:
 
 
 def test_policy_label_includes_value_head() -> None:
-    assert policy_label(session_config(search=True, value=True)) == "2-ply search + value head"
+    assert (
+        policy_label(session_config(search=True, value=True))
+        == "2-ply search + rolling horizon + value head"
+    )
     assert (
         policy_label(session_config(search=True, bc=True, value=True))
-        == "2-ply search + BC re-rank + value head"
+        == "2-ply search + rolling horizon + BC re-rank + value head"
     )
     assert policy_label(session_config(search=False, value=True)) == "myopic evaluator + value head"
 
@@ -185,17 +205,20 @@ def test_policy_label_includes_value_head() -> None:
 def test_policy_tag_covers_all_four_combos() -> None:
     policy_tag = run_ladder_module._policy_tag
     assert policy_tag(session_config(search=False)) == "myopic"
-    assert policy_tag(session_config(search=True)) == "search"
+    assert policy_tag(session_config(search=True)) == "search+horizon"
     assert policy_tag(session_config(search=False, bc=True)) == "bc"
-    assert policy_tag(session_config(search=True, bc=True)) == "search+bc"
+    assert policy_tag(session_config(search=True, bc=True)) == "search+horizon+bc"
 
 
 def test_policy_tag_covers_value_head_combos() -> None:
     policy_tag = run_ladder_module._policy_tag
     assert policy_tag(session_config(search=False, value=True)) == "value"
-    assert policy_tag(session_config(search=True, value=True)) == "search+value"
+    assert policy_tag(session_config(search=True, value=True)) == "search+horizon+value"
     assert policy_tag(session_config(search=False, bc=True, value=True)) == "bc+value"
-    assert policy_tag(session_config(search=True, bc=True, value=True)) == "search+bc+value"
+    assert (
+        policy_tag(session_config(search=True, bc=True, value=True))
+        == "search+horizon+bc+value"
+    )
 
 
 # --- _safe_stop_listening: teardown of a dead connection must never raise -----------
@@ -434,3 +457,80 @@ def test_run_live_session_counts_record_recovered_during_failure(monkeypatch) ->
 
     assert records == [{"won": False, "battle_tag": "recovered-1"}]
     assert _FakeRecoveredRecordPlayer.attempt_count == 1
+
+
+def _tiny_checkpoint(tmp_path):
+    pytest.importorskip("torch")
+    from vgc.rl.model import CandidatePolicyValueNet
+    from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
+    import torch
+
+    path = tmp_path / "best.pt"
+    net = CandidatePolicyValueNet()
+    torch.save(
+        {
+            "model_state_dict": net.state_dict(),
+            "architecture": RL_ARCHITECTURE_VERSION,
+            "use_meta_features": False,
+            "use_information_features": False,
+            "use_tactical_features": False,
+            "head_dropout": 0.0,
+            "value_output_transform": "identity",
+            "head_width": None,
+        },
+        path,
+    )
+    return path
+
+
+def test_make_session_player_hybrid_mode_builds_guided_ladder_player(tmp_path):
+    from vgc.models import PolicyConfig
+
+    checkpoint = _tiny_checkpoint(tmp_path)
+    player = run_ladder_module._make_session_player(
+        checkpoint_path=checkpoint,
+        device="cpu",
+        policy_mode="hybrid",
+        artifacts_dir=tmp_path / "artifacts",
+        log_path=tmp_path / "log.jsonl",
+        session_id="unit",
+        config=PolicyConfig(),
+        team="fake-team",
+        battle_format="gen9championsvgc2026regmb",
+        start_listening=False,
+    )
+
+    assert player.mode == "hybrid"
+    assert player.learned_checkpoint_sha256 == run_ladder_module.checkpoint_sha256(checkpoint)
+    assert player.hybrid_mode is True
+    assert (tmp_path / "artifacts" / "replays").exists()
+
+
+def test_make_session_player_defaults_and_unknown_modes(tmp_path):
+    from ladder.run_ladder import LadderPlayer
+
+    heuristic = run_ladder_module._make_session_player(
+        checkpoint_path=None,
+        device="cpu",
+        artifacts_dir=tmp_path / "artifacts",
+        log_path=tmp_path / "log.jsonl",
+        session_id="unit",
+        team="fake-team",
+        battle_format="gen9championsvgc2026regmb",
+        start_listening=False,
+    )
+    assert isinstance(heuristic, LadderPlayer)
+    assert heuristic.accept_open_team_sheet is False
+
+    with pytest.raises(ValueError, match="unknown policy_mode"):
+        run_ladder_module._make_session_player(
+            checkpoint_path=None,
+            device="cpu",
+            policy_mode="telepathy",
+            artifacts_dir=tmp_path / "a2",
+            log_path=tmp_path / "log2.jsonl",
+            session_id="unit2",
+            team="fake-team",
+            battle_format="gen9championsvgc2026regmb",
+            start_listening=False,
+        )

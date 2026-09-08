@@ -190,12 +190,12 @@ class BcPolicyNet(nn.Module):
         # plenty, and keeps the head cheap to add without changing the trunk's own size).
         self.value_head = nn.Linear(hidden_dim, 1) if "value" in self.heads else None
 
-    def forward(
-        self, index_array: torch.Tensor, scalars: torch.Tensor
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-        """`index_array`: `(batch, INDEX_DIM)` int64. `scalars`: `(batch, scalar_dim)`
-        float32. Returns `(move_logits, target_logits, value_logit)` -- `None` in any
-        slot whose head isn't in `self.heads` (see module docstring).
+    def encode_hidden(self, index_array: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
+        """Return the shared state representation before any prediction head.
+
+        Keeping this public lets candidate-aware policies reuse a BC-pretrained state
+        encoder without pretending the old independent move heads are a joint-action
+        policy. Existing BC callers still go through :meth:`forward` unchanged.
         """
         batch_size = index_array.shape[0]
 
@@ -252,7 +252,16 @@ class BcPolicyNet(nn.Module):
         feature_parts.append(scalars)
 
         features = torch.cat(feature_parts, dim=-1)
-        hidden = self.trunk(features)
+        return self.trunk(features)
+
+    def forward(
+        self, index_array: torch.Tensor, scalars: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+        """`index_array`: `(batch, INDEX_DIM)` int64. `scalars`: `(batch, scalar_dim)`
+        float32. Returns `(move_logits, target_logits, value_logit)` -- `None` in any
+        slot whose head isn't in `self.heads` (see module docstring).
+        """
+        hidden = self.encode_hidden(index_array, scalars)
         move_logits = self.move_head(hidden) if self.move_head is not None else None
         target_logits = self.target_head(hidden) if self.target_head is not None else None
         value_logit = self.value_head(hidden).squeeze(-1) if self.value_head is not None else None

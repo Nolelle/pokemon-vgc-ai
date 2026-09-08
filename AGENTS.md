@@ -1,9 +1,13 @@
 # pokemon-vgc-ai
 
 Pokemon Showdown VGC bot for `gen9championsvgc2026regmb` -- "[Gen 9 Champions] VGC 2026
-Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed, Open Team Sheets on the Bo1
-ladder. Backed by the local Showdown checkout's `champions` mod (see
-`config/formats.ts` in that repo), not vanilla gen9.
+Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed. The format offers mutual-
+consent Open Team Sheets, but the bot rejects them and assumes no opponent sheet on the
+Bo1 ladder (in practice ~0.2% of public games have one). Backed by the local Showdown
+checkout's `champions` mod (see `config/formats.ts` in that repo), not vanilla gen9.
+
+CLAUDE.md is the authoritative, fuller version of this file (gates, parity check,
+exact-mechanics search, closed experiments); when the two disagree, CLAUDE.md wins.
 
 Phase 1 scaffold: project skeleton, data export, poke-env baselines, eval harness.
 
@@ -176,6 +180,116 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
 - `vgc.node.find_node` selects Node 22 even when an older Node is first on PATH. Override
   discovery with `VGC_NODE` if necessary.
 
+## Multi-team gates: cluster by team, and check your power first
+
+`offline/evaluate_own_spread_pool.py` plays a change against MANY teams
+(`data/selfplay/archetype_pool*/manifest.json`, built by `tools/build_archetype_pool.py`).
+Four rules learned the hard way on 2026-08-11/12, all now enforced in code:
+
+- **Never tune on one team and confirm on the same team.** A held-out SEED is not a
+  held-out TEAM. `protect_threat_weight=0.6` read 61.0% on `teams/phase2_mirror` (n=500,
+  fresh seed) and 50.7% on the 58-team pool -- a 10-point overfit. The screen that picked
+  it also had a 7.7-point SE on differences between candidates that spanned 7.5 points,
+  i.e. it was choosing between four indistinguishable options.
+- **Pool win rates need a cluster-robust interval, not Wilson.** Games are clustered in
+  teams and teams genuinely differ, which inflated the variance 1.76x on the real gate
+  and made the reported `[0.476, 0.537]` really `[0.466, 0.547]`. Use
+  `vgc.evaluation.clustered_interval` / `variance_components`; `wilson_interval` is only
+  correct for a single fixed matchup.
+- **Check the pool's power floor BEFORE running.** Between-team variance divides by the
+  number of TEAMS, so a pool of K teams has an irreducible SE floor of `sqrt(tau^2 / K)`
+  that more games per team cannot lower. The 58-team pool could never certify an edge
+  below ~+2.8 points at any game count. The 160-team pool
+  (`data/selfplay/archetype_pool_150/`, 25 variants/archetype, 0 validation failures)
+  ran the same A/B at 1426/2880 = 49.5%, cluster-robust CI [0.470, 0.520], floor +1.8pts
+  -- still a wash, now tight enough that a real +3pt edge would have cleared. Use this
+  pool for anything that needs to resolve below ~+3 points. The gate prints both numbers.
+- **Subgroup checks need a family-wise correction.** Six uncorrected per-archetype 95%
+  checks trip on noise ~14% of runs. `gardevoir_maushold` was flagged at 40.7%, a policy
+  change was built to chase it, and it measured 54.9% on the next seed. The guardrail is
+  now a one-sided cluster-robust test per archetype, Holm-corrected.
+
+**Run `--null-test` (A/A: both arms identical) whenever the harness changes.** It must
+return 50%. This is what retired the phantom "accurate own spreads cost 10 points"
+result: that 200/500 = 40.0% run predates commit `e8417bd`, before which `DirectBattle`
+enriched both sides globally and `PolicyConfig.use_own_team_spreads` had no per-agent
+effect in the direct env at all, so the two seats had identical self-knowledge. The
+post-fix rerun of the same comparison gave 51.8%, and the A/A null test gives 537/1044 =
+51.4%, CI [0.483, 0.546]. The A/A run also has team-effect SD 0.029 (consistent with
+zero) against the A/B gate's 0.106 (above the 99th percentile of the null), which is how
+we know the +/-10-point team-to-team spread under A/B is a real property of the policy
+change rather than noise. The 160-team confirmation measured the same spread (tau 0.114)
+around a 49.5% mean, so the heterogeneity is real and the overall edge is not.
+
+## Neural shortlist distillation (Phase 4): the guided gate passed
+
+The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is trained
+by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
+`offline/evaluate_shortlist_recall.py`. State as of 2026-08-25:
+
+- **The deployed shortlist is NOT the network's raw top-K** -- up to half its budget is
+  heuristic safety slots (`vgc.rl.guided_selection`, shared verbatim by live play and
+  offline replay). Screens must report BOTH flavors; pure-only numbers answer a
+  different question. A guided verdict computed on a metadata-covered SUBSET prints
+  INDETERMINATE, never PASS.
+- **Schema v2.x**: every collected `DistillationSample` also carries per-candidate
+  myopic ranks, safety-tag columns, the teacher's full search-score vector, and a
+  searched-mask (`build_guidance_metadata` / `build_score_metadata`). Old datasets load
+  unchanged (fields defaulted) but cannot replay guided selection.
+- **Current standing**: retrained on 76,801 v2.x decisions
+  (`runs/full_pipeline/teacher_5x_model`, recipe: recall-selected checkpoint +
+  hard-example weight 2.0 + action-count bin balancing; lr 3e-4 matters, weight is
+  flat). On the clean 150-team expanded holdout (18,209 decisions):
+  pure R@10 97.7% (LCB 0.974), **guided@10 LCB 0.984 = PASS**, live shadow
+  **guided@10 99.1% / LCB 0.985 = prior_stage PASSED**. The powered paired strength
+  gate (1,500 pairs) **FAILED narrowly** (delta [−0.030, +0.013] vs −0.02 margin):
+  first-divergence attribution shows true misses are HARMLESS (+4.8% for hybrid) and
+  the whole deficit comes from "upset flips" where the neural shortlist admits a
+  candidate that outscored the shipped winner but lost anyway (concentrated in
+  triple_setup_balance). Fix shipped 2026-08-25: `PolicyConfig.guided_upset_margin=10`
+  arbitrates those flips in `vgc.rl.search_guidance` (audit fields on every hybrid
+  record); **powered re-gate PASSED** (1,500 pairs: hybrid +0.4pts vs full search,
+  delta [−0.009, +0.017]; arbitration fired on 0.77% of decisions) — verdict in
+  `runs/eval/neural_search_5x_regate.json`. Ship path:
+  `ladder/run_ladder.py --policy-checkpoint <ckpt> --policy-mode hybrid`.
+  Public smoke 2026-08-25: **6-4 at zero fallbacks** — hybrid is the live ladder
+  policy; treat the shipped heuristic as the A/B incumbent from here on.
+- Expanded holdout hygiene: `archetype_pool_holdout160` had **10 of 160 teams
+  byte-identical** to training-pool teams (seed collision in variant generation);
+  they are excluded via content match in `runs/full_pipeline/expanded_holdout_teams.json`.
+  Any new pool used for evaluation needs the same packed-content exclusion.
+- Tooling: `offline/run_scaling_curve.py` (nested subsets -> fitted miss ~ N^-alpha;
+  fit against TRAINING volume, never holdout size), `offline/audit_miss_regret.py`
+  (miss severity, not just frequency), `offline/merge_demonstrations.py`,
+  `offline/evaluate_ensemble_recall.py` (logit ensembling: +0.3pt over best member).
+  Misses are NOT free: median known_regret ~30 evaluator points on old-checkpoint
+  shadow records, which is why the recall bar was not relaxed.
+
+## Pure-RL 100k scaling closeout: do not promote or scale this recipe further
+
+The frozen scaling study completed on 2026-08-26: three independent seeds
+(`20260901/02/03`) each trained for 100,096 games from the same imitation checkpoint,
+with the team split and evaluation schedule fixed at seed `20260815`. All 12 saved
+milestones per seed were evaluated on both familiar and unseen teams (42,000 games),
+followed by a 1,000-game-per-split promotion gate for every exact-100k endpoint (6,000
+more games). There were zero fallbacks throughout.
+
+- The pre-registered 25k -> 100k verdict was `MIXED_OR_INSUFFICIENT_EVIDENCE`; Case A
+  (keep scaling), Case B (plateau), and Case C (generalization wall) were all false.
+  Paired unseen-team deltas versus full `vgc` were +13.9 points (team-bootstrap 95%
+  interval [-4.4, +31.8]), -6.9 [-25.0, +10.0], and -9.7 [-30.0, +12.1]. No seed had a
+  certified gain, and the required two-seed replication did not occur.
+- All three exact-100k promotion gates failed. Unseen-team win rates versus shipped
+  full search were 42.6%, 39.5%, and 36.4%; their Wilson lower bounds were all far below
+  the required 50%. Seed 2 also missed the maximum generalization-gap check by 0.2
+  points. Overall held-out performance remained 67.0-67.6% because the policies still
+  beat easier opponents, which is why the per-rung gate matters.
+- Conclusion: ten times more pure reinforcement-learning games did not yield a policy
+  safe to replace search. Do not promote these checkpoints or launch a larger run with
+  the same recipe. The shipped neural-guided hybrid remains authoritative. Evidence:
+  `runs/full_pipeline/rl_scale/scaling_verdict.json` and
+  `runs/eval/rl_scale_seed2026090{1,2,3}_promotion_gate.json`.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -203,6 +317,27 @@ cat teams/dev.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026
 # Acceptance gate (Wilson-CI lower bound over a threshold)
 .venv/bin/python offline/run_gates.py --candidate vgc --incumbent random --n 100 \
     --threshold 0.55 --team teams/dev.packed.txt
+
+# Varied-team gate (see "Multi-team gates" above). Build the pool once, then A/A the
+# harness, then run the A/B. --null-test MUST come back at 50% or the A/B means nothing.
+.venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25 \
+    --seed 20260901 --out data/selfplay/archetype_pool_150
+.venv/bin/python offline/evaluate_own_spread_pool.py --null-test \
+    --manifest data/selfplay/archetype_pool_150/manifest.json \
+    --output runs/eval/pool_null_test.json
+.venv/bin/python offline/evaluate_own_spread_pool.py \
+    --manifest data/selfplay/archetype_pool_150/manifest.json --workers 10 \
+    --output runs/eval/own_spread_pool160_gate.json
+
+# First controlled RL experiment (fixed team, fixed leads, fogged, terminal ±1,
+# gamma=1.0). Heuristic weights stay frozen; this is the learning-curve run.
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent random \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_random
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent maxpower \
+    --init-from runs/ppo/fixed_mirror_vs_random/latest.pt \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_maxpower
 
 # The two Phase 2b acceptance gates (meta1 team mirror on both sides -- see "gate
 # results" in the Phase 2b experiment log, runs/experiments.jsonl, for the latest run):
@@ -238,6 +373,22 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario.json
 ```
 
+## Testing and iteration preference (2026-09-07)
+
+Prioritize getting the battle bot running and iterating on data and training. Do not
+write unit tests for everything. Add tests only for critical behavior where a failure
+would invalidate a run, silently corrupt its evidence, or stop the bot from playing.
+Examples include public/private information boundaries, training/evaluation separation,
+legal battle choices, correct model loading, and essential training/battle execution.
+
+Prefer existing checks and small end-to-end trial runs over expanding the test suite.
+For low-impact helpers, formatting, routine plumbing, and reversible changes, use a
+quick manual check and debug problems when they occur. Do not add tests that merely
+repeat implementation details or delay a useful experiment to chase exhaustive coverage.
+Run the checks affected by a change; broaden testing when a failure or material risk
+justifies it. Preserve critical readiness checks and honest strength measurements.
+This preference does not require deleting existing tests or relaxing release criteria.
+
 ## Conventions
 
 - `uv` for the environment (`uv sync --extra dev`); `.venv/bin/python`, never a bare
@@ -250,6 +401,9 @@ node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario
 - `PolicyConfig` (`vgc/models.py`) is the single frozen-dataclass gate for behavior
   changes -- new strategic knobs go there, individually commented, not as bare
   literals in the decision code. Mirrors `~/code/projects/pokemon-tcg-ai`'s pattern.
+  Heuristic weights themselves are frozen as of 2026-08-12 (the Protect retune did
+  not generalize). Treat the shipped heuristic as a benchmark, not something to
+  keep optimizing.
 - `VgcPlayer.decide()` / `decide_teampreview()` (`vgc/agent.py`) are the only methods
   subclasses should override; `choose_move`/`teampreview` themselves exist only to wrap
   those hooks in an exception-safe fallback (random move / `/team 1234`) so a bug in

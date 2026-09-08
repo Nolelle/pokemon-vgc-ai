@@ -16,6 +16,10 @@ pool (Species Clause: no repeats WITHIN one team; different teams MAY reuse a sp
 which is fine -- a real corpus-derived pool of ~20 teams from ~30 popular species will
 naturally overlap some).
 
+`sample_team_with_fixed_core` is a variant of `sample_teams` for callers that need to
+pin a few species (e.g. `tools/build_archetype_pool.py`'s archetype-defining core) while
+still drawing the remaining slots at random from a pool.
+
 `resolve_team_items` is a separate, TEAM-level step (not per-species): this format's
 Item Clause caps every item at 1 per team, but two popular species sampled onto the same
 team often share the same single most-popular item (Choice Scarf is extremely common
@@ -186,6 +190,35 @@ def sample_teams(
         return []
     rng = random.Random(seed)
     return [rng.sample(pool, TEAM_SIZE) for _ in range(n_teams)]
+
+
+def sample_team_with_fixed_core(
+    core: list[GeneratedSet], flex_pool: list[GeneratedSet], *, seed: int = 0
+) -> list[GeneratedSet] | None:
+    """A `TEAM_SIZE`-species team that keeps every `core` entry exactly as given and
+    fills the remaining slots with a deterministic random sample from `flex_pool`.
+
+    Built for `tools/build_archetype_pool.py`'s within-archetype variant generation:
+    it needs to fix a small defining-core species set (e.g. the weather setter plus its
+    abuser) while still varying the rest of the team from the corpus-priority pool --
+    plain `sample_teams` (which samples ALL `TEAM_SIZE` slots uniformly from one pool)
+    can't express that constraint. `flex_pool` entries whose `species_id` is already in
+    `core` are excluded first (Species Clause: no repeats within one team) so callers
+    don't have to pre-filter their pool themselves.
+
+    Returns `None` if, after that exclusion, `flex_pool` has fewer entries than the
+    number of flex slots still needed -- can't legally fill out the team.
+    """
+    if len(core) > TEAM_SIZE:
+        raise ValueError(f"core has {len(core)} entries, more than TEAM_SIZE={TEAM_SIZE}")
+    flex_needed = TEAM_SIZE - len(core)
+    core_species = {gen_set.species_id for gen_set in core}
+    candidates = [gen_set for gen_set in flex_pool if gen_set.species_id not in core_species]
+    if len(candidates) < flex_needed:
+        return None
+    rng = random.Random(seed)
+    flex = rng.sample(candidates, flex_needed) if flex_needed else []
+    return list(core) + flex
 
 
 def resolve_team_items(team: list[GeneratedSet]) -> list[str | None]:

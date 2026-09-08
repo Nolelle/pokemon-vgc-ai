@@ -1,0 +1,796 @@
+{
+  "approval_authority": false,
+  "inventory_checkout": "46d256076986201be9f05c1c8423a8c9cfbedccb",
+  "inventory_date": "2026-09-07",
+  "models": [
+    {
+      "architecture": "candidate-policy-value-v3-meta",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/full_pipeline/teacher_5x_model/best.pt",
+        "sha256": "968c47307db1be840fe550abba48844d55a0d75d5bd649151a11478994e89c48"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "recorded_hash",
+          "exists": true,
+          "path": "runs/eval/neural_search_5x_regate.json",
+          "sha256": "bb7678bb5855a2655e481fbb9774daa434f78236e275f77de42cdbc4c875bd0a",
+          "status": "historical_pass_not_current_approval"
+        }
+      ],
+      "id": "teacher_5x_model",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "rejected_architecture"
+      },
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": null,
+        "datasets": [
+          {
+            "exists": false,
+            "path": "runs/full_pipeline/teacher_5x_train.pt",
+            "sha256": null
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "dataset": "runs/full_pipeline/teacher_5x_train.pt",
+          "device": "cpu",
+          "epochs": 12,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "lr": 0.0003,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/full_pipeline/teacher_5x_model",
+          "seed": 20260815,
+          "select_metric": "recall_at_k",
+          "split_by": "battle",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": null,
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v4-mechanics",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/train_a3/best.pt",
+        "sha256": "a552056f64e58c21363426bd0bbd49a3da2963780f83766201a307cfc84e5cfe"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "path_only_not_verified_historical_bytes",
+          "exists": true,
+          "path": "runs/eval/shortlist_recall_a3.json",
+          "sha256": "29da6429f1d210c5a5957a24a7e4bb3b4c767b7a43f809951b5dc6a104ecfe39",
+          "status": "failed_development_recall"
+        }
+      ],
+      "id": "train_a3",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "compatible"
+      },
+      "release_approval": null,
+      "status": "experimental",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": "cd45cef2674abacee6a569da3c120dfee5840f9b",
+        "datasets": [
+          {
+            "exists": false,
+            "path": "runs/collect_a3_full/demonstrations.pt",
+            "sha256": null
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "collect_only": false,
+          "dataset": "runs/collect_a3_full/demonstrations.pt",
+          "device": "cpu",
+          "epochs": 12,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "local_smoke": false,
+          "lr": 0.0003,
+          "max_skip_rate": 0.05,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/train_a3",
+          "seed": 20260907,
+          "select_metric": "recall_at_k",
+          "soft_target_temperature": 16.0,
+          "soft_targets": false,
+          "split_by": "team",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": {
+          "exists": true,
+          "path": "runs/train_a3/split_manifest.json",
+          "sha256": "5f0274efb2ebe2c47a21103908cdb01566f5fc63f87791cc2ef42261e69352c8"
+        },
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v4-mechanics",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/train_a3_24ep/best.pt",
+        "sha256": "8923d6e53a2c993530231056b07714d7546f74a5efdcb089fa351c24471cb5e6"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [],
+      "id": "train_a3_24ep",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "compatible"
+      },
+      "release_approval": null,
+      "status": "experimental",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": "cd45cef2674abacee6a569da3c120dfee5840f9b",
+        "datasets": [
+          {
+            "exists": false,
+            "path": "runs/collect_a3_full/demonstrations.pt",
+            "sha256": null
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "collect_only": false,
+          "dataset": "runs/collect_a3_full/demonstrations.pt",
+          "device": "cpu",
+          "epochs": 24,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "local_smoke": false,
+          "lr": 0.0003,
+          "max_skip_rate": 0.05,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/train_a3_24ep",
+          "seed": 20260907,
+          "select_metric": "recall_at_k",
+          "soft_target_temperature": 16.0,
+          "soft_targets": false,
+          "split_by": "team",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": {
+          "exists": true,
+          "path": "runs/train_a3_24ep/split_manifest.json",
+          "sha256": "5f0274efb2ebe2c47a21103908cdb01566f5fc63f87791cc2ef42261e69352c8"
+        },
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v4-mechanics",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/train_a3_soft/best.pt",
+        "sha256": "4eb1e901be9e0fb0d007d9d6309d9c43b4655eed003b70d338cb81d8a8ba6e95"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "path_only_not_verified_historical_bytes",
+          "exists": true,
+          "path": "runs/eval/shortlist_recall_a3_soft.json",
+          "sha256": "9d414a5ef1d4f295ebd3d8729094d409d3508ac8ace0f0214d752fe2a1b9bfb1",
+          "status": "failed_development_recall"
+        }
+      ],
+      "id": "train_a3_soft",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "compatible"
+      },
+      "release_approval": null,
+      "status": "experimental",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": "cd45cef2674abacee6a569da3c120dfee5840f9b",
+        "datasets": [
+          {
+            "exists": false,
+            "path": "runs/collect_a3_full/demonstrations.pt",
+            "sha256": null
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "collect_only": false,
+          "dataset": "runs/collect_a3_full/demonstrations.pt",
+          "device": "cpu",
+          "epochs": 12,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "local_smoke": false,
+          "lr": 0.0003,
+          "max_skip_rate": 0.05,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/train_a3_soft",
+          "seed": 20260907,
+          "select_metric": "recall_at_k",
+          "soft_target_temperature": 16.0,
+          "soft_targets": true,
+          "split_by": "team",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": {
+          "exists": true,
+          "path": "runs/train_a3_soft/split_manifest.json",
+          "sha256": "5f0274efb2ebe2c47a21103908cdb01566f5fc63f87791cc2ef42261e69352c8"
+        },
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v4-mechanics",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/train_b1/best.pt",
+        "sha256": "47fe6e701b37adc043b6795752f55c650e577f496d4dfb10b96e0aeb49860cbd"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "path_only_not_verified_historical_bytes",
+          "exists": true,
+          "path": "runs/eval/shortlist_recall_b1.json",
+          "sha256": "14cc9acff5a285a30cabd96055428f339e24762aca83dd3abd86870e290766b7",
+          "status": "failed_development_recall"
+        }
+      ],
+      "id": "train_b1",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "compatible"
+      },
+      "release_approval": null,
+      "status": "experimental",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": "c1cad213e1b6b8b77ac3efb56a37b4c8a6734826",
+        "datasets": [
+          {
+            "exists": true,
+            "path": "runs/collect_b_s1/demonstrations.pt",
+            "sha256": "e0f3a8c870d624de8b49ac33a8771dd7b7504b41e06d28601561b69bf6286493"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s2/demonstrations.pt",
+            "sha256": "206a9b9e9ad16f1495b77e681a8e7a888ed5214f53e373b6059e39d2642ac768"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s3/demonstrations.pt",
+            "sha256": "ae1900a4fa6b2cc9ade9a776fddc83af50e6880c0f4ebd0a268992b789be8947"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s4/demonstrations.pt",
+            "sha256": "82304563c4e89854cfc3ccb219b0b77886a0b4c79bd8403e404770a3accc4f4d"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s5/demonstrations.pt",
+            "sha256": "49e7920d6070bfe51db06c9bac16102c4fdf5ff39b67e53d28d0951f9f127755"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s6/demonstrations.pt",
+            "sha256": "3eb0b34cbb065422d9eddb2f6e4a84e9f4e58f0a35b460a1632e888f676c64a9"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s7/demonstrations.pt",
+            "sha256": "05d1197da7f1a824556d11569049425c41cc228c39109b1bf7807e47821417b1"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s8/demonstrations.pt",
+            "sha256": "4aac09db964506f6bfc38e25a344e6a641e470d2f874f7f18ed942c3a11ea3f0"
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "collect_only": false,
+          "dataset": [
+            "runs/collect_b_s1/demonstrations.pt",
+            "runs/collect_b_s2/demonstrations.pt",
+            "runs/collect_b_s3/demonstrations.pt",
+            "runs/collect_b_s4/demonstrations.pt",
+            "runs/collect_b_s5/demonstrations.pt",
+            "runs/collect_b_s6/demonstrations.pt",
+            "runs/collect_b_s7/demonstrations.pt",
+            "runs/collect_b_s8/demonstrations.pt"
+          ],
+          "device": "cpu",
+          "epochs": 12,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "local_smoke": false,
+          "lr": 0.0003,
+          "max_skip_rate": 0.05,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/train_b1",
+          "seed": 20260907,
+          "select_metric": "recall_at_k",
+          "soft_target_temperature": 16.0,
+          "soft_targets": false,
+          "split_by": "team",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": {
+          "exists": true,
+          "path": "runs/train_b1/split_manifest.json",
+          "sha256": "f6d8ea788fc0fb0cd171addc06d1d852c7cf5a57fc3e79bb770c97a328093ab8"
+        },
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v4-mechanics",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/train_b1_soft/best.pt",
+        "sha256": "d9b62dd38b4b1d1f323a21f3f2d944eba9a982b30d7374ff81a4d36542413f70"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [],
+      "id": "train_b1_soft",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "compatible"
+      },
+      "release_approval": null,
+      "status": "experimental",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "untrained_by_imitation"
+      },
+      "training": {
+        "collection_repository_commit": "c1cad213e1b6b8b77ac3efb56a37b4c8a6734826",
+        "datasets": [
+          {
+            "exists": true,
+            "path": "runs/collect_b_s1/demonstrations.pt",
+            "sha256": "e0f3a8c870d624de8b49ac33a8771dd7b7504b41e06d28601561b69bf6286493"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s2/demonstrations.pt",
+            "sha256": "206a9b9e9ad16f1495b77e681a8e7a888ed5214f53e373b6059e39d2642ac768"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s3/demonstrations.pt",
+            "sha256": "ae1900a4fa6b2cc9ade9a776fddc83af50e6880c0f4ebd0a268992b789be8947"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s4/demonstrations.pt",
+            "sha256": "82304563c4e89854cfc3ccb219b0b77886a0b4c79bd8403e404770a3accc4f4d"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s5/demonstrations.pt",
+            "sha256": "49e7920d6070bfe51db06c9bac16102c4fdf5ff39b67e53d28d0951f9f127755"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s6/demonstrations.pt",
+            "sha256": "3eb0b34cbb065422d9eddb2f6e4a84e9f4e58f0a35b460a1632e888f676c64a9"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s7/demonstrations.pt",
+            "sha256": "05d1197da7f1a824556d11569049425c41cc228c39109b1bf7807e47821417b1"
+          },
+          {
+            "exists": true,
+            "path": "runs/collect_b_s8/demonstrations.pt",
+            "sha256": "4aac09db964506f6bfc38e25a344e6a641e470d2f874f7f18ed942c3a11ea3f0"
+          }
+        ],
+        "recipe": {
+          "balance_action_count_bins": true,
+          "batch_size": 128,
+          "bc_checkpoint": "/Users/edmundyu/code/projects/pokemon-vgc-ai/data/models/bc_policy_v4.pt",
+          "collect_only": false,
+          "dataset": [
+            "runs/collect_b_s1/demonstrations.pt",
+            "runs/collect_b_s2/demonstrations.pt",
+            "runs/collect_b_s3/demonstrations.pt",
+            "runs/collect_b_s4/demonstrations.pt",
+            "runs/collect_b_s5/demonstrations.pt",
+            "runs/collect_b_s6/demonstrations.pt",
+            "runs/collect_b_s7/demonstrations.pt",
+            "runs/collect_b_s8/demonstrations.pt"
+          ],
+          "device": "cpu",
+          "epochs": 12,
+          "eval_games": 0,
+          "games": 64,
+          "hard_example_rank": 10,
+          "hard_example_weight": 2.0,
+          "head_width": null,
+          "local_smoke": false,
+          "lr": 0.0003,
+          "max_skip_rate": 0.05,
+          "opponents": "random,maxpower,heuristic,vgc_myopic,vgc_shallow,vgc",
+          "out_dir": "runs/train_b1_soft",
+          "seed": 20260907,
+          "select_metric": "recall_at_k",
+          "soft_target_temperature": 16.0,
+          "soft_targets": true,
+          "split_by": "team",
+          "team": "/Users/edmundyu/code/projects/pokemon-vgc-ai/teams/phase2_mirror.packed.txt",
+          "team_manifest": null,
+          "val_fraction": 0.2
+        },
+        "split_manifest": {
+          "exists": true,
+          "path": "runs/train_b1_soft/split_manifest.json",
+          "sha256": "f6d8ea788fc0fb0cd171addc06d1d852c7cf5a57fc3e79bb770c97a328093ab8"
+        },
+        "training_repository_commit": null,
+        "warm_start": {
+          "exists": true,
+          "path": "data/models/bc_policy_v4.pt",
+          "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+        },
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v3-meta",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/full_pipeline/rl_scale_seed20260901/evaluated_latest.pt",
+        "sha256": "08031b546daa95735f688c102a7d787b42272e6d36a1f6cab822bdac095e95a7"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "recorded_hash",
+          "exists": true,
+          "path": "runs/eval/rl_scale_seed20260901_promotion_gate.json",
+          "sha256": "4005b3de1d16e6a627651191f4aaa24804ea86b6c162d56fc50e82d479aa2502",
+          "status": "failed_historical_promotion"
+        }
+      ],
+      "id": "rl_scale_seed20260901",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "rejected_architecture"
+      },
+      "release_approval": null,
+      "status": "rejected",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "trained_historical_outcomes"
+      },
+      "training": {
+        "collection_repository_commit": null,
+        "datasets": [],
+        "recipe": {},
+        "split_manifest": null,
+        "training_repository_commit": null,
+        "warm_start": null,
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v3-meta",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/full_pipeline/rl_scale_seed20260902/evaluated_latest.pt",
+        "sha256": "89e88c17aea2833845dc5b6221cf2f593c0c0c190815cb06267e9caeb398fe66"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "recorded_hash",
+          "exists": true,
+          "path": "runs/eval/rl_scale_seed20260902_promotion_gate.json",
+          "sha256": "6b897911a3a688dbeef835c5eec672e5567fc8490f622a198c96b24639afce01",
+          "status": "failed_historical_promotion"
+        }
+      ],
+      "id": "rl_scale_seed20260902",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "rejected_architecture"
+      },
+      "release_approval": null,
+      "status": "rejected",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "trained_historical_outcomes"
+      },
+      "training": {
+        "collection_repository_commit": null,
+        "datasets": [],
+        "recipe": {},
+        "split_manifest": null,
+        "training_repository_commit": null,
+        "warm_start": null,
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "candidate-policy-value-v3-meta",
+      "checkpoint": {
+        "exists": true,
+        "path": "runs/full_pipeline/rl_scale_seed20260903/evaluated_latest.pt",
+        "sha256": "1232259abc4afb3bc1edb2f3c6d2f3fa3fdd1a7f181e281cf296f9a3c4562cda"
+      },
+      "durability": {
+        "checkpoint_in_scratch": true,
+        "verified_backup": null
+      },
+      "evaluations": [
+        {
+          "checkpoint_binding": "recorded_hash",
+          "exists": true,
+          "path": "runs/eval/rl_scale_seed20260903_promotion_gate.json",
+          "sha256": "2c3febcf9396daa2ec6743c62d5e81c799abce0f89d70cf1fd07a52a0f4e28b2",
+          "status": "failed_historical_promotion"
+        }
+      ],
+      "id": "rl_scale_seed20260903",
+      "loader": {
+        "name": "vgc.rl.opponents.load_snapshot",
+        "status": "rejected_architecture"
+      },
+      "release_approval": null,
+      "status": "rejected",
+      "trained_outputs": {
+        "action_preferences": "trained",
+        "winning_chance": "trained_historical_outcomes"
+      },
+      "training": {
+        "collection_repository_commit": null,
+        "datasets": [],
+        "recipe": {},
+        "split_manifest": null,
+        "training_repository_commit": null,
+        "warm_start": null,
+        "warm_start_historical_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "bc-encoding-v2",
+      "checkpoint": {
+        "exists": true,
+        "path": "data/models/bc_policy_v2.pt",
+        "sha256": "fddedf76e6ffe5227db1516c8254bea46e58a341578e7b886487bff61a5cb166"
+      },
+      "id": "bc_policy_v2",
+      "purpose": "replay starting representation or default-off reranking",
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "declared_heads": [],
+        "verified_training_provenance": null
+      },
+      "training": {
+        "dataset_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "bc-encoding-v2",
+      "checkpoint": {
+        "exists": true,
+        "path": "data/models/bc_policy_v3.pt",
+        "sha256": "73b56cca8f017e78e3df19a06e2b53afba8932cba56802a6606ffd8ad34c95ef"
+      },
+      "id": "bc_policy_v3",
+      "purpose": "replay starting representation or default-off reranking",
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "declared_heads": [
+          "move",
+          "target",
+          "value"
+        ],
+        "verified_training_provenance": null
+      },
+      "training": {
+        "dataset_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "bc-encoding-v2",
+      "checkpoint": {
+        "exists": true,
+        "path": "data/models/bc_policy_v3sp.pt",
+        "sha256": "6dc46a8f6c12dcfb4972f730cf585e6be93fa1b0cd8a3b01247f8bd18fd24146"
+      },
+      "id": "bc_policy_v3sp",
+      "purpose": "replay starting representation or default-off reranking",
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "declared_heads": [
+          "move",
+          "target",
+          "value"
+        ],
+        "verified_training_provenance": null
+      },
+      "training": {
+        "dataset_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "bc-encoding-v4",
+      "checkpoint": {
+        "exists": true,
+        "path": "data/models/bc_policy_v4.pt",
+        "sha256": "639753f73b30c9d2e45bca4d4f19c49cc2103eabbf47600faf379ef1532891af"
+      },
+      "id": "bc_policy_v4",
+      "purpose": "replay starting representation or default-off reranking",
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "declared_heads": [
+          "move",
+          "target",
+          "value"
+        ],
+        "verified_training_provenance": null
+      },
+      "training": {
+        "dataset_exposure": "unknown"
+      }
+    },
+    {
+      "architecture": "bc-encoding-v4",
+      "checkpoint": {
+        "exists": true,
+        "path": "data/models/bc_policy_v4_selfplay.pt",
+        "sha256": "a90cf6234cbf87e2f2d4ad88b9afc4c5b3256f94bd77d48ef21191fa13478344"
+      },
+      "id": "bc_policy_v4_selfplay",
+      "purpose": "replay starting representation or default-off reranking",
+      "release_approval": null,
+      "status": "historical",
+      "trained_outputs": {
+        "declared_heads": [
+          "move",
+          "target",
+          "value"
+        ],
+        "verified_training_provenance": null
+      },
+      "training": {
+        "dataset_exposure": "unknown"
+      }
+    }
+  ],
+  "notes": [
+    "Inventory hashes verify current bytes only; path-only historical results do not establish matching historical bytes.",
+    "No model in this inventory is currently approved for public deployment.",
+    "Source data retained unchanged; validation recovery is required before new fitting."
+  ],
+  "schema": "vgc-model-registry-v1"
+}

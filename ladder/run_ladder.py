@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -59,6 +60,10 @@ from vgc.agent import VgcPlayer  # noqa: E402
 from vgc.baselines import BASELINES, make_player  # noqa: E402
 from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
+from vgc.mechanics_gate import enforce_mechanics_gate_for_cli  # noqa: E402
+from vgc.battle_state_gate import enforce_battle_state_gate_for_cli  # noqa: E402
+from vgc.action_gate import enforce_action_gate_for_cli  # noqa: E402
+from vgc.showdown_parity import enforce_showdown_parity_for_cli  # noqa: E402
 from vgc.postmortem import classify_loss  # noqa: E402
 
 USERNAME_ENV = "VGC_SHOWDOWN_USERNAME"
@@ -125,15 +130,18 @@ class LadderPlayer(VgcPlayer):
         self.artifacts_dir = artifacts_dir
         self.replay_dir = artifacts_dir / "replays"
         self.trace_dir = artifacts_dir / "traces"
+        self.state_replay_dir = artifacts_dir / "state-replays"
         self.log_path = log_path
         self.session_id = session_id
         self.completed_records: list[dict[str, object]] = []
         self._pending_finished_battles: dict[str, AbstractBattle] = {}
         self.replay_dir.mkdir(parents=True, exist_ok=True)
         self.trace_dir.mkdir(parents=True, exist_ok=True)
+        self.state_replay_dir.mkdir(parents=True, exist_ok=True)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         player_kwargs.setdefault("save_replays", str(self.replay_dir))
         player_kwargs.setdefault("start_timer_on_battle_start", True)
+        player_kwargs.setdefault("record_decision_replays", True)
         super().__init__(**player_kwargs)
         _deduplicate_poke_env_stream_handlers(self.logger)
 
@@ -160,6 +168,14 @@ class LadderPlayer(VgcPlayer):
         trace_path = self.trace_dir / f"{battle.battle_tag}.json"
         trace_path.write_text(json.dumps(traces, indent=2, sort_keys=True))
 
+        state_replay = self.decision_replay_bundle(battle)
+        state_replay_path = self.state_replay_dir / f"{battle.battle_tag}.json"
+        if state_replay is None:
+            raise RuntimeError(
+                f"missing decision replay bundle for completed battle {battle.battle_tag}"
+            )
+        state_replay_path.write_text(json.dumps(state_replay, indent=2, sort_keys=True))
+
         replay_matches = list(self.replay_dir.glob(f"*{battle.battle_tag}.html"))
         replay_path = replay_matches[0] if replay_matches else None
         record: dict[str, object] = {
@@ -173,17 +189,128 @@ class LadderPlayer(VgcPlayer):
             "turns": battle.turn,
             "rating": battle.rating,
             "opponent_rating": battle.opponent_rating,
+            "open_team_sheets": "accept" if self.accept_open_team_sheet else "reject",
             "fallback_count": sum(bool(trace.get("fallback_used")) for trace in traces),
             # Machine-readable A/B tag for the evaluator plus optional BC/value layers.
             "policy": _policy_tag(self.config),
             "trace_path": str(trace_path.resolve()),
             "replay_path": str(replay_path.resolve()) if replay_path else None,
+            "state_replay_path": str(state_replay_path.resolve()),
         }
+        learned_checkpoint = getattr(self, "learned_checkpoint_path", None)
+        if learned_checkpoint is not None:
+            record["policy"] = (
+                "learned-hybrid" if getattr(self, "hybrid_mode", False) else "learned"
+            )
+            record["checkpoint_path"] = str(learned_checkpoint.resolve())
+            record["checkpoint_sha256"] = self.learned_checkpoint_sha256
         if battle.lost:
             record["loss_classification"] = classify_loss(traces)
         with self.log_path.open("a") as log_file:
             log_file.write(json.dumps(record, sort_keys=True) + "\n")
         self.completed_records.append(record)
+
+
+def checkpoint_sha256(path: Path) -> str:
+    """Return a stable identity for the exact saved model file being evaluated."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as checkpoint_file:
+        while chunk := checkpoint_file.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _make_session_player(
+    *,
+    checkpoint_path: Path | None,
+    device: str,
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
+    **player_kwargs,
+) -> LadderPlayer:
+    """Construct the heuristic logger or an explicitly selected learned logger.
+
+    The learned imports are lazy so the normal ladder bot still works without the
+    optional training dependency installed. ``policy_mode="hybrid"`` swaps WHO picks
+    the search shortlist (neural ranking inside the deployed safety-slot selector)
+    while search still chooses every move -- see `vgc.rl.guided_selection`.
+    """
+
+    if policy_mode not in ("deterministic", "hybrid"):
+        raise ValueError(f"unknown policy_mode {policy_mode!r}")
+    if policy_mode == "hybrid" and checkpoint_path is None:
+        raise ValueError("policy_mode='hybrid' requires a policy checkpoint")
+
+    if checkpoint_path is None:
+        return LadderPlayer(**player_kwargs)
+
+    from vgc.rl.opponents import load_snapshot
+
+    if policy_mode == "hybrid":
+        from vgc.rl.search_guidance import NeuralSearchPlayer
+
+        class HybridLadderPlayer(NeuralSearchPlayer, LadderPlayer):
+            def __init__(
+                self, *, hybrid_checkpoint: Path, hybrid_device: str, **kwargs
+            ) -> None:
+                self.learned_checkpoint_path = hybrid_checkpoint
+                self.learned_checkpoint_sha256 = checkpoint_sha256(hybrid_checkpoint)
+                self.hybrid_mode = True
+                model = load_snapshot(hybrid_checkpoint, device=hybrid_device)
+                super().__init__(
+                    model=model,
+                    checkpoint_path=hybrid_checkpoint,
+                    mode="hybrid",
+                    device=hybrid_device,
+                    safety_slots=safety_slots,
+                    **kwargs,
+                )
+                self._written_decision_records = 0
+
+            def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+                # Stamps win/loss onto this battle's decision records BEFORE they are
+                # flushed, then defers replay/trace handling like every other mode.
+                NeuralSearchPlayer._battle_finished_callback(self, battle)
+                records_path = self.artifacts_dir / "neural_decisions.jsonl"
+                with records_path.open("a") as out:
+                    for record in self.decision_records[self._written_decision_records :]:
+                        out.write(json.dumps(record, sort_keys=True) + "\n")
+                self._written_decision_records = len(self.decision_records)
+                LadderPlayer._battle_finished_callback(self, battle)
+
+        return HybridLadderPlayer(
+            hybrid_checkpoint=checkpoint_path,
+            hybrid_device=device,
+            **player_kwargs,
+        )
+
+    if policy_mode != "deterministic":
+        raise ValueError(f"unknown policy_mode {policy_mode!r}")
+
+    from vgc.rl.player import PpoVgcPlayer
+
+    class LearnedLadderPlayer(PpoVgcPlayer, LadderPlayer):
+        def __init__(self, *, learned_checkpoint: Path, learned_device: str, **kwargs) -> None:
+            self.learned_checkpoint_path = learned_checkpoint
+            self.learned_checkpoint_sha256 = checkpoint_sha256(learned_checkpoint)
+            model = load_snapshot(learned_checkpoint, device=learned_device)
+            super().__init__(
+                model=model,
+                device=learned_device,
+                deterministic=True,
+                **kwargs,
+            )
+
+        def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+            PpoVgcPlayer._battle_finished_callback(self, battle)
+            LadderPlayer._battle_finished_callback(self, battle)
+
+    return LearnedLadderPlayer(
+        learned_checkpoint=checkpoint_path,
+        learned_device=device,
+        **player_kwargs,
+    )
 
 
 def _session_id() -> str:
@@ -304,7 +431,9 @@ def resolve_output_paths(
     return resolved_artifacts_dir, resolved_log
 
 
-def session_config(search: bool = True, bc: bool = False, value: bool = False) -> PolicyConfig:
+def session_config(
+    search: bool = True, bc: bool = False, value: bool = False, horizon: bool = True
+) -> PolicyConfig:
     """The `PolicyConfig` for one ladder session (smoke or live): the default config
     (robust-response search), optionally changed to the diagnostic myopic path
     (`--myopic`) and composably extended with the BC v2 candidate re-ranker (`--bc`)
@@ -317,7 +446,12 @@ def session_config(search: bool = True, bc: bool = False, value: bool = False) -
     checkpoint at `bc_checkpoint_path` would make `--bc` itself a no-op the same way).
     Pure and argparse-free so it's directly unit-testable (see tests/test_ladder.py).
     """
-    config = replace(PolicyConfig(log_decisions=True), use_two_ply_search=search)
+    config = replace(
+        PolicyConfig(log_decisions=True),
+        use_two_ply_search=search,
+        use_rolling_horizon=search and horizon,
+        search_diverse_candidates=search and horizon,
+    )
     if bc:
         config = replace(config, use_bc_policy=True)
     if value:
@@ -336,6 +470,8 @@ def _policy_tag(config: PolicyConfig) -> str:
     parts = []
     if config.use_two_ply_search:
         parts.append("search")
+    if config.use_two_ply_search and config.use_rolling_horizon:
+        parts.append("horizon")
     if config.use_bc_policy:
         parts.append("bc")
     if config.use_value_head:
@@ -351,6 +487,8 @@ def policy_label(config: PolicyConfig) -> str:
     """
     base = "2-ply search" if config.use_two_ply_search else "myopic evaluator"
     extras = []
+    if config.use_two_ply_search and config.use_rolling_horizon:
+        extras.append("rolling horizon")
     if config.use_bc_policy:
         extras.append("BC re-rank")
     if config.use_value_head:
@@ -368,27 +506,35 @@ async def run_local_smoke(
     artifacts_dir: Path,
     log_path: Path,
     config: PolicyConfig | None = None,
+    checkpoint_path: Path | None = None,
+    device: str = "cpu",
     timeout_seconds: float = 60.0,
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
     config = config or PolicyConfig(log_decisions=True)
     session_id = f"local-{_session_id()}"
-    player = LadderPlayer(
+    player = _make_session_player(
+        checkpoint_path=checkpoint_path,
+        device=device,
+        policy_mode=policy_mode,
+        safety_slots=safety_slots,
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
         config=config,
         team=team,
         battle_format=FORMAT_ID,
-        accept_open_team_sheet=True,
+        accept_open_team_sheet=False,
         server_configuration=LocalhostServerConfiguration,
     )
     anchor = make_player(
         opponent,
         team,
         FORMAT_ID,
-        accept_open_team_sheet=True,
+        accept_open_team_sheet=False,
         server_configuration=LocalhostServerConfiguration,
     )
     try:
@@ -414,6 +560,10 @@ async def run_live_session(
     config: PolicyConfig,
     game_timeout_seconds: float,
     max_retries: int,
+    checkpoint_path: Path | None = None,
+    device: str = "cpu",
+    policy_mode: str = "deterministic",
+    safety_slots: int = 4,
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
@@ -429,7 +579,11 @@ async def run_live_session(
     try:
         while len(records) < n_games:
             if player is None:
-                player = LadderPlayer(
+                player = _make_session_player(
+                    checkpoint_path=checkpoint_path,
+                    device=device,
+                    policy_mode=policy_mode,
+                    safety_slots=safety_slots,
                     artifacts_dir=artifacts_dir,
                     log_path=log_path,
                     session_id=session_id,
@@ -439,7 +593,7 @@ async def run_live_session(
                     config=config,
                     team=team,
                     battle_format=FORMAT_ID,
-                    accept_open_team_sheet=True,
+                    accept_open_team_sheet=False,
                     server_configuration=ShowdownServerConfiguration,
                 )
             previous_finished = player.n_finished_battles
@@ -553,6 +707,18 @@ def parse_args() -> argparse.Namespace:
         help="diagnostic opt-out: use the old one-turn evaluator without response search",
     )
     parser.add_argument(
+        "--horizon",
+        action="store_true",
+        default=True,
+        help="use persistent battle context plus the rolling future-position forecast (default)",
+    )
+    parser.add_argument(
+        "--shallow-horizon",
+        action="store_false",
+        dest="horizon",
+        help="diagnostic opt-out: keep response search but disable future-position planning",
+    )
+    parser.add_argument(
         "--bc",
         action="store_true",
         help=(
@@ -571,6 +737,38 @@ def parse_args() -> argparse.Namespace:
             "comment for why)"
         ),
     )
+    parser.add_argument(
+        "--policy-checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "explicit learned-policy checkpoint to run deterministically; default stays "
+            "on the shipped heuristic policy"
+        ),
+    )
+    parser.add_argument(
+        "--model-release",
+        type=Path,
+        default=None,
+        help="verified release evidence for the exact model; required for public play",
+    )
+    parser.add_argument(
+        "--policy-mode",
+        choices=("deterministic", "hybrid"),
+        default="deterministic",
+        help=(
+            "with --policy-checkpoint: 'deterministic' plays the network's argmax; "
+            "'hybrid' keeps the exchange search as the decider but lets the network "
+            "pick which candidates enter the safety-slotted shortlist"
+        ),
+    )
+    parser.add_argument(
+        "--safety-slots",
+        type=int,
+        default=4,
+        help="hybrid mode only: heuristic-reserved slots inside the shortlist budget",
+    )
+    parser.add_argument("--device", default="cpu", help="learned-policy inference device")
     return parser.parse_args()
 
 
@@ -579,8 +777,17 @@ def main() -> int:
     if args.n < 1:
         raise ValueError("--n must be at least 1")
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
-    config = session_config(args.search, args.bc, args.value)
-    print(f"policy: {policy_label(config)}")
+    config = session_config(args.search, args.bc, args.value, args.horizon)
+    if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
+        raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
+    if args.policy_mode == "hybrid" and args.policy_checkpoint is None:
+        raise SystemExit("--policy-mode hybrid requires --policy-checkpoint")
+    selected_policy = (
+        f"learned checkpoint {args.policy_checkpoint}"
+        if args.policy_checkpoint is not None
+        else policy_label(config)
+    )
+    print(f"policy: {selected_policy}")
     team = args.team.read_text().strip()
     if args.local_smoke:
         records = asyncio.run(
@@ -591,10 +798,44 @@ def main() -> int:
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
                 config=config,
+                checkpoint_path=args.policy_checkpoint,
+                device=args.device,
+                policy_mode=args.policy_mode,
+                safety_slots=args.safety_slots,
                 timeout_seconds=args.game_timeout,
             )
         )
     else:
+        # Fail closed: public results are not interpretable while legal mechanics remain
+        # partial/missing. Local smoke stays available for mechanics development.
+        enforce_mechanics_gate_for_cli("public ladder play")
+        enforce_battle_state_gate_for_cli("public ladder play")
+        enforce_action_gate_for_cli("public ladder play")
+        enforce_showdown_parity_for_cli("public ladder play")
+        if args.policy_mode != "hybrid" or args.policy_checkpoint is None:
+            raise SystemExit(
+                "public ladder play requires --policy-mode hybrid and a mechanics-complete "
+                "--policy-checkpoint; legacy deterministic and Python-forecast policies "
+                "remain local diagnostics only"
+            )
+        import torch
+
+        checkpoint_payload = torch.load(
+            args.policy_checkpoint, map_location="cpu", weights_only=False
+        )
+        if checkpoint_payload.get("use_mechanics_features") is not True:
+            raise SystemExit(
+                "public ladder play requires a checkpoint trained with the complete "
+                "mechanics input"
+            )
+        from vgc.model_release import enforce_model_release_for_cli
+
+        enforce_model_release_for_cli(
+            args.model_release,
+            args.policy_checkpoint,
+            config,
+            safety_slots=args.safety_slots,
+        )
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(
@@ -604,13 +845,17 @@ def main() -> int:
                 artifacts_dir=artifacts_dir,
                 log_path=log_path,
                 config=config,
+                checkpoint_path=args.policy_checkpoint,
+                device=args.device,
+                policy_mode=args.policy_mode,
+                safety_slots=args.safety_slots,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )
         )
     wins = sum(record.get("won") is True for record in records)
     print(f"completed {len(records)} games: {wins} wins, {len(records) - wins} non-wins")
-    print(f"policy: {policy_label(config)}")
+    print(f"policy: {selected_policy}")
     print(f"artifacts: {artifacts_dir}")
     print(f"session log: {log_path}")
     return 0

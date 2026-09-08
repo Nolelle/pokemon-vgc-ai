@@ -1,0 +1,664 @@
+{
+  "schema_version": 1,
+  "catalog_schema_version": 1,
+  "catalog_sha256": "f18690f49b3836aebd7360b2b6909ebdd41faa629e9675807118d052a0ccd2d2",
+  "release_ready": true,
+  "release_rule": "Every required family must be resolved by the official Showdown engine on every gated decision path. Strategic weights that rank exactly-simulated outcomes are policy, listed under policy_approximations, and are deliberately not gated here.",
+  "readiness_scopes": {
+    "training_environment": {
+      "ready": true,
+      "evidence": [
+        "official Showdown BattleStream",
+        "fogged per-player streams",
+        "terminal result from Showdown"
+      ]
+    },
+    "observable_state": {
+      "ready": true,
+      "evidence": [
+        "complete poke-env property contract",
+        "deployed policy rejects opponent Open Team Sheets",
+        "own team spreads load from the supplied team independently of Open Team Sheets",
+        "unknown opponent facts remain unknown",
+        "catalog drift test"
+      ]
+    },
+    "neural_input": {
+      "ready": true,
+      "evidence": [
+        "vgc.rl.mechanics_encoding serialises the whole snapshot losslessly",
+        "no hashing, fixed vocabulary, or truncation",
+        "every training entry point requires use_mechanics_features"
+      ]
+    },
+    "teacher_labels": {
+      "ready": true,
+      "evidence": [
+        "vgc.rl.distill refuses to mint a label without an exact Showdown root",
+        "vgc.rl.demonstrations rejects any source other than the exact teacher",
+        "the approximate Python exchange simulator is unreachable from both"
+      ]
+    },
+    "live_decisions": {
+      "ready": true,
+      "evidence": [
+        "vgc.rl.live_mirror rebuilds the public state inside a real Showdown battle",
+        "hidden timers become weighted belief branches, not assumptions",
+        "the ladder runner requires a mechanics-complete checkpoint"
+      ]
+    }
+  },
+  "families": [
+    {
+      "id": "training_environment_transitions",
+      "status": "exact",
+      "tests": [
+        "tests/test_rl_env.py::test_random_battle_runs_to_a_decided_result",
+        "tests/test_rl_env.py::test_direct_battle_clone_is_exact_and_future_seed_is_controlled"
+      ],
+      "state": "official_showdown",
+      "verification": "integration"
+    },
+    {
+      "id": "fogged_protocol_observations",
+      "status": "exact",
+      "tests": [
+        "tests/test_rl_env.py::test_each_side_sees_its_own_team_exactly_and_the_opponent_only_fogged"
+      ],
+      "state": "captured",
+      "verification": "integration"
+    },
+    {
+      "id": "exact_showdown_branch_oracle",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_oracle.py"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "format_legality",
+      "status": "exact",
+      "tests": [
+        "tests/test_regmb_rain_balance.py::test_paste_is_legal_in_regulation_mb"
+      ],
+      "state": "captured",
+      "verification": "showdown_validator"
+    },
+    {
+      "id": "open_team_sheet_knowledge",
+      "status": "exact",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_ots_accept_reject_race_completes",
+        "tests/integration/test_local_battles.py::test_decision_replay_rebuilds_with_open_team_sheets",
+        "tests/integration/test_local_battles.py::test_own_stat_points_are_known_even_when_open_team_sheets_never_fire"
+      ],
+      "state": "captured",
+      "verification": "integration"
+    },
+    {
+      "id": "observable_battle_state",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_observation_contract.py"
+      ],
+      "state": "captured",
+      "verification": "unit"
+    },
+    {
+      "id": "stats_and_stat_points",
+      "status": "exact",
+      "tests": [
+        "tests/test_stats_ground_truth.py"
+      ],
+      "state": "captured",
+      "verification": "showdown_ground_truth"
+    },
+    {
+      "id": "ordinary_type_and_damage_formula",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_physical_stab_super_effective",
+        "tests/test_damage_ground_truth.py::test_physical_not_stab_resisted",
+        "tests/test_damage_ground_truth.py::test_special_stab_double_super_effective",
+        "tests/test_damage_ground_truth.py::test_special_resisted"
+      ],
+      "state": "captured",
+      "verification": "showdown_ground_truth"
+    },
+    {
+      "id": "legal_action_enumeration",
+      "status": "exact",
+      "tests": [
+        "tests/integration/test_local_battles.py::test_joint_order_enumeration_during_real_battle"
+      ],
+      "state": "captured",
+      "verification": "poke_env_showdown_request"
+    },
+    {
+      "id": "mega_evolution",
+      "status": "exact",
+      "tests": [
+        "tests/test_regmb_rain_balance.py::test_rain_mega_and_second_mega_rejection_match_showdown",
+        "tests/test_damage_ground_truth.py::test_mega_forme_attacker"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "turn_priority_and_speed",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_faster_pokemon_acts_before_a_slower_one",
+        "tests/test_mechanics_families_order_rng.py::test_plus_one_priority_from_a_slower_pokemon_beats_a_faster_normal_move",
+        "tests/test_mechanics_families_order_rng.py::test_trick_room_reverses_speed_order"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "speed_ties",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_speed_ties_realize_both_orderings"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "targeting_and_retargeting",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_single_target_retargets_after_faint_and_hits_the_incoming_switch",
+        "tests/test_mechanics_families_move_execution.py::test_follow_me_and_rage_powder_redirect_except_grass_and_overcoat",
+        "tests/test_mechanics_families_move_execution.py::test_spread_move_damage_is_three_quarters_when_two_targets_are_hit"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "accuracy_and_evasion",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_full_accuracy_never_misses_low_accuracy_does_both_always_hit_ignores_evasion"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "critical_hits",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_normal_high_crit_ratio_sometimes_crits_above_non_crit_max",
+        "tests/test_mechanics_families_order_rng.py::test_will_crit_move_always_crits_and_battle_armor_never_does"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "damage_roll_distribution",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_damage_rolls_span_the_calculator_range_and_never_leave_it"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "variable_and_fixed_damage",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_water_spout_at_full_hp",
+        "tests/test_damage_ground_truth.py::test_water_spout_at_half_hp",
+        "tests/test_damage_ground_truth.py::test_gyro_ball_slow_attacker_vs_fast_target",
+        "tests/test_damage_ground_truth.py::test_electro_ball_fast_attacker_vs_slow_target",
+        "tests/test_damage_ground_truth.py::test_grass_knot_on_a_heavy_target",
+        "tests/test_damage_ground_truth.py::test_heavy_slam_by_weight_ratio"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "one_hit_knockout_moves",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_ohko_hits_ko_and_immunities"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "multi_hit_moves",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_multi_hit_counts_skill_link_population_bomb_double_kick"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "secondary_effects",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_thunderbolt_paralysis_serene_grace_sheer_force_shield_dust"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "recoil_drain_and_crash",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_recoil_drain_crash_and_life_orb"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "survival_effects",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_focus_sash_sturdy_endure_and_disguise"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "protect_family",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_protect_blocks_damage_and_consecutive_protect_is_one_in_three",
+        "tests/test_mechanics_families_move_execution.py::test_wide_guard_quick_guard_and_feint"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "side_wide_guards",
+      "status": "exact",
+      "tests": [
+        "tests/test_regmb_rain_balance.py::test_wide_guard_electro_shot_and_stamina_match_showdown"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "redirection",
+      "status": "exact",
+      "tests": [
+        "tests/test_regmb_rain_balance.py::test_hospitality_and_rage_powder_match_showdown"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "sleep",
+      "status": "exact",
+      "tests": [
+        "tests/test_sleep_ground_truth.py",
+        "tests/test_exact_search.py::test_hidden_sleep_beliefs_reach_showdown_as_different_legal_states"
+      ],
+      "state": "official_showdown_clone_with_belief_branches",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "paralysis",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_paralysis_halves_speed_in_the_ordering",
+        "tests/test_mechanics_families_order_rng.py::test_champions_full_paralysis_is_one_in_eight_not_one_in_four"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "freeze",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_champions_freeze_thaws_by_the_three_step_limit_and_sometimes_earlier",
+        "tests/test_mechanics_families_order_rng.py::test_fire_hit_and_defrost_flag_move_thaw_a_frozen_pokemon"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "burn",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_burn_halves_physical_damage"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "poison_and_toxic",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_poison_toxic_immunities_heal_and_corrosion"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "confusion",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_confused_pokemon_sometimes_hits_itself_and_sometimes_acts",
+        "tests/test_mechanics_families_order_rng.py::test_own_tempo_prevents_confusion"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "flinch_and_fake_out",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_fake_out_inner_focus_and_iron_head_flinch"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "move_restrictions",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_taunt_encore_disable_choice_scarf_imprison_and_zero_pp"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "charge_recharge_and_locks",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_move_execution.py::test_solar_beam_hyper_beam_outrage_and_fly"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "stat_stage_changes",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_stat_stages_boost_damage_cap_and_ability_reactions"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "weather",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_weather_rain_boosts_water_move",
+        "tests/test_damage_ground_truth.py::test_weather_rain_cuts_fire_move",
+        "tests/test_damage_ground_truth.py::test_weather_ball_in_sun_on_charizard_y",
+        "tests/test_damage_ground_truth.py::test_weather_ball_in_rain_changes_type_to_water",
+        "tests/test_regmb_rain_balance.py::test_rain_mega_and_second_mega_rejection_match_showdown"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "terrain_and_groundedness",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_electric_terrain_boosts_grounded_attacker",
+        "tests/test_damage_ground_truth.py::test_misty_terrain_halves_dragon_move_on_grounded_defender"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "rooms_and_field_conditions",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_trick_room_gravity_magic_room_and_wonder_room"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "screens_tailwind_and_side_conditions",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_reflect_halves_physical_damage_singles",
+        "tests/test_damage_ground_truth.py::test_light_screen_two_thirds_multiplier_in_doubles",
+        "tests/test_regmb_rain_balance.py::test_light_clay_and_tailwind_durations_match_showdown"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "entry_hazards",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_entry_hazards_damage_layers_and_removal"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "switching_trapping_and_phazing",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_switching_happens_before_moves_trapping_pivots_and_phazing"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "items",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_life_orb_boosts_damage",
+        "tests/test_damage_ground_truth.py::test_type_boost_item_charcoal",
+        "tests/test_damage_ground_truth.py::test_expert_belt_boosts_only_super_effective_hits"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "abilities",
+      "status": "exact",
+      "tests": [
+        "tests/test_damage_ground_truth.py::test_water_absorb_immunity",
+        "tests/test_damage_ground_truth.py::test_levitate_immunity",
+        "tests/test_damage_ground_truth.py::test_multiscale_halves_damage_at_full_hp",
+        "tests/test_damage_ground_truth.py::test_solid_rock_reduces_super_effective_damage",
+        "tests/test_damage_ground_truth.py::test_tinted_lens_boosts_resisted_damage",
+        "tests/test_damage_ground_truth.py::test_thick_fat_halves_fire_damage",
+        "tests/test_damage_ground_truth.py::test_huge_power_doubles_attack_stat",
+        "tests/test_damage_ground_truth.py::test_technician_boosts_low_power_move",
+        "tests/test_damage_ground_truth.py::test_adaptability_boosts_stab_to_double",
+        "tests/test_damage_ground_truth.py::test_guts_boosts_attack_when_statused",
+        "tests/test_damage_ground_truth.py::test_wonder_guard_blocks_non_super_effective_hit",
+        "tests/test_damage_ground_truth.py::test_wonder_guard_allows_super_effective_hit"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "form_transform_and_illusion",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_illusion_transform_mega_and_disguise"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "move_flags_and_interactions",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_sound_bullet_powder_substitute_bounce_and_prankster"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "residual_and_end_of_turn_order",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_residual_order_speed_and_weather_duration"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "faint_and_replacement_order",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_field_switch.py::test_faint_replacement_queued_move_destiny_bond_and_both_sides"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "random_branch_order",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_families_order_rng.py::test_identical_future_seeds_are_byte_identical_and_different_seeds_can_differ"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "showdown_branch_contract"
+    },
+    {
+      "id": "neural_mechanics_encoding",
+      "status": "exact",
+      "tests": [
+        "tests/test_mechanics_encoding.py"
+      ],
+      "state": "lossless_public_json_tokens",
+      "verification": "unit"
+    },
+    {
+      "id": "oracle_teacher_migration",
+      "status": "exact",
+      "tests": [
+        "tests/test_exact_mechanics_contract.py"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "live_exact_transition_access",
+      "status": "exact",
+      "tests": [
+        "tests/test_exact_search.py"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "live_mirror_branch_execution",
+      "status": "exact",
+      "what": "A LiveExactMirror-patched Showdown root must emit protocol and change public state when cloned and stepped; exact-search exchange values cannot be a constant offset of the myopic score.",
+      "tests": [
+        "tests/test_live_mirror_branches.py::test_mirror_clone_step_emits_protocol_and_advances_public_state",
+        "tests/test_live_mirror_branches.py::test_mirror_exact_branches_diverge_from_each_other_and_the_root",
+        "tests/test_live_mirror_branches.py::test_mirror_exact_search_exchange_values_are_not_constant",
+        "tests/test_live_mirror_branches.py::test_patch_public_leaves_a_playable_request_and_null_stream_error",
+        "tests/test_live_mirror_branches.py::test_mirror_p2_base_matches_p1_public_observation",
+        "tests/test_live_mirror_branches.py::test_mirror_trick_room_survives_fieldend_on_p2_parser",
+        "tests/test_live_mirror_branches.py::test_mirror_stale_preparing_does_not_lock_search_to_solarbeam"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "live_mirror_seat_parity",
+      "status": "exact",
+      "what": "Teacher labeling from the p2 seat must build the same working mirror as from p1: the observation may only seed the parser base whose wire format it shares, otherwise clone steps KeyError on crossed idents and collection fails closed.",
+      "tests": [
+        "tests/test_live_mirror_branches.py::test_public_teacher_labels_from_p2_seat_without_keyerror"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "mirror_move_availability",
+      "status": "exact",
+      "what": "Request-withheld moves (Choice lock, Encore, Disable, PP exhaustion) must reach the mirror root as disabled: the snapshot marks known-but-unoffered moves from the live request, and the patched sim reproduces the lock, so exact search never ranks a forbidden move.",
+      "tests": [
+        "tests/test_mechanics_state.py::test_unoffered_known_moves_are_marked_request_disabled",
+        "tests/test_live_mirror_branches.py::test_mirror_reproduces_choice_lock_from_snapshot"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "integration"
+    },
+    {
+      "id": "exact_branch_effect_polarity",
+      "status": "exact",
+      "what": "The exact-search value function must spend exact_search_effect_weight with a sign: a volatile or side condition that hurts its holder (Leech Seed, Taunt, Stealth Rock on our own side) must score below a clean board and below one that helps (Substitute, Tailwind). Signs are derived from Champions move targets, and effects that cannot be signed score zero rather than a bonus.",
+      "tests": [
+        "tests/test_position_effects.py::test_derivation_reproduces_the_repos_own_hazard_list",
+        "tests/test_position_effects.py::test_being_crippled_and_setting_up_no_longer_score_the_same",
+        "tests/test_position_effects.py::test_hazards_on_our_own_side_cost_us_and_tailwind_pays_us",
+        "tests/test_position_effects.py::test_unsigned_effects_score_nothing_rather_than_a_bonus",
+        "tests/test_position_effects.py::test_bookkeeping_volatiles_are_not_mistaken_for_harm",
+        "tests/test_position_effects.py::test_effects_no_legal_move_applies_are_still_signed",
+        "tests/test_position_effects.py::test_illegal_champions_moves_do_not_contribute_signs",
+        "tests/test_position_effects.py::test_legacy_control_reproduces_the_sign_blind_behaviour_exactly"
+      ],
+      "state": "official_showdown_clone",
+      "verification": "unit"
+    }
+  ],
+  "catalog_surface_classification": {
+    "format_rules": "classified_by_format_legality",
+    "conditions": "classified_across_status_volatile_field_and_residual_families",
+    "move_callbacks": "classified_across_move_execution_families",
+    "move_signals": "classified_across_move_execution_families",
+    "move_flags": "classified_by_move_flags_and_interactions",
+    "ability_callbacks": "classified_by_abilities",
+    "ability_flags": "classified_by_abilities",
+    "item_callbacks": "classified_by_items",
+    "item_signals": "classified_by_items",
+    "target_modes": "classified_by_targeting_and_retargeting"
+  },
+  "policy_approximations": [
+    {
+      "id": "myopic_prior_in_exact_ranking",
+      "where": "vgc.rl.exact_search.search_joint_orders_exact, search_myopic_weight",
+      "what": "The final rank blends the exact branch outcome with vgc.evaluator's one-turn heuristic score, which still uses vgc.damage's expected-value shortcuts for accuracy, critical hits, and secondary effects.",
+      "why_not_a_mechanics_gap": "It never decides what happens in a predicted turn; Showdown does. It only expresses a strategic preference over turns Showdown already resolved. Zeroing it would change frozen, gate-tuned heuristic weights and needs a same-session A/B, not a mechanics review."
+    },
+    {
+      "id": "candidate_shortlisting",
+      "where": "vgc.search._select_search_candidates, search_our_candidates",
+      "what": "Only the top candidates are simulated exactly; the tail is ranked below them by heuristic score alone.",
+      "why_not_a_mechanics_gap": "A compute budget, not a rule approximation. Every candidate that is searched is searched exactly."
+    },
+    {
+      "id": "exact_branch_position_value",
+      "where": "vgc.rl.exact_search._position_value",
+      "what": "Scoring a resulting Showdown position uses hand-chosen weights for HP, status, boosts, and active effects. As of Rung 3a the effect term is signed (vgc.position_effects) rather than a bare count, and effects whose direction cannot be derived from Champions move targets score zero; the weights themselves are still hand-chosen and uncalibrated.",
+      "why_not_a_mechanics_gap": "Showdown decides which position is reached; this only says how much that position is liked. It is the value function, and improving it is RL work."
+    },
+    {
+      "id": "opponent_response_model",
+      "where": "vgc.rl.exact_search, search_opp_candidates and the softmax weights",
+      "what": "The opponent's likely replies come from the heuristic evaluator.",
+      "why_not_a_mechanics_gap": "Predicting an opponent's choice is opponent modelling, not a game rule. Each modelled reply is still executed exactly."
+    }
+  ],
+  "information_uncertainty": [
+    {
+      "id": "hidden_opponent_team_sheet",
+      "handling": "The deployed policy rejects Open Team Sheets. Opponent moves, item, ability, nature, Stat Points, and selected four remain unknown until ordinary public battle events reveal them; set and usage priors provide weighted hypotheses rather than private truth."
+    },
+    {
+      "id": "hidden_opponent_spread_and_nature",
+      "handling": "Estimated from usage priors when rebuilding a live mirror. vgc.sets.opponent_spread_hypotheses exposes the full weighted distribution and PolicyConfig.exact_search_spread_hypotheses builds one Showdown root per belief; it ships at 1 (the most popular spread, treated as a point estimate) because raising it changes gate-tuned behaviour and needs a same-session A/B."
+    },
+    {
+      "id": "hidden_sleep_and_confusion_timers",
+      "handling": "Enumerated as weighted legal branches by vgc.rl.hidden_state and averaged by vgc.rl.exact_search.combine_belief_rankings, rather than assumed."
+    },
+    {
+      "id": "opponent_unrevealed_bring_and_bench",
+      "handling": "Ordered by revealed-first hypothesis when building the live mirror."
+    }
+  ]
+}

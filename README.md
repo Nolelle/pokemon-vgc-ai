@@ -1,8 +1,47 @@
 # pokemon-vgc-ai
 
+## Current priority — 2026-09-07
+
+Build and verify a strong battle bot before developing the coaching app. The target
+is **1700+ Elo on the public Champions Reg M-B ladder**; Elo is the ladder's playing-strength
+rating. Current models are experimental and have not demonstrated that target.
+
+Work proceeds through trustworthy data and training, current offline strength checks,
+local battle checks, and then controlled public ladder sessions with saved replays,
+results, and exact model identities. Copying the teacher or passing offline checks does
+not establish the target rating; actual ladder results must do that. Coaching interface
+and product work are deferred until the playing goal is demonstrated.
+
+Current repair plan: [audit implementation plan](docs/audit_implementation_plan_2026-09-07.md).
+Current model inventory: [model register](data/models/registry.json).
+The older pipeline and commands below describe historical development and must not be
+treated as current release approval.
+
 A rules-first Pokémon Showdown bot for the Champions VGC 2026 Reg M-B doubles ladder.
 It uses the Champions mod's exported data, a simulator-checked damage engine, and an
 explicit one-turn evaluator before any learned components are introduced.
+
+## Full learning pipeline
+
+The learned bot now has one end-to-end, default-off path:
+
+1. exact Champions rules and our complete six-Pokemon team;
+2. public high-level replays for an initial human-like state representation;
+3. full joint-action imitation from the simulator-backed search teacher;
+4. reinforcement learning against mixed opponents, old model snapshots, and varied teams;
+5. a held-out-team promotion gate; and
+6. explicit checkpoint deployment to local smoke or public ladder games.
+
+Opponent information stays fogged. Revealed moves, items, abilities, move order, and
+damage update a probability distribution over plausible hidden sets; the model never
+reads the simulator's private opponent state. Every legal doubles order also receives
+raw damage, knockout, Speed, threat, Protect, switching, targeting, and coordination
+facts from the rules engine.
+
+The shipped heuristic remains the default. A learned checkpoint is usable only through
+an explicit path and is not promoted merely because training completed. See
+[`docs/full_learning_pipeline.md`](docs/full_learning_pipeline.md) for the commands,
+data boundaries, measured smoke results, and promotion rules.
 
 ## Local verification
 

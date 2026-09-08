@@ -76,6 +76,7 @@ PolicyConfig field.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import mean
 
@@ -93,6 +94,7 @@ from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
+from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.principles import (
     BURN_MOVES,
@@ -337,7 +339,8 @@ def field_effective_speed(
     """
 
     speed = effective_speed(state)
-    if _WEATHER_SPEED_ABILITY.get(weather) == state.ability:
+    weather_ability = _WEATHER_SPEED_ABILITY.get(weather)
+    if weather_ability is not None and weather_ability == state.ability:
         speed *= 2.0
     if tailwind:
         speed *= 2.0
@@ -412,6 +415,24 @@ def score_joint_orders(
         return []
 
     ctx = build_context(battle, config)
+    scored = score_joint_orders_in_context(joint_orders, ctx, config)
+    _record_trace(scored, config)
+    return scored
+
+
+def score_joint_orders_in_context(
+    joint_orders: Sequence[DoubleBattleOrder],
+    ctx: _Context,
+    config: PolicyConfig,
+) -> list[ScoredOrder]:
+    """Score an already-enumerated joint-order list against one `_Context`.
+
+    `score_joint_orders` is this plus `enumerate_joint_orders` + `build_context`.
+    Callers that want the same ranking under a different opponent-spread snapshot
+    (see `vgc.belief_scoring`) rebuild the context and reuse the same list so the
+    per-order scores stay aligned by enumerate position. Does not record a decision
+    trace; the caller owns that so a mixture over several contexts traces once.
+    """
     scored: list[ScoredOrder] = []
     for order in joint_orders:
         first_info = _score_single(order.first_order, 0, ctx, config)
@@ -426,7 +447,6 @@ def score_joint_orders(
             )
         )
     scored.sort(key=lambda scored_order: scored_order.score, reverse=True)
-    _record_trace(scored, config)
     return scored
 
 
@@ -511,6 +531,10 @@ class _Context:
     opp_engine_enabler_slots: frozenset[int] = frozenset()
     preview_plan: object | None = None
     endgame: bool = False
+    # Complete observable state. The smaller lists above remain the current evaluator's
+    # fast inputs; this snapshot prevents new mechanics handlers from silently losing
+    # counters, volatile effects, PP, accuracy/evasion, or side/field state.
+    mechanics_state: BattleMechanicsState | None = None
 
     def field_state(
         self, defender_is_ours: bool, num_targets: int, weather: str | None = _UNSET
@@ -618,7 +642,11 @@ def _best_attacking_move(
     return best_pct, best_move_id, best_priority
 
 
-def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
+def build_context(
+    battle: DoubleBattle,
+    config: PolicyConfig,
+    opp_state_override: Mapping[int, PokemonState] | None = None,
+) -> _Context:
     usage = load_usage_spreads()
     priors = load_set_priors()
     preview_team = list(getattr(battle, "teampreview_opponent_team", None) or [])
@@ -646,12 +674,16 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         _our_pokemon_state(mon) if mon is not None and not mon.fainted else None
         for mon in our_pokemon
     ]
-    opp_states = [
-        opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
-        if mon is not None and not mon.fainted
-        else None
-        for mon in opp_pokemon
-    ]
+    opp_states: list[PokemonState | None] = []
+    for idx, mon in enumerate(opp_pokemon):
+        if opp_state_override is not None and idx in opp_state_override:
+            opp_states.append(opp_state_override[idx])
+            continue
+        opp_states.append(
+            opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+            if mon is not None and not mon.fainted
+            else None
+        )
 
     our_tailwind = SideCondition.TAILWIND in battle.side_conditions
     opp_tailwind = SideCondition.TAILWIND in battle.opponent_side_conditions
@@ -797,6 +829,10 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
             preferred_win_con_species=preferred_closer,
         )
         record_note("gameplan", gameplan.summary())
+        battle_memory = getattr(battle, "_vgc_battle_memory", None)
+        if battle_memory is not None:
+            battle_memory.update_strategy(gameplan)
+            record_note("battle_memory", battle_memory.summary())
 
     opp_signals = detect_team_signals(opp_team_full)
     enabler_species = {
@@ -861,6 +897,7 @@ def build_context(battle: DoubleBattle, config: PolicyConfig) -> _Context:
         opp_engine_enabler_slots=opp_engine_enabler_slots,
         preview_plan=preview_plan,
         endgame=endgame,
+        mechanics_state=snapshot_battle(battle),
     )
 
 

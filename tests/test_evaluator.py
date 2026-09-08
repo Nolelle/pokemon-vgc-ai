@@ -87,6 +87,11 @@ def test_field_effective_speed_applies_matching_weather_ability() -> None:
     assert field_effective_speed(excadrill, weather="sun") == effective_speed(excadrill)
 
 
+def test_field_effective_speed_does_not_double_when_weather_and_ability_are_unknown() -> None:
+    garchomp = PokemonState("garchomp", ability=None, nature="jolly")
+    assert field_effective_speed(garchomp, weather=None) == effective_speed(garchomp)
+
+
 def test_field_effective_speed_applies_tailwind_and_weather_together() -> None:
     venusaur = PokemonState("venusaur", ability="chlorophyll", nature="modest")
 

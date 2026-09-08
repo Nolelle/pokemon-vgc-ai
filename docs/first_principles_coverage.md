@@ -1,9 +1,17 @@
-# Reg M-B first-principles policy coverage
+# Reg M-B strategic-signal coverage
 
-In this checklist, **Yes** means the principle has a named input or derived signal,
-changes preview/action/search scoring, appears in decision traces where useful, and has
-unit or integration coverage. It does not mean the heuristic predicts every human play
-perfectly.
+> **Important correction (2026-08-27):** this checklist records whether a strategic
+> idea changes the bot's score. It is **not** proof that the underlying game mechanic is
+> simulated exactly. For example, Fake Out can receive a useful score bonus while the
+> forecast still fails to cancel the target's action. See
+> [the mechanics coverage audit](mechanics_coverage.md) for the stricter exact,
+> approximate, score-only, and missing classification.
+
+In this checklist, **Yes** means the principle has a named input or derived signal and
+changes preview, action, or search scoring. The old heading called this
+"first-principles policy coverage," which was too broad: it made score-only signals look
+like verified mechanics. These rows should therefore be read as design coverage, not as
+ladder-readiness evidence.
 
 | Principle | Verdict | Implemented decision path |
 |---|---|---|

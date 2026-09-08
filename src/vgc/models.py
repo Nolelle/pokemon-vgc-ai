@@ -15,17 +15,66 @@ from vgc.config import FORMAT_ID
 
 @dataclass(frozen=True)
 class PolicyConfig:
-    """Knobs for `vgc.agent.VgcPlayer`. Phase 1 scaffold only -- no real evaluator yet
-    (that's Phase 2), so most of this is placeholder plumbing that Phase 2 will read.
+    """Knobs for `vgc.agent.VgcPlayer`.
+
+    Heuristic weights are FROZEN as of 2026-08-12. The Protect/own-spread retune did not
+    generalize off the team it was tuned on (160-team confirmation: 49.5%, CI includes
+    50%). Do not change evaluator, search, or preview weights unless a future experiment
+    gives strong evidence. This config is a benchmark for RL, not a tuning surface.
     """
 
     # Which Showdown format this policy plays. Always the Champions-mod Reg M-B doubles
     # format unless a caller is deliberately testing against something else.
     format_id: str = FORMAT_ID
-    # We WANT to see the opponent's Open Team Sheet (revealed sets/items/abilities/Tera
-    # before team preview) -- poke-env auto-rejects OTS unless this is True, and rejecting
-    # it would throw away free information the ladder format hands us.
-    accept_open_team_sheet: bool = True
+    # Reject Open Team Sheets (OTS) by default. The format supports them only when both
+    # players opt in, but the deployed policy must match ordinary ladder information:
+    # our complete supplied team is known, while opposing moves/items/abilities remain
+    # unknown until battle events reveal them.
+    accept_open_team_sheet: bool = False
+    # Fill in our OWN Stat Points/nature from the team file when no Open Team Sheets
+    # `showteam` arrives (see `vgc.own_team`). poke-env otherwise leaves `Pokemon.evs`
+    # None for our own team on ~99.8% of ladder games, and the evaluator then falls back
+    # to `default_opponent_spread` -- the guess meant for UNKNOWN opponents, applied to
+    # the team we built ourselves.
+    #
+    # ON, because our own team sheet is not hidden information and a policy should never
+    # guess a fact it holds. That fallback is also a bad guess specifically: it assigns 2
+    # of 66 Stat Points to Speed, where the real ladder spreads in data/usage/spreads.json
+    # put 32 into Speed for Charizard, Venusaur and Garchomp. On meta1 it misses by up to
+    # 35.6% (Incineroar Atk 135 -> 183), underestimating Speed on all six Pokemon and
+    # overestimating HP on all six.
+    #
+    # RETRACTED: this comment used to report a mirror A/B putting the knowing bot at
+    # 200/500 = 40.0%, CI [0.358, 0.444], and to justify the Protect retune below as
+    # recovering that loss. That measurement was an instrumentation artifact and no part
+    # of it should be relied on. This flag has only ever had two consumers -- the live
+    # path in `vgc.agent.VgcPlayer` and the direct-env path in `vgc.rl.agents.DirectAgent`
+    # -- and the direct-env one did not exist until commit e8417bd. The 40.0% run predates
+    # it, so `DirectBattle` was still enriching BOTH sides globally and the two seats had
+    # identical self-knowledge; the run could not have measured what it claimed. Note also
+    # that `vgc.evaluator._our_pokemon_state` never reads this flag, it just reads whatever
+    # `Pokemon.evs` holds, so there is no second path that could have made it work.
+    #
+    # Re-run after the fix, the same comparison (both sides at the legacy weight 0.8, only
+    # self-knowledge differing) came out 259/500 = 51.8%, CI [0.474, 0.561] -- consistent
+    # with no effect. The two runs disagree by z = 3.77 (p ~ 0.0002), which is why the
+    # earlier one is treated as broken rather than as unlucky.
+    #
+    # What still stands, on its own evidence:
+    #   * The principle. Our own team sheet is not hidden information and a policy should
+    #     never guess a fact it holds. That is the reason this is ON.
+    #   * The decision-level diagnostic (258 decisions): correct spreads change 26% of
+    #     chosen joint orders, toward more Protect and fewer switches, because the bot
+    #     correctly sees itself as frail. This was NOT symmetric-error cancellation -- the
+    #     OPPONENT's spread comes from usage data (vgc.sets.load_usage_spreads) and was
+    #     already reasonable.
+    #
+    # What is NOT established: that accurate self-knowledge measurably wins. The
+    # equal-weight 0.6-vs-0.6 mirror put it at 246/500 = 49.2%, CI [0.448, 0.536]. Neither
+    # the 58-team pool (50.7%) nor the 160-team confirmation (1426/2880 = 49.5%,
+    # cluster-robust CI [0.470, 0.520]; see `protect_threat_weight`) could certify the
+    # shipped combination. Ship it because it is correct, not because it is stronger.
+    use_own_team_spreads: bool = True
     # Emit one log line per `decide()` exception (see vgc.agent.VgcPlayer) so a battle that
     # silently fell back to random play is visible instead of just... quietly losing.
     log_decisions: bool = False
@@ -106,7 +155,24 @@ class PolicyConfig:
     # -- Defense/utility: Protect --------------------------------------------------------
     # Points per 1% of estimated incoming damage (from the opponent's best revealed move
     # onto this slot) that choosing Protect this turn avoids.
-    protect_threat_weight: float = 0.8
+    #
+    # 0.6 rather than the older 0.8, but hold this loosely -- it is NOT a certified win.
+    # The screen that chose it ran 80 games per candidate on ONE team (teams/phase2_mirror)
+    # and read 0.8 -> 47/80, 0.7 -> 48/80, 0.6 -> 53/80, 0.5 -> 53/80. The SE of a
+    # difference between two of those candidates is 7.7 points and best-minus-worst is 7.5,
+    # so the four are statistically indistinguishable and picking 0.6 over 0.7 was a coin
+    # flip -- with the usual winner's curse on top, since the best of four noisy candidates
+    # is biased high. The n=500 "held-out confirmation" that read 61.0% held out the SEED
+    # but reused the TEAM, so it did not test generalization.
+    #
+    # The varied-team gate did: on the 58-team archetype pool the same policy measured
+    # 529/1044 = 50.7%, cluster-robust CI [0.466, 0.547] -- a 10-point drop from the
+    # single-team number. The 160-team confirmation (seed 20260902, 18 games/team, n=2880)
+    # was 1426/2880 = 49.5%, cluster-robust CI [0.470, 0.520], floor +1.8pts -- still a
+    # wash, now with an interval tight enough that a real +3pt edge would have cleared.
+    # So 0.6 is kept as a wash that is no worse and marginally better-motivated, NOT as a
+    # demonstrated gain. Do not retune this on a single team again.
+    protect_threat_weight: float = 0.6
     # SUPERSEDED by `protect_success_decay` (below): `_score_protect` used to subtract
     # this flat penalty once `protect_counter >= 1` instead of actually modeling Gen 9's
     # real geometric success-rate falloff. Kept (unread) rather than deleted so any
@@ -282,6 +348,20 @@ class PolicyConfig:
     # with Protect valued via protect_threat_weight) -- keeps resolve_exchange's
     # damage_range call count bounded regardless of how many moves either slot knows.
     search_opp_candidates: int = 12
+    # Hybrid neural-guided mode only (`vgc.rl.search_guidance`): a candidate that the
+    # DEFAULT heuristic selector would NOT have searched may only become the chosen
+    # move if its refined score beats the best default-searched candidate by this many
+    # points; otherwise the best default-searched action wins. Powered paired-gate
+    # attribution (runs/experiments.jsonl, 2026-08-25) showed the entire strength
+    # deficit comes from such upset flips (-58%/game on near-ties) while true misses
+    # were harmless -- so admit the network's discoveries only when they clear a real
+    # margin. 0 disables arbitration entirely (pure argmax over the searched set).
+    guided_upset_margin: float = 10.0
+    # Number of joint opponent-spread hypotheses used to ORDER the search shortlist
+    # (`vgc.belief_scoring.belief_ordered_candidates`). Scores, opponent-response
+    # enumeration, and searched count stay on the point-estimate evaluator. 1 = return
+    # the myopic list unchanged (byte-identical). Rung 2c gates raising this.
+    shortlist_belief_hypotheses: int = 1
     # Points per 1% of a Pokemon's max HP lost during a simulated exchange -- the same
     # currency as damage_percent_weight, so exchange-derived and myopic-derived HP
     # percentages are directly comparable once blended together.
@@ -331,6 +411,52 @@ class PolicyConfig:
     # Setting this to 0.0 disables the search's actual influence on ranking while still
     # paying its compute cost -- useful as an isolation test, not a recommended setting.
     search_position_weight: float = 1.0
+    # Number of deterministic future-randomness samples used by the exact Showdown
+    # teacher. Four means accuracy, critical hits, damage rolls, wake turns, secondary
+    # effects, and Speed ties are averaged across four real simulator branches instead
+    # of being replaced by hand-written expected-value shortcuts.
+    exact_search_future_samples: int = 4
+    # Number of current-state belief branches used for hidden timers such as the
+    # Champions 2-or-3-action sleep duration. These are facts no player is told; each
+    # branch is a legal Showdown state rather than a made-up deterministic duration.
+    exact_search_state_hypotheses: int = 4
+    # Number of opponent Stat Point/nature beliefs the live mirror builds a root for.
+    # Open Team Sheets never reveal a spread, and the shipped usage corpus names the most
+    # popular one with only ~52% confidence at the median (no species reaches certainty).
+    # Part B requires at least two materially plausible spreads to reach search instead
+    # of silently hardening the most popular one into fact.
+    exact_search_spread_hypotheses: int = 2
+    # Number of move/item/ability configurations retained from combinations observed
+    # together in public replays. One is a point guess; Part B live/public configurations
+    # use at least two whenever compatible alternatives remain.
+    exact_search_set_hypotheses: int = 2
+    # Number of plausible opponent bring-four configurations retained after filtering
+    # by Pokemon that have publicly appeared.
+    exact_search_bring_hypotheses: int = 2
+    # Hard cap on the combined spread/set/bring/private-timer cross product. The highest
+    # probability branches are kept and renormalized; audit metadata reports retained
+    # mass so compute limits never masquerade as certainty.
+    exact_search_total_hypotheses: int = 2
+    # Exact-branch value for applying a major status. Sleep/freeze use the larger
+    # control weight below; other statuses share this base currency.
+    exact_search_status_weight: float = 18.0
+    exact_search_hard_control_weight: float = 30.0
+    # Value per net stat stage and per newly established side/field effect in an exact
+    # branch. These judge strategy; Showdown itself remains responsible for whether the
+    # effect actually occurred and how long it lasts.
+    exact_search_boost_weight: float = 5.0
+    exact_search_effect_weight: float = 12.0
+    # Spend exact_search_effect_weight with a SIGN (vgc.position_effects) instead of on a
+    # bare count of active effects. False is the pre-Rung-3a behavior and is a bug, kept
+    # only as the exact legacy control for same-session A/Bs: `len(mon.effects)` scored a
+    # Leech Seed on our own Pokemon and a Substitute we set up identically at +12, and
+    # Stealth Rock on our side identically to Tailwind on our side. Since the value
+    # function is our_side - opponent_side, that ran backwards in both directions at once
+    # -- the search read being crippled as good for us and read crippling them as bad for
+    # us, at ~12% of a Pokemon's HP per effect. It was invisible until a30bec3 because the
+    # public-mirror exact search was a no-op from 2026-08-28, so _position_value deltas
+    # were a constant and no wrong sign inside it could move a decision.
+    exact_search_signed_effects: bool = True
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat
@@ -348,18 +474,49 @@ class PolicyConfig:
     # non-damaging effect. Individual utility actions scale this shared currency.
     search_opp_utility_weight: float = 25.0
 
+    # --- Phase 3b: persistent context + short rolling horizon --------------------------
+    # Master switch for the persistent-context future-position score. Promoted after
+    # 2026-07-22 local gates: 98/100 vs heuristic (Wilson low .930, threshold .65),
+    # 99/100 vs random (Wilson low .946, threshold .90), and a side-swapped 200-game
+    # mirror against the old shallow search was neutral (95/200, CI contains .5). False
+    # remains the exact shallow-search control path for future ladder A/Bs.
+    use_rolling_horizon: bool = True
+    # Additional projected turns AFTER the normal searched exchange. Two is long enough
+    # to recognize setup/payoff and looming traps without pretending our compact damage
+    # model is a full Showdown simulator.
+    rolling_horizon_turns: int = 2
+    # Blend weight on the projected joint-position value. Kept below the immediate
+    # exchange's 1.0 weight because uncertainty grows each projected turn.
+    rolling_horizon_weight: float = 0.45
+    # A bench Pokemon is a safe pivot when the two opposing actives' combined best
+    # expected damage stays below this percent of its maximum HP.
+    rolling_safe_switch_damage_ceiling: float = 55.0
+    # Position-value bonus per safe pivot we retain relative to the opponent.
+    rolling_safe_switch_bonus: float = 12.0
+    # Penalty for each active slot projected to die with no safe pivot and no projected
+    # opposing removal -- the concrete "Protect will soon be the only good move" state.
+    rolling_trap_penalty: float = 45.0
+    # Reward/penalty for advancing or losing the battle's persistent win-condition plan
+    # (removing a plan-breaker or losing the planned closer).
+    rolling_plan_progress_weight: float = 25.0
+    # How strongly observed opponent move repetition biases otherwise-similar response
+    # likelihoods. 0 disables history's ranking effect while retaining its trace.
+    battle_history_response_weight: float = 0.25
+    # Search a strategically diverse top-K (best switch/control/non-Protect lines as well
+    # as raw myopic leaders) so a setup line cannot be pruned before horizon evaluation.
+    search_diverse_candidates: bool = True
+
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
-    # (see tools/build_set_priors.py) -- Open Team Sheets essentially never triggers on
+    # (see tools/build_set_priors.py) -- Open Team Sheets essentially never trigger on
     # the real public ladder (vgc.replay_parse's module docstring: ~0.2% of downloaded
     # replays reveal a full sheet, since this format's "Open Team Sheets" ruleset needs
     # BOTH players to opt in and almost no human ladder opponent does), so most opposing
     # movesets the threat/Protect model sees in a real game are otherwise 0-4 known moves
     # out of the real 4, starving `_opp_protect_probability`/`_best_attacking_move` of the
-    # information they need. Gate-neutral by construction: offline gates run mutual OTS
-    # accept (every move is already revealed there), so filling has nothing left to fill
-    # and this knob is a no-op in that setting -- its real effect only shows up against
-    # real ladder opponents.
+    # information they need. Direct evaluations expose only Showdown's normal fog, and
+    # websocket gates now reject sheets by default, so this prior is evaluated under the
+    # same information boundary used on the public ladder.
     use_set_priors: bool = True
     # Minimum tracked appearances (set_priors.json's per-species "appearances" count)
     # before that species' move-frequency prior is trusted enough to fill unrevealed

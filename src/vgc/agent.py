@@ -11,6 +11,9 @@ fall back to a legal random move and log the exception (mirrors pokemon-tcg-ai's
 
 from __future__ import annotations
 
+import asyncio
+import random
+from collections.abc import Awaitable
 from dataclasses import asdict
 
 from poke_env.battle.abstract_battle import AbstractBattle
@@ -18,7 +21,9 @@ from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
-from vgc.actions import describe_order
+from vgc.actions import choice_wire_message, describe_order
+from vgc.battle_state_replay import DecisionReplayRecorder
+from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
 from vgc.decision_trace import (
     current_trace,
@@ -29,7 +34,10 @@ from vgc.decision_trace import (
     trace_enabled,
 )
 from vgc.evaluator import score_joint_orders
+from vgc.config import REPO_ROOT, SHOWDOWN_REPO
 from vgc.models import PolicyConfig
+from vgc.opponent_belief import information_boundary_summary
+from vgc.own_team import apply_own_spreads
 from vgc.search import search_joint_orders
 from vgc.team_preview import build_team_order
 
@@ -48,17 +56,89 @@ class VgcPlayer(Player):
 
     def __init__(self, config: PolicyConfig | None = None, **player_kwargs) -> None:
         self.config = config or PolicyConfig()
+        record_decision_replays = bool(player_kwargs.pop("record_decision_replays", False))
+        supplied_team = player_kwargs.get("team")
+        self._decision_replay_recorder = (
+            DecisionReplayRecorder(
+                own_packed_team=supplied_team if isinstance(supplied_team, str) else None,
+                config=self.config,
+                repo_root=REPO_ROOT,
+                showdown_repo=SHOWDOWN_REPO,
+            )
+            if record_decision_replays
+            else None
+        )
         # poke-env 0.15 can receive an opponent's OTS rejection before its team-preview
         # request. Remember that room until the request arrives so the battle does not
         # wait forever for a `showteam` message that Showdown will never send.
         self._pending_ots_rejections: set[str] = set()
         self._resolved_ots_rejections: set[str] = set()
+        self._battle_memories: dict[str, BattleMemory] = {}
         self.decision_trace_history: list[dict[str, object]] = []
+        # Always-on safety counter for automated gates. Detailed traces remain opt-in,
+        # but a gate must still detect that inference crashed and random fallback play
+        # was used when VGC_TRACE is unset.
+        self.fallback_count = 0
         player_kwargs.setdefault("battle_format", self.config.format_id)
         player_kwargs.setdefault("accept_open_team_sheet", self.config.accept_open_team_sheet)
         super().__init__(**player_kwargs)
 
+    async def _handle_battle_request(
+        self, battle: AbstractBattle, maybe_default_order: bool = False
+    ) -> None:
+        """Choose outside poke-env's socket loop so exact search cannot kill heartbeats.
+
+        poke-env normally calls the synchronous ``choose_move`` method directly inside
+        its shared asyncio loop. A mechanics-exact search can take tens of seconds,
+        preventing every client on that loop from answering its WebSocket heartbeat.
+        ``asyncio.to_thread`` keeps the battle request serialized while allowing network
+        I/O and connection-failure detection to continue normally.
+        """
+
+        if battle._wait:
+            self._waiting.set()
+            return
+        if maybe_default_order and random.random() < self.DEFAULT_CHOICE_CHANCE:
+            message = self.choose_default_move().message
+        elif battle.teampreview:
+            preview = await asyncio.to_thread(self.teampreview, battle)
+            if isinstance(preview, Awaitable):
+                preview = await preview
+            message = preview
+        else:
+            if maybe_default_order:
+                self._trying_again.set()
+            choice = await asyncio.to_thread(self.choose_move, battle)
+            if isinstance(choice, Awaitable):
+                choice = await choice
+            message = choice.message
+        if message:
+            await self.ps_client.send_message(message, battle.battle_tag)
+
     async def _handle_battle_message(self, split_messages) -> None:
+        """Consume one protocol line at a time so a decision sees only its prefix.
+
+        poke-env accepts a multiline websocket burst and invokes ``choose_move`` as soon
+        as it reaches a ``request`` line.  BattleMemory used to consume the whole burst
+        before poke-env parsed any of it, allowing later lines in that same burst to
+        enter an earlier decision.  Serial processing makes the observation cutoff
+        explicit and also supplies the exact stream recorded by Part B replay bundles.
+        """
+
+        if not split_messages:
+            return
+        room = split_messages[0]
+        room_marker = room[0] if room else ""
+        battle_tag = room_marker[1:] if room_marker.startswith(">") else room_marker
+        for message in split_messages[1:]:
+            recorder = getattr(self, "_decision_replay_recorder", None)
+            if recorder is not None and battle_tag:
+                recorder.observe(battle_tag, message)
+            if battle_tag:
+                self._memory_for_tag(battle_tag).observe_protocol([message])
+            await self._handle_battle_message_line([room, message])
+
+    async def _handle_battle_message_line(self, split_messages) -> None:
         """Work around poke-env 0.15's Open Team Sheets accept/reject race.
 
         Upstream defers team-preview choice while an OTS-accepting player waits for the
@@ -89,6 +169,22 @@ class VgcPlayer(Player):
             self._pending_ots_rejections.add(battle_tag)
 
         await super()._handle_battle_message(split_messages)
+
+        # Fill in our OWN Stat Points/nature from the team we supplied. poke-env only
+        # ever learns them from an Open Team Sheets `showteam`, which on the public
+        # ladder essentially never arrives (~0.2% of replays), leaving the evaluator to
+        # guess our own spread with `default_opponent_spread` -- off by up to 35.6% and
+        # underestimating Speed on every Pokemon. See `vgc.own_team`. Must run BEFORE
+        # the OTS early-return below, since the no-OTS case is exactly the one that
+        # needs it. A no-op when a showteam did arrive and poke-env already filled them.
+        #
+        # Accurate self-knowledge exposed an old Protect miscalibration; that weight has
+        # since been retuned and confirmed above 50% against the legacy fake-spread
+        # policy. See PolicyConfig for the screen and held-out confirmation numbers.
+        if battle_tag and self.config.use_own_team_spreads:
+            own_battle = self._battles.get(battle_tag)
+            if own_battle is not None:
+                apply_own_spreads(own_battle)
 
         if not self.accept_open_team_sheet or battle_tag in self._resolved_ots_rejections:
             return
@@ -129,9 +225,56 @@ class VgcPlayer(Player):
 
     # --- overridable hooks --------------------------------------------------------
 
+    def _memory_for_tag(self, battle_tag: str) -> BattleMemory:
+        # Lazy initialization keeps tests that intentionally construct ``VgcPlayer``
+        # through ``__new__`` (without running ``__init__``) working.
+        memories = getattr(self, "_battle_memories", None)
+        if memories is None:
+            memories = {}
+            self._battle_memories = memories
+        if battle_tag not in memories:
+            memories[battle_tag] = BattleMemory(battle_tag=battle_tag)
+        return memories[battle_tag]
+
+    def _memory_for(self, battle: AbstractBattle) -> BattleMemory:
+        memory = self._memory_for_tag(battle.battle_tag)
+        memory.observe_battle(battle)
+        try:
+            setattr(battle, "_vgc_battle_memory", memory)
+        except (AttributeError, TypeError):
+            pass
+        return memory
+
+    def _record_decision(self, battle: AbstractBattle, *, team_preview: bool) -> int | None:
+        recorder = getattr(self, "_decision_replay_recorder", None)
+        if recorder is None:
+            return None
+        # The decision snapshot must include our known nature and Stat Points even on
+        # the very first team-preview request.  The transport-level enrichment after
+        # ``super()._handle_battle_message`` is too late for a recorder invoked inside
+        # poke-env's request callback.
+        if self.config.use_own_team_spreads:
+            apply_own_spreads(battle)
+        return recorder.record_decision(
+            battle,
+            self._memory_for(battle),
+            team_preview=team_preview,
+        )
+
+    def decision_replay_bundle(self, battle: AbstractBattle) -> dict[str, object] | None:
+        recorder = getattr(self, "_decision_replay_recorder", None)
+        if recorder is None or not recorder.has_battle(battle.battle_tag):
+            return None
+        return recorder.bundle(
+            battle.battle_tag,
+            player_side=getattr(battle, "player_role", None),
+            player_username=getattr(battle, "player_username", None),
+        )
+
     def decide(self, battle: AbstractBattle) -> BattleOrder:
-        """Choose a move: the argmax of `vgc.search.search_joint_orders` (Phase 2c's
-        shallow robust-response search) when `PolicyConfig.use_two_ply_search` is set
+        """Choose a move: the argmax of `vgc.search.search_joint_orders` (opponent
+        response search plus the gated rolling position forecast) when
+        `PolicyConfig.use_two_ply_search` is set
         (True by default; `ladder/run_ladder.py --myopic` is the diagnostic opt-out),
         falling back to the plain myopic
         `vgc.evaluator.score_joint_orders` when the search is disabled but the heuristic
@@ -151,6 +294,12 @@ class VgcPlayer(Player):
         whole method's outer exception-safe wrapper (`choose_move`) already guarantees
         for any other failure here.
         """
+        memory = self._memory_for(battle)
+        if trace_enabled():
+            record_note(
+                "information_boundary",
+                information_boundary_summary(battle, memory, self.config),
+            )
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
             scored = search_joint_orders(battle, self.config)
@@ -162,7 +311,13 @@ class VgcPlayer(Player):
                 scored = score_orders(policy, battle, scored, self.config)
             if self.config.log_decisions:
                 record_note("chosen_order_score", round(scored[0].score, 3))
+            if isinstance(scored[0].order, DoubleBattleOrder):
+                memory.record_choice(
+                    int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
+                )
+            record_note("battle_memory", memory.summary())
             return scored[0].order
+        record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
 
     def decide_teampreview(self, battle: AbstractBattle) -> str:
@@ -179,10 +334,12 @@ class VgcPlayer(Player):
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
         trace_token = start_trace()
         chosen_order: BattleOrder | None = None
+        replay_sequence = self._record_decision(battle, team_preview=False)
         try:
             chosen_order = self.decide(battle)
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
+            self.fallback_count += 1
             record_fallback(f"decide() raised {exc!r}")
             if self.config.log_decisions:
                 self.logger.exception(
@@ -192,6 +349,22 @@ class VgcPlayer(Player):
             chosen_order = self.choose_random_move(battle)
             return chosen_order
         finally:
+            recorder = getattr(self, "_decision_replay_recorder", None)
+            if recorder is not None and replay_sequence is not None and chosen_order is not None:
+                recorder.record_choice(
+                    battle.battle_tag,
+                    replay_sequence,
+                    (
+                        describe_order(chosen_order)
+                        if isinstance(chosen_order, DoubleBattleOrder)
+                        else str(chosen_order)
+                    ),
+                    wire=(
+                        choice_wire_message(chosen_order)
+                        if isinstance(chosen_order, BattleOrder)
+                        else str(chosen_order)
+                    ),
+                )
             trace = current_trace()
             if trace is not None:
                 trace.turn = getattr(battle, "turn", None)
@@ -208,10 +381,12 @@ class VgcPlayer(Player):
     def teampreview(self, battle: AbstractBattle) -> str:
         trace_token = start_trace()
         chosen_order: str | None = None
+        replay_sequence = self._record_decision(battle, team_preview=True)
         try:
             chosen_order = self.decide_teampreview(battle)
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
+            self.fallback_count += 1
             record_fallback(f"decide_teampreview() raised {exc!r}")
             if self.config.log_decisions:
                 self.logger.exception(
@@ -220,6 +395,9 @@ class VgcPlayer(Player):
             chosen_order = "/team 1234"
             return chosen_order
         finally:
+            recorder = getattr(self, "_decision_replay_recorder", None)
+            if recorder is not None and replay_sequence is not None and chosen_order is not None:
+                recorder.record_choice(battle.battle_tag, replay_sequence, chosen_order)
             trace = current_trace()
             if trace is not None:
                 trace.turn = 0

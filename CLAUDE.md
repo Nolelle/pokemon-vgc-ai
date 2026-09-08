@@ -1,8 +1,9 @@
 # pokemon-vgc-ai
 
 Pokemon Showdown VGC bot for `gen9championsvgc2026regmb` -- "[Gen 9 Champions] VGC 2026
-Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed, Open Team Sheets on the Bo1
-ladder. Backed by the local Showdown checkout's `champions` mod (see
+Reg M-B": doubles, bring-6-pick-4, level 50, Megas allowed. The format offers mutual-
+consent Open Team Sheets, but this bot rejects them and assumes no opponent sheet on the
+best-of-one ladder. Backed by the local Showdown checkout's `champions` mod (see
 `config/formats.ts` in that repo), not vanilla gen9.
 
 Phase 1 scaffold: project skeleton, data export, poke-env baselines, eval harness.
@@ -173,6 +174,294 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   freshly-started server, interleaved or back-to-back); a single cross-session run only
   supports pass/fail against the absolute Wilson-low threshold.
 
+## Multi-team gates: cluster by team, and check your power first
+
+`offline/evaluate_own_spread_pool.py` plays a change against MANY teams
+(`data/selfplay/archetype_pool*/manifest.json`, built by `tools/build_archetype_pool.py`).
+Four rules learned the hard way on 2026-08-11/12, all now enforced in code:
+
+- **Never tune on one team and confirm on the same team.** A held-out SEED is not a
+  held-out TEAM. `protect_threat_weight=0.6` read 61.0% on `teams/phase2_mirror` (n=500,
+  fresh seed) and 50.7% on the 58-team pool -- a 10-point overfit. The screen that picked
+  it also had a 7.7-point SE on differences between candidates that spanned 7.5 points,
+  i.e. it was choosing between four indistinguishable options.
+- **Pool win rates need a cluster-robust interval, not Wilson.** Games are clustered in
+  teams and teams genuinely differ, which inflated the variance 1.76x on the real gate
+  and made the reported `[0.476, 0.537]` really `[0.466, 0.547]`. Use
+  `vgc.evaluation.clustered_interval` / `variance_components`; `wilson_interval` is only
+  correct for a single fixed matchup.
+- **Check the pool's power floor BEFORE running.** Between-team variance divides by the
+  number of TEAMS, so a pool of K teams has an irreducible SE floor of `sqrt(tau^2 / K)`
+  that more games per team cannot lower. The 58-team pool could never certify an edge
+  below ~+2.8 points at any game count. The 160-team pool
+  (`data/selfplay/archetype_pool_150/`, 25 variants/archetype, 0 validation failures)
+  ran the same A/B at 1426/2880 = 49.5%, cluster-robust CI [0.470, 0.520], floor +1.8pts
+  -- still a wash, now tight enough that a real +3pt edge would have cleared. Use this
+  pool for anything that needs to resolve below ~+3 points. The gate prints both numbers.
+- **Subgroup checks need a family-wise correction.** Six uncorrected per-archetype 95%
+  checks trip on noise ~14% of runs. `gardevoir_maushold` was flagged at 40.7%, a policy
+  change was built to chase it, and it measured 54.9% on the next seed. The guardrail is
+  now a one-sided cluster-robust test per archetype, Holm-corrected.
+
+**Run `--null-test` (A/A: both arms identical) whenever the harness changes.** It must
+return 50%. This is what retired the phantom "accurate own spreads cost 10 points"
+result: that 200/500 = 40.0% run predates commit `e8417bd`, before which `DirectBattle`
+enriched both sides globally and `PolicyConfig.use_own_team_spreads` had no per-agent
+effect in the direct env at all, so the two seats had identical self-knowledge. The
+post-fix rerun of the same comparison gave 51.8%, and the A/A null test gives 537/1044 =
+51.4%, CI [0.483, 0.546]. The A/A run also has team-effect SD 0.029 (consistent with
+zero) against the A/B gate's 0.106 (above the 99th percentile of the null), which is how
+we know the +/-10-point team-to-team spread under A/B is a real property of the policy
+change rather than noise. The 160-team confirmation measured the same spread (tau 0.114)
+around a 49.5% mean, so the heterogeneity is real and the overall edge is not. A 160-team
+A/A (seed 20260903, n=2880) came back 1434/2880 = 49.8%, cluster-robust CI [0.481, 0.515],
+team-effect SD 0.000 -- 50% inside, no seat bias.
+
+## Counterfactual Q / search integration: closed, do not resume without a new hypothesis
+
+Learned Q(o, a, b) was evaluated against the engineered search evaluator on a powered,
+team-separated test set (768 roots, 192 teams, 424 matchups --
+`data/selfplay/counterfactual_q_powered_validation_pool`, declared in
+`data/meta/counterfactual_q_powered_validation_split.json`). **No variant showed a
+reproducible advantage.** Nine configurations -- frozen backbone, and trainable backbone
+at lr 1e-5 and 1e-4, three seeds each -- gave `search - model` differences scattered
+around zero (+0.0085, -0.0046, +0.0068, -0.0098, -0.0055, +0.0042, +0.0072, +0.0049,
+-0.0150); none significant, none surviving Holm. Unfreezing the shared encoder tested and
+**rejected** the last live hypothesis (that features fitted for policy/value lacked what Q
+needs): it widened the train-validation gap from 0.032 to 0.053-0.056 and did not
+generalize better. Opponent-response weighting was closed separately -- noise-corrected
+headroom +0.0011 +/- 0.0013 over the collected top-two responses, with 92.3% of roots
+having exactly zero at any weight.
+
+Consequences, in order of how much time they save:
+
+- **Do not add learned Q, an opponent-response model, or learned-value blending to the
+  playing agent** on current evidence. Engineered search stays the reasoning engine. This
+  is a measured dead end, not an unexplored one -- reopening it needs a materially
+  different hypothesis, not another seed or another learning rate.
+- **This says nothing about the RL policy work**, which measured a large reproducible
+  win and is unaffected. "Can the RL policy approach or beat engineered search?" is still
+  the open benchmark; "can learned Q improve search?" is not.
+- **The earlier "best run" was an artifact of an underpowered test set**, and this is the
+  reusable lesson: 120 roots drawn from only 24 teams had a cluster-robust SE floor of
+  0.035 against a ~0.015 effect, so it ranked seeds by noise. Cluster by team and check
+  the power floor BEFORE running -- same rule as the multi-team gates above.
+  `vgc.evaluation.clustered_mean` is the continuous-value counterpart of
+  `clustered_interval`/`variance_components` for per-position quantities like regret;
+  `offline/evaluate_q_vs_search_powered.py` is the worked example.
+
+## Exact Showdown mechanics: the gate, and what it does not cover
+
+Every predicted turn in a gated decision path is now executed by the official local
+Showdown engine, not by Python re-implementations. `offline/check_mechanics_readiness.py`
+prints the gate; it must say `verdict: PASS` or training and ladder play refuse to run
+(`vgc.mechanics_gate`, fail-closed, catalogue-hash pinned). Full write-up:
+`docs/champions_mechanics_catalog.md`.
+
+- `vgc.rl.exact_search.search_joint_orders_exact` ranks orders by cloning the real battle
+  and playing each candidate/response through Showdown. `vgc.rl.mechanics_oracle` does
+  the cloning; `tools/sim_worker.mjs` gained `dump` and `patchPublic` for it.
+- `vgc.rl.live_mirror.LiveExactMirror` rebuilds a *public* observation into a real local
+  Showdown battle so live play searches exactly too. `vgc.rl.hidden_state` turns the
+  privately rolled Champions sleep (`sample([2, 3, 3])`) and confusion (`random(2, 6)`)
+  durations into weighted legal branches, combined by
+  `vgc.rl.exact_search.combine_belief_rankings` -- never assumed.
+- `vgc.rl.mechanics_encoding` feeds the model the whole `vgc.mechanics_state` snapshot as
+  byte tokens: no hashing, no fixed vocabulary, no truncation, so a newly exposed field
+  reaches the network automatically. Every training entry point hardcodes
+  `use_mechanics_features=True`.
+- **The approximate Python and private-information teachers are gone, not merely
+  unused.** `vgc.rl.distill` now builds every teaching root through `LiveExactMirror`,
+  using the same public-information boundary as real play, and will not mint a label
+  without an exact Showdown branch. `vgc.rl.demonstrations` accepts only
+  `public_mirror_exact_showdown_teacher_v2`; its v3 dataset format intentionally blocks
+  older private-root files from new training.
+  `tests/test_exact_mechanics_contract.py` asserts `resolve_exchange`/`search_joint_orders`
+  are unreachable from the exact modules.
+- **Hidden opponent spreads are a distribution, and it is not a confident one.**
+  `vgc.sets.opponent_spread_hypotheses` returns the weighted Stat Point/nature beliefs
+  behind `opponent_state`'s single point estimate (median confidence in the most popular
+  spread across the 275-species corpus is 52.4%; no species reaches certainty).
+  `PolicyConfig.exact_search_spread_hypotheses` makes `vgc.rl.live_mirror` build real
+  Showdown roots for multiple beliefs -- verified reaching the engine as genuinely different stats
+  (`tests/test_exact_search.py::test_hidden_spread_beliefs_reach_showdown_as_different_opponent_stats`
+  shows three near-equally-likely Charizards at Speed 144/152/167). Part B now requires
+  two spread, coherent set, and brought-four inputs at the source, then searches two
+  decision-diverse representatives of their joint distribution. Audit metadata preserves
+  the original branch counts and assigns the full probability mass to those
+  representatives. Spreads rebuild the root (Stat Points are baked into the starting
+  team); timers re-patch it, which is why `LiveExactMirror.hypotheses` is ordered
+  spread-major.
+- **Those beliefs are a posterior, not a fixed prior.** `vgc.opponent_belief.
+  build_opponent_beliefs` reweights the corpus spreads by what the battle has shown --
+  `BattleMemory.speed_observations` (who moved first, at what effective Speed, weather/
+  Tailwind/Trick-Room aware) and `damage_observations` (observed % vs `damage_range`) --
+  keeping a contradicted hypothesis at 5% rather than deleting it, because speed ties and
+  crits make one observation noisy. `LiveExactMirror.hypotheses(battle, memory)` consumes
+  it; omitting `memory` gives the pre-battle prior. One Speed observation typically moves
+  Charizard from a three-way 34/34/33 split to 91/4/4. **Note the shipped ladder search
+  (`vgc.search`) and `vgc.evaluator` still use `vgc.sets.opponent_state`'s point estimate
+  -- `build_opponent_beliefs` reaches only the neural network's input features
+  (`vgc.rl.encoding`) and now the mirror.**
+- **The teacher's opponent-information leak was measured and then removed.** On
+  2026-08-28, `offline/measure_opponent_information_leak.py` compared 34 real
+  checkpoints across `data/selfplay/archetype_pool_150` with identical reduced search
+  width on both roots. The search's top pick agreed only 28/34 = 82.4% of the time between the
+  true root and the reconstruction (Wilson low 66.5%) -- roughly 1 in 6 disagreed, and the
+  disagreements are substantive (Protect+switch vs attack, a Weather Ball/Hurricane
+  speed-order flip), not tie-break noise. This is frequent enough that the leak is a real
+  problem, not an academic one -- the old teacher advised moves the deployed agent could
+  not justify from what it actually saw roughly one turn in six. As of 2026-08-30,
+  `TeacherRecordingPlayer` and PPO's optional teacher anchor both use the public mirror;
+  `docs/data_requirements.md` defines the saved contract and
+  `offline/audit_training_data.py` enforces it.
+  **The live_mirror path also costs ~9.6x the search time** at the same reduced width
+  (0.10s peek vs 0.99s guess median); at full production search width a single probe
+  showed 2.0s vs 28.0s. Rerouting training through `live_mirror` is now justified by the
+  disagreement rate, but the ~10x per-decision cost still needs budgeting before a large
+  collection.
+  Results: `runs/eval/opponent_information_leak.json`. A handful of checkpoints with
+  transient `patch_public_state` failures were skipped rather than counted in that old
+  diagnostic. The fail-closed collector exposed three direct-offline mirror defects: a
+  private simulator root containing a non-copyable thread lock, poke-env's `null` active
+  slot after a faint, and a rebuilt bring-four omitting an already revealed Pokemon.
+  `DirectBattle.patch_public_state`, `tools/sim_worker.mjs`, and `vgc.rl.live_mirror` now
+  handle those cases. The real-Showdown forced-switch/exhausted-bench integration contract
+  and a two-game/14-decision smoke collection both pass; high-volume reliability is still
+  unclaimed.
+- **The gate promises exact transitions, not good judgement.** The final rank still blends
+  `vgc.evaluator`'s myopic heuristic score (`search_myopic_weight`, deliberately left at
+  1.0 -- zeroing it changes frozen gate-tuned weights and needs a same-session A/B), the
+  shortlist is a compute budget, and `_position_value` is a hand-weighted value function.
+  All three are listed in `data/champions/mechanics_coverage.json` under
+  `policy_approximations`; hidden opponent spreads/nature/bring are under
+  `information_uncertainty`. Do not let "mechanics are exact" drift into "the search is
+  optimal" -- they are different claims and the file keeps them apart.
+- **The public-mirror exact search was a no-op from 33d3a0e (2026-08-28) to a30bec3
+  (2026-09-01).** `handlePatchPublic` replaced Showdown's `BattleQueue` with `[]`; the
+  next `go()` threw inside the stream, the worker drains swallowed it, and every `choose`
+  on a `LiveExactMirror` root returned no lines and an unchanged state. `exchange_value`
+  was therefore identical for every candidate and the ranking was the myopic evaluator
+  plus a constant -- on 16/16 diagnostic and 4/4 production-width decisions. Nothing
+  caught it because every test checked stats and structure, not that a branch MOVED.
+  Treat any live_mirror result from that window (ladder hybrid sessions, the leak
+  measurement's "guess" side, post-08-30 teacher labels) as myopic-evaluator output.
+  `tests/test_live_mirror_branches.py` (in both gates, family
+  `live_mirror_branch_execution`) now asserts branches emit protocol, diverge, and give
+  non-constant exact values; `DirectBattle._apply` raises on a silent no-op step. Two
+  further mirror defects fell out of the same run and are fixed in 7590c4f: a stale
+  poke-env `preparing` flag after a charge-skipped Solar Beam was materialised as a real
+  two-turn lock (snapshot now trusts the request, not the flag), and the non-perspective
+  clone base was a blank turn-1 parser (no Trick Room/weather/HP), which both KeyError'd
+  on `-fieldend` and fed opponent-response scoring a wrong board. Open: 2/140 recall-gate
+  decisions still skip with `Can't switch: trapped` on a mirror root; not yet diagnosed.
+
+## Rung 2 (belief-aware shortlist): built, gated, not enabled
+
+`vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the
+opponent's posterior Stat Point spreads (`joint_spread_hypotheses` +
+`score_joint_orders_under_beliefs`), and `belief_ordered_candidates` re-sorts the myopic
+list by that mixture before top-K selection in both `vgc.search` and
+`vgc.rl.exact_search` (same objects, scores untouched, opponent-response enumeration
+untouched). `PolicyConfig.shortlist_belief_hypotheses` controls it and **ships at 1**
+(identity). Evidence, 2026-09-01:
+
+- `offline/evaluate_belief_shortlist_recall.py` (derived gate: does the winner of a
+  wide exact search on the public mirror survive into K=10?) -- 138 decisions / 46
+  teams: point estimate 0.971, mixture 0.978, paired diff +0.007 [-0.007, +0.022],
+  `verdict: PASS` (pre-registered non-inferiority, margin 0.02). Winner was myopic rank
+  1 in only 82/138, so exact search does overturn the myopic pick ~40% of the time; the
+  misses sit at myopic rank 18-48 under BOTH selectors.
+- `offline/evaluate_own_spread_pool.py --candidate shortlist_belief_hypotheses=3`
+  (160 teams, 2880 games, `vgc.search` path): 1427/2880 = 49.5%, cluster-robust
+  [0.476, 0.515]; A/A null 50.8% OK. A wash, not a drop.
+- Conclusion: the shortlist is not the bottleneck at K=10 (97% recall). The remaining
+  recall loss is orders the myopic evaluator ranks very low, which is a search/value
+  question (Rung 3), not a belief question. Do not raise the default without a new
+  hypothesis; the knob exists so Rung 3 can revisit it once the judge changes.
+
+## Rung 3a (signed effect term): the exact search's value function had a sign error
+
+`vgc.rl.exact_search._side_position` scored volatiles and side conditions with
+`len(...)`, so it could not tell a benefit from an injury. Every active effect was worth
++`exact_search_effect_weight` (12.0) whatever it did:
+
+    our own Leech Seed  +12      our own Substitute  +12
+    Stealth Rock, our side  +12  Tailwind, our side  +12
+
+Because `_position_value` is `our_side - opponent_side`, that ran backwards in BOTH
+directions at once -- the search read walking into a Leech Seed as good for us, and read
+landing a Taunt on the opponent as bad for us -- at roughly 12% of a Pokemon's HP per
+effect, which is larger than the gap between many candidate moves. It also paid full
+weight for one-shot ability-activation markers (`aftermath`, `dancer`, `ironbarbs`,
+`quickdraw`) that are not position advantages at all; those dominate poke-env's
+224-member `Effect` vocabulary.
+
+**This was invisible until 2026-09-01.** The public-mirror exact search was a no-op from
+33d3a0e to a30bec3 (see the previous section), so `_position_value` deltas were a constant
+and no wrong sign inside it could move a decision. Fixing the queue bug is what armed this
+one. `vgc/search.py`'s Phase 2c search is NOT affected -- it names Tailwind and the other
+side conditions explicitly rather than counting them.
+
+`vgc.position_effects` fixes the sign and nothing else. `exact_search_effect_weight` keeps
+its frozen value; this is not a calibration change and no new weight was added.
+
+- **The sign is derived, not hand-listed.** A volatile or side condition applied by a
+  FOE-targeting move hurts its holder; one applied by a SELF/ALLY-targeting move helps.
+  `tools/export_champions_data.mjs` now exports `volatileStatus`, `selfVolatileStatus`,
+  `secondaryVolatileStatuses`, `sideCondition` and `slotCondition` alongside `target` so
+  the map regenerates with the data instead of going stale.
+- **The rule cross-checks against something written independently.** Derived
+  "harmful to the side holding it" reproduces `mechanics_state._LAYERED_SIDE_CONDITIONS`
+  (spikes/toxicspikes/stealthrock/stickyweb) exactly, from move targets alone. That
+  assertion is a gate test, so a bad derivation cannot land quietly.
+- **Restricting to LEGAL moves is what makes the derivation complete.** Octolock,
+  Telekinesis, Embargo, Nightmare, Tar Shot, Glaive Rush, Obstruct, Burning Bulwark, Silk
+  Trap, Mist, Lucky Chant, Crafty Shield and Mat Block are all `isNonstandard: "Past"` in
+  this mod -- a vanilla-gen9 derivation would sign a dozen volatiles that can never occur.
+- **Unsignable effects score 0, not +12.** This is deliberate and is itself part of the
+  fix. Two small tables cover what the rule cannot see: `_SUPPLEMENT` for effects no legal
+  move applies (perish counters, `trapped`, `slowstart`, the Protosynthesis/Quark Drive
+  families) and `_OVERRIDES` for the handful the rule mis-signs because they are engine
+  bookkeeping (`sparklingaria` marks targets for burn-curing) or genuinely two-sided
+  (`lockedmove`, `uproar`, `roost`). Every entry is +1/-1/0 -- there are no magnitudes in
+  that module, so it cannot become a tuning surface.
+- `PolicyConfig.exact_search_signed_effects` ships **True**. False is the exact
+  pre-3a behavior, kept only as the legacy control for same-session A/Bs -- the same
+  pattern as `search_respect_our_protect_odds`.
+- Gate family `exact_branch_effect_polarity` (`tests/test_position_effects.py`, 32 tests)
+  is in the mechanics gate. `policy_approximations.exact_branch_position_value` still
+  stands: the weights remain hand-chosen and uncalibrated, which is later work. Only the
+  sign is fixed.
+- **An effect already on the board cannot change the ranking, and this is general.**
+  `search_joint_orders_exact` scores every branch as `_position_value(after) - before`
+  with the SAME `before` for every candidate, so any term that is identical across
+  branches cancels out of the comparison entirely. A pre-existing Leech Seed is invisible
+  to the ranking; only an effect GAINED OR LOST inside the searched turn moves it. This
+  is not specific to the effect term -- it is how the whole exact value function behaves,
+  and it is the reason a diagnostic that counts effects at the ROOT measures the one case
+  that provably cannot matter. The first version of the script did exactly that and
+  returned a meaningless 0/110.
+- `offline/measure_effect_polarity_impact.py` therefore keys off
+  `exchange_values_differ`: did signing the term move any SEARCHED candidate's exchange
+  value at all? Root effect counts are still reported, but only as context. Rates are
+  clustered by our own team file.
+- **Measured impact, 2026-09-02** (`runs/eval/effect_polarity_impact.json`, 110
+  decisions / 43 teams, `archetype_pool_150`, diagnostic width): signing moved a searched
+  candidate's exchange value on **7/110** decisions, with a largest shift of **12.00**
+  points -- exactly `exact_search_effect_weight`, which is the confirmation that the
+  mechanism is live and that one effect flip costs exactly one weight. The top pick
+  changed on **0/110**.
+- **Do not spend a pool A/B on this.** With 0/110 decision changes a win-rate gate is a
+  null by construction and would only buy a wide confidence interval around zero. 3a is a
+  correctness fix held by a gate test, not a strength claim, and that is the whole of its
+  claim. Two real caveats before anyone reads 0/110 as "the effect term does not matter":
+  the pool is offence-heavy (only `triple_setup_balance` sets much up), and the diagnostic
+  budget is far narrower than production (`search_our_candidates=4`,
+  `exact_search_future_samples=1`, one spread hypothesis), so it explores far fewer
+  branches in which an effect could appear or disappear. A targeted board that actually
+  creates hazards/screens/Leech Seed would measure this properly; the pool cannot.
+
 ## Commands
 
 All Python invocations use `.venv/bin/python` -- there is no `python` on PATH in fresh
@@ -180,6 +469,24 @@ shells on this machine, and `node` may also need an absolute path
 (`~/.nvm/versions/node/v22.22.0/bin/node`) if it isn't on PATH.
 
 ```bash
+# Mechanics gate -- must PASS before any training or ladder command runs
+.venv/bin/python offline/check_mechanics_readiness.py
+
+# Battle-state gate -- must also PASS before any training or ladder command runs
+.venv/bin/python offline/check_battle_state_readiness.py
+
+# Action-generation gate (Problem C) -- must also PASS before any training or
+# ladder command runs. Full write-up: `docs/action_generation_contract.md`.
+.venv/bin/python offline/check_action_readiness.py
+
+# Showdown parity -- both gates and the public ladder run this; it fetches origin/master
+# and BLOCKS if the local checkout is dirty, differs from the catalog's pinned commit, or
+# is missing upstream commits on mod/sim paths. To update: in the showdown repo
+# `git pull --ff-only origin master && node build --force` (unforced `node build` can
+# leave a stale dist/sim), then rerun both exporters below and re-pin
+# `mechanics_coverage.json`'s `catalog_sha256`. Last done 2026-09-01 -> 50408e6f9.
+.venv/bin/python offline/check_showdown_parity.py
+
 # Start the local server (from the showdown repo, port 8000, no auth)
 cd /Users/edmundyu/code/projects/pokemon-showdown && node pokemon-showdown start --no-security
 
@@ -201,6 +508,27 @@ cat teams/dev.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026
 .venv/bin/python offline/run_gates.py --candidate vgc --incumbent random --n 100 \
     --threshold 0.55 --team teams/dev.packed.txt
 
+# Varied-team gate (see "Multi-team gates" above). Build the pool once, then A/A the
+# harness, then run the A/B. --null-test MUST come back at 50% or the A/B means nothing.
+.venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25 \
+    --seed 20260901 --out data/selfplay/archetype_pool_150
+.venv/bin/python offline/evaluate_own_spread_pool.py --null-test \
+    --manifest data/selfplay/archetype_pool_150/manifest.json \
+    --output runs/eval/pool_null_test.json
+.venv/bin/python offline/evaluate_own_spread_pool.py \
+    --manifest data/selfplay/archetype_pool_150/manifest.json --workers 10 \
+    --output runs/eval/own_spread_pool160_gate.json
+
+# First controlled RL experiment (fixed team, fixed leads, fogged, terminal ±1,
+# gamma=1.0). Heuristic weights stay frozen; this is the learning-curve run.
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent random \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_random
+.venv/bin/python selfplay/train_fixed_mirror.py --opponent maxpower \
+    --init-from runs/ppo/fixed_mirror_vs_random/latest.pt \
+    --iterations 20 --games-per-iteration 256 --eval-games 500 \
+    --eval-every-iterations 4 --out-dir runs/ppo/fixed_mirror_vs_maxpower
+
 # The two Phase 2b acceptance gates (meta1 team mirror on both sides -- see "gate
 # results" in the Phase 2b experiment log, runs/experiments.jsonl, for the latest run):
 .venv/bin/python offline/run_gates.py --candidate vgc --incumbent random --n 100 \
@@ -221,6 +549,11 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 # Public ladder (credentials are read from env or .showdown-credentials.json):
 .venv/bin/python ladder/run_ladder.py --n 1
 
+# Rung 3a diagnostic: how often does signing the exact search's effect term change its
+# top pick? Reports an overall rate AND a rate restricted to decisions that actually had
+# a signed effect on the board -- the second is the honest denominator.
+.venv/bin/python offline/measure_effect_polarity_impact.py --pairs 60
+
 # Log an experiment note
 .venv/bin/python offline/log_experiment.py --name "..." --summary "..."
 
@@ -235,6 +568,22 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario.json
 ```
 
+## Testing and iteration preference (2026-09-07)
+
+Prioritize getting the battle bot running and iterating on data and training. Do not
+write unit tests for everything. Add tests only for critical behavior where a failure
+would invalidate a run, silently corrupt its evidence, or stop the bot from playing.
+Examples include public/private information boundaries, training/evaluation separation,
+legal battle choices, correct model loading, and essential training/battle execution.
+
+Prefer existing checks and small end-to-end trial runs over expanding the test suite.
+For low-impact helpers, formatting, routine plumbing, and reversible changes, use a
+quick manual check and debug problems when they occur. Do not add tests that merely
+repeat implementation details or delay a useful experiment to chase exhaustive coverage.
+Run the checks affected by a change; broaden testing when a failure or material risk
+justifies it. Preserve critical readiness checks and honest strength measurements.
+This preference does not require deleting existing tests or relaxing release criteria.
+
 ## Conventions
 
 - `uv` for the environment (`uv sync --extra dev`); `.venv/bin/python`, never a bare
@@ -247,6 +596,9 @@ node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario
 - `PolicyConfig` (`vgc/models.py`) is the single frozen-dataclass gate for behavior
   changes -- new strategic knobs go there, individually commented, not as bare
   literals in the decision code. Mirrors `~/code/projects/pokemon-tcg-ai`'s pattern.
+  Heuristic weights themselves are frozen as of 2026-08-12 (the Protect retune did
+  not generalize). Treat the shipped heuristic as a benchmark, not something to
+  keep optimizing.
 - `VgcPlayer.decide()` / `decide_teampreview()` (`vgc/agent.py`) are the only methods
   subclasses should override; `choose_move`/`teampreview` themselves exist only to wrap
   those hooks in an exception-safe fallback (random move / `/team 1234`) so a bug in

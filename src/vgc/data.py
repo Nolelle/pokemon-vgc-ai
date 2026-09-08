@@ -63,6 +63,20 @@ def load_natures() -> dict[str, Any]:
     return _load_json("natures.json")
 
 
+@lru_cache(maxsize=1)
+def load_mechanics_catalog() -> dict[str, Any]:
+    """Exact legal entities and Showdown mechanics hooks for the target format."""
+
+    return _load_json("mechanics_catalog.json")
+
+
+@lru_cache(maxsize=1)
+def load_mechanics_coverage() -> dict[str, Any]:
+    """Reviewed exact/partial/missing status for every mechanics family."""
+
+    return _load_json("mechanics_coverage.json")
+
+
 def clear_cache() -> None:
     """Drop all cached loads -- mainly useful for tests that re-export data mid-run."""
     load_species.cache_clear()
@@ -71,6 +85,8 @@ def clear_cache() -> None:
     load_learnsets.cache_clear()
     load_typechart.cache_clear()
     load_natures.cache_clear()
+    load_mechanics_catalog.cache_clear()
+    load_mechanics_coverage.cache_clear()
 
 
 def data_dir() -> Path:

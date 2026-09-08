@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import math
 import secrets
 import sys
 from datetime import UTC, datetime
@@ -23,20 +22,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from vgc.baselines import make_player  # noqa: E402
 from vgc.config import FORMAT_ID, RUNS_DIR, TEAMS_DIR  # noqa: E402
+from vgc.evaluation import wilson_interval  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = RUNS_DIR / "eval"
 
 
-def wilson_interval(wins: int, games: int, z: float = 1.96) -> tuple[float, float]:
-    """Wilson score interval -- same formula as pokemon-tcg-ai's offline/run_matches.py."""
-    if games <= 0:
-        return 0.0, 0.0
-    p = wins / games
-    z2 = z * z
-    denom = 1.0 + z2 / games
-    center = (p + z2 / (2.0 * games)) / denom
-    margin = (z / denom) * math.sqrt((p * (1.0 - p) / games) + (z2 / (4.0 * games * games)))
-    return max(0.0, center - margin), min(1.0, center + margin)
+# Re-exported from vgc.evaluation, which is where it lives now so that vgc.rl.match can
+# share it without src/vgc/ importing this scripts package. Kept importable from here:
+# offline.run_gates and any existing analysis still do `from offline.run_matches import
+# wilson_interval`.
+__all__ = ["run_matches", "wilson_interval"]
 
 
 async def run_matches(
@@ -46,7 +41,7 @@ async def run_matches(
     team: str,
     battle_format: str = FORMAT_ID,
     *,
-    accept_open_team_sheet: bool = True,
+    accept_open_team_sheet: bool = False,
 ) -> dict[str, object]:
     # Keep both sides on the same OTS setting. Besides making comparisons fair, this
     # avoids accidentally benchmarking an accept/reject protocol race instead of the
@@ -125,27 +120,77 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--open-team-sheets",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="make both players accept OTS (default); use --no-open-team-sheets for both to reject",
+        default=False,
+        help="make both players accept OTS; rejected by default to match public ladder play",
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--direct",
+        action="store_true",
+        help=(
+            "run on the direct BattleStream environment (vgc.rl.match) instead of a "
+            "local Showdown server: no server, no websocket, no accounts, and the "
+            "n>=500 evaluation budget becomes practical. Same decision code either way "
+            "-- see vgc/rl/agents.py. --open-team-sheets does not apply (the direct env "
+            "reveals nothing beyond the simulator's own fog)."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="simulator seed stream for --direct, making the series reproducible",
+    )
     return parser.parse_args()
+
+
+def run_direct(args: argparse.Namespace, team: str) -> dict[str, object]:
+    """The --direct path: same result shape, no server."""
+
+    from functools import partial
+
+    from vgc.rl.agents import make_direct_agent
+    from vgc.rl.env import SimWorker
+    from vgc.rl.match import run_series, summarize
+
+    # Distinct dict keys are required (run_series is keyed by agent name), so a mirror
+    # like --p1 vgc --p2 vgc needs disambiguating before it reaches the runner.
+    p1_name, p2_name = args.p1, args.p2
+    if p1_name == p2_name:
+        p1_name, p2_name = f"{p1_name}-a", f"{p2_name}-b"
+    factories = {
+        p1_name: partial(make_direct_agent, args.p1, team, battle_format=args.format),
+        p2_name: partial(make_direct_agent, args.p2, team, battle_format=args.format),
+    }
+    with SimWorker() as worker:
+        outcomes = run_series(
+            worker,
+            factories,
+            {p1_name: team, p2_name: team},
+            args.n,
+            battle_format=args.format,
+            seed=args.seed,
+        )
+    return summarize(outcomes, p1_name, p2_name, battle_format=args.format)
 
 
 def main() -> int:
     args = parse_args()
     team = args.team.read_text().strip()
 
-    result = asyncio.run(
-        run_matches(
-            args.p1,
-            args.p2,
-            args.n,
-            team,
-            args.format,
-            accept_open_team_sheet=args.open_team_sheets,
+    if args.direct:
+        result = run_direct(args, team)
+    else:
+        result = asyncio.run(
+            run_matches(
+                args.p1,
+                args.p2,
+                args.n,
+                team,
+                args.format,
+                accept_open_team_sheet=args.open_team_sheets,
+            )
         )
-    )
 
     print(
         f"{result['p1']} vs {result['p2']}: "
