@@ -13,12 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Not part of this repo -- cloned/built separately. See CLAUDE.md for setup.
 SHOWDOWN_REPO = Path("/Users/edmundyu/code/projects/pokemon-showdown")
 
-# "[Gen 9 Champions] VGC 2026 Reg M-B" -- doubles, bring-6-pick-4, level 50, Megas allowed.
+# "[Gen 9 Champions] VGC 2026 Reg M-C" -- doubles, bring-6-pick-4, level 50, Megas allowed.
 # The format offers mutual-consent Open Team Sheets, but the bot rejects them and assumes
 # no opponent sheet on the best-of-one ladder. Backed by the Showdown repo's "champions"
 # mod (see config/formats.ts there), NOT vanilla gen9 -- Stat Points, item legality,
 # abilities, and learnsets all diverge from vanilla gen9 VGC. Never assume vanilla data.
-FORMAT_ID = "gen9championsvgc2026regmb"
+FORMAT_ID = "gen9championsvgc2026regmc"
 
 # Local Showdown server poke-env connects to (`node pokemon-showdown start --no-security`).
 LOCAL_SERVER_HOST = "localhost:8000"

@@ -1118,31 +1118,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "courtchange": {
-    "id": "courtchange",
-    "name": "Court Change",
-    "num": 756,
-    "type": "Normal",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "all",
-    "flags": {
-      "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "crabhammer": {
     "id": "crabhammer",
     "name": "Crabhammer",
@@ -1404,6 +1379,34 @@
     "slotCondition": null,
     "isNonstandard": null
   },
+  "disable": {
+    "id": "disable",
+    "name": "Disable",
+    "num": 50,
+    "type": "Normal",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": 100,
+    "pp": 20,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "protect": 1,
+      "reflectable": 1,
+      "mirror": 1,
+      "bypasssub": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": "disable",
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "disarmingvoice": {
     "id": "disarmingvoice",
     "name": "Disarming Voice",
@@ -1495,32 +1498,6 @@
       "protect": 1,
       "mirror": 1,
       "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
-  "doubleshock": {
-    "id": "doubleshock",
-    "name": "Double Shock",
-    "num": 892,
-    "type": "Electric",
-    "category": "Physical",
-    "basePower": 120,
-    "accuracy": 100,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1
     },
     "secondary": null,
     "secondaries": null,
@@ -1719,43 +1696,6 @@
     },
     "secondary": null,
     "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
-  "drumbeating": {
-    "id": "drumbeating",
-    "name": "Drum Beating",
-    "num": 778,
-    "type": "Grass",
-    "category": "Physical",
-    "basePower": 80,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "protect": 1,
-      "mirror": 1
-    },
-    "secondary": {
-      "chance": 100,
-      "boosts": {
-        "spe": -1
-      }
-    },
-    "secondaries": [
-      {
-        "chance": 100,
-        "boosts": {
-          "spe": -1
-        }
-      }
-    ],
     "volatileStatus": null,
     "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
@@ -2724,33 +2664,6 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
-  "glaiverush": {
-    "id": "glaiverush",
-    "name": "Glaive Rush",
-    "num": 862,
-    "type": "Dragon",
-    "category": "Physical",
-    "basePower": 120,
-    "accuracy": 100,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": "glaiverush",
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "grasspledge": {
     "id": "grasspledge",
     "name": "Grass Pledge",
@@ -3411,34 +3324,6 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
-  "jawlock": {
-    "id": "jawlock",
-    "name": "Jaw Lock",
-    "num": 746,
-    "type": "Dark",
-    "category": "Physical",
-    "basePower": 80,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1,
-      "metronome": 1,
-      "bite": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "judgment": {
     "id": "judgment",
     "name": "Judgment",
@@ -3974,6 +3859,33 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "meteorassault": {
+    "id": "meteorassault",
+    "name": "Meteor Assault",
+    "num": 794,
+    "type": "Fighting",
+    "category": "Physical",
+    "basePower": 170,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "recharge": 1,
+      "protect": 1,
+      "mirror": 1,
+      "failinstruct": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": "mustrecharge",
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": "Past"
+  },
   "metronome": {
     "id": "metronome",
     "name": "Metronome",
@@ -4040,7 +3952,7 @@
     "accuracy": true,
     "pp": 5,
     "priority": 0,
-    "target": "self",
+    "target": "adjacentAllyOrSelf",
     "flags": {
       "snatch": 1,
       "heal": 1,
@@ -4054,7 +3966,7 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
+    "isNonstandard": null
   },
   "mimic": {
     "id": "mimic",
@@ -4450,6 +4362,32 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "octolock": {
+    "id": "octolock",
+    "name": "Octolock",
+    "num": 753,
+    "type": "Fighting",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": 100,
+    "pp": 15,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "protect": 1,
+      "mirror": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": "octolock",
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "orderup": {
     "id": "orderup",
     "name": "Order Up",
@@ -4489,33 +4427,6 @@
       "protect": 1,
       "mirror": 1,
       "pulse": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
-  "overdrive": {
-    "id": "overdrive",
-    "name": "Overdrive",
-    "num": 786,
-    "type": "Electric",
-    "category": "Special",
-    "basePower": 80,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "allAdjacentFoes",
-    "flags": {
-      "protect": 1,
-      "mirror": 1,
-      "sound": 1,
-      "bypasssub": 1
     },
     "secondary": null,
     "secondaries": null,
@@ -5078,41 +4989,6 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
-  "pyroball": {
-    "id": "pyroball",
-    "name": "Pyro Ball",
-    "num": 780,
-    "type": "Fire",
-    "category": "Physical",
-    "basePower": 120,
-    "accuracy": 90,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "protect": 1,
-      "mirror": 1,
-      "defrost": 1,
-      "bullet": 1
-    },
-    "secondary": {
-      "chance": 10,
-      "status": "brn"
-    },
-    "secondaries": [
-      {
-        "chance": 10,
-        "status": "brn"
-      }
-    ],
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "ragefist": {
     "id": "ragefist",
     "name": "Rage Fist",
@@ -5254,31 +5130,6 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
-  },
-  "revivalblessing": {
-    "id": "revivalblessing",
-    "name": "Revival Blessing",
-    "num": 863,
-    "type": "Normal",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 1,
-    "priority": 0,
-    "target": "self",
-    "flags": {
-      "heal": 1,
-      "nosketch": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": "revivalblessing",
     "isNonstandard": "Past"
   },
   "roaroftime": {
@@ -5763,31 +5614,6 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
-  "shiftgear": {
-    "id": "shiftgear",
-    "name": "Shift Gear",
-    "num": 508,
-    "type": "Steel",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 10,
-    "priority": 0,
-    "target": "self",
-    "flags": {
-      "snatch": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "shockwave": {
     "id": "shockwave",
     "name": "Shock Wave",
@@ -5928,7 +5754,7 @@
     "num": 163,
     "type": "Normal",
     "category": "Physical",
-    "basePower": 70,
+    "basePower": 80,
     "accuracy": 100,
     "pp": 20,
     "priority": 0,
@@ -5948,7 +5774,7 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
+    "isNonstandard": null
   },
   "sludge": {
     "id": "sludge",
@@ -6095,7 +5921,7 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
+    "isNonstandard": null
   },
   "snowscape": {
     "id": "snowscape",
@@ -6490,6 +6316,34 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Past"
+  },
+  "strengthsap": {
+    "id": "strengthsap",
+    "name": "Strength Sap",
+    "num": 668,
+    "type": "Grass",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "protect": 1,
+      "reflectable": 1,
+      "mirror": 1,
+      "heal": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
   },
   "stuffcheeks": {
     "id": "stuffcheeks",
@@ -7526,6 +7380,32 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "wish": {
+    "id": "wish",
+    "name": "Wish",
+    "num": 273,
+    "type": "Normal",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 5,
+    "priority": 0,
+    "target": "self",
+    "flags": {
+      "snatch": 1,
+      "heal": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": "Wish",
+    "isNonstandard": null
+  },
   "withdraw": {
     "id": "withdraw",
     "name": "Withdraw",
@@ -7571,44 +7451,6 @@
     "volatileStatus": null,
     "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
-  "zingzap": {
-    "id": "zingzap",
-    "name": "Zing Zap",
-    "num": 716,
-    "type": "Electric",
-    "category": "Physical",
-    "basePower": 80,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": {
-      "chance": 30,
-      "volatileStatus": "flinch"
-    },
-    "secondaries": [
-      {
-        "chance": 30,
-        "volatileStatus": "flinch"
-      }
-    ],
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [
-      "flinch",
-      "flinch"
-    ],
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
@@ -10717,6 +10559,31 @@
     "slotCondition": null,
     "isNonstandard": null
   },
+  "courtchange": {
+    "id": "courtchange",
+    "name": "Court Change",
+    "num": 756,
+    "type": "Normal",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": 100,
+    "pp": 10,
+    "priority": 0,
+    "target": "all",
+    "flags": {
+      "mirror": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "covet": {
     "id": "covet",
     "name": "Covet",
@@ -11145,34 +11012,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "disable": {
-    "id": "disable",
-    "name": "Disable",
-    "num": 50,
-    "type": "Normal",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": 100,
-    "pp": 20,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "protect": 1,
-      "reflectable": 1,
-      "mirror": 1,
-      "bypasssub": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": "disable",
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
   "discharge": {
     "id": "discharge",
     "name": "Discharge",
@@ -11370,6 +11209,32 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Past"
+  },
+  "doubleshock": {
+    "id": "doubleshock",
+    "name": "Double Shock",
+    "num": 892,
+    "type": "Electric",
+    "category": "Physical",
+    "basePower": 120,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
   },
   "doubleslap": {
     "id": "doubleslap",
@@ -11728,6 +11593,43 @@
     },
     "secondary": null,
     "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
+  "drumbeating": {
+    "id": "drumbeating",
+    "name": "Drum Beating",
+    "num": 778,
+    "type": "Grass",
+    "category": "Physical",
+    "basePower": 80,
+    "accuracy": 100,
+    "pp": 10,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "protect": 1,
+      "mirror": 1
+    },
+    "secondary": {
+      "chance": 100,
+      "boosts": {
+        "spe": -1
+      }
+    },
+    "secondaries": [
+      {
+        "chance": 100,
+        "boosts": {
+          "spe": -1
+        }
+      }
+    ],
     "volatileStatus": null,
     "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
@@ -13902,6 +13804,33 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Past"
+  },
+  "glaiverush": {
+    "id": "glaiverush",
+    "name": "Glaive Rush",
+    "num": 862,
+    "type": "Dragon",
+    "category": "Physical",
+    "basePower": 120,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": "glaiverush",
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
   },
   "glare": {
     "id": "glare",
@@ -16454,6 +16383,34 @@
     "slotCondition": null,
     "isNonstandard": null
   },
+  "jawlock": {
+    "id": "jawlock",
+    "name": "Jaw Lock",
+    "num": 746,
+    "type": "Dark",
+    "category": "Physical",
+    "basePower": 80,
+    "accuracy": 100,
+    "pp": 10,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1,
+      "metronome": 1,
+      "bite": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "jetpunch": {
     "id": "jetpunch",
     "name": "Jet Punch",
@@ -18249,33 +18206,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "meteorassault": {
-    "id": "meteorassault",
-    "name": "Meteor Assault",
-    "num": 794,
-    "type": "Fighting",
-    "category": "Physical",
-    "basePower": 150,
-    "accuracy": 100,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "recharge": 1,
-      "protect": 1,
-      "mirror": 1,
-      "failinstruct": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": "mustrecharge",
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "meteorbeam": {
     "id": "meteorbeam",
     "name": "Meteor Beam",
@@ -19321,32 +19251,6 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
-  "octolock": {
-    "id": "octolock",
-    "name": "Octolock",
-    "num": 753,
-    "type": "Fighting",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": 100,
-    "pp": 15,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "protect": 1,
-      "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": "octolock",
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": "Past"
-  },
   "odorsleuth": {
     "id": "odorsleuth",
     "name": "Odor Sleuth",
@@ -19448,6 +19352,33 @@
     "secondaries": null,
     "volatileStatus": null,
     "selfVolatileStatus": "lockedmove",
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
+  "overdrive": {
+    "id": "overdrive",
+    "name": "Overdrive",
+    "num": 786,
+    "type": "Electric",
+    "category": "Special",
+    "basePower": 80,
+    "accuracy": 100,
+    "pp": 10,
+    "priority": 0,
+    "target": "allAdjacentFoes",
+    "flags": {
+      "protect": 1,
+      "mirror": 1,
+      "sound": 1,
+      "bypasssub": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
@@ -20664,6 +20595,41 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "pyroball": {
+    "id": "pyroball",
+    "name": "Pyro Ball",
+    "num": 780,
+    "type": "Fire",
+    "category": "Physical",
+    "basePower": 120,
+    "accuracy": 90,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "protect": 1,
+      "mirror": 1,
+      "defrost": 1,
+      "bullet": 1
+    },
+    "secondary": {
+      "chance": 10,
+      "status": "brn"
+    },
+    "secondaries": [
+      {
+        "chance": 10,
+        "status": "brn"
+      }
+    ],
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "quash": {
     "id": "quash",
     "name": "Quash",
@@ -21239,6 +21205,31 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
+    "isNonstandard": null
+  },
+  "revivalblessing": {
+    "id": "revivalblessing",
+    "name": "Revival Blessing",
+    "num": 863,
+    "type": "Normal",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 1,
+    "priority": 0,
+    "target": "self",
+    "flags": {
+      "heal": 1,
+      "nosketch": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": "revivalblessing",
     "isNonstandard": null
   },
   "risingvoltage": {
@@ -22381,6 +22372,31 @@
     "id": "shelter",
     "name": "Shelter",
     "num": 842,
+    "type": "Steel",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 10,
+    "priority": 0,
+    "target": "self",
+    "flags": {
+      "snatch": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
+  "shiftgear": {
+    "id": "shiftgear",
+    "name": "Shift Gear",
+    "num": 508,
     "type": "Steel",
     "category": "Status",
     "basePower": 0,
@@ -24067,34 +24083,6 @@
     "flags": {
       "protect": 1,
       "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
-  "strengthsap": {
-    "id": "strengthsap",
-    "name": "Strength Sap",
-    "num": 668,
-    "type": "Grass",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": 100,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "protect": 1,
-      "reflectable": 1,
-      "mirror": 1,
-      "heal": 1,
       "metronome": 1
     },
     "secondary": null,
@@ -26497,32 +26485,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "wish": {
-    "id": "wish",
-    "name": "Wish",
-    "num": 273,
-    "type": "Normal",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 10,
-    "priority": 0,
-    "target": "self",
-    "flags": {
-      "snatch": 1,
-      "heal": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": "Wish",
-    "isNonstandard": null
-  },
   "wonderroom": {
     "id": "wonderroom",
     "name": "Wonder Room",
@@ -26771,6 +26733,44 @@
     "secondaries": [
       {
         "chance": 20,
+        "volatileStatus": "flinch"
+      }
+    ],
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [
+      "flinch",
+      "flinch"
+    ],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
+  "zingzap": {
+    "id": "zingzap",
+    "name": "Zing Zap",
+    "num": 716,
+    "type": "Electric",
+    "category": "Physical",
+    "basePower": 80,
+    "accuracy": 100,
+    "pp": 10,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1,
+      "metronome": 1
+    },
+    "secondary": {
+      "chance": 30,
+      "volatileStatus": "flinch"
+    },
+    "secondaries": [
+      {
+        "chance": 30,
         "volatileStatus": "flinch"
       }
     ],

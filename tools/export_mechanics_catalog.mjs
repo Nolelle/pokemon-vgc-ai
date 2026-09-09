@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Export the complete mechanics surface used by the Champions Reg M-B format.
+/** Export the complete mechanics surface used by the Champions Reg M-C format.
  *
  * This intentionally loads the fully merged Showdown Dex. Reading only
  * data/mods/champions/*.ts would miss the ordinary Gen 9 mechanics inherited by the
@@ -7,7 +7,7 @@
  * to those entities, and every declarative move field that can change battle state.
  *
  * Usage:
- *   node tools/export_mechanics_catalog.mjs <showdown-repo> [output.json]
+ *   node tools/export_mechanics_catalog.mjs <showdown-repo> [output.json] [format-id]
  */
 
 import fs from "node:fs";
@@ -15,9 +15,9 @@ import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {execFileSync} from "node:child_process";
 
-const [, , showdownRepo, outputPath] = process.argv;
+const [, , showdownRepo, outputPath, customFormatId] = process.argv;
 if (!showdownRepo) {
-	console.error("usage: node tools/export_mechanics_catalog.mjs <showdown-repo> [output.json]");
+	console.error("usage: node tools/export_mechanics_catalog.mjs <showdown-repo> [output.json] [format-id]");
 	process.exit(1);
 }
 
@@ -30,7 +30,8 @@ if (!fs.existsSync(simPath)) {
 const imported = await import(pathToFileURL(simPath).href);
 const Sim = imported.default || imported;
 const dex = Sim.Dex.mod("champions");
-const format = dex.formats.get("gen9championsvgc2026regmb");
+const formatId = customFormatId || "gen9championsvgc2026regmc";
+const format = dex.formats.get(formatId);
 const ruleTable = dex.formats.getRuleTable(format);
 
 function callbacks(effect, prefix = "", seen = new WeakSet()) {

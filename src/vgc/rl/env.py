@@ -56,10 +56,11 @@ from typing import Any, Iterable, Sequence
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import DoubleBattleOrder
 
+from vgc.config import FORMAT_ID
 from vgc.node import find_node
 from vgc.own_team import apply_own_spreads, index_from_packed
 
-DEFAULT_FORMAT = "gen9championsvgc2026regmb"
+DEFAULT_FORMAT = FORMAT_ID
 DEFAULT_SHOWDOWN_REPO = Path.home() / "code" / "projects" / "pokemon-showdown"
 WORKER_SCRIPT = Path(__file__).resolve().parents[3] / "tools" / "sim_worker.mjs"
 
