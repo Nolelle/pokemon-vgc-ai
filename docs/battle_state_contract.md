@@ -18,7 +18,9 @@ player-private request message that lists currently legal moves and switches, an
 usually lacks full sets because Open Team Sheets are opt-in. The required saved artifact
 is therefore a **decision replay bundle**: the visible message history, that player's
 request messages, the player's own registered team, and a saved state check at every
-decision.
+decision. Saved bundles must record `format_id` (live target:
+`gen9championsvgc2026regmc`). Spectator HTML replays are a weaker artifact; see
+`docs/replay_label_contract.md`.
 
 ## 1. Terms and authority
 

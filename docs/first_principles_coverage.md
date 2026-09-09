@@ -1,4 +1,7 @@
-# Reg M-B strategic-signal coverage
+# Champions strategic-signal coverage (heuristic)
+
+Live format is Reg M-C. This checklist is about whether a strategic idea changes the
+heuristic score. It is not M-C legality evidence and not a mechanics-exactness audit.
 
 > **Important correction (2026-08-27):** this checklist records whether a strategic
 > idea changes the bot's score. It is **not** proof that the underlying game mechanic is

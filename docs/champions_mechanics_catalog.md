@@ -1,15 +1,19 @@
-# Complete Champions Reg M-B mechanics catalogue
+# Complete Champions Reg M-C mechanics catalogue
 
-Generated and audited: 2026-08-27
+Generated and audited: 2026-08-27 (M-B snapshot). Entity counts and format pin
+refreshed 2026-09-09 for Regulation M-C (`gen9championsvgc2026regmc`, Showdown
+`efe494857`).
 
 ## Regulation source record
 
 - Regulation M-A ran from 2026-04-08 through 2026-06-17. It is the initial rules and
   roster reference, not this bot's target:
   https://www.serebii.net/pokemonchampions/rankedbattle/regulationm-a.shtml
-- Regulation M-B runs from 2026-06-17 through 2026-09-09. It is this bot's target and
-  adds species, Mega forms, and items to the M-A pool:
+- Regulation M-B ran from 2026-06-17 through 2026-09-09. Historical for this bot:
   https://www.serebii.net/pokemonchampions/rankedbattle/regulationm-b.shtml
+- Regulation M-C runs from 2026-09-09 through 2026-12-02. It is this bot's target and
+  adds species, Mega forms, and items to the M-B pool:
+  https://www.serebii.net/pokemonchampions/rankedbattle/regulationm-c.shtml
 - Serebii is a human-readable cross-check. The machine authority for legality and battle
   behavior is the pinned local Pokemon Showdown Champions mod and its TeamValidator.
 
@@ -24,10 +28,10 @@ used for this snapshot.
 
 The inventory currently contains:
 
-- 355 legal species and battle forms, representing 264 base species;
-- 496 legal moves learnable by at least one legal species;
-- 208 abilities used by at least one legal species or form;
-- 148 legal held items;
+- 390 legal species and battle forms, representing 293 base species;
+- 509 legal moves learnable by at least one legal species;
+- 222 abilities used by at least one legal species or form;
+- 166 legal held items;
 - 35 global conditions plus every move-defined volatile condition;
 - every active format rule, engine callback, declarative move effect, targeting mode,
   and move/ability/item flag attached to those legal entities.
@@ -44,7 +48,7 @@ transitions, probabilities, ordering, and interactions.
 - Species Clause and one-of-each Item Clause.
 - Level adjusted to 50.
 - Champions Stat Points: at most 32 per stat and 66 total; fixed 31 Individual Values.
-- Custom legal species, forms, learnsets, abilities, and 148-item pool.
+- Custom legal species, forms, learnsets, abilities, and 166-item pool.
 - Mythical and Restricted Legendary tags banned.
 - Open Team Sheets can reveal species, moves, items, and abilities only when both players
   opt in. The deployed bot rejects them and assumes no opponent sheet.
@@ -249,7 +253,7 @@ list silently omitting a unique volatile.
 - Mega Stones and their species/form restrictions.
 - Item activation, use, eat, take, suppression, restoration, and per-item callback order.
 
-All 148 legal item IDs and every callback attached to each are in the JSON catalogue.
+All 166 legal item IDs and every callback attached to each are in the JSON catalogue.
 
 ## 15. Abilities
 
@@ -262,8 +266,7 @@ All 148 legal item IDs and every callback attached to each are in the JSON catal
 - Start, update, residual, switch, move, damage, status, boost, item, faint, and Mega
   event timing.
 
-All 208 usable ability IDs, 89 distinct callback paths, and their exact attachment lists
-are in the JSON catalogue.
+All 222 legal ability IDs and every callback attached to each are in the JSON catalogue.
 
 ## 16. Move classifications and interaction flags
 

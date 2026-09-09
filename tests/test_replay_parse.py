@@ -263,11 +263,10 @@ def test_forced_switch_after_faint_produces_its_own_record() -> None:
     assert forced[0]["turn"] == 1
     assert forced[0]["action"] == {"slot": 1, "switch_species": "gholdengo"}
 
-    # The fainted slot's turn-1 "turn" record shows "pass" -- Klefki never got a chance
-    # to act (it fainted before any |move| line for it), and the Gholdengo switch-in is
-    # its OWN forced_switch record, not folded into this one.
+    # The replay never reveals what Klefki selected before it fainted.
     p1_turn1 = _turn_records(result, "p1")[0]
-    assert p1_turn1["action"]["slot1"] == {"kind": "pass"}
+    assert p1_turn1["action"]["slot1"] == {"kind": "unknown", "mega": False}
+    assert p1_turn1["action_status"]["slot1"] == "unknown"
 
 
 # --- HP fraction tracking through damage AND heal --------------------------------------
@@ -336,6 +335,40 @@ def test_mega_flag_attributed_to_the_acting_slots_move() -> None:
     assert p1_turn1["state"]["our"]["active"][0]["mega"] is False
 
 
+def test_mega_is_preserved_when_mon_faints_before_its_move_is_reported() -> None:
+    log = _log(
+        [
+            "|gen|9",
+            "|poke|p1|Charizard, L50, M|",
+            "|poke|p2|Garchomp, L50, M|",
+            "|teampreview|4",
+            "|start",
+            "|switch|p1a: Charizard|Charizard, L50, M|100/100",
+            "|switch|p2a: Garchomp|Garchomp, L50, M|100/100",
+            "|turn|1",
+            "|-mega|p1a: Charizard|Charizard|Charizardite Y",
+            "|move|p2a: Garchomp|Rock Slide|p1a: Charizard",
+            "|-damage|p1a: Charizard|0 fnt",
+            "|faint|p1a: Charizard",
+            "|tie|",
+        ]
+    )
+    result = parse_replay("test-mega-faint-before-move", 1400, log)
+    action = _turn_records(result, "p1")[0]["action"]["slot0"]
+    assert action == {"kind": "unknown", "mega": True}
+    assert _turn_records(result, "p1")[0]["action"]["slot1"] == {
+        "kind": "no_action_required"
+    }
+    blocked = parse_replay(
+        "test-mega-blocked", 1400,
+        log.replace("|-damage|p1a: Charizard|0 fnt\n|faint|p1a: Charizard",
+                    "|cant|p1a: Charizard|flinch"),
+    )
+    blocked_record = _turn_records(blocked, "p1")[0]
+    assert blocked_record["action"]["slot0"] == {"kind": "unknown", "mega": True}
+    assert blocked_record["action_status"]["slot0"] == "unknown"
+
+
 # --- skip-not-crash contract -------------------------------------------------------------
 
 
@@ -369,7 +402,7 @@ def test_malformed_events_are_skipped_not_fatal() -> None:
 
     p1_turn1 = _turn_records(result, "p1")[0]
     # The malformed move line never registered a real action for p1's slot 0.
-    assert p1_turn1["action"]["slot0"] == {"kind": "pass"}
+    assert p1_turn1["action"]["slot0"] == {"kind": "unknown", "mega": False}
     p2_turn1 = _turn_records(result, "p2")[0]
     assert p2_turn1["action"]["slot0"]["move_id"] == "flamethrower"
 
@@ -388,7 +421,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 4 for record in result.records)
+    assert all(record["schema"] == 5 for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -508,7 +541,8 @@ def test_tie_line_leaves_winner_none_and_every_record_unwon() -> None:
     log = _log_with_players(["|tie|"])
     result = parse_replay("test-tie", 1400, log)
     assert result.winner is None
-    assert all(record["won"] is False for record in result.records)
+    assert all(record["outcome"] == "draw" for record in result.records)
+    assert all(record["won"] is None for record in result.records)
 
 
 def test_win_line_with_unresolvable_name_leaves_winner_none() -> None:
@@ -516,7 +550,8 @@ def test_win_line_with_unresolvable_name_leaves_winner_none() -> None:
     result = parse_replay("test-win-unresolved", 1400, log)
     assert result.winner is None
     assert result.skipped["unresolved_winner_name"] == 1
-    assert all(record["won"] is False for record in result.records)
+    assert all(record["outcome"] == "unresolved" for record in result.records)
+    assert all(record["won"] is None for record in result.records)
 
 
 def test_no_player_lines_at_all_leaves_winner_none_gracefully() -> None:
@@ -525,7 +560,8 @@ def test_no_player_lines_at_all_leaves_winner_none_gracefully() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.winner is None
-    assert all(record["won"] is False for record in result.records)
+    assert all(record["outcome"] == "unresolved" for record in result.records)
+    assert all(record["won"] is None for record in result.records)
 
 
 def test_every_record_carries_a_won_key_regardless_of_decision_kind() -> None:

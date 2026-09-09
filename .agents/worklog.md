@@ -1,5 +1,17 @@
 # Project handoff log
 
+## 2026-09-09 — documentation pass for Regulation M-C
+
+- Operator docs, contracts, and tool docstrings now state the live format is Reg M-C
+  (`gen9championsvgc2026regmc`), with the 2026-09-09 data export counts and Showdown pin
+  `efe494857`.
+- Dual replay corpus is documented: keep M-B (~2940) as historical warm-start/priors;
+  download new rated M-C games incrementally; do not rebuild `set_priors.json` or
+  `spreads.json` from the small M-C snapshot.
+- `AGENTS.md` is now a pointer to `CLAUDE.md`. Dated snapshots
+  (`project_audit_2026-09-07.md`, `rl_roadmap.md`) are marked historical. Preview
+  prediction is marked shipped. No replay files, priors, or models were changed.
+
 ## 2026-09-09 — replay action and outcome label repair
 
 - User approved separating unknown actions, observed actions, and no-action-required slots; match wins remain the objective, not avoiding every faint.

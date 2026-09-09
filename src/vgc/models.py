@@ -23,7 +23,7 @@ class PolicyConfig:
     gives strong evidence. This config is a benchmark for RL, not a tuning surface.
     """
 
-    # Which Showdown format this policy plays. Always the Champions-mod Reg M-B doubles
+    # Which Showdown format this policy plays. Always the Champions-mod Reg M-C doubles
     # format unless a caller is deliberately testing against something else.
     format_id: str = FORMAT_ID
     # Reject Open Team Sheets (OTS) by default. The format supports them only when both

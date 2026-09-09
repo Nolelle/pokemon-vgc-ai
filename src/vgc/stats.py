@@ -1,7 +1,8 @@
 """Level-50 stat calculation under the Champions mod's **Stat Points** system.
 
-The champions mod (backing `gen9championsvgc2026regmb`, see `vgc.config.FORMAT_ID`)
-replaces vanilla gen9's 0-252-per-stat / 510-total EV system with **Stat Points**: max 32
+The champions mod (backing `vgc.config.FORMAT_ID`, currently
+`gen9championsvgc2026regmc`) replaces vanilla gen9's 0-252-per-stat / 510-total EV
+system with **Stat Points**: max 32
 per stat, 66 total across all six stats (see CLAUDE.md). This is NOT the same number
 space as EVs -- a Stat Point is not "1/4 of an EV", it is a direct +1 to the post-base
 stat, derived below.
@@ -24,12 +25,12 @@ specific rules this format applies, and empirically verified against the built s
      `> 32` -> illegal. That's `MAX_SP_PER_STAT` below.
    - `sim/dex-formats.ts` (`valueRules.get('evlimit') === 'Auto'` branch, ~line 342):
      `if (format.mod.startsWith('champions')) this.evLimit = 66;` -- the 66-total cap.
-     (`gen9championsvgc2026regmb`'s ruleset doesn't override `evlimit`, so this Auto
+     (the live format's ruleset doesn't override `evlimit`, so this Auto
      value applies.)
 
 2. `data/mods/champions/scripts.ts::statModify` -- the actual stat formula. It has two
    branches gated on the `levelclausemod` ruleset (which recomputes stats from `set.level`
-   instead of assuming level 50). `gen9championsvgc2026regmb`'s ruleset is
+   instead of assuming level 50). The live format's ruleset is
    `['Flat Rules', 'VGC Timer', 'Open Team Sheets']`; `Flat Rules` (`rulesets.ts`) does
    NOT include `Level Clause Mod`, and this format has no adjustable level (`Adjust Level
    = 50` in Flat Rules forces every Pokemon to level 50 for battle purposes). So the
@@ -141,7 +142,7 @@ def calculate_stats(
     if level != FORMAT_LEVEL:
         raise ValueError(
             f"calculate_stats only implements the level-{FORMAT_LEVEL} Champions formula "
-            f"(gen9championsvgc2026regmb has no adjustable level); got level={level}"
+            f"(this format has no adjustable level); got level={level}"
         )
     species = load_species().get(species_id)
     if species is None:

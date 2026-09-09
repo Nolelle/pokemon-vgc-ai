@@ -31,6 +31,10 @@ of argmax.
 Usage:
     .venv/bin/python tools/build_usage_spreads.py
     .venv/bin/python tools/build_usage_spreads.py --input data/usage/other.json --top-n 5
+
+Default input is the M-B chaos dump `data/usage/gen9championsvgc2026regmb-1760.json`.
+The checked-in `data/usage/spreads.json` stays that source. Do not regenerate from a
+tiny M-C snapshot; wait for a same-format chaos-stats file.
 """
 
 from __future__ import annotations

@@ -60,7 +60,7 @@ Every saved teaching dataset must include:
 - creation time in Coordinated Universal Time (UTC);
 - repository and local Pokemon Showdown commits, plus whether either checkout had local
   changes;
-- battle format;
+- battle format (`format_id`; live target is `gen9championsvgc2026regmc`);
 - collection command or program;
 - requested game count and random seed;
 - team source and opponent mixture;
@@ -104,9 +104,14 @@ treated as independent evidence for every turn it contributes. Evaluation report
 uncertainty by team.
 
 Human replays can provide a useful starting representation and public usage estimates,
-but this project's short, mostly mid-ladder replay snapshot is not sufficient evidence of
-high-level play. Strategic teaching data comes from the public-information exact teacher;
-final strength comes from held-out battles against the unchanged full-search benchmark.
+but they are not the exact public-teacher contract (see
+`docs/replay_label_contract.md`). Spectator logs lack own-team sets and legal-choice
+requests. Public M-C replays are still scarce; the large M-B replay tree is kept as a
+warm-start corpus and new rated M-C games are added incrementally. Do not treat a
+mixed-format dump as one metagame without recording `format_id` on every dataset, and
+do not rebuild usage priors from a few dozen M-C games. Strategic teaching data comes
+from the public-information exact teacher; final strength comes from held-out battles
+against the unchanged full-search benchmark.
 
 ## Required audit
 

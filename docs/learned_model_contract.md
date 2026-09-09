@@ -2,9 +2,12 @@
 
 The current learned player is **experimental, not approved for public deployment**.
 New v4 models load, but their recorded retention checks fail and current strength
-approval is absent. August approval belongs to a different, incompatible model.
-The current inventory is `data/models/registry.json`; implementation and validation
-progress is tracked in `docs/audit_implementation_plan_2026-09-07.md` and the worklog.
+approval is absent. August approval belongs to a different, incompatible **M-B**
+model. The live format is Reg M-C (`gen9championsvgc2026regmc`). Usage priors
+(`data/usage/set_priors.json`) and spreads remain the M-B corpus until enough rated
+M-C replays exist to rebuild them. The current inventory is
+`data/models/registry.json`; implementation and validation progress is tracked in
+`docs/audit_implementation_plan_2026-09-07.md` and the worklog.
 
 ## Takeaway
 
@@ -80,7 +83,9 @@ Problem E is complete only when all gates hold in the current checkout:
    and its recipe are stored outside gitignored scratch space so the result
    survives a `runs/` cleanup. **Currently OPEN -- see §6.**
 
-## 5. August evidence (on file, pre-registered methodology)
+## 5. August evidence (on file, pre-registered methodology, M-B era)
+
+Historical. Does not approve a current M-C checkpoint.
 
 - Retrain recipe: recall-selected checkpoint + hard-example weight 2.0 +
   action-count bin balancing, lr 3e-4, on 76,801 v2.x decisions.

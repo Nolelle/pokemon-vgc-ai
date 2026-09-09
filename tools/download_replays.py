@@ -11,9 +11,12 @@ Two endpoints, verified manually:
     id/rating/uploadtime/players fields plus the battle `log` text (and `views`/
     `formatid`/`format`/`private`/`password`).
 
-As of writing, the `gen9championsvgc2026regmb` corpus has 3000+ replays, ~950 rated
->=1200 -- `--min-rating` (default 1100) keeps this from downloading low-quality/ladder-
-noise games nobody would want to clone from.
+As of writing, the live format is `gen9championsvgc2026regmc`. Public M-C replays are
+still scarce (tens of rated games). The historical `gen9championsvgc2026regmb` tree has
+~3000 replays, ~950 rated >=1200. `--min-rating` (default 1100) keeps this from
+downloading low-quality/ladder-noise games nobody would want to clone from. Re-run
+this tool incrementally as new M-C games appear; keep the M-B tree. Do not rebuild
+usage priors from the small M-C snapshot.
 
 One JSON file per replay (`<out>/<id>.json`, written atomically via tmp+rename) plus an
 `<out>/index.jsonl` (one line per on-disk replay: id/rating/uploadtime/players),
@@ -59,7 +62,7 @@ DEFAULT_MAX_PAGES = 100
 DEFAULT_SLEEP_SECONDS = 0.3
 DEFAULT_OUT_DIR = REPO_ROOT / "data" / "replays" / FORMAT_ID
 
-# Showdown replay ids look like "gen9championsvgc2026regmb-2649967888" -- alphanumeric
+# Showdown replay ids look like "gen9championsvgc2026regmc-2649967888" -- alphanumeric
 # plus hyphen only. Rejecting anything else before it touches the filesystem closes off
 # path-traversal via a maliciously/corruptly-shaped "id" field (e.g. "../../evil").
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9-]+$")
