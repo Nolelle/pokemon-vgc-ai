@@ -1,17 +1,25 @@
 # Full VGC learning pipeline
 
-## Current status (2026-09-07)
+## Current status (2026-09-09)
 
-The current learned models are **experimental**. A3/B1 models load, but the audit
-found data-split and offline/live search defects, and B1 still fails recorded retention
-requirements. See `docs/audit_implementation_plan_2026-09-07.md` for the repair sequence
-and `data/models/registry.json` for saved model identities. No new model is approved.
+The live format is Champions Reg M-C (`gen9championsvgc2026regmc`). Current learned
+models are **experimental**. A3/B1 models load, but the audit found data-split and
+offline/live search defects, and B1 still fails recorded retention requirements. See
+`docs/audit_implementation_plan_2026-09-07.md` for the repair sequence and
+`data/models/registry.json` for saved model identities. No new model is approved.
+
+Public M-C replays are scarce. Keep `data/replays/gen9championsvgc2026regmb/` as the
+historical warm-start corpus and download new rated M-C games into
+`data/replays/gen9championsvgc2026regmc/`. Do not rebuild `set_priors.json` or
+`spreads.json` from the small M-C snapshot.
 
 Think of the stages as teaching a driver. The simulator supplies the laws of physics and
 the car's exact controls. Strong replays demonstrate useful habits. A search teacher then
 labels complete decisions in situations where the learner has the same information it
 will have in a real game. Finally, reinforcement learning lets it practice for the only
-score that ultimately matters: winning.
+score that ultimately matters: winning. The outcome-based scaling recipe in steps 4–6
+is **closed** pending a new hypothesis (see CLAUDE.md). Follow the September audit
+plan for current work.
 
 ## Information boundary
 
@@ -50,8 +58,11 @@ uv sync --extra dev --extra train
 .venv/bin/python tools/build_set_priors.py
 ```
 
-The downloader is incremental. The parser keeps complete battles together so later
-training and validation do not share turns from one battle.
+The downloader writes to `data/replays/<FORMAT_ID>/` (now `gen9championsvgc2026regmc`)
+and is incremental. Re-run it as new rated M-C games appear; do not delete the M-B
+tree. The parser keeps complete battles together so later training and validation do
+not share turns from one battle. Skip `build_set_priors.py` until the M-C corpus is
+large enough to replace the M-B prior (`data/usage/set_priors.json`, corpus_size 2939).
 
 ### 2. Warm-start from strong public decisions
 
@@ -75,7 +86,7 @@ useful battle patterns but predicts slot-level replay actions, so it is only a w
 This stage records the full legal doubles order, all six of our sets, fog-safe opponent
 beliefs, and first-principles tactical facts. Whole teams are held out during validation.
 
-### 4. Improve through reinforcement learning
+### 4. Improve through reinforcement learning (historical — closed pending a new hypothesis)
 
 ```bash
 .venv/bin/python selfplay/train_full_pipeline.py --iterations 100 \
@@ -93,7 +104,7 @@ forgetting. Rewards remain only win, loss, or draw.
 improves the worst opponent result first and the average result second. A checkpoint is
 a saved model file.
 
-### 5. Run the promotion gate
+### 5. Run the promotion gate (historical — closed pending a new hypothesis)
 
 ```bash
 .venv/bin/python offline/evaluate_learned_policy.py \
@@ -116,7 +127,7 @@ Team-pool uncertainty is clustered by team instead of pretending every game is a
 independent coin flip. The report also stores the model file's SHA-256 fingerprint, so
 the result always identifies the exact bytes that were tested.
 
-### 6. Deploy only an explicitly named checkpoint
+### 6. Deploy only an explicitly named checkpoint (historical — closed pending a new hypothesis)
 
 Start with a local smoke against a running local Showdown server:
 

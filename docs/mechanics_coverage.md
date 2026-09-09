@@ -1,6 +1,10 @@
 # Champions VGC mechanics coverage audit
 
-Audit date: 2026-08-27
+Audit date: 2026-08-27 (Reg M-B snapshot). This file classifies the **Python**
+search forecast (`vgc.search`), not the exact Showdown teacher path. M-C legality
+(Rocky Helmet, Octolock/Grapploct, expanded species) flows through
+`data/champions/*.json`; re-audit the ladder-team gap table before treating those
+rows as current.
 
 ## Bottom line
 
@@ -78,9 +82,9 @@ forecast, so a blind spot shared by both sides was invisible to the test.
 
 ## Damage formulas, items, and abilities
 
-The exported Champions learnsets contain 498 standard moves. Of those, 42 use a special
-damage formula or fixed-damage rule in Showdown. The calculator explicitly handles the
-ordinary formula plus these special families:
+The exported Champions catalog lists 509 legal moves (M-C, 2026-09-09). Of those, 42 use
+a special damage formula or fixed-damage rule in Showdown. The calculator explicitly
+handles the ordinary formula plus these special families:
 
 - Weather Ball;
 - Water Spout and Eruption;

@@ -2,7 +2,9 @@
 
 This document defines what the thinking engine must do before committing to a
 move, and how we prove that thinking harder helps. The current checkout passes
-this contract; the evidence is recorded below.
+this contract's **structure**; M-C does not change the two search paths or the
+authority rule (search decides). Strength and latency numbers below are
+historical until re-run on Reg M-C.
 
 ## Takeaway
 

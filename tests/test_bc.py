@@ -28,6 +28,7 @@ from vgc.bc.encoding import (
     encode_action,
     encode_state,
     encode_target,
+    encode_value,
     flatten_state,
 )
 
@@ -447,7 +448,20 @@ def test_encode_action_move_id() -> None:
         action={"slot0": {"kind": "move", "move_id": "earthquake"}, "slot1": {"kind": "pass"}},
     )
     assert encode_action(record, 0) == MOVE_TO_IDX["earthquake"]
-    assert encode_action(record, 1) == MOVE_TO_IDX["<pass>"]
+    assert encode_action(record, 1) is None
+
+
+def test_encode_action_only_accepts_schema5_observed_pass() -> None:
+    record = _turn_record(
+        our_active=[_mon("garchomp"), None],
+        opp_active=[None, None],
+        action={"slot0": {"kind": "pass"}},
+    )
+    record["schema"] = 5
+    record["action_status"] = {"slot0": "observed"}
+    assert encode_action(record, 0) == MOVE_TO_IDX["<pass>"]
+    record["action_status"]["slot0"] = "unknown"
+    assert encode_action(record, 0) is None
 
 
 def test_encode_action_switch() -> None:
@@ -534,7 +548,7 @@ def test_encode_target_switch_and_pass_are_none_class() -> None:
         },
     )
     assert encode_target(record, 0) == TARGET_TO_IDX["<none>"]
-    assert encode_target(record, 1) == TARGET_TO_IDX["<none>"]
+    assert encode_target(record, 1) is None
 
 
 def test_encode_target_unknown_target_returns_none_for_skip() -> None:
@@ -778,6 +792,8 @@ def test_bc_turn_dataset_value_label_matches_won(tmp_path) -> None:
         },
         won=False,
     )
+    won_record["outcome"] = "win"
+    lost_record["outcome"] = "loss"
     path = _write_jsonl(tmp_path, [won_record, lost_record])
     dataset = BcTurnDataset(path, min_rating=1000, split="train", val_fraction=0.0)
 
@@ -789,6 +805,35 @@ def test_bc_turn_dataset_value_label_matches_won(tmp_path) -> None:
     assert won_sample[6].item() == 1.0  # has_value
     assert lost_sample[5].item() == 0.0
     assert lost_sample[6].item() == 1.0
+
+
+def test_encode_value_uses_explicit_outcome_and_masks_draws() -> None:
+    assert encode_value({"outcome": "win", "won": True}) == 1.0
+    assert encode_value({"outcome": "loss", "won": False}) == 0.0
+    assert encode_value({"outcome": "draw", "won": None}) is None
+    assert encode_value({"outcome": "unresolved", "won": None}) is None
+    assert encode_value({"won": False}) is None
+    assert encode_value({"won": True}) is None
+
+
+def test_unknown_action_is_skipped_but_known_move_without_target_is_retained(tmp_path) -> None:
+    pytest.importorskip("torch")
+    from vgc.bc.dataset import BcTurnDataset
+
+    record = _turn_record(
+        replay_id="partial-choice", rating=1300,
+        our_active=[_mon("garchomp"), _mon("klefki")],
+        opp_active=[_mon("charizard"), None],
+        action={"slot0": {"kind": "unknown", "mega": True},
+                "slot1": {"kind": "move", "move_id": "protect", "target_slot": None}},
+    )
+    record.update(schema=5, outcome="loss")
+    dataset = BcTurnDataset(_write_jsonl(tmp_path, [record]), val_fraction=0.0)
+    assert len(dataset) == 1
+    assert dataset.skipped == 1
+    assert dataset[0][4].item() == 0.0  # no invented target
+    assert dataset[0][5].item() == 0.0  # known loss retained
+    assert dataset[0][6].item() == 1.0
 
 
 def test_bc_turn_dataset_missing_won_key_masks_value_out(tmp_path) -> None:

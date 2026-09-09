@@ -161,14 +161,14 @@ The `TARGET_VOCAB` index of WHERE that slot's action goes:
 
 ## `encode_value(record) -> float | None`
 
-`1.0` if `record["won"]` is `True`, `0.0` if `False`, `None` if the key is missing
-entirely (a pre-schema-3 `vgc.replay_parse` record). Unlike `encode_action`/
+`1.0` for explicit `outcome="win"`, `0.0` for `outcome="loss"`, and `None` for
+draws, unresolved results, or historical boolean-only records. Unlike `encode_action`/
 `encode_target`, NOT gated to `decision_kind == "turn"` -- "who won the game" is a
 per-record fact regardless of decision kind (`vgc.bc.dataset.BcTurnDataset` only ever
 calls this for "turn" records today, matching the move/target heads' training data, but
 the function itself doesn't assume that). The `None` case masks the value loss out the
 same way `encode_target`'s `None` masks the target loss (see `vgc.bc.dataset`) --
-matters for training on any decisions.jsonl built before schema 3.
+prevents ambiguous outcomes from becoming losses or a wins-only training set.
 
 ## `ENCODER_LAYOUT_VERSION`
 
@@ -530,6 +530,12 @@ def encode_action(record: dict, slot: int) -> int | None:
         return None
     kind = action.get("kind")
     if kind == "pass":
+        # Older replay schemas also used pass when the real action was unobserved.
+        if record.get("schema", 0) < 5:
+            return None
+        status = (record.get("action_status") or {}).get(f"slot{slot}")
+        if status != "observed":
+            return None
         return MOVE_TO_IDX["<pass>"]
     if kind == "switch":
         return MOVE_TO_IDX["<switch>"]
@@ -549,7 +555,14 @@ def encode_target(record: dict, slot: int) -> int | None:
     if not action:
         return None
     kind = action.get("kind")
-    if kind in ("switch", "pass"):
+    if kind == "pass":
+        if record.get("schema", 0) < 5:
+            return None
+        status = (record.get("action_status") or {}).get(f"slot{slot}")
+        if status != "observed":
+            return None
+        return TARGET_TO_IDX["<none>"]
+    if kind == "switch":
         return TARGET_TO_IDX["<none>"]
     if kind == "move":
         target_slot = action.get("target_slot")
@@ -562,8 +575,18 @@ def encode_target(record: dict, slot: int) -> int | None:
 
 
 def encode_value(record: dict) -> float | None:
-    """See module docstring's "`encode_value`" section."""
-    won = record.get("won")
-    if won is None:
+    """Encode explicit win/loss only; mask draws, unresolved and legacy outcomes.
+
+Raw replay outcomes retain draws separately. This binary outcome head is not a
+three-outcome model, and legacy boolean labels must be rebuilt from raw logs.
+"""
+    outcome = record.get("outcome")
+    if outcome is not None:
+        if outcome == "win":
+            return 1.0
+        if outcome == "loss":
+            return 0.0
         return None
-    return 1.0 if won else 0.0
+    # Historical False also covered draws and unresolved replays. Mask the entire
+    # legacy outcome task rather than retaining only wins and creating label bias.
+    return None

@@ -1,18 +1,23 @@
 # RL roadmap (frozen 2026-08-09, amended 2026-08-11)
 
-**Current direction (2026-09-07) supersedes the historical objective below:** build
-trustworthy data and training, then demonstrate 1700+ Elo on the public Champions
-Reg M-B ladder. Elo is the ladder's playing-strength rating. A specific learning method
-is a means to that goal, not the goal itself. Follow the September audit implementation
-plan first. Coaching app work stays deferred until the battle goal is demonstrated.
+**Historical.** Phase 1/2 design notes in this file are still cited from `vgc.rl`
+code. Later phases, the 1700 Elo M-B objective, and "scale RL next" are **not** a
+current execution plan. Follow `docs/audit_implementation_plan_2026-09-07.md`. The
+pure-RL 100k recipe is closed (CLAUDE.md). The live format is Reg M-C.
+
+**Current direction (2026-09-09):** build trustworthy data and training, then
+demonstrate 1700+ Elo on the public Champions Reg M-C ladder. Elo is the ladder's
+playing-strength rating. A specific learning method is a means to that goal, not the
+goal itself. Coaching app work stays deferred until the battle goal is demonstrated.
 
 The scope-narrowing plan that replaces the ad-hoc PPO experiments in `runs/ppo/`.
 Read this before proposing any change to `vgc.rl` or `selfplay/train_ppo.py`.
 
 The objective is narrow and it is not "ship a bot":
 
-> Build a Reg M-B battle policy whose strength **measurably improves with additional RL
-> experience**, and build an experimental setup trustworthy enough to prove it.
+> Historical M-B objective, superseded: build a battle policy whose strength
+> **measurably improves with additional RL experience**, and build an experimental
+> setup trustworthy enough to prove it. Do not resume the 100k scaling recipe.
 
 Coaching, counterfactual analysis, and explanations are downstream consumers of that
 policy. Team building and learned team preview are deferred (Phase 6).
@@ -298,7 +303,7 @@ should validate. Confirm before building on it, then confirm what preview actual
 with it:
 
 ```bash
-cat teams/fixed4.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026regmb
+cat teams/fixed4.packed.txt | ./pokemon-showdown validate-team gen9championsvgc2026regmc
 ```
 
 If it rejects 4, fall back to a 6-mon team with a hardcoded `/team 1234` on both sides.
@@ -465,7 +470,7 @@ or other evaluator knobs as part of this phase.
 Only after Phase 1 certification:
 
 ```
-Format:        Champions Reg M-B
+Format:        Champions Reg M-C
 Team:          fixed four, both sides identical
 Leads/order:   fixed and hardcoded
 Observation:   fogged (.p1/.p2)

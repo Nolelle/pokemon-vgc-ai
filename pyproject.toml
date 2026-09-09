@@ -1,7 +1,7 @@
 [project]
 name = "pokemon-vgc-ai"
 version = "0.1.0"
-description = "Pokemon Showdown VGC (Champions mod, Reg M-B doubles) bot"
+description = "Pokemon Showdown VGC (Champions mod, Reg M-C doubles) bot"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "poke-env>=0.15",

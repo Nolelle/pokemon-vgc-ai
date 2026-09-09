@@ -1,4 +1,4 @@
-"""Explicit vocabulary for the Reg M-B first-principles policy.
+"""Explicit vocabulary for the Champions first-principles policy.
 
 The evaluator used to recognize strategic ideas only when a one-off scorer happened to
 encode them.  This module gives team preview, turn scoring, search, traces, and the

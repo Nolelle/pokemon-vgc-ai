@@ -193,6 +193,17 @@ def test_finish_labels_loss_correctly(tmp_path: Path) -> None:
 
     record = json.loads(player.out_path.read_text().strip())
     assert record["won"] is False
+    assert record["outcome"] == "loss"
+
+
+def test_finish_keeps_draw_distinct_from_loss(tmp_path: Path) -> None:
+    player = _make_player(tmp_path)
+    battle = _FakeBattle(battle_tag="battle-draw", won=None)
+    player._buffer_decision(battle, _fake_order())
+    player._battle_finished_callback(battle)
+    record = json.loads(player.out_path.read_text().strip())
+    assert record["outcome"] == "draw"
+    assert record["won"] is None
 
 
 def test_multiple_turns_in_one_battle_all_get_the_same_outcome_label(tmp_path: Path) -> None:

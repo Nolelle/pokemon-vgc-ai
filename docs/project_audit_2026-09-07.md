@@ -1,5 +1,11 @@
 # Project audit — 2026-09-07
 
+**Snapshot.** This is a point-in-time audit of checkout `46d2560` on 2026-09-07.
+Several findings were repaired afterward (model registry, public-search parity,
+recovery audit). Do not treat the status claims below as current. Repair progress:
+`.agents/worklog.md`. Repair plan: `docs/audit_implementation_plan_2026-09-07.md`.
+The live format is now Reg M-C; this audit predates that switch.
+
 The foundations contain useful work, but the evidence does not currently justify calling the learned player approved or treating more training data as the established next solution. Fix experimental validity before another large collection or training run.
 
 Audited checkout: `46d256076986201be9f05c1c8423a8c9cfbedccb`. The working tree was clean at the start. `.agents/worklog.md` is absent. This review inspected current code, dataset records, saved models, evaluation reports, and reran checks. It did not train models, play public ladder games, or change strategy code. Historical results below remain historical, not fresh strength measurements.

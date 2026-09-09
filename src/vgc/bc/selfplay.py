@@ -180,6 +180,7 @@ class RecordingVgcPlayer(VgcPlayer):
         record["rating"] = None
         record["replay_id"] = f"{self.replay_tag}-{battle.battle_tag}"
         record["action"] = order_to_action_dict(order)
+        record["action_status"] = {"slot0": "observed", "slot1": "observed"}
         self._pending.setdefault(battle.battle_tag, []).append(record)
 
     def _battle_finished_callback(self, battle: AbstractBattle) -> None:
@@ -187,9 +188,22 @@ class RecordingVgcPlayer(VgcPlayer):
         self.games_recorded += 1
         if not records:
             return
-        won = bool(battle.won)
+        if battle.won is True:
+            outcome = "win"
+        elif battle.won is False:
+            outcome = "loss"
+        else:
+            # The callback is invoked only when poke-env marks the battle finished;
+            # neither side winning in a finished battle is a draw.
+            outcome = "draw"
         with self.out_path.open("a") as out_file:
             for record in records:
-                record["won"] = won
+                record["outcome"] = outcome
+                if outcome == "win":
+                    record["won"] = True
+                elif outcome == "loss":
+                    record["won"] = False
+                else:
+                    record["won"] = None
                 out_file.write(json.dumps(record, sort_keys=True) + "\n")
         self.records_written += len(records)

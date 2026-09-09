@@ -15,8 +15,8 @@ and save its pick in a form that converts back into a Showdown command.
 Legality is delegated, not hand-listed. The Showdown request message parsed by
 poke-env is the authority for what is legal. `vgc.actions` only combines the
 two per-slot lists and filters the pairs Showdown forbids. This is why a new
-move, item, or Mega never needs a new action table; it arrives inside the
-request.
+move, item, or Mega — including Regulation M-C additions — never needs a new
+action table; it arrives inside the request.
 
 A human-readable label such as `earthquake@1 / protect` is not a command. The
 command is the order object's wire message (`/choose move ...`, `/team ...`).

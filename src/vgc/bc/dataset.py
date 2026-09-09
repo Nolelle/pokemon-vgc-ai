@@ -34,9 +34,7 @@ has_target, value_label, has_value, turn)` --
   - `value_label`: scalar float32, `vgc.bc.encoding.encode_value`'s 1.0/0.0 ("did THIS
     record's player win the game") when `has_value` is true, else an arbitrary
     placeholder (0.0) that MUST be masked out -- same has_X-masking contract as target
-    (a `None` from `encode_value` only happens on a pre-schema-3 record, so on any
-    dataset built after this feature it's always 1.0, but the mask keeps mixed-schema
-    data safe rather than silently training a fabricated label).
+    (draws, unresolved results, and legacy boolean-only outcomes are masked).
   - `turn`: scalar float32, the record's raw turn number (`record["turn"]`, NOT the
     `encode_state`-normalized `min(1.0, turn/20)` scalar that's already part of
     `scalar_array`) -- carried separately so `vgc.bc.train` can report value accuracy

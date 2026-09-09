@@ -1,11 +1,18 @@
 # Audit implementation plan — 2026-09-07
 
 **Priority confirmed by the user:** focus on data, training, and demonstrated battle
-strength. The goal is 1700+ Elo on the public Champions Reg M-B ladder. Defer coaching
-app work until that playing goal is demonstrated. Offline checks qualify a candidate
-for controlled ladder testing; they cannot substitute for ladder results. Record the
-exact model/settings, starting and ending rating, games, failures, and replays for each
-session. This document remains the repair plan, not a claim that the steps are complete.
+strength. The goal is 1700+ Elo on the public Champions **Reg M-C** ladder. Defer
+coaching app work until that playing goal is demonstrated. Offline checks qualify a
+candidate for controlled ladder testing; they cannot substitute for ladder results.
+Record the exact model/settings, starting and ending rating, games, failures, and
+replays for each session. This document remains the repair plan, not a claim that the
+steps are complete.
+
+**Progress (2026-09-09):** stages 1–4 are partly done (model registry, public-search
+parity, B1/A3 recovery audit PASS, searched-only soft teaching default-off). See
+`.agents/worklog.md`. Champions data was re-exported for M-C; usage priors and
+spreads remain M-B until the M-C replay corpus is large enough. Do not rebuild
+`set_priors.json` from the current ~44 M-C replays.
 
 Build trustworthy training and evaluation first, then improve the model. This plan implements the findings in `docs/project_audit_2026-09-07.md` against checkout `46d2560`. It is a plan only: no training or strategy changes are included in this document.
 
@@ -17,7 +24,7 @@ The first four stages repair confirmed problems. The fifth measures the teacher 
 
 **Change:** Add a tracked model register, proposed `data/models/registry.json`, with entries for the old August model, A3 variants, B1 variants, and historical outcome-trained models. A checkpoint means a saved model file. Record its content fingerprint, architecture version, source datasets and split, training recipe, source commits, compatible loader, evaluation references, trained outputs, and status: experimental, historical, rejected, or approved. Missing information must be explicit; never invent a historical fingerprint from a current file path.
 
-Correct the current-status sections of `docs/learned_model_contract.md` and `docs/full_learning_pipeline.md`; retain dated historical results. Remove the claims that no current model loads, that current hybrid never calls exact search, and that scaling is the proven remaining lever. Record that the winning-chance output is untrained in current imitation models. Add a project handoff log at `.agents/worklog.md` when repository permissions allow it; the file is currently absent.
+Correct the current-status sections of `docs/learned_model_contract.md` and `docs/full_learning_pipeline.md`; retain dated historical results. Remove the claims that no current model loads, that current hybrid never calls exact search, and that scaling is the proven remaining lever. Record that the winning-chance output is untrained in current imitation models. The project handoff log is `.agents/worklog.md`.
 
 Preserve source datasets and models unchanged. Do not delete, rename, or convert old artifacts to make them appear approved. Keep small registers/reports in version control. Before release, place the selected model and its dataset/recipe references in durable storage with a verified backup and a restore check; a second copy in disposable `runs/` is insufficient. Choose the concrete storage destination before copying large files, after checking available space. No cloud service is required by this plan.
 

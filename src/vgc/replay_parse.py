@@ -6,11 +6,13 @@ per-decision JSONL training records.
 
 The task that specified this module assumed replay logs would reliably contain
 `|showteam|` lines (from Open Team Sheets) revealing both players' full sets. Verified
-against the real downloaded corpus (2338 replays at last count): only **6 replays
-(~0.26%)** contain a `|showteam|` line at all. This is NOT a parsing bug -- it's a real
-property of this ladder format. `config/formats.ts` (in the Showdown checkout) shows
-`gen9championsvgc2026regmb` uses the ruleset `"Open Team Sheets"` (opt-in), not `"Force
-Open Team Sheets"` (the Bo3 variant's ruleset) -- and `server/chat-commands/core.ts`'s
+against the downloaded corpus: the M-B tree has ~2940 replays and the M-C tree is still
+small (~44). Only about **0.2%** of the M-B public logs contain a `|showteam|` line at
+all. This is NOT a parsing bug -- it's a real property of this ladder format.
+`config/formats.ts` (in the Showdown checkout) shows both
+`gen9championsvgc2026regmb` and `gen9championsvgc2026regmc` use the ruleset
+`"Open Team Sheets"` (opt-in), not `"Force Open Team Sheets"` (the Bo3 variant's
+ruleset) -- and `server/chat-commands/core.ts`'s
 `acceptopenteamsheets` handler only ever sends `>show-openteamsheets` to the sim when
 `battle.players.every(curPlayer => curPlayer.wantsOpenTeamSheets)`, i.e. BOTH players
 must explicitly run `/acceptopenteamsheets` before Team Preview ends. Our own bot always
@@ -31,8 +33,8 @@ Each replay's `log` field is walked as one flat sequence of protocol lines, segm
 preview / lead-selection phase; segment N (between `|turn|N|` and `|turn|N+1|`, or the
 end of the log) is turn N's action-resolution window.
 
-Within a normal turn segment, the first `|move|`/`|switch|`/`|-mega|` seen for each
-(side, slot) is that slot's CHOSEN action for the turn (`decision_kind="turn"`,
+Within a normal turn segment, the first `|move|`/`|switch|` seen for each
+(side, slot) is that slot's OBSERVED action for the turn (`decision_kind="turn"`,
 `state` = a snapshot of PUBLIC state as of the START of the segment, i.e. before any of
 its lines are applied). A `|switch|`/`|drag|` for a (side, slot) that already acted, or
 whose occupant just fainted this same segment, is instead a **forced switch** (Parting
@@ -41,7 +43,9 @@ Shot/U-turn/Volt Switch self-switch, a fainted-mon replacement, Eject Button/Pac
 since the player is making a genuine (if reactive) choice about which bench mon to send.
 `|cant|` records the ATTEMPTED move when the line names one (still a real choice that
 got blocked -- flinch, paralysis, etc. -- see the real example this module was built
-against: `|cant|p2a: Farigiraf|ability: Armor Tail|Fake Out|...`), else it's `"pass"`.
+against: `|cant|p2a: Farigiraf|ability: Armor Tail|Fake Out|...`), else it's `"unknown"`.
+Observed events do not certify submitted choices: called/locked moves and redirection
+still require a separate reconstruction audit.
 
 State is per-decision-player-relative (`"our"`/`"opp"`, matching `vgc.evaluator`'s own
 naming), computed once per segment as a neutral `p1`/`p2` snapshot and relabeled per
@@ -51,6 +55,13 @@ unknown-whether-brought until they appear, so listing them as "bench" would be a
 not a tracked fact.
 
 ## Schema (`SCHEMA_VERSION`)
+
+Schema 5 is current. Missing actions in occupied turn-start slots are `unknown`;
+empty slots are `no_action_required`. `action_status` records the same distinction
+from observed actions. Mega Evolution is preserved even when a move is unknown.
+Every record has `outcome`: win/loss/draw/unresolved. The compatibility field `won`
+is True/False for wins/losses and None otherwise. Older schema descriptions below
+are historical; their collapsed pass and outcome labels are not authoritative.
 
 Every emitted record carries a `"schema": SCHEMA_VERSION` int so datasets built from
 different parser versions stay distinguishable -- additive changes bump this rather than
@@ -144,7 +155,7 @@ from vgc.data import load_species
 # -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
 # old datasets stay distinguishable from newer ones instead of silently being read as if
 # compatible.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -610,13 +621,17 @@ def _process_segment(
                     "kind": "move",
                     "move_id": attempted_move_id,
                     "target_slot": None,
-                    "mega": False,
+                    "mega": (side, slot) in pending_mega,
                 }
                 cant_species = state.sides[side].active[slot]
                 if cant_species is not None and attempted_move_id:
                     state.sides[side].mon(cant_species).revealed_moves.add(attempted_move_id)
             else:
-                acted[(side, slot)] = {"kind": "pass"}
+                # The protocol says the mon could not act, but does not reveal the
+                # submitted choice. It must not become a teachable pass label.
+                acted[(side, slot)] = {
+                    "kind": "unknown", "mega": (side, slot) in pending_mega
+                }
             continue
 
         if tag == "faint":
@@ -838,10 +853,20 @@ def _process_segment(
         if not any(side_state.active) and not side_state.appeared_order:
             skipped["no_alive_mons_for_player"] += 1
             continue
-        action = {
-            "slot0": acted.get((player, 0), {"kind": "pass"}),
-            "slot1": acted.get((player, 1), {"kind": "pass"}),
-        }
+        action: dict[str, dict] = {}
+        action_status: dict[str, str] = {}
+        for slot in (0, 1):
+            key = f"slot{slot}"
+            observed = acted.get((player, slot))
+            if observed is not None:
+                action[key] = observed
+                action_status[key] = "unknown" if observed["kind"] == "unknown" else "observed"
+            elif snapshot[player]["active"][slot] is None:
+                action[key] = {"kind": "no_action_required"}
+                action_status[key] = "no_action_required"
+            else:
+                action[key] = {"kind": "unknown", "mega": (player, slot) in pending_mega}
+                action_status[key] = "unknown"
         records.append(
             {
                 "replay_id": None,
@@ -852,6 +877,7 @@ def _process_segment(
                 "decision_kind": "turn",
                 "state": _for_player(snapshot, player),
                 "action": action,
+                "action_status": action_status,
             }
         )
 
@@ -977,6 +1003,7 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
         segment_lines: list[str] = []
         pending_turn = 0
         ended = False
+        outcome_kind = "unresolved"
         for line in log.splitlines():
             if line.startswith("|turn|"):
                 _process_segment(
@@ -1001,10 +1028,12 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                     for side, name in player_names.items():
                         if name == winner_name:
                             winner = side
+                            outcome_kind = "win"
                             break
                     else:
                         skipped["unresolved_winner_name"] += 1
-                # |tie|/|tie -- winner stays None, no real winner to resolve.
+                else:
+                    outcome_kind = "draw"
                 break
             segment_lines.append(line)
         if not ended:
@@ -1021,7 +1050,17 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
             player = record["player"]
             record["replay_id"] = replay_id
             record["rating"] = rating
-            record["won"] = winner is not None and player == winner
+            if outcome_kind == "win":
+                record["outcome"] = "win" if player == winner else "loss"
+            else:
+                record["outcome"] = outcome_kind
+            # Compatibility for schema 3/4 readers; schema 5 readers use `outcome`.
+            if record["outcome"] == "win":
+                record["won"] = True
+            elif record["outcome"] == "loss":
+                record["won"] = False
+            else:
+                record["won"] = None
             if player in showteam_players and player not in attached:
                 record["sets"] = state.sides[player].sets_by_species
                 attached.add(player)
