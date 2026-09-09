@@ -132,6 +132,47 @@ def order_to_action_dict(order: DoubleBattleOrder) -> dict[str, dict[str, object
     }
 
 
+def _active_pokemon_at(battle: AbstractBattle, slot: int) -> object | None:
+    active = list(getattr(battle, "active_pokemon", None) or [])
+    if slot >= len(active):
+        return None
+    return active[slot]
+
+
+def _slot_action_and_status(
+    single: SingleBattleOrder | None, pokemon: object | None
+) -> tuple[dict[str, object], str]:
+    """Schema-5 kind/status for one live slot. Empty or fainted slots are not pass."""
+    if pokemon is None or bool(getattr(pokemon, "fainted", False)):
+        return {"kind": "no_action_required"}, "no_action_required"
+    action = _single_order_to_action(single)
+    if action.get("kind") == "pass" and single is None:
+        return {"kind": "unknown"}, "unknown"
+    return action, "observed"
+
+
+def recorded_joint_action(
+    battle: AbstractBattle, order: DoubleBattleOrder
+) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
+    """Live-choice action dict plus per-slot `action_status` for schema-5 teaching.
+
+    `order_to_action_dict` still emits `pass` for a missing order object. Recording
+    must not mark that as observed when the slot was empty or fainted; that would
+    teach `<pass>` for no-choice slots.
+    """
+    action: dict[str, dict[str, object]] = {}
+    status: dict[str, str] = {}
+    singles = (order.first_order, order.second_order)
+    for slot, single in enumerate(singles):
+        key = f"slot{slot}"
+        slot_action, slot_status = _slot_action_and_status(
+            single, _active_pokemon_at(battle, slot)
+        )
+        action[key] = slot_action
+        status[key] = slot_status
+    return action, status
+
+
 class RecordingVgcPlayer(VgcPlayer):
     """`VgcPlayer` that records every `decide()` call as a schema-4-shaped `"turn"`
     decision record, appending them (labeled with the battle's real outcome) to
@@ -179,8 +220,9 @@ class RecordingVgcPlayer(VgcPlayer):
         record["turn"] = battle.turn
         record["rating"] = None
         record["replay_id"] = f"{self.replay_tag}-{battle.battle_tag}"
-        record["action"] = order_to_action_dict(order)
-        record["action_status"] = {"slot0": "observed", "slot1": "observed"}
+        action, action_status = recorded_joint_action(battle, order)
+        record["action"] = action
+        record["action_status"] = action_status
         self._pending.setdefault(battle.battle_tag, []).append(record)
 
     def _battle_finished_callback(self, battle: AbstractBattle) -> None:

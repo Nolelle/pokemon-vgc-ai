@@ -18,7 +18,12 @@ from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
 from poke_env.player.battle_order import DoubleBattleOrder, PassBattleOrder, SingleBattleOrder
 
-from vgc.bc.selfplay import RecordingVgcPlayer, _forward_target_slot, order_to_action_dict
+from vgc.bc.selfplay import (
+    RecordingVgcPlayer,
+    _forward_target_slot,
+    order_to_action_dict,
+    recorded_joint_action,
+)
 from vgc.data import load_moves
 from vgc.models import PolicyConfig
 
@@ -103,6 +108,36 @@ def test_order_to_action_dict_mega_species_resolved_to_base() -> None:
     assert action["slot0"] == {"kind": "switch", "switch_species": "charizard"}
 
 
+def test_recorded_joint_action_empty_slot_is_not_observed_pass() -> None:
+    battle = _FakeBattle(battle_tag="empty-slot")
+    order = _fake_order()
+    action, status = recorded_joint_action(battle, order)
+    assert action["slot0"]["kind"] == "move"
+    assert status["slot0"] == "observed"
+    assert action["slot1"] == {"kind": "no_action_required"}
+    assert status["slot1"] == "no_action_required"
+
+
+def test_recorded_joint_action_fainted_slot_is_not_observed_pass() -> None:
+    battle = _FakeBattle(battle_tag="fainted-slot")
+    battle.active_pokemon[1] = _FakeMon(species="klefki", fainted=True)
+    order = _fake_order()
+    action, status = recorded_joint_action(battle, order)
+    assert action["slot1"] == {"kind": "no_action_required"}
+    assert status["slot1"] == "no_action_required"
+
+
+def test_recorded_joint_action_keeps_observed_pass_on_a_living_slot() -> None:
+    battle = _FakeBattle(battle_tag="living-pass")
+    battle.active_pokemon[1] = _FakeMon(species="klefki")
+    move = Move("earthquake", gen=9)
+    order = _double(_single(move, move_target=0), PassBattleOrder())
+    action, status = recorded_joint_action(battle, order)
+    assert action["slot0"]["kind"] == "move"
+    assert action["slot1"] == {"kind": "pass"}
+    assert status == {"slot0": "observed", "slot1": "observed"}
+
+
 # --- RecordingVgcPlayer: buffering + finalize-on-battle-end --------------------------
 
 
@@ -181,6 +216,8 @@ def test_buffer_decision_then_finish_writes_labeled_record(tmp_path: Path) -> No
     assert record["player"] == "p1"
     assert record["replay_id"] == "selfplay-battle-1"
     assert record["action"]["slot0"]["kind"] == "move"
+    assert record["action"]["slot1"]["kind"] == "no_action_required"
+    assert record["action_status"] == {"slot0": "observed", "slot1": "no_action_required"}
     assert "state" in record and "our" in record["state"] and "opp" in record["state"]
     assert battle.battle_tag not in player._pending  # consumed
 
