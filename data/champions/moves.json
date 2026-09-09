@@ -7403,7 +7403,7 @@
     "secondaryVolatileStatuses": [],
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
-    "slotCondition": "Wish",
+    "slotCondition": "wish",
     "isNonstandard": null
   },
   "withdraw": {

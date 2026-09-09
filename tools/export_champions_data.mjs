@@ -110,8 +110,8 @@ for (const m of mod.moves.all()) {
 		selfVolatileStatus: (m.self && m.self.volatileStatus) || null,
 		secondaryVolatileStatuses: secondaryVolatiles,
 		secondarySelfVolatileStatuses: secondarySelfVolatiles,
-		sideCondition: m.sideCondition || null,
-		slotCondition: m.slotCondition || null,
+		sideCondition: m.sideCondition ? m.sideCondition.toLowerCase() : null,
+		slotCondition: m.slotCondition ? m.slotCondition.toLowerCase() : null,
 		isNonstandard: m.isNonstandard || null,
 	};
 }

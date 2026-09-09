@@ -15,10 +15,23 @@ import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {execFileSync} from "node:child_process";
 
-const [, , showdownRepo, outputPath, customFormatId] = process.argv;
+const [, , showdownRepo, arg3, arg4] = process.argv;
 if (!showdownRepo) {
 	console.error("usage: node tools/export_mechanics_catalog.mjs <showdown-repo> [output.json] [format-id]");
 	process.exit(1);
+}
+
+let outputPath = null;
+let formatId = "gen9championsvgc2026regmc";
+if (arg4) {
+	outputPath = arg3;
+	formatId = arg4;
+} else if (arg3) {
+	if (arg3.endsWith(".json")) {
+		outputPath = arg3;
+	} else {
+		formatId = arg3;
+	}
 }
 
 const simPath = path.join(showdownRepo, "dist", "sim", "index.js");
@@ -30,8 +43,11 @@ if (!fs.existsSync(simPath)) {
 const imported = await import(pathToFileURL(simPath).href);
 const Sim = imported.default || imported;
 const dex = Sim.Dex.mod("champions");
-const formatId = customFormatId || "gen9championsvgc2026regmc";
 const format = dex.formats.get(formatId);
+if (!format.exists) {
+	console.error(`format "${formatId}" not found in Showdown dex`);
+	process.exit(1);
+}
 const ruleTable = dex.formats.getRuleTable(format);
 
 function callbacks(effect, prefix = "", seen = new WeakSet()) {
