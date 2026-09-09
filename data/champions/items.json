@@ -29,6 +29,21 @@
       "Absol"
     ]
   },
+  "absolitez": {
+    "id": "absolitez",
+    "name": "Absolite Z",
+    "num": 2638,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Absol"
+    ]
+  },
   "aerodactylite": {
     "id": "aerodactylite",
     "name": "Aerodactylite",
@@ -147,6 +162,21 @@
     "megaEvolves": null,
     "itemUser": [
       "Barbaracle"
+    ]
+  },
+  "baxcalibrite": {
+    "id": "baxcalibrite",
+    "name": "Baxcalibrite",
+    "num": 2648,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Baxcalibur"
     ]
   },
   "beedrillite": {
@@ -509,6 +539,21 @@
       "Garchomp"
     ]
   },
+  "garchompitez": {
+    "id": "garchompitez",
+    "name": "Garchompite Z",
+    "num": 2640,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Garchomp"
+    ]
+  },
   "gardevoirite": {
     "id": "gardevoirite",
     "name": "Gardevoirite",
@@ -567,6 +612,21 @@
     "megaEvolves": null,
     "itemUser": [
       "Glimmora"
+    ]
+  },
+  "golisopite": {
+    "id": "golisopite",
+    "name": "Golisopite",
+    "num": 2645,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Golisopod"
     ]
   },
   "golurkite": {
@@ -674,6 +734,23 @@
       "Kangaskhan"
     ]
   },
+  "leek": {
+    "id": "leek",
+    "name": "Leek",
+    "num": 259,
+    "fling": {
+      "basePower": 60
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": [
+      "Farfetch’d",
+      "Farfetch’d-Galar",
+      "Sirfetch’d"
+    ]
+  },
   "lopunnite": {
     "id": "lopunnite",
     "name": "Lopunnite",
@@ -693,6 +770,21 @@
     "id": "lucarionite",
     "name": "Lucarionite",
     "num": 673,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Lucario"
+    ]
+  },
+  "lucarionitez": {
+    "id": "lucarionitez",
+    "name": "Lucarionite Z",
+    "num": 2641,
     "fling": {
       "basePower": 80
     },
@@ -898,6 +990,21 @@
     "megaEvolves": null,
     "itemUser": [
       "Sableye"
+    ]
+  },
+  "salamencite": {
+    "id": "salamencite",
+    "name": "Salamencite",
+    "num": 769,
+    "fling": {
+      "basePower": 80
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": true,
+    "megaEvolves": null,
+    "itemUser": [
+      "Salamence"
     ]
   },
   "sceptilite": {
@@ -1138,10 +1245,10 @@
       "Victreebel"
     ]
   },
-  "whiteherb": {
-    "id": "whiteherb",
-    "name": "White Herb",
-    "num": 214,
+  "airballoon": {
+    "id": "airballoon",
+    "name": "Air Balloon",
+    "num": 541,
     "fling": {
       "basePower": 10
     },
@@ -1189,6 +1296,19 @@
     "num": 296,
     "fling": {
       "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "bindingband": {
+    "id": "bindingband",
+    "name": "Binding Band",
+    "num": 544,
+    "fling": {
+      "basePower": 30
     },
     "isBerry": false,
     "naturalGift": null,
@@ -1399,6 +1519,32 @@
     "megaEvolves": null,
     "itemUser": null
   },
+  "ejectbutton": {
+    "id": "ejectbutton",
+    "name": "Eject Button",
+    "num": 547,
+    "fling": {
+      "basePower": 30
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "electricseed": {
+    "id": "electricseed",
+    "name": "Electric Seed",
+    "num": 881,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "expertbelt": {
     "id": "expertbelt",
     "name": "Expert Belt",
@@ -1442,6 +1588,19 @@
     "id": "focussash",
     "name": "Focus Sash",
     "num": 275,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "grassyseed": {
+    "id": "grassyseed",
+    "name": "Grassy Seed",
+    "num": 884,
     "fling": {
       "basePower": 10
     },
@@ -1732,6 +1891,19 @@
     "megaEvolves": null,
     "itemUser": null
   },
+  "mistyseed": {
+    "id": "mistyseed",
+    "name": "Misty Seed",
+    "num": 883,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "muscleband": {
     "id": "muscleband",
     "name": "Muscle Band",
@@ -1765,6 +1937,17 @@
     "fling": {
       "basePower": 30
     },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "normalgem": {
+    "id": "normalgem",
+    "name": "Normal Gem",
+    "num": 564,
+    "fling": null,
     "isBerry": false,
     "naturalGift": null,
     "megaStone": false,
@@ -1881,6 +2064,19 @@
     "megaEvolves": null,
     "itemUser": null
   },
+  "psychicseed": {
+    "id": "psychicseed",
+    "name": "Psychic Seed",
+    "num": 882,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "quickclaw": {
     "id": "quickclaw",
     "name": "Quick Claw",
@@ -1910,6 +2106,19 @@
     "megaEvolves": null,
     "itemUser": null
   },
+  "redcard": {
+    "id": "redcard",
+    "name": "Red Card",
+    "num": 542,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "rindoberry": {
     "id": "rindoberry",
     "name": "Rindo Berry",
@@ -1922,6 +2131,19 @@
       "basePower": 80,
       "type": "Grass"
     },
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "rockyhelmet": {
+    "id": "rockyhelmet",
+    "name": "Rocky Helmet",
+    "num": 540,
+    "fling": {
+      "basePower": 60
+    },
+    "isBerry": false,
+    "naturalGift": null,
     "megaStone": false,
     "megaEvolves": null,
     "itemUser": null
@@ -2094,6 +2316,19 @@
     "megaEvolves": null,
     "itemUser": null
   },
+  "terrainextender": {
+    "id": "terrainextender",
+    "name": "Terrain Extender",
+    "num": 879,
+    "fling": {
+      "basePower": 60
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "twistedspoon": {
     "id": "twistedspoon",
     "name": "Twisted Spoon",
@@ -2119,6 +2354,19 @@
       "basePower": 80,
       "type": "Electric"
     },
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
+  "whiteherb": {
+    "id": "whiteherb",
+    "name": "White Herb",
+    "num": 214,
+    "fling": {
+      "basePower": 10
+    },
+    "isBerry": false,
+    "naturalGift": null,
     "megaStone": false,
     "megaEvolves": null,
     "itemUser": null

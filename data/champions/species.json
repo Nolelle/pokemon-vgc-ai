@@ -3346,9 +3346,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Fairy"
     ],
@@ -4137,9 +4137,9 @@
       "Persian-Alola"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -4180,9 +4180,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -6081,9 +6081,9 @@
       "Farfetch’d-Galar"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying",
       "Field"
@@ -8402,9 +8402,9 @@
       "Mr. Mime-Galar"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Human-Like"
     ],
@@ -18888,9 +18888,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Amorphous"
     ],
@@ -21151,9 +21151,9 @@
     "changesFrom": "Absol",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -21804,9 +21804,9 @@
       "Salamence-Mega"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Dragon"
     ],
@@ -21848,9 +21848,9 @@
     "changesFrom": "Salamence",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Dragon"
     ],
@@ -25845,9 +25845,9 @@
     "changesFrom": "Garchomp",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Monster",
       "Dragon"
@@ -26069,9 +26069,9 @@
     "changesFrom": "Lucario",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field",
       "Human-Like"
@@ -40004,9 +40004,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -45833,9 +45833,9 @@
       "Golisopod-Mega"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Bug",
       "Water 3"
@@ -45863,7 +45863,7 @@
       "spe": 40
     },
     "abilities": {
-      "0": "Emergency Exit"
+      "0": "Tough Claws"
     },
     "weightkg": 148,
     "heightm": 2.3,
@@ -45878,9 +45878,9 @@
     "changesFrom": "Golisopod",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Future",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Bug",
       "Water 3"
@@ -49411,9 +49411,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field",
       "Grass"
@@ -49583,9 +49583,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field",
       "Human-Like"
@@ -49755,9 +49755,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Water 1",
       "Field"
@@ -50318,9 +50318,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -51546,9 +51546,9 @@
       "Toxtricity-Low-Key"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Human-Like"
     ],
@@ -51590,9 +51590,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Human-Like"
     ],
@@ -51634,8 +51634,8 @@
     "changesFrom": "Toxtricity",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
+    "tier": "OU",
+    "doublesTier": "OU",
     "isNonstandard": "Past",
     "eggGroups": [
       "Human-Like"
@@ -51895,9 +51895,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Water 1",
       "Human-Like"
@@ -52511,9 +52511,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -52596,9 +52596,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying",
       "Field"
@@ -53254,9 +53254,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Water 1",
       "Amorphous"
@@ -53514,9 +53514,9 @@
       "Indeedee-F"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Fairy"
     ],
@@ -53558,9 +53558,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Fairy"
     ],
@@ -56285,9 +56285,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -56634,9 +56634,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Grass"
     ],
@@ -56682,9 +56682,9 @@
       "Squawkabilly-White"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying"
     ],
@@ -56726,9 +56726,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying"
     ],
@@ -56770,9 +56770,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying"
     ],
@@ -56814,9 +56814,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Flying"
     ],
@@ -57333,9 +57333,9 @@
     "changesFrom": null,
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Field"
     ],
@@ -60103,9 +60103,9 @@
       "Baxcalibur-Mega"
     ],
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Past",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Dragon",
       "Mineral"
@@ -60149,9 +60149,9 @@
     "changesFrom": "Baxcalibur",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "Illegal",
-    "doublesTier": "Illegal",
-    "isNonstandard": "Future",
+    "tier": "OU",
+    "doublesTier": "OU",
+    "isNonstandard": null,
     "eggGroups": [
       "Dragon",
       "Mineral"

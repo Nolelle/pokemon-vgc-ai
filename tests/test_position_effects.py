@@ -120,10 +120,12 @@ def test_effects_no_legal_move_applies_are_still_signed():
 
 
 def test_illegal_champions_moves_do_not_contribute_signs():
-    # Octolock/Telekinesis/Embargo/Nightmare/Tar Shot are isNonstandard "Past" in this
+    # Telekinesis/Embargo/Nightmare/Tar Shot/Laser Focus are isNonstandard "Past" in this
     # mod, so their volatiles can never appear and must not be derived into the map.
+    # Note: Octolock was unbanned in Reg M-C with the addition of Grapploct.
     volatiles, sides = _derived()
-    for effect in ("octolock", "telekinesis", "embargo", "nightmare", "tarshot"):
+    assert "octolock" in volatiles
+    for effect in ("telekinesis", "embargo", "nightmare", "tarshot", "laserfocus"):
         assert effect not in volatiles
     for effect in ("mist", "luckychant", "craftyshield", "matblock"):
         assert effect not in sides

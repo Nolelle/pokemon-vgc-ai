@@ -34,15 +34,11 @@ def test_species_has_megas_with_stone_mapping() -> None:
 
 def test_known_illegal_item_absent() -> None:
     items = load_items()
-    # Rocky Helmet is a real, common VGC item that this mod bans (isNonstandard: "Past"
-    # in data/mods/champions/items.ts) -- items.json only keeps legal (isNonstandard is
-    # None) items, so it must not appear here.
-    assert "rockyhelmet" not in items
-    # Spot-check a couple more of the vanilla-VGC staples this mod bans (see
-    # data/mods/champions/items.ts). NOTE: Choice Band and Choice Specs are explicitly
-    # banned (isNonstandard: "Past"), but Choice Scarf is NOT banned in this mod (no
-    # override entry -> inherits vanilla gen9's standard/legal status) -- a correction to
-    # the Phase 0 "no Choice items" assumption, confirmed here so it isn't silently wrong.
+    # Rocky Helmet was unbanned in Regulation M-C and is now legal.
+    assert "rockyhelmet" in items, "Rocky Helmet is legal in Regulation M-C"
+    # Spot-check staples this mod bans (see data/mods/champions/items.ts).
+    # Choice Band and Choice Specs are explicitly banned (isNonstandard: "Past"),
+    # but Choice Scarf is NOT banned in this mod.
     for banned in ("choicespecs", "choiceband", "assaultvest", "heavydutyboots", "eviolite"):
         assert banned not in items, f"{banned} should not be a legal item in this mod"
     assert "choicescarf" in items, "Choice Scarf is legal in this mod (unlike Band/Specs)"

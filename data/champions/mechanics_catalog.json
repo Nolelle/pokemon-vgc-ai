@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "format_id": "gen9championsvgc2026regmb",
+    "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "2f5b273925862ac242b419086c1e7a8868b51da1"
+    "showdown_commit": "efe4948570d5e8189751792136d26e71710c6c66"
   },
   "format": {
     "game_type": "doubles",
@@ -52,11 +52,11 @@
     "level": 50
   },
   "counts": {
-    "legal_species_and_formes": 355,
-    "legal_base_species": 264,
-    "legal_moves": 496,
-    "legal_abilities": 208,
-    "legal_items": 148,
+    "legal_species_and_formes": 390,
+    "legal_base_species": 293,
+    "legal_moves": 509,
+    "legal_abilities": 222,
+    "legal_items": 166,
     "merged_conditions": 35
   },
   "legal_entities": {
@@ -65,6 +65,7 @@
       "abomasnowmega",
       "absol",
       "absolmega",
+      "absolmegaz",
       "aegislash",
       "aegislashblade",
       "aerodactyl",
@@ -89,6 +90,7 @@
       "appletun",
       "araquanid",
       "arbok",
+      "arboliva",
       "arcanine",
       "arcaninehisui",
       "archaludon",
@@ -108,6 +110,8 @@
       "basculegion",
       "basculegionf",
       "bastiodon",
+      "baxcalibur",
+      "baxcaliburmega",
       "beartic",
       "beedrill",
       "beedrillmega",
@@ -132,6 +136,7 @@
       "chesnaughtmega",
       "chimecho",
       "chimechomega",
+      "cinderace",
       "clawitzer",
       "clefable",
       "clefablemega",
@@ -169,6 +174,7 @@
       "excadrillmega",
       "falinks",
       "falinksmega",
+      "farfetchd",
       "farigiraf",
       "feraligatr",
       "feraligatrmega",
@@ -186,6 +192,7 @@
       "garbodor",
       "garchomp",
       "garchompmega",
+      "garchompmegaz",
       "gardevoir",
       "gardevoirmega",
       "garganacl",
@@ -198,6 +205,9 @@
       "glimmora",
       "glimmoramega",
       "gliscor",
+      "gogoat",
+      "golisopod",
+      "golisopodmega",
       "golurk",
       "golurkmega",
       "goodra",
@@ -206,6 +216,7 @@
       "gourgeistlarge",
       "gourgeistsmall",
       "gourgeistsuper",
+      "grapploct",
       "greninja",
       "greninjamega",
       "grimmsnarl",
@@ -224,7 +235,10 @@
       "hydrapple",
       "hydreigon",
       "incineroar",
+      "indeedee",
+      "indeedeef",
       "infernape",
+      "inteleon",
       "jolteon",
       "kangaskhan",
       "kangaskhanmega",
@@ -239,10 +253,12 @@
       "lopunnymega",
       "lucario",
       "lucariomega",
+      "lucariomegaz",
       "luxray",
       "lycanroc",
       "lycanrocdusk",
       "lycanrocmidnight",
+      "mabosstiff",
       "machamp",
       "malamar",
       "malamarmega",
@@ -270,6 +286,7 @@
       "miniormeteor",
       "morpeko",
       "morpekohangry",
+      "mrmime",
       "mrrime",
       "mudsdale",
       "musharna",
@@ -287,10 +304,15 @@
       "palafinhero",
       "pangoro",
       "passimian",
+      "pawmot",
       "pelipper",
+      "perrserker",
+      "persian",
+      "persianalola",
       "pidgeot",
       "pidgeotmega",
       "pikachu",
+      "pincurchin",
       "pinsir",
       "pinsirmega",
       "politoed",
@@ -308,6 +330,7 @@
       "rampardos",
       "reuniclus",
       "rhyperior",
+      "rillaboom",
       "roserade",
       "rotom",
       "rotomfan",
@@ -318,6 +341,8 @@
       "runerigus",
       "sableye",
       "sableyemega",
+      "salamence",
+      "salamencemega",
       "salazzle",
       "samurott",
       "samurotthisui",
@@ -340,6 +365,7 @@
       "simisear",
       "sinistcha",
       "sinistchamasterpiece",
+      "sirfetchd",
       "skarmory",
       "skarmorymega",
       "skeledirge",
@@ -352,6 +378,10 @@
       "sneasler",
       "snorlax",
       "spiritomb",
+      "squawkabilly",
+      "squawkabillyblue",
+      "squawkabillywhite",
+      "squawkabillyyellow",
       "staraptor",
       "staraptormega",
       "starmie",
@@ -360,6 +390,7 @@
       "steelixmega",
       "stunfisk",
       "stunfiskgalar",
+      "swalot",
       "swampert",
       "swampertmega",
       "sylveon",
@@ -368,12 +399,15 @@
       "taurospaldeaaqua",
       "taurospaldeablaze",
       "taurospaldeacombat",
+      "thievul",
       "tinkaton",
       "torkoal",
       "torterra",
       "toucannon",
       "toxapex",
       "toxicroak",
+      "toxtricity",
+      "toxtricitylowkey",
       "trevenant",
       "tsareena",
       "typhlosion",
@@ -413,6 +447,7 @@
       "watchog",
       "weavile",
       "whimsicott",
+      "wigglytuff",
       "wyrdeer",
       "zoroark",
       "zoroarkhisui"
@@ -502,6 +537,7 @@
       "cottonguard",
       "cottonspore",
       "counter",
+      "courtchange",
       "covet",
       "crabhammer",
       "crosschop",
@@ -523,6 +559,7 @@
       "dive",
       "doubleedge",
       "doublehit",
+      "doubleshock",
       "doubleteam",
       "dracometeor",
       "dragoncheer",
@@ -536,6 +573,7 @@
       "drainpunch",
       "drillpeck",
       "drillrun",
+      "drumbeating",
       "dualwingbeat",
       "dynamicpunch",
       "earthpower",
@@ -599,6 +637,7 @@
       "gigadrain",
       "gigaimpact",
       "gigatonhammer",
+      "glaiverush",
       "glare",
       "grassknot",
       "grassyglide",
@@ -653,6 +692,7 @@
       "irondefense",
       "ironhead",
       "irontail",
+      "jawlock",
       "jetpunch",
       "kingsshield",
       "knockoff",
@@ -689,6 +729,7 @@
       "metalsound",
       "meteorbeam",
       "meteormash",
+      "milkdrink",
       "minimize",
       "mirrorcoat",
       "mistyexplosion",
@@ -709,7 +750,9 @@
       "nobleroar",
       "noretreat",
       "nuzzle",
+      "octolock",
       "outrage",
+      "overdrive",
       "overheat",
       "painsplit",
       "paraboliccharge",
@@ -729,7 +772,6 @@
       "poltergeist",
       "populationbomb",
       "pounce",
-      "pound",
       "powergem",
       "powersplit",
       "powerswap",
@@ -745,6 +787,7 @@
       "psychup",
       "psyshieldbash",
       "psyshock",
+      "pyroball",
       "quash",
       "quickattack",
       "quickguard",
@@ -762,6 +805,7 @@
       "reflecttype",
       "rest",
       "reversal",
+      "revivalblessing",
       "risingvoltage",
       "roar",
       "rockblast",
@@ -794,12 +838,14 @@
       "shellsidearm",
       "shellsmash",
       "shelter",
+      "shiftgear",
       "simplebeam",
       "sing",
       "skillswap",
       "skittersmack",
       "skyattack",
       "slackoff",
+      "slash",
       "sleeppowder",
       "sleeptalk",
       "sludgebomb",
@@ -808,6 +854,7 @@
       "smartstrike",
       "snaptrap",
       "snarl",
+      "snipeshot",
       "snore",
       "snowscape",
       "soak",
@@ -913,7 +960,8 @@
       "xscissor",
       "yawn",
       "zapcannon",
-      "zenheadbutt"
+      "zenheadbutt",
+      "zingzap"
     ],
     "abilities": [
       "adaptability",
@@ -959,6 +1007,7 @@
       "embodyaspecthearthflame",
       "embodyaspectteal",
       "embodyaspectwellspring",
+      "emergencyexit",
       "fairyaura",
       "filter",
       "firemane",
@@ -975,6 +1024,9 @@
       "gluttony",
       "goodasgold",
       "gooey",
+      "grasspelt",
+      "grassysurge",
+      "guarddog",
       "gulpmissile",
       "guts",
       "harvest",
@@ -1004,9 +1056,11 @@
       "klutz",
       "leafguard",
       "levitate",
+      "libero",
       "lightmetal",
       "lightningrod",
       "limber",
+      "liquidooze",
       "liquidvoice",
       "longreach",
       "magicbounce",
@@ -1045,12 +1099,15 @@
       "prankster",
       "pressure",
       "protean",
+      "psychicsurge",
+      "punkrock",
       "purepower",
       "purifyingsalt",
       "queenlymajesty",
       "quickdraw",
       "quickfeet",
       "raindish",
+      "rattled",
       "receiver",
       "reckless",
       "refrigerate",
@@ -1059,6 +1116,7 @@
       "rivalry",
       "rockhead",
       "roughskin",
+      "runaway",
       "sandforce",
       "sandrush",
       "sandspit",
@@ -1067,6 +1125,7 @@
       "sapsipper",
       "scrappy",
       "screencleaner",
+      "seedsower",
       "shadowtag",
       "sharpness",
       "shedskin",
@@ -1084,12 +1143,14 @@
       "soundproof",
       "speedboost",
       "spicyspray",
+      "stakeout",
       "stall",
       "stalwart",
       "stamina",
       "stancechange",
       "static",
       "steadfast",
+      "steelyspirit",
       "stench",
       "stickyhold",
       "strongjaw",
@@ -1107,6 +1168,7 @@
       "tangledfeet",
       "technician",
       "telepathy",
+      "thermalexchange",
       "thickfat",
       "torrent",
       "toughclaws",
@@ -1128,8 +1190,10 @@
     "items": [
       "abomasite",
       "absolite",
+      "absolitez",
       "aerodactylite",
       "aggronite",
+      "airballoon",
       "alakazite",
       "altarianite",
       "ampharosite",
@@ -1138,8 +1202,10 @@
       "babiriberry",
       "banettite",
       "barbaracite",
+      "baxcalibrite",
       "beedrillite",
       "bigroot",
+      "bindingband",
       "blackbelt",
       "blackglasses",
       "blastoisinite",
@@ -1169,6 +1235,8 @@
       "dragoninite",
       "drampanite",
       "eelektrossite",
+      "ejectbutton",
+      "electricseed",
       "emboarite",
       "excadrite",
       "expertbelt",
@@ -1181,11 +1249,14 @@
       "froslassite",
       "galladite",
       "garchompite",
+      "garchompitez",
       "gardevoirite",
       "gengarite",
       "glalitite",
       "glimmoranite",
+      "golisopite",
       "golurkite",
+      "grassyseed",
       "greninjite",
       "gyaradosite",
       "habanberry",
@@ -1200,6 +1271,7 @@
       "kasibberry",
       "kebiaberry",
       "kingsrock",
+      "leek",
       "leftovers",
       "leppaberry",
       "lifeorb",
@@ -1207,6 +1279,7 @@
       "lightclay",
       "lopunnite",
       "lucarionite",
+      "lucarionitez",
       "lumberry",
       "magnet",
       "malamarite",
@@ -1220,9 +1293,11 @@
       "metalcoat",
       "metronome",
       "miracleseed",
+      "mistyseed",
       "muscleband",
       "mysticwater",
       "nevermeltice",
+      "normalgem",
       "occaberry",
       "oranberry",
       "passhoberry",
@@ -1232,14 +1307,18 @@
       "pidgeotite",
       "pinsirite",
       "poisonbarb",
+      "psychicseed",
       "pyroarite",
       "quickclaw",
       "raichunitex",
       "raichunitey",
       "rawstberry",
+      "redcard",
       "rindoberry",
+      "rockyhelmet",
       "roseliberry",
       "sablenite",
+      "salamencite",
       "sceptilite",
       "scizorite",
       "scolipite",
@@ -1264,6 +1343,7 @@
       "steelixite",
       "swampertite",
       "tangaberry",
+      "terrainextender",
       "twistedspoon",
       "tyranitarite",
       "venusaurite",
@@ -1397,6 +1477,7 @@
           "healbell",
           "healpulse",
           "instruct",
+          "jawlock",
           "kingsshield",
           "lockon",
           "magicpowder",
@@ -1476,6 +1557,7 @@
           "focuspunch",
           "followme",
           "gastroacid",
+          "glaiverush",
           "helpinghand",
           "imprison",
           "ingrain",
@@ -1484,6 +1566,7 @@
           "magnetrise",
           "mirrorcoat",
           "noretreat",
+          "octolock",
           "powertrick",
           "protect",
           "ragepowder",
@@ -1520,6 +1603,7 @@
           "grassyterrain",
           "ingrain",
           "leechseed",
+          "octolock",
           "perishsong",
           "saltcure",
           "syrupbomb",
@@ -1531,6 +1615,7 @@
           "chillyreception",
           "destinybond",
           "disable",
+          "glaiverush",
           "gravity",
           "taunt",
           "throatchop"
@@ -1563,6 +1648,7 @@
           "attract",
           "endeavor",
           "leechseed",
+          "octolock",
           "switcheroo",
           "trick",
           "worryseed"
@@ -1683,6 +1769,7 @@
         "self.onHit": [
           "batonpass",
           "burnup",
+          "doubleshock",
           "shedtail"
         ],
         "onAfterMove": [
@@ -1721,6 +1808,7 @@
           "burnup",
           "dig",
           "dive",
+          "doubleshock",
           "electroshot",
           "fly",
           "meteorbeam",
@@ -1749,6 +1837,7 @@
           "poltergeist",
           "psychicfangs",
           "ragingbull",
+          "revivalblessing",
           "roleplay",
           "shedtail",
           "simplebeam",
@@ -1816,6 +1905,12 @@
           "counter",
           "mirrorcoat"
         ],
+        "onHitField": [
+          "courtchange",
+          "haze",
+          "perishsong",
+          "teatime"
+        ],
         "condition.onFaint": [
           "destinybond"
         ],
@@ -1828,6 +1923,7 @@
           "dig",
           "dive",
           "fly",
+          "glaiverush",
           "minimize"
         ],
         "condition.onDisableMove": [
@@ -1886,7 +1982,8 @@
         "condition.onTrapPokemon": [
           "fairylock",
           "ingrain",
-          "noretreat"
+          "noretreat",
+          "octolock"
         ],
         "onDisableMove": [
           "fakeout",
@@ -1910,6 +2007,10 @@
           "gastroacid",
           "powertrick"
         ],
+        "condition.onAccuracy": [
+          "glaiverush",
+          "minimize"
+        ],
         "onModifyPriority": [
           "grassyglide"
         ],
@@ -1920,11 +2021,6 @@
           "gravity",
           "throatchop",
           "wonderroom"
-        ],
-        "onHitField": [
-          "haze",
-          "perishsong",
-          "teatime"
         ],
         "condition.onSwap": [
           "healingwish"
@@ -1961,9 +2057,6 @@
           "quickguard",
           "wideguard"
         ],
-        "condition.onAccuracy": [
-          "minimize"
-        ],
         "condition.onType": [
           "roost"
         ],
@@ -1992,6 +2085,7 @@
           "ironfist",
           "megalauncher",
           "pixilate",
+          "punkrock",
           "reckless",
           "refrigerate",
           "rivalry",
@@ -2024,11 +2118,14 @@
           "justified",
           "mummy",
           "poisonpoint",
+          "rattled",
           "roughskin",
           "sandspit",
+          "seedsower",
           "spicyspray",
           "stamina",
           "static",
+          "thermalexchange",
           "toxicdebris",
           "wanderingspirit",
           "weakarmor"
@@ -2053,6 +2150,7 @@
           "forewarn",
           "frisk",
           "gluttony",
+          "grassysurge",
           "hospitality",
           "iceface",
           "intimidate",
@@ -2060,6 +2158,7 @@
           "mimicry",
           "moldbreaker",
           "pressure",
+          "psychicsurge",
           "sandstream",
           "screencleaner",
           "shieldsdown",
@@ -2119,6 +2218,7 @@
         "onTryBoost": [
           "bigpecks",
           "clearbody",
+          "guarddog",
           "hypercutter",
           "illuminate",
           "innerfocus",
@@ -2137,6 +2237,7 @@
           "hustle",
           "overgrow",
           "purepower",
+          "stakeout",
           "swarm",
           "torrent",
           "waterbubble"
@@ -2148,6 +2249,7 @@
           "overgrow",
           "plus",
           "solarpower",
+          "stakeout",
           "swarm",
           "torrent",
           "waterbubble"
@@ -2245,6 +2347,7 @@
           "magmaarmor",
           "oblivious",
           "owntempo",
+          "thermalexchange",
           "trace",
           "vitalspirit",
           "waterbubble"
@@ -2258,6 +2361,9 @@
           "raindish",
           "solarpower"
         ],
+        "onEmergencyExit": [
+          "emergencyexit"
+        ],
         "onAnyBasePower": [
           "fairyaura"
         ],
@@ -2265,6 +2371,7 @@
           "filter",
           "fluffy",
           "multiscale",
+          "punkrock",
           "ripen",
           "solidrock"
         ],
@@ -2296,11 +2403,16 @@
         ],
         "onModifyDef": [
           "furcoat",
+          "grasspelt",
           "marvelscale"
         ],
         "onModifyPriority": [
           "galewings",
           "prankster"
+        ],
+        "onDragOut": [
+          "guarddog",
+          "suctioncups"
         ],
         "onSourceTryPrimaryHit": [
           "gulpmissile"
@@ -2344,6 +2456,7 @@
           "limber",
           "purifyingsalt",
           "shieldsdown",
+          "thermalexchange",
           "vitalspirit",
           "waterbubble"
         ],
@@ -2356,8 +2469,16 @@
           "shieldsdown",
           "vitalspirit"
         ],
+        "onPrepareHit": [
+          "libero",
+          "parentalbond",
+          "protean"
+        ],
         "onAnyRedirectTarget": [
           "lightningrod"
+        ],
+        "onSourceTryHeal": [
+          "liquidooze"
         ],
         "onAllyTryHitSide": [
           "magicbounce",
@@ -2403,10 +2524,6 @@
         "onFoeAfterBoost": [
           "opportunist"
         ],
-        "onPrepareHit": [
-          "parentalbond",
-          "protean"
-        ],
         "onSourceModifySecondaries": [
           "parentalbond"
         ],
@@ -2422,6 +2539,9 @@
         ],
         "onFractionalPriority": [
           "quickdraw"
+        ],
+        "onAfterBoost": [
+          "rattled"
         ],
         "onAllyFaint": [
           "receiver"
@@ -2449,12 +2569,12 @@
         "onFlinch": [
           "steadfast"
         ],
+        "onAllyBasePower": [
+          "steelyspirit"
+        ],
         "onTakeItem": [
           "stickyhold",
           "unburden"
-        ],
-        "onDragOut": [
-          "suctioncups"
         ],
         "onAllyAfterUseItem": [
           "symbiosis"
@@ -2479,6 +2599,7 @@
         "onTakeItem": [
           "abomasite",
           "absolite",
+          "absolitez",
           "aerodactylite",
           "aggronite",
           "alakazite",
@@ -2487,6 +2608,7 @@
           "audinite",
           "banettite",
           "barbaracite",
+          "baxcalibrite",
           "beedrillite",
           "blastoisinite",
           "blazikenite",
@@ -2511,10 +2633,12 @@
           "froslassite",
           "galladite",
           "garchompite",
+          "garchompitez",
           "gardevoirite",
           "gengarite",
           "glalitite",
           "glimmoranite",
+          "golisopite",
           "golurkite",
           "greninjite",
           "gyaradosite",
@@ -2524,6 +2648,7 @@
           "kangaskhanite",
           "lopunnite",
           "lucarionite",
+          "lucarionitez",
           "malamarite",
           "manectite",
           "mawilite",
@@ -2537,6 +2662,7 @@
           "raichunitex",
           "raichunitey",
           "sablenite",
+          "salamencite",
           "sceptilite",
           "scizorite",
           "scolipite",
@@ -2552,6 +2678,23 @@
           "tyranitarite",
           "venusaurite",
           "victreebelite"
+        ],
+        "onAfterSubDamage": [
+          "airballoon"
+        ],
+        "onDamagingHit": [
+          "airballoon",
+          "rockyhelmet"
+        ],
+        "onStart": [
+          "airballoon",
+          "choicescarf",
+          "electricseed",
+          "grassyseed",
+          "metronome",
+          "mistyseed",
+          "psychicseed",
+          "whiteherb"
         ],
         "onEat": [
           "aspearberry",
@@ -2652,10 +2795,15 @@
           "choicescarf",
           "ironball"
         ],
-        "onStart": [
-          "choicescarf",
-          "metronome",
-          "whiteherb"
+        "onAfterMoveSecondary": [
+          "ejectbutton",
+          "redcard"
+        ],
+        "onTerrainChange": [
+          "electricseed",
+          "grassyseed",
+          "mistyseed",
+          "psychicseed"
         ],
         "onModifyDamage": [
           "expertbelt",
@@ -2667,6 +2815,10 @@
         ],
         "onEffectiveness": [
           "ironball"
+        ],
+        "onModifyCritRatio": [
+          "leek",
+          "scopelens"
         ],
         "onResidual": [
           "leftovers",
@@ -2698,15 +2850,15 @@
         "condition.onTryMove": [
           "metronome"
         ],
+        "onSourceTryPrimaryHit": [
+          "normalgem"
+        ],
         "onTryEatItem": [
           "oranberry",
           "sitrusberry"
         ],
         "onFractionalPriority": [
           "quickclaw"
-        ],
-        "onModifyCritRatio": [
-          "scopelens"
         ],
         "onMaybeTrapPokemon": [
           "shedshell"
@@ -2724,9 +2876,6 @@
           "whiteherb"
         ],
         "onUse": [
-          "whiteherb"
-        ],
-        "onWhiteHerb": [
           "whiteherb"
         ],
         "onSourceModifyAccuracy": [
@@ -3027,6 +3176,7 @@
         "screech",
         "shellsmash",
         "shelter",
+        "shiftgear",
         "spicyextract",
         "stringshot",
         "swagger",
@@ -3066,6 +3216,7 @@
         "cosmicpower",
         "cottonguard",
         "cottonspore",
+        "courtchange",
         "curse",
         "decorate",
         "defog",
@@ -3119,6 +3270,7 @@
         "meanlook",
         "memento",
         "metalsound",
+        "milkdrink",
         "minimize",
         "mistyterrain",
         "moonlight",
@@ -3126,6 +3278,7 @@
         "nastyplot",
         "nobleroar",
         "noretreat",
+        "octolock",
         "painsplit",
         "partingshot",
         "perishsong",
@@ -3146,6 +3299,7 @@
         "reflect",
         "reflecttype",
         "rest",
+        "revivalblessing",
         "roar",
         "rockpolish",
         "roleplay",
@@ -3157,6 +3311,7 @@
         "shedtail",
         "shellsmash",
         "shelter",
+        "shiftgear",
         "simplebeam",
         "sing",
         "skillswap",
@@ -3240,6 +3395,7 @@
         "direclaw",
         "discharge",
         "dragonrush",
+        "drumbeating",
         "dynamicpunch",
         "earthpower",
         "eeriespell",
@@ -3293,6 +3449,7 @@
         "psychic",
         "psychicnoise",
         "psyshieldbash",
+        "pyroball",
         "rapidspin",
         "razorshell",
         "rockslide",
@@ -3330,7 +3487,8 @@
         "waterfall",
         "waterpulse",
         "zapcannon",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "accuracyCheck": [
         "aircutter",
@@ -3409,6 +3567,7 @@
         "populationbomb",
         "powerwhip",
         "psyshieldbash",
+        "pyroball",
         "razorshell",
         "rockblast",
         "rockslide",
@@ -3459,6 +3618,8 @@
         "psychocut",
         "shadowclaw",
         "skyattack",
+        "slash",
+        "snipeshot",
         "stoneedge",
         "triplearrows"
       ],
@@ -3491,6 +3652,7 @@
         "magnetrise",
         "minimize",
         "noretreat",
+        "octolock",
         "powertrick",
         "protect",
         "ragepowder",
@@ -3516,9 +3678,11 @@
         "blastburn",
         "burnup",
         "closecombat",
+        "doubleshock",
         "dracometeor",
         "frenzyplant",
         "gigaimpact",
+        "glaiverush",
         "hammerarm",
         "headlongrush",
         "hydrocannon",
@@ -3555,6 +3719,7 @@
         "chillyreception",
         "flipturn",
         "partingshot",
+        "revivalblessing",
         "shedtail",
         "uturn",
         "voltswitch"
@@ -3662,10 +3827,12 @@
       ],
       "slotCondition": [
         "healingwish",
+        "revivalblessing",
         "wish"
       ],
       "heal": [
         "lifedew",
+        "milkdrink",
         "recover",
         "roost",
         "slackoff"
@@ -3685,6 +3852,9 @@
       ],
       "overrideDefensiveStat": [
         "psyshock"
+      ],
+      "noPPBoosts": [
+        "revivalblessing"
       ]
     },
     "move_flags": {
@@ -3728,6 +3898,7 @@
         "dive",
         "doubleedge",
         "doublehit",
+        "doubleshock",
         "dragonclaw",
         "dragonrush",
         "dragontail",
@@ -3755,6 +3926,7 @@
         "focuspunch",
         "foulplay",
         "gigaimpact",
+        "glaiverush",
         "grassknot",
         "grassyglide",
         "guillotine",
@@ -3776,6 +3948,7 @@
         "infestation",
         "ironhead",
         "irontail",
+        "jawlock",
         "jetpunch",
         "knockoff",
         "kowtowcleave",
@@ -3804,7 +3977,6 @@
         "poisonjab",
         "populationbomb",
         "pounce",
-        "pound",
         "powertrip",
         "powerwhip",
         "psychicfangs",
@@ -3821,6 +3993,7 @@
         "shadowpunch",
         "shadowsneak",
         "skittersmack",
+        "slash",
         "smartstrike",
         "snaptrap",
         "solarblade",
@@ -3853,7 +4026,8 @@
         "woodhammer",
         "wrap",
         "xscissor",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "protect": [
         "accelerock",
@@ -3934,6 +4108,7 @@
         "dive",
         "doubleedge",
         "doublehit",
+        "doubleshock",
         "dracometeor",
         "dragonclaw",
         "dragondarts",
@@ -3944,6 +4119,7 @@
         "drainpunch",
         "drillpeck",
         "drillrun",
+        "drumbeating",
         "dualwingbeat",
         "dynamicpunch",
         "earthpower",
@@ -4000,6 +4176,7 @@
         "gigadrain",
         "gigaimpact",
         "gigatonhammer",
+        "glaiverush",
         "glare",
         "grassknot",
         "grassyglide",
@@ -4043,6 +4220,7 @@
         "instruct",
         "ironhead",
         "irontail",
+        "jawlock",
         "jetpunch",
         "knockoff",
         "kowtowcleave",
@@ -4086,7 +4264,9 @@
         "nightslash",
         "nobleroar",
         "nuzzle",
+        "octolock",
         "outrage",
+        "overdrive",
         "overheat",
         "painsplit",
         "paraboliccharge",
@@ -4104,7 +4284,6 @@
         "poltergeist",
         "populationbomb",
         "pounce",
-        "pound",
         "powergem",
         "powersplit",
         "powerswap",
@@ -4116,6 +4295,7 @@
         "psychocut",
         "psyshieldbash",
         "psyshock",
+        "pyroball",
         "quash",
         "quickattack",
         "ragefist",
@@ -4153,6 +4333,7 @@
         "skillswap",
         "skittersmack",
         "skyattack",
+        "slash",
         "sleeppowder",
         "sludgebomb",
         "sludgewave",
@@ -4160,6 +4341,7 @@
         "smartstrike",
         "snaptrap",
         "snarl",
+        "snipeshot",
         "snore",
         "soak",
         "solarbeam",
@@ -4242,7 +4424,8 @@
         "xscissor",
         "yawn",
         "zapcannon",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "mirror": [
         "accelerock",
@@ -4304,6 +4487,7 @@
         "confuseray",
         "corrosivegas",
         "cottonspore",
+        "courtchange",
         "covet",
         "crabhammer",
         "crosschop",
@@ -4321,6 +4505,7 @@
         "dive",
         "doubleedge",
         "doublehit",
+        "doubleshock",
         "dracometeor",
         "dragonclaw",
         "dragondarts",
@@ -4331,6 +4516,7 @@
         "drainpunch",
         "drillpeck",
         "drillrun",
+        "drumbeating",
         "dualwingbeat",
         "dynamicpunch",
         "earthpower",
@@ -4387,6 +4573,7 @@
         "gigadrain",
         "gigaimpact",
         "gigatonhammer",
+        "glaiverush",
         "glare",
         "grassknot",
         "grassyglide",
@@ -4427,6 +4614,7 @@
         "infestation",
         "ironhead",
         "irontail",
+        "jawlock",
         "jetpunch",
         "knockoff",
         "kowtowcleave",
@@ -4471,7 +4659,9 @@
         "nightslash",
         "nobleroar",
         "nuzzle",
+        "octolock",
         "outrage",
+        "overdrive",
         "overheat",
         "painsplit",
         "paraboliccharge",
@@ -4490,7 +4680,6 @@
         "poltergeist",
         "populationbomb",
         "pounce",
-        "pound",
         "powergem",
         "powerswap",
         "powertrip",
@@ -4501,6 +4690,7 @@
         "psychocut",
         "psyshieldbash",
         "psyshock",
+        "pyroball",
         "quash",
         "quickattack",
         "ragefist",
@@ -4538,6 +4728,7 @@
         "skillswap",
         "skittersmack",
         "skyattack",
+        "slash",
         "sleeppowder",
         "sludgebomb",
         "sludgewave",
@@ -4545,6 +4736,7 @@
         "smartstrike",
         "snaptrap",
         "snarl",
+        "snipeshot",
         "snore",
         "soak",
         "solarbeam",
@@ -4630,7 +4822,8 @@
         "xscissor",
         "yawn",
         "zapcannon",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "metronome": [
         "accelerock",
@@ -4702,6 +4895,7 @@
         "cosmicpower",
         "cottonguard",
         "cottonspore",
+        "courtchange",
         "crabhammer",
         "crosschop",
         "crosspoison",
@@ -4791,6 +4985,7 @@
         "gigadrain",
         "gigaimpact",
         "gigatonhammer",
+        "glaiverush",
         "glare",
         "grassknot",
         "grassyglide",
@@ -4842,6 +5037,7 @@
         "irondefense",
         "ironhead",
         "irontail",
+        "jawlock",
         "knockoff",
         "kowtowcleave",
         "lashout",
@@ -4873,6 +5069,7 @@
         "metalsound",
         "meteorbeam",
         "meteormash",
+        "milkdrink",
         "minimize",
         "mistyexplosion",
         "mistyterrain",
@@ -4892,6 +5089,7 @@
         "nobleroar",
         "noretreat",
         "nuzzle",
+        "octolock",
         "outrage",
         "overheat",
         "painsplit",
@@ -4910,7 +5108,6 @@
         "poisonpowder",
         "pollenpuff",
         "poltergeist",
-        "pound",
         "powergem",
         "powersplit",
         "powerswap",
@@ -4966,17 +5163,20 @@
         "shellsidearm",
         "shellsmash",
         "shelter",
+        "shiftgear",
         "simplebeam",
         "sing",
         "skillswap",
         "skittersmack",
         "skyattack",
         "slackoff",
+        "slash",
         "sleeppowder",
         "sludgebomb",
         "sludgewave",
         "smackdown",
         "smartstrike",
+        "snipeshot",
         "soak",
         "solarbeam",
         "solarblade",
@@ -5068,7 +5268,8 @@
         "xscissor",
         "yawn",
         "zapcannon",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "snatch": [
         "acidarmor",
@@ -5098,6 +5299,7 @@
         "lightscreen",
         "magneticflux",
         "magnetrise",
+        "milkdrink",
         "minimize",
         "moonlight",
         "morningsun",
@@ -5115,6 +5317,7 @@
         "safeguard",
         "shellsmash",
         "shelter",
+        "shiftgear",
         "slackoff",
         "stockpile",
         "stuffcheeks",
@@ -5136,6 +5339,7 @@
         "focusblast",
         "gyroball",
         "pollenpuff",
+        "pyroball",
         "rockblast",
         "rockwrecker",
         "seedbomb",
@@ -5185,6 +5389,7 @@
         "razorshell",
         "sacredsword",
         "shadowclaw",
+        "slash",
         "solarblade",
         "stoneaxe",
         "xscissor"
@@ -5218,6 +5423,7 @@
         "magneticflux",
         "metalsound",
         "nobleroar",
+        "overdrive",
         "partingshot",
         "perishsong",
         "powerswap",
@@ -5315,6 +5521,7 @@
         "hypervoice",
         "metalsound",
         "nobleroar",
+        "overdrive",
         "partingshot",
         "perishsong",
         "psychicnoise",
@@ -5530,6 +5737,7 @@
         "crunch",
         "firefang",
         "icefang",
+        "jawlock",
         "poisonfang",
         "psychicfangs",
         "thunderfang"
@@ -5545,11 +5753,13 @@
         "leechlife",
         "lifedew",
         "matchagotcha",
+        "milkdrink",
         "moonlight",
         "morningsun",
         "paraboliccharge",
         "recover",
         "rest",
+        "revivalblessing",
         "roost",
         "slackoff",
         "strengthsap",
@@ -5640,6 +5850,7 @@
         "burnup",
         "flareblitz",
         "matchagotcha",
+        "pyroball",
         "scald",
         "scorchingsands"
       ],
@@ -5676,6 +5887,9 @@
         "spikes",
         "stealthrock",
         "toxicspikes"
+      ],
+      "nosketch": [
+        "revivalblessing"
       ]
     },
     "move_targets": {
@@ -5741,6 +5955,7 @@
         "dive",
         "doubleedge",
         "doublehit",
+        "doubleshock",
         "dracometeor",
         "dragonclaw",
         "dragondarts",
@@ -5749,6 +5964,7 @@
         "drainingkiss",
         "drainpunch",
         "drillrun",
+        "drumbeating",
         "dualwingbeat",
         "dynamicpunch",
         "earthpower",
@@ -5801,6 +6017,7 @@
         "gigadrain",
         "gigaimpact",
         "gigatonhammer",
+        "glaiverush",
         "glare",
         "grassknot",
         "grassyglide",
@@ -5839,6 +6056,7 @@
         "instruct",
         "ironhead",
         "irontail",
+        "jawlock",
         "jetpunch",
         "knockoff",
         "kowtowcleave",
@@ -5875,6 +6093,7 @@
         "nightslash",
         "nobleroar",
         "nuzzle",
+        "octolock",
         "overheat",
         "painsplit",
         "partingshot",
@@ -5889,7 +6108,6 @@
         "poltergeist",
         "populationbomb",
         "pounce",
-        "pound",
         "powergem",
         "powersplit",
         "powerswap",
@@ -5902,6 +6120,7 @@
         "psychup",
         "psyshieldbash",
         "psyshock",
+        "pyroball",
         "quash",
         "quickattack",
         "ragefist",
@@ -5937,11 +6156,13 @@
         "sing",
         "skillswap",
         "skittersmack",
+        "slash",
         "sleeppowder",
         "sludgebomb",
         "smackdown",
         "smartstrike",
         "snaptrap",
+        "snipeshot",
         "snore",
         "soak",
         "solarbeam",
@@ -6017,7 +6238,8 @@
         "xscissor",
         "yawn",
         "zapcannon",
-        "zenheadbutt"
+        "zenheadbutt",
+        "zingzap"
       ],
       "self": [
         "acidarmor",
@@ -6062,11 +6284,13 @@
         "recover",
         "recycle",
         "rest",
+        "revivalblessing",
         "rockpolish",
         "roost",
         "shedtail",
         "shellsmash",
         "shelter",
+        "shiftgear",
         "slackoff",
         "sleeptalk",
         "spikyshield",
@@ -6098,7 +6322,8 @@
         "waterpulse"
       ],
       "adjacentAllyOrSelf": [
-        "acupressure"
+        "acupressure",
+        "milkdrink"
       ],
       "allAdjacentFoes": [
         "aircutter",
@@ -6117,6 +6342,7 @@
         "matchagotcha",
         "mortalspin",
         "muddywater",
+        "overdrive",
         "rockslide",
         "snarl",
         "stringshot",
@@ -6160,6 +6386,7 @@
       ],
       "all": [
         "chillyreception",
+        "courtchange",
         "electricterrain",
         "fairylock",
         "grassyterrain",
@@ -6225,6 +6452,8 @@
         "friendguard",
         "furcoat",
         "goodasgold",
+        "grasspelt",
+        "guarddog",
         "heatproof",
         "heavymetal",
         "hypercutter",
@@ -6248,6 +6477,7 @@
         "oblivious",
         "overcoat",
         "owntempo",
+        "punkrock",
         "purifyingsalt",
         "queenlymajesty",
         "sandveil",
@@ -6263,6 +6493,7 @@
         "sweetveil",
         "tangledfeet",
         "telepathy",
+        "thermalexchange",
         "thickfat",
         "unaware",
         "vitalspirit",
@@ -6382,8 +6613,10 @@
       "fling": [
         "abomasite",
         "absolite",
+        "absolitez",
         "aerodactylite",
         "aggronite",
+        "airballoon",
         "alakazite",
         "altarianite",
         "ampharosite",
@@ -6392,8 +6625,10 @@
         "babiriberry",
         "banettite",
         "barbaracite",
+        "baxcalibrite",
         "beedrillite",
         "bigroot",
+        "bindingband",
         "blackbelt",
         "blackglasses",
         "blastoisinite",
@@ -6423,6 +6658,8 @@
         "dragoninite",
         "drampanite",
         "eelektrossite",
+        "ejectbutton",
+        "electricseed",
         "emboarite",
         "excadrite",
         "expertbelt",
@@ -6435,11 +6672,14 @@
         "froslassite",
         "galladite",
         "garchompite",
+        "garchompitez",
         "gardevoirite",
         "gengarite",
         "glalitite",
         "glimmoranite",
+        "golisopite",
         "golurkite",
+        "grassyseed",
         "greninjite",
         "gyaradosite",
         "habanberry",
@@ -6454,6 +6694,7 @@
         "kasibberry",
         "kebiaberry",
         "kingsrock",
+        "leek",
         "leftovers",
         "leppaberry",
         "lifeorb",
@@ -6461,6 +6702,7 @@
         "lightclay",
         "lopunnite",
         "lucarionite",
+        "lucarionitez",
         "lumberry",
         "magnet",
         "malamarite",
@@ -6474,6 +6716,7 @@
         "metalcoat",
         "metronome",
         "miracleseed",
+        "mistyseed",
         "muscleband",
         "mysticwater",
         "nevermeltice",
@@ -6486,14 +6729,18 @@
         "pidgeotite",
         "pinsirite",
         "poisonbarb",
+        "psychicseed",
         "pyroarite",
         "quickclaw",
         "raichunitex",
         "raichunitey",
         "rawstberry",
+        "redcard",
         "rindoberry",
+        "rockyhelmet",
         "roseliberry",
         "sablenite",
+        "salamencite",
         "sceptilite",
         "scizorite",
         "scolipite",
@@ -6518,6 +6765,7 @@
         "steelixite",
         "swampertite",
         "tangaberry",
+        "terrainextender",
         "twistedspoon",
         "tyranitarite",
         "venusaurite",
@@ -6532,6 +6780,7 @@
       "megaStone": [
         "abomasite",
         "absolite",
+        "absolitez",
         "aerodactylite",
         "aggronite",
         "alakazite",
@@ -6540,6 +6789,7 @@
         "audinite",
         "banettite",
         "barbaracite",
+        "baxcalibrite",
         "beedrillite",
         "blastoisinite",
         "blazikenite",
@@ -6564,10 +6814,12 @@
         "froslassite",
         "galladite",
         "garchompite",
+        "garchompitez",
         "gardevoirite",
         "gengarite",
         "glalitite",
         "glimmoranite",
+        "golisopite",
         "golurkite",
         "greninjite",
         "gyaradosite",
@@ -6577,6 +6829,7 @@
         "kangaskhanite",
         "lopunnite",
         "lucarionite",
+        "lucarionitez",
         "malamarite",
         "manectite",
         "mawilite",
@@ -6590,6 +6843,7 @@
         "raichunitex",
         "raichunitey",
         "sablenite",
+        "salamencite",
         "sceptilite",
         "scizorite",
         "scolipite",
@@ -6665,6 +6919,9 @@
         "tangaberry",
         "wacanberry",
         "yacheberry"
+      ],
+      "isGem": [
+        "normalgem"
       ]
     }
   }
