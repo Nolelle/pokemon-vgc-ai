@@ -201,8 +201,9 @@ via `offline/evaluate_own_spread_pool.py --candidate/--incumbent` overrides.
 - **Latency (gate 3): PASS.** See section 5: p99 98ms against a 5s budget,
   zero timer losses, zero fallbacks.
 - **Authority (gate 4): PASS.** Learned components default off and the
-  hybrid margin is positive, pinned by unit test; ladder requires
-  mechanics-complete hybrid with search as decider.
+  hybrid margin is positive, pinned by unit test. Public play defaults to
+  search-only (no checkpoint). A learned hybrid session still requires a
+  mechanics-complete checkpoint, `--policy-mode hybrid`, and `--model-release`.
 
 Problem D is **complete for search and planning**. This does not claim the
 search is optimal -- the position weights are hand-chosen and uncalibrated,

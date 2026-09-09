@@ -66,4 +66,4 @@ def test_stat_formula_matches_sim(species: str, sp: dict[str, int], nature: str)
 def test_format_is_doubles_and_uses_champions_mod() -> None:
     # Sanity check this suite is actually exercising the mod this project targets, not
     # some other Showdown format -- see CLAUDE.md's "never assume vanilla gen9" warning.
-    assert FORMAT_ID == "gen9championsvgc2026regmb"
+    assert FORMAT_ID == "gen9championsvgc2026regmc"

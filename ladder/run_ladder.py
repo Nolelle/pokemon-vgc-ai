@@ -750,7 +750,7 @@ def parse_args() -> argparse.Namespace:
         "--model-release",
         type=Path,
         default=None,
-        help="verified release evidence for the exact model; required for public play",
+        help="verified release evidence for the exact model; required for public hybrid play",
     )
     parser.add_argument(
         "--policy-mode",
@@ -812,30 +812,30 @@ def main() -> int:
         enforce_battle_state_gate_for_cli("public ladder play")
         enforce_action_gate_for_cli("public ladder play")
         enforce_showdown_parity_for_cli("public ladder play")
-        if args.policy_mode != "hybrid" or args.policy_checkpoint is None:
-            raise SystemExit(
-                "public ladder play requires --policy-mode hybrid and a mechanics-complete "
-                "--policy-checkpoint; legacy deterministic and Python-forecast policies "
-                "remain local diagnostics only"
-            )
-        import torch
+        if args.policy_checkpoint is not None:
+            if args.policy_mode != "hybrid":
+                raise SystemExit(
+                    "public ladder play with a learned checkpoint requires --policy-mode hybrid "
+                    "and --model-release"
+                )
+            import torch
 
-        checkpoint_payload = torch.load(
-            args.policy_checkpoint, map_location="cpu", weights_only=False
-        )
-        if checkpoint_payload.get("use_mechanics_features") is not True:
-            raise SystemExit(
-                "public ladder play requires a checkpoint trained with the complete "
-                "mechanics input"
+            checkpoint_payload = torch.load(
+                args.policy_checkpoint, map_location="cpu", weights_only=False
             )
-        from vgc.model_release import enforce_model_release_for_cli
+            if checkpoint_payload.get("use_mechanics_features") is not True:
+                raise SystemExit(
+                    "public ladder play requires a checkpoint trained with the complete "
+                    "mechanics input"
+                )
+            from vgc.model_release import enforce_model_release_for_cli
 
-        enforce_model_release_for_cli(
-            args.model_release,
-            args.policy_checkpoint,
-            config,
-            safety_slots=args.safety_slots,
-        )
+            enforce_model_release_for_cli(
+                args.model_release,
+                args.policy_checkpoint,
+                config,
+                safety_slots=args.safety_slots,
+            )
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(
