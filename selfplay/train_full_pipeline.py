@@ -39,6 +39,7 @@ from vgc.rl.opponents import (
 )
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace
 
 DEFAULT_MANIFEST = REPO_ROOT / "data" / "selfplay" / "archetype_pool_150" / "manifest.json"
 DEFAULT_INIT = REPO_ROOT / "runs" / "full_pipeline" / "imitation" / "best.pt"
@@ -106,6 +107,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--init", type=Path, default=DEFAULT_INIT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    add_wandb_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -528,127 +530,17 @@ def main(argv: list[str] | None = None) -> None:
         best_key = (-1.0, -1.0)
     eval_opponents = [name for name, _weight in mix]
     prev_games_seen = games_seen
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="full_pipeline_ppo",
+        config=config_from_namespace(args),
+        tags=["ppo", "full_pipeline"],
+    )
 
-    with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
-        if not args.resume:
-            initial_eval = evaluate_policy(
-                worker,
-                model=model,
-                teams=holdout_teams,
-                opponents=eval_opponents,
-                games=args.eval_games,
-                seed=args.eval_seed + 9_000_000,
-                device=args.device,
-            )
-            initial_row = {"iteration": 0, "games_seen": 0, **initial_eval}
-            eval_path.write_text(json.dumps(initial_row, sort_keys=True) + "\n")
-            save_training_checkpoint(
-                args.out_dir / "best.pt",
-                model,
-                optimizer,
-                iteration=0,
-                games_seen=0,
-                ppo_config=ppo_config,
-                evaluation=initial_eval,
-            )
-            best_key = (
-                float(initial_eval["min_opponent_win_rate"]),
-                float(initial_eval["mean_opponent_win_rate"]),
-            )
-            print(f"eval 0: {initial_eval}", flush=True)
-
-        for iteration in range(start_iteration + 1, args.iterations + 1):
-            started = time.time()
-            rng = random.Random(args.seed + iteration * 100_000)
-            snapshots = discover_snapshots(pool_dir)
-            snapshot_cache = {path: load_snapshot(path, device=args.device) for path in snapshots}
-            buffer = RolloutBuffer()
-            results: list[float] = []
-            opponent_counts: Counter[str] = Counter()
-            learner_team_counts: Counter[str] = Counter()
-            for game_index in range(args.games_per_iteration):
-                learner_team = rng.choice(train_teams)
-                opponent_team = (
-                    learner_team if rng.random() < args.mirror_fraction else rng.choice(train_teams)
-                )
-                use_snapshot = bool(snapshots) and rng.random() < args.selfplay_fraction
-                if use_snapshot:
-                    snapshot_path = rng.choice(snapshots)
-                    opponent_kind = "snapshot"
-                    opponent_label = snapshot_path.stem
-                    opponent_model = snapshot_cache[snapshot_path]
-                else:
-                    opponent_kind = "baseline"
-                    opponent_label = sample_mix(mix, rng)
-                    opponent_model = None
-                opponent_counts[opponent_label] += 1
-                learner_team_counts[learner_team.label] += 1
-                results.append(
-                    _training_game(
-                        worker,
-                        model=model,
-                        buffer=buffer,
-                        learner_team=learner_team,
-                        opponent_team=opponent_team,
-                        opponent_kind=opponent_kind,
-                        opponent_label=opponent_label,
-                        opponent_model=opponent_model,
-                        learner_side="p1" if game_index % 2 == 0 else "p2",
-                        ppo_config=ppo_config,
-                        seed=args.seed + iteration * 100_000 + game_index,
-                        rng=rng,
-                        device=args.device,
-                    )
-                )
-            update = ppo_update(model, optimizer, buffer, ppo_config, device=args.device)
-            prev_games_seen = games_seen
-            games_seen += args.games_per_iteration
-            snapshot_path = save_snapshot(
-                pool_dir,
-                model,
-                generation=iteration,
-                max_snapshots=args.max_snapshots,
-            )
-            if crossed_milestone(prev_games_seen, games_seen, args.milestone_every):
-                milestone_path = save_training_checkpoint(
-                    args.out_dir / "milestones" / f"games_{games_seen:06d}.pt",
-                    model,
-                    optimizer,
-                    iteration=iteration,
-                    games_seen=games_seen,
-                    ppo_config=ppo_config,
-                    include_optimizer=False,
-                )
-                print(f"milestone saved: {milestone_path}", flush=True)
-            row = {
-                "iteration": iteration,
-                "games_seen": games_seen,
-                "wins": sum(result > 0 for result in results),
-                "losses": sum(result < 0 for result in results),
-                "draws": sum(result == 0 for result in results),
-                "opponent_counts": dict(opponent_counts),
-                "learner_team_counts": dict(learner_team_counts),
-                "ppo": update,
-                "snapshot": str(snapshot_path),
-                "elapsed_seconds": time.time() - started,
-            }
-            with metrics_path.open("a") as file:
-                file.write(json.dumps(row, sort_keys=True) + "\n")
-            save_training_checkpoint(
-                args.out_dir / "latest.pt",
-                model,
-                optimizer,
-                iteration=iteration,
-                games_seen=games_seen,
-                ppo_config=ppo_config,
-            )
-            print(
-                f"iteration {iteration}: wins={row['wins']} losses={row['losses']} "
-                f"steps={int(update['steps'])} loss={update['loss']:.4f}",
-                flush=True,
-            )
-            if iteration % args.eval_every == 0 or iteration == args.iterations:
-                evaluation = evaluate_policy(
+    try:
+        with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
+            if not args.resume:
+                initial_eval = evaluate_policy(
                     worker,
                     model=model,
                     teams=holdout_teams,
@@ -657,13 +549,114 @@ def main(argv: list[str] | None = None) -> None:
                     seed=args.eval_seed + 9_000_000,
                     device=args.device,
                 )
-                eval_row = {"iteration": iteration, "games_seen": games_seen, **evaluation}
-                with eval_path.open("a") as file:
-                    file.write(json.dumps(eval_row, sort_keys=True) + "\n")
-                # `latest.pt` was saved immediately before this frozen evaluation.
-                # Re-save the exact same model with its evaluation attached so the
-                # conservative promotion gate can verify that the tested checkpoint
-                # is evaluation-linked, even when the final iteration is not `best.pt`.
+                initial_row = {"iteration": 0, "games_seen": 0, **initial_eval}
+                eval_path.write_text(json.dumps(initial_row, sort_keys=True) + "\n")
+                save_training_checkpoint(
+                    args.out_dir / "best.pt",
+                    model,
+                    optimizer,
+                    iteration=0,
+                    games_seen=0,
+                    ppo_config=ppo_config,
+                    evaluation=initial_eval,
+                )
+                best_key = (
+                    float(initial_eval["min_opponent_win_rate"]),
+                    float(initial_eval["mean_opponent_win_rate"]),
+                )
+                print(f"eval 0: {initial_eval}", flush=True)
+
+            for iteration in range(start_iteration + 1, args.iterations + 1):
+                started = time.time()
+                rng = random.Random(args.seed + iteration * 100_000)
+                snapshots = discover_snapshots(pool_dir)
+                snapshot_cache = {
+                    path: load_snapshot(path, device=args.device) for path in snapshots
+                }
+                buffer = RolloutBuffer()
+                results: list[float] = []
+                opponent_counts: Counter[str] = Counter()
+                learner_team_counts: Counter[str] = Counter()
+                for game_index in range(args.games_per_iteration):
+                    learner_team = rng.choice(train_teams)
+                    opponent_team = (
+                        learner_team
+                        if rng.random() < args.mirror_fraction
+                        else rng.choice(train_teams)
+                    )
+                    use_snapshot = bool(snapshots) and rng.random() < args.selfplay_fraction
+                    if use_snapshot:
+                        snapshot_path = rng.choice(snapshots)
+                        opponent_kind = "snapshot"
+                        opponent_label = snapshot_path.stem
+                        opponent_model = snapshot_cache[snapshot_path]
+                    else:
+                        opponent_kind = "baseline"
+                        opponent_label = sample_mix(mix, rng)
+                        opponent_model = None
+                    opponent_counts[opponent_label] += 1
+                    learner_team_counts[learner_team.label] += 1
+                    results.append(
+                        _training_game(
+                            worker,
+                            model=model,
+                            buffer=buffer,
+                            learner_team=learner_team,
+                            opponent_team=opponent_team,
+                            opponent_kind=opponent_kind,
+                            opponent_label=opponent_label,
+                            opponent_model=opponent_model,
+                            learner_side="p1" if game_index % 2 == 0 else "p2",
+                            ppo_config=ppo_config,
+                            seed=args.seed + iteration * 100_000 + game_index,
+                            rng=rng,
+                            device=args.device,
+                        )
+                    )
+                update = ppo_update(model, optimizer, buffer, ppo_config, device=args.device)
+                prev_games_seen = games_seen
+                games_seen += args.games_per_iteration
+                snapshot_path = save_snapshot(
+                    pool_dir,
+                    model,
+                    generation=iteration,
+                    max_snapshots=args.max_snapshots,
+                )
+                if crossed_milestone(prev_games_seen, games_seen, args.milestone_every):
+                    milestone_path = save_training_checkpoint(
+                        args.out_dir / "milestones" / f"games_{games_seen:06d}.pt",
+                        model,
+                        optimizer,
+                        iteration=iteration,
+                        games_seen=games_seen,
+                        ppo_config=ppo_config,
+                        include_optimizer=False,
+                    )
+                    print(f"milestone saved: {milestone_path}", flush=True)
+                row = {
+                    "iteration": iteration,
+                    "games_seen": games_seen,
+                    "wins": sum(result > 0 for result in results),
+                    "losses": sum(result < 0 for result in results),
+                    "draws": sum(result == 0 for result in results),
+                    "opponent_counts": dict(opponent_counts),
+                    "learner_team_counts": dict(learner_team_counts),
+                    "ppo": update,
+                    "snapshot": str(snapshot_path),
+                    "elapsed_seconds": time.time() - started,
+                }
+                with metrics_path.open("a") as file:
+                    file.write(json.dumps(row, sort_keys=True) + "\n")
+                wandb_session.log(
+                    {
+                        "train/wins": row["wins"],
+                        "train/losses": row["losses"],
+                        "train/draws": row["draws"],
+                        "ppo": update,
+                        "train/elapsed_seconds": row["elapsed_seconds"],
+                    },
+                    step=games_seen,
+                )
                 save_training_checkpoint(
                     args.out_dir / "latest.pt",
                     model,
@@ -671,16 +664,34 @@ def main(argv: list[str] | None = None) -> None:
                     iteration=iteration,
                     games_seen=games_seen,
                     ppo_config=ppo_config,
-                    evaluation=evaluation,
                 )
-                candidate_key = (
-                    float(evaluation["min_opponent_win_rate"]),
-                    float(evaluation["mean_opponent_win_rate"]),
+                print(
+                    f"iteration {iteration}: wins={row['wins']} losses={row['losses']} "
+                    f"steps={int(update['steps'])} loss={update['loss']:.4f}",
+                    flush=True,
                 )
-                if candidate_key > best_key:
-                    best_key = candidate_key
+                if iteration % args.eval_every == 0 or iteration == args.iterations:
+                    evaluation = evaluate_policy(
+                        worker,
+                        model=model,
+                        teams=holdout_teams,
+                        opponents=eval_opponents,
+                        games=args.eval_games,
+                        seed=args.eval_seed + 9_000_000,
+                        device=args.device,
+                    )
+                    eval_row = {"iteration": iteration, "games_seen": games_seen, **evaluation}
+                    with eval_path.open("a") as file:
+                        file.write(json.dumps(eval_row, sort_keys=True) + "\n")
+                    wandb_session.log(
+                        {
+                            "eval/mean_opponent_win_rate": evaluation["mean_opponent_win_rate"],
+                            "eval/min_opponent_win_rate": evaluation["min_opponent_win_rate"],
+                        },
+                        step=games_seen,
+                    )
                     save_training_checkpoint(
-                        args.out_dir / "best.pt",
+                        args.out_dir / "latest.pt",
                         model,
                         optimizer,
                         iteration=iteration,
@@ -688,7 +699,24 @@ def main(argv: list[str] | None = None) -> None:
                         ppo_config=ppo_config,
                         evaluation=evaluation,
                     )
-                print(f"eval {iteration}: {evaluation}", flush=True)
+                    candidate_key = (
+                        float(evaluation["min_opponent_win_rate"]),
+                        float(evaluation["mean_opponent_win_rate"]),
+                    )
+                    if candidate_key > best_key:
+                        best_key = candidate_key
+                        save_training_checkpoint(
+                            args.out_dir / "best.pt",
+                            model,
+                            optimizer,
+                            iteration=iteration,
+                            games_seen=games_seen,
+                            ppo_config=ppo_config,
+                            evaluation=evaluation,
+                        )
+                    print(f"eval {iteration}: {evaluation}", flush=True)
+    finally:
+        wandb_session.finish()
 
     print(f"best checkpoint: {args.out_dir / 'best.pt'}")
     print(f"latest checkpoint: {args.out_dir / 'latest.pt'}")

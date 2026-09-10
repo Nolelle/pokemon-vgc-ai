@@ -59,6 +59,7 @@ from vgc.rl.model import CandidatePolicyValueNet
 from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace
 
 DEFAULT_TEAM = REPO_ROOT / "teams" / "phase2_mirror.packed.txt"
 DEFAULT_BC_CHECKPOINT = REPO_ROOT / "data" / "models" / "bc_policy_v4.pt"
@@ -166,6 +167,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--soft-target-weight", type=float, default=1.0)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    add_wandb_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -529,6 +531,12 @@ def main(argv: list[str] | None = None) -> None:
                 f"remove local changes in {', '.join(dirty_sources)}"
             )
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="imitation",
+        config=config_from_namespace(args),
+        tags=["imitation", "distillation"],
+    )
     dataset_path = args.out_dir / "demonstrations.pt"
     split_manifest_path = args.out_dir / "split_manifest.json"
 
@@ -643,10 +651,11 @@ def main(argv: list[str] | None = None) -> None:
         if args.audit_only:
             print(f"training audit: PASS ({len(train_samples)} train / {len(validation_samples)} validation)")
             print(f"audit: {audit_path}")
+            wandb_session.finish()
             return
 
         if args.collect_only:
-            metrics: dict[str, object] = {
+            collect_metrics: dict[str, object] = {
                 "mode": "collect_only",
                 "sample_count": len(samples),
                 "battle_count": len({sample.battle_id for sample in samples}),
@@ -665,9 +674,11 @@ def main(argv: list[str] | None = None) -> None:
                 "split_manifest": str(split_manifest_path),
             }
             metrics_path = args.out_dir / "collection_summary.json"
-            metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
-            print(json.dumps(metrics, indent=2, sort_keys=True))
+            metrics_path.write_text(json.dumps(collect_metrics, indent=2, sort_keys=True) + "\n")
+            wandb_session.log_summary(collect_metrics)
+            print(json.dumps(collect_metrics, indent=2, sort_keys=True))
             print(f"collection summary: {metrics_path}")
+            wandb_session.finish()
             return
 
         torch.manual_seed(args.seed)
@@ -707,6 +718,8 @@ def main(argv: list[str] | None = None) -> None:
             device=args.device,
             val_samples=validation_samples,
         )
+        for epoch_row in training.get("val_history", []):
+            wandb_session.log({"val": epoch_row}, step=int(epoch_row.get("epoch", 0)))
         after = evaluate_agreement(
             model, validation_samples, batch_size=args.batch_size, device=args.device
         )
@@ -754,11 +767,21 @@ def main(argv: list[str] | None = None) -> None:
     save_model_checkpoint(
         args.out_dir / "best.pt", model, optimizer, metrics=metrics, args=args
     )
+    wandb_session.log_summary(
+        {
+            "before": before,
+            "after": after,
+            "training": training,
+            "game_evaluation": game_evaluation,
+            "teacher_probability_improved": improved,
+        }
+    )
     print(json.dumps(metrics, indent=2, sort_keys=True))
     print(f"demonstrations: {dataset_path if args.dataset is None else args.dataset}")
     print(f"split manifest: {split_manifest_path}")
     print(f"checkpoint: {args.out_dir / 'best.pt'}")
     print(f"metrics: {metrics_path}")
+    wandb_session.finish(exit_code=0 if improved else 1)
     if not improved:
         raise SystemExit("validation teacher probability did not improve")
 
