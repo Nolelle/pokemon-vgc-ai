@@ -59,6 +59,7 @@ from vgc.rl.opponents import (  # noqa: E402
 )
 from vgc.rl.player import PpoVgcPlayer  # noqa: E402
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update  # noqa: E402
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace  # noqa: E402
 
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "ppo"
 DEFAULT_BC_CHECKPOINT = REPO_ROOT / "data" / "models" / "bc_policy_v4_selfplay.pt"
@@ -1877,6 +1878,7 @@ def parse_args() -> argparse.Namespace:
             "threat, switching, uncertainty, and two-slot synergy facts"
         ),
     )
+    add_wandb_arguments(parser)
     args = parser.parse_args()
     # Which PpoConfig-backed knobs the caller actually set on the command line. --resume
     # restores the checkpoint's saved PpoConfig wholesale, which would otherwise silently
@@ -2075,6 +2077,12 @@ def main() -> int:
             )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="ppo",
+        config=config_from_namespace(args),
+        tags=["ppo"],
+    )
     metrics_path = args.out_dir / "metrics.jsonl"
     bootstrap_path = args.out_dir / "bootstrap.json"
     evaluation_path = args.out_dir / "evaluation.json"
@@ -2292,6 +2300,12 @@ def main() -> int:
             )
             passed = bootstrap_result["passed"]
             bootstrap_path.write_text(json.dumps(bootstrap_result, indent=2, sort_keys=True) + "\n")
+            wandb_session.log_summary({"bootstrap": bootstrap_result})
+            for epoch_row in training.get("val_history", []):
+                wandb_session.log(
+                    {"bootstrap/val": epoch_row},
+                    step=int(epoch_row.get("epoch", 0)),
+                )
             summary_line = (
                 "teacher bootstrap: "
                 f"source={validation_source} "
@@ -2390,6 +2404,16 @@ def main() -> int:
             }
             with metrics_path.open("a") as metrics_file:
                 metrics_file.write(json.dumps(row, sort_keys=True) + "\n")
+            wandb_session.log(
+                {
+                    "train/wins": result["wins"],
+                    "train/steps": result["steps"],
+                    "ppo": update_metrics,
+                    "train/elapsed_seconds": row["elapsed_seconds"],
+                    "train/teacher_anchor_weight": current_teacher_anchor_weight,
+                },
+                step=games_seen,
+            )
             checkpoint_path = args.out_dir / "latest.pt"
             save_checkpoint(
                 checkpoint_path,
@@ -2410,6 +2434,14 @@ def main() -> int:
                 evaluation = run_evaluation()
                 evaluation["training_games"] = games_seen
                 improved = record_evaluation(evaluation, iteration=iteration)
+                wandb_session.log(
+                    {
+                        "eval/win_rate": evaluation["win_rate"],
+                        "eval/games": evaluation["games"],
+                        "eval/wins": evaluation["wins"],
+                    },
+                    step=games_seen,
+                )
                 last_evaluated_games = games_seen
                 print(
                     f"frozen evaluation at {games_seen} games: "
@@ -2439,6 +2471,7 @@ def main() -> int:
         if server_process is not None:
             server_process.kill()
             server_process.wait(timeout=10)
+        wandb_session.finish()
 
     print(f"checkpoint: {args.out_dir / 'latest.pt'}")
     print(f"metrics: {metrics_path}")

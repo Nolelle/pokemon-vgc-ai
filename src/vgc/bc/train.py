@@ -109,6 +109,7 @@ from vgc.bc.encoding import (
     TARGET_VOCAB,
 )
 from vgc.bc.model import DEFAULT_HEADS, BcPolicyNet
+from vgc.wandb_logging import WandbSession
 
 DEFAULT_CHECKPOINT_NAME = "bc_policy.pt"
 # Turn-bucket boundaries for val_value_accuracy_by_turn_bucket -- see module docstring.
@@ -334,7 +335,11 @@ def evaluate(
     }
 
 
-def train(config: TrainConfig) -> dict[str, object]:
+def train(
+    config: TrainConfig,
+    *,
+    wandb_session: WandbSession | None = None,
+) -> dict[str, object]:
     """Runs the full BC training loop (with early stopping) and returns a summary dict
     (also everything `tools/train_bc.py` prints) -- see module docstring for scope.
     """
@@ -473,18 +478,19 @@ def train(config: TrainConfig) -> dict[str, object]:
             f"value_baseline={value_baseline:.4f} value_by_turn=[{bucket_str}] "
             f"lr={scheduler.get_last_lr()[0]:.6f}"
         )
-        history.append(
-            {
-                "epoch": epoch,
-                "train_loss": train_loss,
-                "val_move_top1": metrics["move_top1"],
-                "val_move_top3": metrics["move_top3"],
-                "val_target_top1": metrics["target_top1"],
-                "val_value_accuracy": metrics["value_accuracy"],
-                "val_value_auc": metrics["value_auc"],
-                "val_value_accuracy_by_turn_bucket": metrics["value_accuracy_by_turn_bucket"],
-            }
-        )
+        epoch_row = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_move_top1": metrics["move_top1"],
+            "val_move_top3": metrics["move_top3"],
+            "val_target_top1": metrics["target_top1"],
+            "val_value_accuracy": metrics["value_accuracy"],
+            "val_value_auc": metrics["value_auc"],
+            "val_value_accuracy_by_turn_bucket": metrics["value_accuracy_by_turn_bucket"],
+        }
+        history.append(epoch_row)
+        if wandb_session is not None:
+            wandb_session.log(epoch_row, step=epoch)
 
         if metrics["move_top1"] > best_val_move_top1:
             best_val_move_top1 = metrics["move_top1"]

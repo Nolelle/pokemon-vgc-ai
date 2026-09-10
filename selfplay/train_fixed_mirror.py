@@ -33,6 +33,7 @@ from vgc.rl.model import CandidatePolicyValueNet
 from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace
 
 DEFAULT_TEAM = REPO_ROOT / "teams" / "phase2_mirror.packed.txt"
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "ppo" / "fixed_mirror"
@@ -109,6 +110,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="enable first-principles damage, KO, Speed, threat, and synergy inputs",
     )
+    add_wandb_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -407,6 +409,7 @@ def _record_evals(
     iteration: int,
     games_seen: int,
     eval_path: Path,
+    wandb_session: WandbSession | None = None,
 ) -> dict[str, object]:
     eval_rows: list[dict[str, object]] = []
     for opponent_name in opponents:
@@ -435,6 +438,16 @@ def _record_evals(
         eval_rows.append(eval_row)
         with eval_path.open("a") as eval_file:
             eval_file.write(json.dumps(eval_row, sort_keys=True) + "\n")
+        if wandb_session is not None:
+            wandb_session.log(
+                {
+                    "eval/win_rate": eval_row["win_rate"],
+                    "eval/games": eval_row["games"],
+                    "eval/wins": eval_row["wins"],
+                    f"eval/by_opponent/{opponent_name}/win_rate": eval_row["win_rate"],
+                },
+                step=games_seen,
+            )
         print(
             f"  eval vs {opponent_name} @ {games_seen} games: "
             f"{summary['p1_wins']}/{summary['games']} "
@@ -449,6 +462,14 @@ def _record_evals(
     }
     with eval_path.open("a") as eval_file:
         eval_file.write(json.dumps(pool_row, sort_keys=True) + "\n")
+    if wandb_session is not None:
+        wandb_session.log(
+            {
+                "eval/pool/mean_win_rate": pool["mean_win_rate"],
+                "eval/pool/min_win_rate": pool["min_win_rate"],
+            },
+            step=games_seen,
+        )
     print(
         f"  pool @ {games_seen} games: mean={pool['mean_win_rate']:.3f} "
         f"min={pool['min_win_rate']:.3f} ({pool['min_opponent']})"
@@ -548,117 +569,22 @@ def main(argv: list[str] | None = None) -> None:
     if not (sim_repo / "dist" / "sim" / "index.js").exists():
         raise SystemExit(f"no built showdown sim at {sim_repo}")
 
-    with SimWorker(sim_repo) as worker:
-        if mix:
-            mix_s = ", ".join(f"{name}={weight:.2f}" for name, weight in mix)
-            print(f"training mix: {mix_s}", flush=True)
-        else:
-            print(f"training opponent: {args.opponent}", flush=True)
-        evaled_targets: set[int] = set()
-        if args.eval_games > 0:
-            print(f"eval at 0 games ({args.eval_games} per opponent)", flush=True)
-            _record_evals(
-                worker,
-                model=model,
-                team=team,
-                opponents=eval_opponents,
-                games=args.eval_games,
-                ppo_config=ppo_config,
-                device=args.device,
-                seed=args.seed,
-                iteration=0,
-                games_seen=0,
-                eval_path=eval_path,
-            )
-        for iteration in range(1, args.iterations + 1):
-            started = time.time()
-            buffer = RolloutBuffer()
-            rng = random.Random(args.seed + iteration * 10_000)
-            wins = losses = draws = steps = 0
-            opponent_counts: Counter[str] = Counter()
-            for game_idx in range(args.games_per_iteration):
-                learner_side = "p1" if game_idx % 2 == 0 else "p2"
-                opponent_name = sample_opponent(mix, rng) if mix else args.opponent
-                opponent_counts[opponent_name] += 1
-                sim_seed = [rng.randrange(1, 2**31) for _ in range(4)]
-                policy_seed = args.seed + iteration * 10_000 + game_idx
-                opponent_seed = args.seed + iteration * 10_000 + game_idx + 1
-                result, game_steps = _play_training_game(
-                    worker,
-                    model=model,
-                    buffer=buffer,
-                    team=team,
-                    opponent_name=opponent_name,
-                    ppo_config=ppo_config,
-                    device=args.device,
-                    battle_tag=f"train-{iteration}-{game_idx}",
-                    learner_side=learner_side,
-                    sim_seed=sim_seed,
-                    policy_seed=policy_seed,
-                    opponent_seed=opponent_seed,
-                )
-                steps += game_steps
-                if result > 0:
-                    wins += 1
-                elif result < 0:
-                    losses += 1
-                else:
-                    draws += 1
-
-            if not buffer.steps:
-                raise RuntimeError("no PPO decisions were recorded from completed training games")
-            update_metrics = ppo_update(
-                model, optimizer, buffer, ppo_config, device=args.device
-            )
-            games_seen += args.games_per_iteration
-            # Save AFTER the update. Previously iter_0040 represented the model before
-            # iteration 40 while its filename and metrics row implied the opposite.
-            snapshot_path = _save_iteration_snapshot(
-                args.out_dir,
-                model,
-                iteration,
-                games_seen=games_seen,
-            )
-            row = {
-                "iteration": iteration,
-                "games_seen": games_seen,
-                "wins": wins,
-                "losses": losses,
-                "draws": draws,
-                "steps": steps,
-                "opponent_counts": dict(opponent_counts),
-                "mix": {name: weight for name, weight in mix} if mix else {args.opponent: 1.0},
-                "ppo": update_metrics,
-                "snapshot": str(snapshot_path),
-                "elapsed_seconds": time.time() - started,
-            }
-            with metrics_path.open("a") as metrics_file:
-                metrics_file.write(json.dumps(row, sort_keys=True) + "\n")
-            save_checkpoint(
-                args.out_dir / "latest.pt",
-                model,
-                optimizer,
-                iteration=iteration,
-                games_seen=games_seen,
-                ppo_config=ppo_config,
-            )
-            print(
-                f"iteration {iteration}: games={args.games_per_iteration} "
-                f"wins={wins} losses={losses} draws={draws} steps={steps} "
-                f"loss={update_metrics['loss']:.4f} entropy={update_metrics['entropy']:.4f}"
-            )
-
-            due_targets = (
-                [target for target in eval_at_games if games_seen >= target and target not in evaled_targets]
-                if eval_at_games
-                else []
-            )
-            eval_by_interval = (
-                not eval_at_games
-                and args.eval_games > 0
-                and iteration % args.eval_every_iterations == 0
-            )
-            if args.eval_games > 0 and (due_targets or eval_by_interval):
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="fixed_mirror_ppo",
+        config=config_from_namespace(args),
+        tags=["ppo", "fixed_mirror"],
+    )
+    try:
+        with SimWorker(sim_repo) as worker:
+            if mix:
+                mix_s = ", ".join(f"{name}={weight:.2f}" for name, weight in mix)
+                print(f"training mix: {mix_s}", flush=True)
+            else:
+                print(f"training opponent: {args.opponent}", flush=True)
+            evaled_targets: set[int] = set()
+            if args.eval_games > 0:
+                print(f"eval at 0 games ({args.eval_games} per opponent)", flush=True)
                 _record_evals(
                     worker,
                     model=model,
@@ -668,11 +594,134 @@ def main(argv: list[str] | None = None) -> None:
                     ppo_config=ppo_config,
                     device=args.device,
                     seed=args.seed,
+                    iteration=0,
+                    games_seen=0,
+                    eval_path=eval_path,
+                    wandb_session=wandb_session,
+                )
+            for iteration in range(1, args.iterations + 1):
+                started = time.time()
+                buffer = RolloutBuffer()
+                rng = random.Random(args.seed + iteration * 10_000)
+                wins = losses = draws = steps = 0
+                opponent_counts: Counter[str] = Counter()
+                for game_idx in range(args.games_per_iteration):
+                    learner_side = "p1" if game_idx % 2 == 0 else "p2"
+                    opponent_name = sample_opponent(mix, rng) if mix else args.opponent
+                    opponent_counts[opponent_name] += 1
+                    sim_seed = [rng.randrange(1, 2**31) for _ in range(4)]
+                    policy_seed = args.seed + iteration * 10_000 + game_idx
+                    opponent_seed = args.seed + iteration * 10_000 + game_idx + 1
+                    result, game_steps = _play_training_game(
+                        worker,
+                        model=model,
+                        buffer=buffer,
+                        team=team,
+                        opponent_name=opponent_name,
+                        ppo_config=ppo_config,
+                        device=args.device,
+                        battle_tag=f"train-{iteration}-{game_idx}",
+                        learner_side=learner_side,
+                        sim_seed=sim_seed,
+                        policy_seed=policy_seed,
+                        opponent_seed=opponent_seed,
+                    )
+                    steps += game_steps
+                    if result > 0:
+                        wins += 1
+                    elif result < 0:
+                        losses += 1
+                    else:
+                        draws += 1
+
+                if not buffer.steps:
+                    raise RuntimeError(
+                        "no PPO decisions were recorded from completed training games"
+                    )
+                update_metrics = ppo_update(
+                    model, optimizer, buffer, ppo_config, device=args.device
+                )
+                games_seen += args.games_per_iteration
+                snapshot_path = _save_iteration_snapshot(
+                    args.out_dir,
+                    model,
+                    iteration,
+                    games_seen=games_seen,
+                )
+                row = {
+                    "iteration": iteration,
+                    "games_seen": games_seen,
+                    "wins": wins,
+                    "losses": losses,
+                    "draws": draws,
+                    "steps": steps,
+                    "opponent_counts": dict(opponent_counts),
+                    "mix": {name: weight for name, weight in mix}
+                    if mix
+                    else {args.opponent: 1.0},
+                    "ppo": update_metrics,
+                    "snapshot": str(snapshot_path),
+                    "elapsed_seconds": time.time() - started,
+                }
+                with metrics_path.open("a") as metrics_file:
+                    metrics_file.write(json.dumps(row, sort_keys=True) + "\n")
+                wandb_session.log(
+                    {
+                        "train/wins": wins,
+                        "train/losses": losses,
+                        "train/draws": draws,
+                        "train/steps": steps,
+                        "train/elapsed_seconds": row["elapsed_seconds"],
+                        "ppo": update_metrics,
+                    },
+                    step=games_seen,
+                )
+                save_checkpoint(
+                    args.out_dir / "latest.pt",
+                    model,
+                    optimizer,
                     iteration=iteration,
                     games_seen=games_seen,
-                    eval_path=eval_path,
+                    ppo_config=ppo_config,
                 )
-                evaled_targets.update(due_targets)
+                print(
+                    f"iteration {iteration}: games={args.games_per_iteration} "
+                    f"wins={wins} losses={losses} draws={draws} steps={steps} "
+                    f"loss={update_metrics['loss']:.4f} entropy={update_metrics['entropy']:.4f}"
+                )
+
+                due_targets = (
+                    [
+                        target
+                        for target in eval_at_games
+                        if games_seen >= target and target not in evaled_targets
+                    ]
+                    if eval_at_games
+                    else []
+                )
+                eval_by_interval = (
+                    not eval_at_games
+                    and args.eval_games > 0
+                    and iteration % args.eval_every_iterations == 0
+                )
+                if args.eval_games > 0 and (due_targets or eval_by_interval):
+                    _record_evals(
+                        worker,
+                        model=model,
+                        team=team,
+                        opponents=eval_opponents,
+                        games=args.eval_games,
+                        ppo_config=ppo_config,
+                        device=args.device,
+                        seed=args.seed,
+                        iteration=iteration,
+                        games_seen=games_seen,
+                        eval_path=eval_path,
+                        wandb_session=wandb_session,
+                    )
+                    evaled_targets.update(due_targets)
+    finally:
+        wandb_session.finish()
 
     if args.iterations > 0:
         print(f"checkpoint: {args.out_dir / 'latest.pt'}")
