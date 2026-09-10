@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "d04d59618a5d3a14a9a14763392204ecde680f37"
+    "showdown_commit": "d849b220082e113d8a17303509fb44d420c543d5"
   },
   "format": {
     "game_type": "doubles",
@@ -2548,6 +2548,12 @@
         ],
         "onTryHeal": [
           "ripen"
+        ],
+        "onMaybeTrapPokemon": [
+          "runaway"
+        ],
+        "onTrapPokemon": [
+          "runaway"
         ],
         "onModifyAccuracy": [
           "sandveil",
@@ -5831,6 +5837,7 @@
       ],
       "punch": [
         "bulletpunch",
+        "doubleshock",
         "drainpunch",
         "dynamicpunch",
         "firepunch",
