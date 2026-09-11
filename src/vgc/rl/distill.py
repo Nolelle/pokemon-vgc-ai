@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import random
 import traceback
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 from poke_env.battle.double_battle import DoubleBattle
@@ -801,6 +802,7 @@ def distill_policy(
     *,
     device: str,
     val_samples: list[DistillationSample] | None = None,
+    on_epoch: Callable[[int, dict[str, object]], None] | None = None,
 ) -> dict[str, float]:
     """Train `model` to imitate the teacher for `config.epochs` epochs.
 
@@ -818,6 +820,8 @@ def distill_policy(
     `balance_action_count_bins` oversamples rare large-branching turns, and
     `hard_example_weight` upweights samples whose teacher action currently ranks past
     `hard_example_rank` -- the only samples a shortlist gate can actually fail.
+    `on_epoch`, when set, receives that epoch's train (and validation, if present)
+    scalars. Training does not depend on it.
     """
 
     if not train_samples:
@@ -866,6 +870,8 @@ def distill_policy(
         else:
             sample_weights = None
         model.train()
+        epoch_losses: list[float] = []
+        epoch_grad_norms: list[float] = []
         for start in range(0, len(indices), config.batch_size):
             selected = indices[start : start + config.batch_size]
             batch = _tensor_batch([train_samples[int(index)] for index in selected], device)
@@ -930,9 +936,17 @@ def distill_policy(
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
-            losses.append(float(loss.detach()))
-            grad_norms.append(float(grad_norm.detach()))
+            batch_loss = float(loss.detach())
+            batch_grad = float(grad_norm.detach())
+            losses.append(batch_loss)
+            grad_norms.append(batch_grad)
+            epoch_losses.append(batch_loss)
+            epoch_grad_norms.append(batch_grad)
         epochs_run = epoch
+        epoch_payload: dict[str, object] = {
+            "train/loss": sum(epoch_losses) / len(epoch_losses),
+            "train/grad_norm": sum(epoch_grad_norms) / len(epoch_grad_norms),
+        }
 
         if val_samples is not None:
             # evaluate_agreement puts the model in eval mode internally; return to
@@ -953,6 +967,13 @@ def distill_policy(
                     "teacher_rank_p95": epoch_metrics.get("teacher_rank_p95"),
                 }
             )
+            epoch_payload["val/accuracy"] = epoch_metrics["accuracy"]
+            epoch_payload["val/teacher_probability"] = epoch_metrics["teacher_probability"]
+            epoch_payload["val/loss"] = epoch_metrics["loss"]
+            if epoch_metrics.get("recall_at_10") is not None:
+                epoch_payload["val/recall_at_10"] = epoch_metrics["recall_at_10"]
+            if epoch_metrics.get("teacher_rank_p95") is not None:
+                epoch_payload["val/teacher_rank_p95"] = epoch_metrics["teacher_rank_p95"]
             if config.checkpoint_metric == "recall_at_k":
                 metric_name = f"recall_at_{config.checkpoint_recall_k}"
                 candidate_key = (
@@ -983,11 +1004,15 @@ def distill_policy(
                 epochs_since_improvement = 0
             else:
                 epochs_since_improvement += 1
-                if (
-                    config.early_stopping_patience > 0
-                    and epochs_since_improvement >= config.early_stopping_patience
-                ):
-                    break
+
+        if on_epoch is not None:
+            on_epoch(epoch, epoch_payload)
+        if (
+            val_samples is not None
+            and config.early_stopping_patience > 0
+            and epochs_since_improvement >= config.early_stopping_patience
+        ):
+            break
 
     result: dict[str, float] = {
         "loss": sum(losses) / len(losses),
