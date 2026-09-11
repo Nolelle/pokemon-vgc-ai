@@ -1,0 +1,59 @@
+Lucario @ Lucarionite Z
+Level: 50
+Ability: Inner Focus
+EVs: 16 HP / 18 SpA / 32 Spe
+Timid Nature
+- Detect
+- Aura Sphere
+- Flash Cannon
+- Calm Mind
+
+Floette-Eternal @ Floettite
+Level: 50
+Ability: Flower Veil
+EVs: 32 HP / 2 Def / 32 SpA
+Modest Nature
+- Protect
+- Draining Kiss
+- Dazzling Gleam
+- Calm Mind
+
+Incineroar @ Sitrus Berry
+Level: 50
+Ability: Intimidate
+EVs: 32 HP / 14 Def / 20 SpD
+Careful Nature
+- Fake Out
+- Flare Blitz
+- Darkest Lariat
+- Parting Shot
+
+Rillaboom @ Rocky Helmet
+Level: 50
+Ability: Grassy Surge
+EVs: 32 HP / 32 Atk / 2 Def
+Adamant Nature
+- Fake Out
+- Grassy Glide
+- Wood Hammer
+- U-turn
+
+Politoed @ Leftovers
+Level: 50
+Ability: Drizzle
+EVs: 32 HP / 18 Def / 16 SpD
+Calm Nature
+- Protect
+- Weather Ball
+- Perish Song
+- Icy Wind
+
+Garchomp @ Life Orb
+Level: 50
+Ability: Rough Skin
+EVs: 2 HP / 32 Atk / 32 Spe
+Jolly Nature
+- Protect
+- Dragon Claw
+- Stomping Tantrum
+- Rock Slide
