@@ -3911,7 +3911,7 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
+    "isNonstandard": null
   },
   "metronome": {
     "id": "metronome",

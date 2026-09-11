@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "d849b220082e113d8a17303509fb44d420c543d5"
+    "showdown_commit": "524413e8415fe179781e9bbcc7c79a85543b3409"
   },
   "format": {
     "game_type": "doubles",
@@ -54,7 +54,7 @@
   "counts": {
     "legal_species_and_formes": 390,
     "legal_base_species": 293,
-    "legal_moves": 509,
+    "legal_moves": 510,
     "legal_abilities": 222,
     "legal_items": 166,
     "merged_conditions": 35
@@ -727,6 +727,7 @@
       "memento",
       "metalburst",
       "metalsound",
+      "meteorassault",
       "meteorbeam",
       "meteormash",
       "milkdrink",
@@ -3696,6 +3697,7 @@
         "icehammer",
         "leafstorm",
         "makeitrain",
+        "meteorassault",
         "outrage",
         "overheat",
         "petaldance",
@@ -4254,6 +4256,7 @@
         "memento",
         "metalburst",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "mirrorcoat",
@@ -4650,6 +4653,7 @@
         "memento",
         "metalburst",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "mistyexplosion",
@@ -5721,6 +5725,7 @@
         "focuspunch",
         "instruct",
         "kingsshield",
+        "meteorassault",
         "outrage",
         "petaldance",
         "phantomforce",
@@ -5779,6 +5784,7 @@
         "gigaimpact",
         "hydrocannon",
         "hyperbeam",
+        "meteorassault",
         "rockwrecker"
       ],
       "nonsky": [
@@ -6088,6 +6094,7 @@
         "megakick",
         "memento",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "moonblast",

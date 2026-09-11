@@ -59,6 +59,7 @@ from vgc.rl.model import CandidatePolicyValueNet
 from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig
+from vgc.rl.wandb_run import add_wandb_args, start_wandb_run
 
 DEFAULT_TEAM = REPO_ROOT / "teams" / "phase2_mirror.packed.txt"
 DEFAULT_BC_CHECKPOINT = REPO_ROOT / "data" / "models" / "bc_policy_v4.pt"
@@ -166,6 +167,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--soft-target-weight", type=float, default=1.0)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    add_wandb_args(parser)
     return parser.parse_args(argv)
 
 
@@ -531,6 +533,7 @@ def main(argv: list[str] | None = None) -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     dataset_path = args.out_dir / "demonstrations.pt"
     split_manifest_path = args.out_dir / "split_manifest.json"
+    tracker = start_wandb_run(args, job_type="imitation", step_metric="epoch")
 
     worker_context = SimWorker(DEFAULT_SHOWDOWN_REPO) if args.dataset is None or args.eval_games else nullcontext(None)
     with worker_context as worker:
@@ -643,6 +646,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.audit_only:
             print(f"training audit: PASS ({len(train_samples)} train / {len(validation_samples)} validation)")
             print(f"audit: {audit_path}")
+            tracker.finish()
             return
 
         if args.collect_only:
@@ -668,6 +672,7 @@ def main(argv: list[str] | None = None) -> None:
             metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
             print(json.dumps(metrics, indent=2, sort_keys=True))
             print(f"collection summary: {metrics_path}")
+            tracker.finish()
             return
 
         torch.manual_seed(args.seed)
@@ -706,6 +711,7 @@ def main(argv: list[str] | None = None) -> None:
             ),
             device=args.device,
             val_samples=validation_samples,
+            on_epoch=tracker.log_epoch,
         )
         after = evaluate_agreement(
             model, validation_samples, batch_size=args.batch_size, device=args.device
@@ -759,6 +765,15 @@ def main(argv: list[str] | None = None) -> None:
     print(f"split manifest: {split_manifest_path}")
     print(f"checkpoint: {args.out_dir / 'best.pt'}")
     print(f"metrics: {metrics_path}")
+    tracker.log_eval(
+        {
+            "epoch": training.get("best_epoch", args.epochs),
+            "before": before,
+            "after": after,
+            "game_evaluation": game_evaluation,
+        }
+    )
+    tracker.finish()
     if not improved:
         raise SystemExit("validation teacher probability did not improve")
 
