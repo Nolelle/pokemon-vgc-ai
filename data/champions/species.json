@@ -21848,8 +21848,8 @@
     "changesFrom": "Salamence",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "OU",
-    "doublesTier": "OU",
+    "tier": "Uber",
+    "doublesTier": "Uber",
     "isNonstandard": null,
     "eggGroups": [
       "Dragon"
@@ -60133,8 +60133,7 @@
       "spe": 87
     },
     "abilities": {
-      "0": "Thermal Exchange",
-      "H": "Ice Body"
+      "0": "Thermal Exchange"
     },
     "weightkg": 315,
     "heightm": 2.1,
