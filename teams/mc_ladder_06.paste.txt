@@ -1,0 +1,59 @@
+Raichu @ Raichunite Y
+Level: 50
+Ability: Lightning Rod
+EVs: 2 HP / 32 SpA / 32 Spe
+Timid Nature
+- Zap Cannon
+- Focus Blast
+- Fake Out
+- Protect
+
+Salamence @ Salamencite
+Level: 50
+Ability: Intimidate
+EVs: 2 HP / 32 SpA / 32 Spe
+Timid Nature
+- Hyper Voice
+- Draco Meteor
+- Tailwind
+- Protect
+
+Sylveon @ Life Orb
+Level: 50
+Ability: Pixilate
+EVs: 32 HP / 2 Def / 32 SpA
+Quiet Nature
+- Hyper Voice
+- Hyper Beam
+- Quick Attack
+- Detect
+
+Farigiraf @ Grassy Seed
+Level: 50
+Ability: Armor Tail
+EVs: 32 HP / 16 Def / 18 SpD
+Sassy Nature
+- Psyshock
+- Helping Hand
+- Trick Room
+- Roar
+
+Rillaboom @ Focus Sash
+Level: 50
+Ability: Grassy Surge
+EVs: 32 HP / 32 Atk / 2 Def
+Brave Nature
+- Fake Out
+- Grassy Glide
+- Wood Hammer
+- High Horsepower
+
+Ceruledge @ Colbur Berry
+Level: 50
+Ability: Flash Fire
+EVs: 32 HP / 10 Atk / 24 SpD
+Careful Nature
+- Bitter Blade
+- Shadow Sneak
+- Bulk Up
+- Protect
