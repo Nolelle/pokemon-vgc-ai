@@ -6,6 +6,7 @@ import hashlib
 import json
 import random
 import os
+import shutil
 import tempfile
 import subprocess
 import numpy as np
@@ -34,9 +35,23 @@ INVARIANT_FIELDS = (
 )
 
 
+def _require_save_headroom(path: Path, *, min_free_bytes: int = 2 * 1024**3) -> None:
+    """Fail before writing an ~800MB shard if the volume is nearly full."""
+
+    usage = shutil.disk_usage(path.parent)
+    if usage.free < min_free_bytes:
+        gib = usage.free / (1024**3)
+        need_gib = min_free_bytes / (1024**3)
+        raise OSError(
+            f"insufficient disk space to save {path.name}: "
+            f"{gib:.2f} GiB free, need at least {need_gib:.2f} GiB"
+        )
+
+
 def atomic_torch_save(payload, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _require_save_headroom(path)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
@@ -45,6 +60,11 @@ def atomic_torch_save(payload, path: Path) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"failed to save torch checkpoint to {path}") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
