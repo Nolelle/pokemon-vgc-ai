@@ -4836,8 +4836,8 @@
     "changesFrom": "Alakazam",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "UUBL",
-    "doublesTier": "UUBL",
+    "tier": "Uber",
+    "doublesTier": "Uber",
     "isNonstandard": null,
     "eggGroups": [
       "Human-Like"
@@ -26069,8 +26069,8 @@
     "changesFrom": "Lucario",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "OU",
-    "doublesTier": "OU",
+    "tier": "Uber",
+    "doublesTier": "Uber",
     "isNonstandard": null,
     "eggGroups": [
       "Field",
@@ -60103,8 +60103,8 @@
       "Baxcalibur-Mega"
     ],
     "cosmeticFormes": null,
-    "tier": "OU",
-    "doublesTier": "OU",
+    "tier": "Uber",
+    "doublesTier": "Uber",
     "isNonstandard": null,
     "eggGroups": [
       "Dragon",
@@ -60148,8 +60148,8 @@
     "changesFrom": "Baxcalibur",
     "otherFormes": null,
     "cosmeticFormes": null,
-    "tier": "OU",
-    "doublesTier": "OU",
+    "tier": "Uber",
+    "doublesTier": "Uber",
     "isNonstandard": null,
     "eggGroups": [
       "Dragon",

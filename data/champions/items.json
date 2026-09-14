@@ -419,6 +419,19 @@
       "Eelektross"
     ]
   },
+  "ejectbutton": {
+    "id": "ejectbutton",
+    "name": "Eject Button",
+    "num": 547,
+    "fling": {
+      "basePower": 30
+    },
+    "isBerry": false,
+    "naturalGift": null,
+    "megaStone": false,
+    "megaEvolves": null,
+    "itemUser": null
+  },
   "emboarite": {
     "id": "emboarite",
     "name": "Emboarite",
@@ -1512,19 +1525,6 @@
     "num": 250,
     "fling": {
       "basePower": 70
-    },
-    "isBerry": false,
-    "naturalGift": null,
-    "megaStone": false,
-    "megaEvolves": null,
-    "itemUser": null
-  },
-  "ejectbutton": {
-    "id": "ejectbutton",
-    "name": "Eject Button",
-    "num": 547,
-    "fling": {
-      "basePower": 30
     },
     "isBerry": false,
     "naturalGift": null,
