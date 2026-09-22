@@ -682,6 +682,23 @@ This preference does not require deleting existing tests or relaxing release cri
   (Phase 2b)" above. New strategic behavior belongs there (and its weight in
   `PolicyConfig`), not as a new special case bolted onto `vgc/agent.py`.
 
+## TypeSafe/Jev usage
+
+Use TypeSafe/Jev for fuzzy or semantic judgment that would otherwise need brittle
+heuristics, regex/string matching for meaning, classification, scoring/ranking subjective
+properties, probabilistic yes/no decisions, or an LLM call for a small judgment.
+
+Do NOT use Jev for deterministic calculations, schema validation, exact comparisons,
+normal business logic, or open-ended generation / complex reasoning.
+
+When Jev is appropriate:
+
+1. Load the TypeSafe skill.
+2. Decompose the problem into atomic judgments.
+3. Batch independent judgments where possible.
+4. Keep questions and thresholds centralized.
+5. Validate important judgments with test cases.
+
 ## Pattern source
 
 `~/code/projects/pokemon-tcg-ai` is the sibling project this one's conventions are
