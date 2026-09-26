@@ -761,3 +761,12 @@ class PolicyConfig:
     # `search_faint_weight` already use, so a 10% win-probability swing (10 points) is
     # roughly comparable to a 10%-HP swing, not dominating or negligible by construction.
     value_head_weight: float = 1.0
+
+    # --- TypeSafe Jev System One (vgc.system_one; judgments on trace only) ------------
+    # When True, `score_joint_orders` issues one batched Jev request over the public
+    # board before myopic scoring / search (system two unchanged). Records structured
+    # judgments on the decision trace (`notes["system_one"]`); does not alter chosen
+    # moves, evaluator weights, or search. When False, no HTTP traffic and behavior
+    # matches the pre-integration policy exactly. Missing `TYPESAFE_API_KEY` skips the
+    # call and records `status: skipped` on the trace instead of raising.
+    use_jev_system_one: bool = False

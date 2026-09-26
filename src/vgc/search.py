@@ -117,6 +117,7 @@ from vgc.bc.policy import (
     position_value,
     position_values_batch,
 )
+from vgc.battle_memory import BattleMemory
 from vgc.belief_scoring import belief_ordered_candidates
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves
@@ -1644,6 +1645,7 @@ def search_joint_orders(
     battle: DoubleBattle,
     config: PolicyConfig | None = None,
     *,
+    memory: BattleMemory | None = None,
     candidate_selector: SearchCandidateSelector | None = None,
     leaf_observer: SearchLeafObserver | None = None,
     leaf_value_adjuster: SearchLeafValueAdjuster | None = None,
@@ -1668,7 +1670,7 @@ def search_joint_orders(
     """
     started_at = time.perf_counter()
     config = config or PolicyConfig()
-    myopic = score_joint_orders(battle, config)
+    myopic = score_joint_orders(battle, config, memory=memory)
     if not myopic:
         return []
 
