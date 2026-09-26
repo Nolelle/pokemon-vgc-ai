@@ -302,9 +302,9 @@ class VgcPlayer(Player):
             )
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
-            scored = search_joint_orders(battle, self.config)
+            scored = search_joint_orders(battle, self.config, memory=memory)
         elif self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
-            scored = score_joint_orders(battle, self.config)
+            scored = score_joint_orders(battle, self.config, memory=memory)
         if scored:
             if self.config.use_bc_policy:
                 policy = load_bc_policy(self.config.bc_checkpoint_path)

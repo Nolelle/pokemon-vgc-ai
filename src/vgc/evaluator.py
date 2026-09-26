@@ -91,6 +91,7 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
+from vgc.battle_memory import BattleMemory
 from vgc.decision_trace import record_note
 from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
@@ -400,7 +401,10 @@ class ScoredOrder:
 
 
 def score_joint_orders(
-    battle: DoubleBattle, config: PolicyConfig | None = None
+    battle: DoubleBattle,
+    config: PolicyConfig | None = None,
+    *,
+    memory: BattleMemory | None = None,
 ) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn, best first.
 
@@ -410,6 +414,11 @@ def score_joint_orders(
     wrapper already does for any other evaluator failure.
     """
     config = config or PolicyConfig()
+    if config.use_jev_system_one:
+        # Lazy import: vgc.system_one.state -> opponent_belief -> evaluator.
+        from vgc.system_one.jev import maybe_attach_system_one_judgments
+
+        maybe_attach_system_one_judgments(battle, memory, config)
     joint_orders = enumerate_joint_orders(battle)
     if not joint_orders:
         return []
