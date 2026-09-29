@@ -1212,6 +1212,31 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "curse": {
+    "id": "curse",
+    "name": "Curse",
+    "num": 174,
+    "type": "Ghost",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 10,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "bypasssub": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "cut": {
     "id": "cut",
     "name": "Cut",
@@ -1508,6 +1533,33 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Past"
+  },
+  "doubleshock": {
+    "id": "doubleshock",
+    "name": "Double Shock",
+    "num": 892,
+    "type": "Electric",
+    "category": "Physical",
+    "basePower": 120,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1,
+      "punch": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
   },
   "dragonascent": {
     "id": "dragonascent",
@@ -3884,7 +3936,7 @@
     "secondarySelfVolatileStatuses": [],
     "sideCondition": null,
     "slotCondition": null,
-    "isNonstandard": "Past"
+    "isNonstandard": null
   },
   "metronome": {
     "id": "metronome",
@@ -10738,31 +10790,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "curse": {
-    "id": "curse",
-    "name": "Curse",
-    "num": 174,
-    "type": "Ghost",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "bypasssub": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": "curse",
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
   "darkestlariat": {
     "id": "darkestlariat",
     "name": "Darkest Lariat",
@@ -11209,32 +11236,6 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Past"
-  },
-  "doubleshock": {
-    "id": "doubleshock",
-    "name": "Double Shock",
-    "num": 892,
-    "type": "Electric",
-    "category": "Physical",
-    "basePower": 120,
-    "accuracy": 100,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
   },
   "doubleslap": {
     "id": "doubleslap",

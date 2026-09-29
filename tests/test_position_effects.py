@@ -113,7 +113,7 @@ def test_bookkeeping_volatiles_are_not_mistaken_for_harm():
 def test_effects_no_legal_move_applies_are_still_signed():
     # Perish Song targets `all`, so no target-derived sign exists; it is still a countdown
     # to a guaranteed faint. Trapping and Slow Start come from abilities, not moves.
-    for effect in ("perish0", "perish1", "perish2", "perish3", "trapped", "slowstart"):
+    for effect in ("perish0", "perish1", "perish2", "perish3", "trapped", "slowstart", "curse"):
         assert effect_polarity(effect) == HURTS_HOLDER
     for effect in ("protosynthesisatk", "quarkdrivespe"):
         assert effect_polarity(effect) == HELPS_HOLDER

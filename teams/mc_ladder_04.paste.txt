@@ -1,0 +1,59 @@
+Salamence @ Salamencite
+Level: 50
+Ability: Intimidate
+EVs: 2 HP / 14 Atk / 18 SpA / 32 Spe
+Hasty Nature
+- Hyper Voice
+- Double-Edge
+- Tailwind
+- Protect
+
+Rillaboom @ Sitrus Berry
+Level: 50
+Ability: Grassy Surge
+EVs: 32 HP / 32 Atk / 2 Def
+Adamant Nature
+- Wood Hammer
+- Grassy Glide
+- U-turn
+- Fake Out
+
+Sneasler @ Grassy Seed
+Level: 50
+Ability: Unburden
+EVs: 16 HP / 32 Atk / 18 Spe
+Jolly Nature
+- Dire Claw
+- Close Combat
+- Fake Out
+- Protect
+
+Arcanine-Hisui @ Focus Sash
+Level: 50
+Ability: Rock Head
+EVs: 2 HP / 32 Atk / 32 Spe
+Jolly Nature
+- Flare Blitz
+- Head Smash
+- Extreme Speed
+- Protect
+
+Kingambit @ Chople Berry
+Level: 50
+Ability: Defiant
+EVs: 32 HP / 32 Atk / 2 SpD
+Adamant Nature
+- Kowtow Cleave
+- Iron Head
+- Low Kick
+- Sucker Punch
+
+Basculegion @ Mystic Water
+Level: 50
+Ability: Adaptability
+EVs: 2 HP / 32 Atk / 32 Spe
+Adamant Nature
+- Wave Crash
+- Last Respects
+- Aqua Jet
+- Protect

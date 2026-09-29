@@ -143,10 +143,11 @@ After the promotion gate passes and the local smoke has zero fallbacks:
   --policy-checkpoint runs/full_pipeline/rl/best.pt
 ```
 
-Current public play requires hybrid mode, a compatible named checkpoint, and readiness
-checks; a model file existing is not approval. The historical command above is insufficient
-for current deployment. Release enforcement is part of the repair plan. Local diagnostic
-play remains separate from public approval.
+Current public play defaults to the shipped 2-ply search (no checkpoint). A learned
+hybrid session still requires `--policy-mode hybrid`, a compatible named checkpoint,
+readiness checks, and `--model-release`; a model file existing is not approval. The
+historical command above is insufficient for hybrid deployment. Local diagnostic play
+of unapproved models remains separate from public hybrid approval.
 
 ## Neural-guided search experiment
 

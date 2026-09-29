@@ -6,8 +6,10 @@ import hashlib
 import json
 import random
 import os
+import shutil
 import tempfile
 import subprocess
+import warnings
 import numpy as np
 from collections.abc import Sequence
 from dataclasses import replace
@@ -32,11 +34,32 @@ INVARIANT_FIELDS = (
     "repository_commit", "repository_dirty", "showdown_commit", "showdown_dirty",
     "format_id", "opponents", "policy_config", "information_contract", "teacher_source",
 )
+COLLECTION_SEMANTIC_FIELDS = (
+    "format_id", "teacher_source", "information_contract", "policy_config", "opponents",
+)
+# Only the Showdown pin may drift across shards. Our own collection code must still pass
+# the tracked-tree equivalence check, because a code change can silently change what the
+# stored features mean even when every contract/config field is identical.
+COLLECTION_PIN_FIELDS = frozenset({"showdown_commit"})
+
+
+def _require_save_headroom(path: Path, *, min_free_bytes: int = 2 * 1024**3) -> None:
+    """Fail before writing an ~800MB shard if the volume is nearly full."""
+
+    usage = shutil.disk_usage(path.parent)
+    if usage.free < min_free_bytes:
+        gib = usage.free / (1024**3)
+        need_gib = min_free_bytes / (1024**3)
+        raise OSError(
+            f"insufficient disk space to save {path.name}: "
+            f"{gib:.2f} GiB free, need at least {need_gib:.2f} GiB"
+        )
 
 
 def atomic_torch_save(payload, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _require_save_headroom(path)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
@@ -45,6 +68,11 @@ def atomic_torch_save(payload, path: Path) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"failed to save torch checkpoint to {path}") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -61,6 +89,15 @@ def canonical_samples(samples, source_identity: str):
             battle_id=f"{source}:{original}",
         ))
     return result
+
+
+def _collection_semantics_match(metadata: Sequence[dict]) -> bool:
+    """True when shards share the teacher contract but were collected on different pins."""
+
+    for field in COLLECTION_SEMANTIC_FIELDS:
+        if len({repr(source[field]) for source in metadata}) > 1:
+            return False
+    return not any(source.get("repository_dirty") or source.get("showdown_dirty") for source in metadata)
 
 
 def validate_source_compatibility(metadata: Sequence[dict]) -> None:
@@ -84,6 +121,16 @@ def validate_source_compatibility(metadata: Sequence[dict]) -> None:
                         continue
                 except subprocess.CalledProcessError:
                     pass
+            if field in COLLECTION_PIN_FIELDS and _collection_semantics_match(metadata):
+                # Incremental M-C shard collection spans Showdown re-pins while the teacher
+                # contract stays fixed; refuse only when semantics diverge.
+                pins = sorted({str(source[field])[:12] for source in metadata})
+                warnings.warn(
+                    f"dataset sources disagree on {field} ({', '.join(pins)}); "
+                    "accepting because collection semantics match",
+                    stacklevel=2,
+                )
+                continue
             raise ValueError(f"dataset sources disagree on {field}")
 
 

@@ -542,7 +542,7 @@ shells on this machine, and `node` may also need an absolute path
 # is missing upstream commits on mod/sim paths. To update: in the showdown repo
 # `git pull --ff-only origin master && node build --force` (unforced `node build` can
 # leave a stale dist/sim), then rerun both exporters below and re-pin
-# `mechanics_coverage.json`'s `catalog_sha256`. Last done 2026-09-09 -> efe494857 (M-C).
+# `mechanics_coverage.json`'s `catalog_sha256`. Last done 2026-09-29 -> a5df8274e (M-C).
 .venv/bin/python offline/check_showdown_parity.py
 
 # Start the local server (from the showdown repo, port 8000, no auth)

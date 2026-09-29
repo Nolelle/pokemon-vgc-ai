@@ -1,0 +1,59 @@
+Aerodactyl @ Aerodactylite
+Level: 50
+Ability: Unnerve
+EVs: 2 HP / 32 Atk / 32 Spe
+Jolly Nature
+- Dual Wingbeat
+- Rock Slide
+- Tailwind
+- Wide Guard
+
+Rillaboom @ Miracle Seed
+Level: 50
+Ability: Grassy Surge
+EVs: 32 HP / 32 Atk / 2 Def
+Adamant Nature
+- Grassy Glide
+- Wood Hammer
+- Fake Out
+- U-turn
+
+Basculegion @ Life Orb
+Level: 50
+Ability: Adaptability
+EVs: 2 HP / 32 Atk / 32 Spe
+Adamant Nature
+- Aqua Jet
+- Wave Crash
+- Protect
+- Last Respects
+
+Baxcalibur @ Baxcalibrite
+Level: 50
+Ability: Thermal Exchange
+EVs: 4 HP / 32 Atk / 30 Spe
+Jolly Nature
+- Glaive Rush
+- Ice Shard
+- Dragon Dance
+- Protect
+
+Kingambit @ Choice Scarf
+Level: 50
+Ability: Defiant
+EVs: 2 HP / 32 Atk / 32 Spe
+Jolly Nature
+- Kowtow Cleave
+- Sucker Punch
+- Iron Head
+- Low Kick
+
+Sneasler @ Grassy Seed
+Level: 50
+Ability: Unburden
+EVs: 32 HP / 32 Atk / 2 SpD
+Adamant Nature
+- Acrobatics
+- Dire Claw
+- Close Combat
+- Fake Out
