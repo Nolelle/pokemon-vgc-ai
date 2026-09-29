@@ -704,6 +704,14 @@ When Jev is appropriate:
 4. Keep questions and thresholds centralized.
 5. Validate important judgments with test cases.
 
+**Status: parked (2026-09-29).** No Jev code is in the bot. The first planned use,
+tagging why ladder games were lost, needs a VGC-competent person to hand-label an answer
+key first (`tools/build_loss_review.py` builds the sheet); labels written by another AI
+only measure AI-to-AI agreement. Until such a reviewer exists, study losses with code
+that needs no judgement: `tools/loss_patterns.py` (checkable facts, losses vs wins) and
+the engine re-check of lost decisions. Reopen Jev only with a real answer key or a new,
+concrete fuzzy-judgement need.
+
 Project rules for this bot (reviewed 2026-09-29; see the closed PR #8 for why):
 
 - **Never call Jev inside the per-turn move-choice loop** (`score_joint_orders`,
