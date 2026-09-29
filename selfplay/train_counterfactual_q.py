@@ -15,6 +15,7 @@ except ImportError as exc:  # pragma: no cover - command requires train extra
     raise SystemExit("run `uv sync --extra train` before Q training") from exc
 
 from vgc.config import RUNS_DIR
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary
 from vgc.rl.counterfactual_q import (
     ActionResponseValueNet,
     QTrainingConfig,
@@ -317,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     torch.save(
         {
             "format": "vgc-action-response-value-v1",
+            VOCABULARY_KEY: current_vocabulary(),
             "model_state_dict": model.state_dict(),
             "base_checkpoint": str(args.checkpoint.resolve()),
             "base_checkpoint_sha256": report["base_checkpoint_sha256"],

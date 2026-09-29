@@ -13,6 +13,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
         "vgc.rl.opponents requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary, require_current_vocabulary
 from vgc.rl.model import CandidatePolicyValueNet
 
 RL_ARCHITECTURE_VERSION = "candidate-policy-value-v4-mechanics"
@@ -63,6 +64,7 @@ def save_snapshot(
         {
             "model_state_dict": model.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "generation": generation,
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
@@ -85,6 +87,7 @@ def load_snapshot(path: Path, *, device: str = "cpu") -> CandidatePolicyValueNet
             f"unsupported RL snapshot architecture {architecture!r} in {path}; "
             f"expected {RL_ARCHITECTURE_VERSION!r}"
         )
+    require_current_vocabulary(checkpoint, path)
     use_meta_features = bool(checkpoint.get("use_meta_features", False))
     use_information_features = bool(checkpoint.get("use_information_features", False))
     use_mechanics_features = bool(checkpoint.get("use_mechanics_features", False))

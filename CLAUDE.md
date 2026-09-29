@@ -491,7 +491,17 @@ The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is
 by `selfplay/train_imitation.py` (BC from the search teacher) and evaluated by
 `offline/evaluate_shortlist_recall.py`. August 2026 standing below is **M-B-era** and
 does not approve a current checkpoint. See `docs/learned_model_contract.md` and
-`data/models/registry.json`: current candidates are experimental.
+`data/models/registry.json`. **No registered checkpoint loads on M-C**: the A3/B1
+models have a 150-row item table vs the M-C export's 168, so they are marked
+`incompatible_vocabulary` (2026-09-29), and the BC files (`bc_policy_*.pt`) differ in
+species/item/ability. `vgc.model_vocabulary` is the check: RL checkpoints now save the
+ordered species/item/ability/move token lists (`data_vocabulary`), and
+`load_snapshot`, PPO/fixed-mirror resume, `--init-from` and release validation refuse
+a file whose lists differ from `data/champions/*.json` or that records none (row counts
+alone miss reordering). `load_bc_policy` disables a stale BC file; warm-start skips
+stale embedding tables and says so. `tests/test_model_registry.py` requires a
+`compatible` entry's `loader.vocabulary_sha256` to match today's vocabulary. Any
+learned policy on M-C needs retraining first.
 
 - **The shortlist is NOT the network's raw top-K** -- up to half its budget is
   heuristic safety slots (`vgc.rl.guided_selection`, shared by live play and offline
