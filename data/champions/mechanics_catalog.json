@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "aa6d5f0856d24679be8f5df167d1b528c2dcbd71"
+    "showdown_commit": "a5df8274e85b0889bf2a9b3422a08b39732374fc"
   },
   "format": {
     "game_type": "doubles",
@@ -3637,7 +3637,6 @@
         "bind",
         "charge",
         "confuseray",
-        "curse",
         "destinybond",
         "detect",
         "disable",
@@ -3784,9 +3783,6 @@
         "dragontail",
         "roar",
         "whirlwind"
-      ],
-      "nonGhostTarget": [
-        "curse"
       ],
       "ignoreDefensive": [
         "darkestlariat",

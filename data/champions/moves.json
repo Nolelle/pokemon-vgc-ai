@@ -1212,6 +1212,31 @@
     "slotCondition": null,
     "isNonstandard": "Past"
   },
+  "curse": {
+    "id": "curse",
+    "name": "Curse",
+    "num": 174,
+    "type": "Ghost",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 10,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "bypasssub": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "cut": {
     "id": "cut",
     "name": "Cut",
@@ -10758,31 +10783,6 @@
       }
     ],
     "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
-  "curse": {
-    "id": "curse",
-    "name": "Curse",
-    "num": 174,
-    "type": "Ghost",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 10,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "bypasssub": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": "curse",
     "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
     "secondarySelfVolatileStatuses": [],
