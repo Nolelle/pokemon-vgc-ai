@@ -44,3 +44,45 @@ This preference does not require deleting existing tests or relaxing release cri
   override.
 - Learned Q, opponent-response models, and the pure-RL 100k recipe are **closed**.
   Current learned checkpoints are experimental; search remains the decision authority.
+
+## TypeSafe/Jev usage
+
+Use TypeSafe/Jev for fuzzy or semantic judgment that would otherwise need brittle
+heuristics, regex/string matching for meaning, classification, scoring/ranking subjective
+properties, probabilistic yes/no decisions, or an LLM call for a small judgment.
+
+Do NOT use Jev for deterministic calculations, schema validation, exact comparisons,
+normal business logic, or open-ended generation / complex reasoning.
+
+When Jev is appropriate:
+
+1. Load the TypeSafe skill.
+2. Decompose the problem into atomic judgments.
+3. Batch independent judgments where possible.
+4. Keep questions and thresholds centralized.
+5. Validate important judgments with test cases.
+
+Project rules for this bot (reviewed 2026-09-29; see the closed PR #8 for why):
+
+- **Never call Jev inside the per-turn move-choice loop** (`score_joint_orders`,
+  `search_joint_orders`, exact search, rollouts, or any reusable scoring function).
+  Those run many times per decision -- once per side, per hidden-state hypothesis, and
+  again during teacher collection -- so a hook there multiplies network calls and adds
+  blocking latency before search. Call Jev explicitly, once per thing being judged
+  (e.g. once per game at team preview, or offline over replays and traces).
+- **Public information only.** Build Jev state through the same fog-safe boundary as
+  live play; never from a private simulator root or the opponent's side of a direct
+  battle. Normalize sentinels (`vgc.sets.normalize_item` for `unknown_item`) and keep
+  observed facts separate from estimates in the state you send.
+- **Jev is not a Pokemon strategist.** Exact outcomes come from Showdown, and move
+  judgement from search. Good fits are fuzzy, text-shaped, time-insensitive labels:
+  opponent team archetype at preview (baseline: `vgc.principles.detect_team_signals`),
+  loss-reason tagging next to `vgc.postmortem.classify_loss`, replay-corpus labelling.
+  Never use Jev to invent replay action labels or training targets.
+- **Measure before it touches play.** Pin the evaluated model version (not
+  `jev-latest`), check accuracy on a hand-labelled set, put any behavior knob and
+  threshold on `PolicyConfig`, and require a same-session A/B before it changes moves.
+- **"Faster" needs a named saving.** A Jev call is a network round trip, slower than
+  the local myopic evaluator or neural shortlist. Only claim a speedup if it removes
+  measured work (e.g. fewer searched candidates) worth more than the call costs,
+  including slow responses.
