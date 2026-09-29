@@ -22,6 +22,7 @@ from vgc.rl.value_calibration import (
     evaluate_value_model,
     split_samples_by_team_archetype,
 )
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace
 
 DEFAULT_DATASET = RUNS_DIR / "eval" / "neural_search_train_teams.pt"
 DEFAULT_CHECKPOINT = RUNS_DIR / "full_pipeline" / "rl_promotion_10k" / "best.pt"
@@ -41,6 +42,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260817)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    add_wandb_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -141,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
         "promotion_authority": False,
     }
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="search_value_calibration",
+        config=config_from_namespace(args),
+        tags=["value_calibration"],
+    )
     metrics_path = args.out_dir / "metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
     split_path = args.out_dir / "team_split.json"
@@ -164,6 +172,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     checkpoint_path = args.out_dir / "best.pt"
     torch.save(calibrated, checkpoint_path)
+    for epoch_row in training.get("history", []):
+        wandb_session.log({"val": epoch_row}, step=int(epoch_row.get("epoch", 0)))
+    wandb_session.log_summary(metrics)
+    wandb_session.finish()
     print(json.dumps({**metrics, "checkpoint": str(checkpoint_path.resolve())}, indent=2))
     return 0
 

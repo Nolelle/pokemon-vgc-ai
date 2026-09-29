@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from vgc.bc.train import TrainConfig, train  # noqa: E402
 from vgc.config import DATA_DIR  # noqa: E402
+from vgc.wandb_logging import WandbSession, add_wandb_arguments, config_from_namespace  # noqa: E402
 
 DEFAULT_DATA_PATH = DATA_DIR.parent / "bc" / "decisions.jsonl"
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "bc"
@@ -100,6 +101,7 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="relative sampling weight for each --extra-data sample vs each corpus sample",
     )
+    add_wandb_arguments(parser)
     return parser.parse_args()
 
 
@@ -129,7 +131,17 @@ def main() -> int:
         extra_data=str(args.extra_data) if args.extra_data else None,
         selfplay_weight=args.selfplay_weight,
     )
-    result = train(config)
+    wandb_session = WandbSession.from_cli(
+        args,
+        job_type="behavior_cloning",
+        config=config_from_namespace(args),
+        tags=["bc"],
+    )
+    try:
+        result = train(config, wandb_session=wandb_session)
+        wandb_session.log_summary(result)
+    finally:
+        wandb_session.finish()
 
     print("\ntraining summary:")
     print(
