@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import subprocess
+import warnings
 import numpy as np
 from collections.abc import Sequence
 from dataclasses import replace
@@ -33,6 +34,10 @@ INVARIANT_FIELDS = (
     "repository_commit", "repository_dirty", "showdown_commit", "showdown_dirty",
     "format_id", "opponents", "policy_config", "information_contract", "teacher_source",
 )
+COLLECTION_SEMANTIC_FIELDS = (
+    "format_id", "teacher_source", "information_contract", "policy_config", "opponents",
+)
+COLLECTION_PIN_FIELDS = frozenset({"repository_commit", "showdown_commit"})
 
 
 def _require_save_headroom(path: Path, *, min_free_bytes: int = 2 * 1024**3) -> None:
@@ -83,6 +88,15 @@ def canonical_samples(samples, source_identity: str):
     return result
 
 
+def _collection_semantics_match(metadata: Sequence[dict]) -> bool:
+    """True when shards share the teacher contract but were collected on different pins."""
+
+    for field in COLLECTION_SEMANTIC_FIELDS:
+        if len({repr(source[field]) for source in metadata}) > 1:
+            return False
+    return not any(source.get("repository_dirty") or source.get("showdown_dirty") for source in metadata)
+
+
 def validate_source_compatibility(metadata: Sequence[dict]) -> None:
     for source in metadata:
         validate_metadata(source)
@@ -104,6 +118,16 @@ def validate_source_compatibility(metadata: Sequence[dict]) -> None:
                         continue
                 except subprocess.CalledProcessError:
                     pass
+            if field in COLLECTION_PIN_FIELDS and _collection_semantics_match(metadata):
+                # Incremental M-C shard collection spans multiple clean commits while the
+                # teacher contract stays fixed; refuse only when semantics diverge.
+                pins = sorted({str(source[field])[:12] for source in metadata})
+                warnings.warn(
+                    f"dataset sources disagree on {field} ({', '.join(pins)}); "
+                    "accepting because collection semantics match",
+                    stacklevel=2,
+                )
+                continue
             raise ValueError(f"dataset sources disagree on {field}")
 
 

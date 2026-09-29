@@ -270,3 +270,17 @@ def test_load_training_dataset_single_keeps_ids_multi_namespaces(tmp_path) -> No
         f"{file_sha256(second)}:game-0",
     ]
     assert len(multi_metadata["source_datasets"]) == 2
+
+
+def test_source_compatibility_allows_clean_pin_drift_but_not_semantic_drift() -> None:
+    from vgc.rl.demonstrations import validate_source_compatibility
+
+    base = _metadata()
+    moved_pin = {**base, "showdown_commit": "c" * 40}
+    with pytest.warns(UserWarning, match="disagree on showdown_commit"):
+        validate_source_compatibility([base, moved_pin])
+
+    with pytest.raises(ValueError, match="disagree on showdown_commit"):
+        validate_source_compatibility([base, {**moved_pin, "showdown_dirty": True}])
+    with pytest.raises(ValueError, match="disagree on"):
+        validate_source_compatibility([base, {**moved_pin, "format_id": "other"}])
