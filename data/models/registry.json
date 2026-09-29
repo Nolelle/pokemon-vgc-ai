@@ -97,11 +97,20 @@
       ],
       "id": "train_a3",
       "loader": {
+        "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
-        "status": "compatible"
+        "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
+        "status": "incompatible_vocabulary",
+        "vocabulary_rows": {
+          "ability": 321,
+          "item": 150,
+          "move": 942,
+          "species": 1520
+        },
+        "vocabulary_sha256": null
       },
       "release_approval": null,
-      "status": "experimental",
+      "status": "historical",
       "trained_outputs": {
         "action_preferences": "trained",
         "winning_chance": "untrained_by_imitation"
@@ -170,11 +179,20 @@
       "evaluations": [],
       "id": "train_a3_24ep",
       "loader": {
+        "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
-        "status": "compatible"
+        "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
+        "status": "incompatible_vocabulary",
+        "vocabulary_rows": {
+          "ability": 321,
+          "item": 150,
+          "move": 942,
+          "species": 1520
+        },
+        "vocabulary_sha256": null
       },
       "release_approval": null,
-      "status": "experimental",
+      "status": "historical",
       "trained_outputs": {
         "action_preferences": "trained",
         "winning_chance": "untrained_by_imitation"
@@ -251,11 +269,20 @@
       ],
       "id": "train_a3_soft",
       "loader": {
+        "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
-        "status": "compatible"
+        "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
+        "status": "incompatible_vocabulary",
+        "vocabulary_rows": {
+          "ability": 321,
+          "item": 150,
+          "move": 942,
+          "species": 1520
+        },
+        "vocabulary_sha256": null
       },
       "release_approval": null,
-      "status": "experimental",
+      "status": "historical",
       "trained_outputs": {
         "action_preferences": "trained",
         "winning_chance": "untrained_by_imitation"
@@ -332,11 +359,20 @@
       ],
       "id": "train_b1",
       "loader": {
+        "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
-        "status": "compatible"
+        "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
+        "status": "incompatible_vocabulary",
+        "vocabulary_rows": {
+          "ability": 321,
+          "item": 150,
+          "move": 942,
+          "species": 1520
+        },
+        "vocabulary_sha256": null
       },
       "release_approval": null,
-      "status": "experimental",
+      "status": "historical",
       "trained_outputs": {
         "action_preferences": "trained",
         "winning_chance": "untrained_by_imitation"
@@ -449,11 +485,20 @@
       "evaluations": [],
       "id": "train_b1_soft",
       "loader": {
+        "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
-        "status": "compatible"
+        "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
+        "status": "incompatible_vocabulary",
+        "vocabulary_rows": {
+          "ability": 321,
+          "item": 150,
+          "move": 942,
+          "species": 1520
+        },
+        "vocabulary_sha256": null
       },
       "release_approval": null,
-      "status": "experimental",
+      "status": "historical",
       "trained_outputs": {
         "action_preferences": "trained",
         "winning_chance": "untrained_by_imitation"
@@ -790,7 +835,8 @@
   "notes": [
     "Inventory hashes verify current bytes only; path-only historical results do not establish matching historical bytes.",
     "No model in this inventory is currently approved for public deployment.",
-    "Source data retained unchanged; validation recovery is required before new fitting."
+    "Source data retained unchanged; validation recovery is required before new fitting.",
+    "Every entry whose loader status is 'compatible' must record loader.vocabulary_sha256 equal to vgc.model_vocabulary.vocabulary_fingerprint(current_vocabulary()) (tests/test_model_registry.py enforces this; with checkpoint files present it also checks the file hash and a real load_snapshot)."
   ],
   "schema": "vgc-model-registry-v1"
 }

@@ -40,6 +40,7 @@ from vgc.bc.encoding import (  # noqa: E402
 )
 from vgc.bc.model import HIDDEN_DIM  # noqa: E402
 from vgc.battle_memory import BattleMemory, TurnMemory  # noqa: E402
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary  # noqa: E402
 from vgc.rl.encoding import (  # noqa: E402
     CandidateFeatures,
     HISTORY_SCALAR_DIM,
@@ -1026,7 +1027,13 @@ def test_warm_start_state_encoder_loads_same_tensor_count_regardless_of_meta_fea
 ) -> None:
     source = CandidatePolicyValueNet()
     checkpoint_path = tmp_path / "bc.pt"
-    torch.save({"model_state_dict": source.state_encoder.state_dict()}, checkpoint_path)
+    torch.save(
+        {
+            "model_state_dict": source.state_encoder.state_dict(),
+            VOCABULARY_KEY: current_vocabulary(),
+        },
+        checkpoint_path,
+    )
 
     off_result = CandidatePolicyValueNet(use_meta_features=False).warm_start_state_encoder(
         checkpoint_path

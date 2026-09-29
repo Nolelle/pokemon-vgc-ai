@@ -121,6 +121,7 @@ from vgc.evaluator import (
     _terrain_str,
     _weather_str,
 )
+from vgc.model_vocabulary import bc_checkpoint_vocabulary, vocabulary_mismatches
 from vgc.models import PolicyConfig
 from vgc.replay_parse import _resolve_species
 from vgc.sets import normalize_item, normalize_status
@@ -255,6 +256,18 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
             checkpoint_path,
             saved_version,
         )
+
+    stale_vocabulary = vocabulary_mismatches(bc_checkpoint_vocabulary(checkpoint))
+    if stale_vocabulary:
+        # The encoder indexes tokens with TODAY's vocabularies; a checkpoint trained on
+        # another data export would read those indices as different species/items.
+        _LOGGER.warning(
+            "BC policy disabled: checkpoint %s was trained on a different %s vocabulary "
+            "than the current data/champions export -- retrain it on the current data",
+            checkpoint_path,
+            "/".join(stale_vocabulary),
+        )
+        return None
 
     # Pre-value-head checkpoints (saved before this feature existed) have no "heads"
     # key at all -- treat that as exactly what it is, a move+target-only model, rather

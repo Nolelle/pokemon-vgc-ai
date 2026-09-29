@@ -26,6 +26,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.baselines import BASELINES
 from vgc.config import FORMAT_ID, REPO_ROOT
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary, require_current_vocabulary
 from vgc.rl.agents import PHASE2_PREVIEW_ORDER, DirectAgent, make_direct_agent
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, SimWorker
 from vgc.rl.match import BattleOutcome, play_battle, summarize
@@ -132,6 +133,7 @@ def save_checkpoint(
             "games_seen": games_seen,
             "ppo_config": asdict(ppo_config),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
             "use_mechanics_features": model.use_mechanics_features,
@@ -156,6 +158,7 @@ def load_checkpoint(
             f"unsupported checkpoint architecture {architecture!r}; "
             f"expected {RL_ARCHITECTURE_VERSION!r}"
         )
+    require_current_vocabulary(checkpoint, path)
     checkpoint_information = bool(checkpoint.get("use_information_features", False))
     if checkpoint_information != model.use_information_features:
         raise ValueError(
@@ -275,6 +278,7 @@ def _save_iteration_snapshot(
         {
             "model_state_dict": model.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "iteration": iteration,
             "games_seen": games_seen,
             "use_meta_features": model.use_meta_features,
@@ -544,6 +548,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"unsupported --init-from architecture {architecture!r}; "
                 f"expected {RL_ARCHITECTURE_VERSION!r}"
             )
+        require_current_vocabulary(checkpoint, args.init_from)
         checkpoint_information = bool(checkpoint.get("use_information_features", False))
         if checkpoint_information != model.use_information_features:
             raise SystemExit(

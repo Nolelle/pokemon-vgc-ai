@@ -9,6 +9,7 @@ torch = pytest.importorskip("torch")
 
 from vgc.artifact_evidence import atomic_write_json, file_reference  # noqa: E402
 from vgc.model_release import enforce_model_release_for_cli, validate_model_release  # noqa: E402
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary  # noqa: E402
 from vgc.models import PolicyConfig  # noqa: E402
 from vgc.rl.opponents import RL_ARCHITECTURE_VERSION  # noqa: E402
 
@@ -29,6 +30,7 @@ def bundle(tmp_path, monkeypatch):
     torch.save(
         {
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "use_mechanics_features": True,
             "trained_outputs": {"action_preferences": True, "winning_chance": False},
             "training_audit_sha256": audit["sha256"],

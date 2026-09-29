@@ -31,6 +31,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.config import FORMAT_ID, REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT))  # sibling `offline/` tooling (shard loading)
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary
 from vgc.models import PolicyConfig
 from vgc.rl.agents import DirectAgent, make_direct_agent
 from vgc.rl.demonstrations import (
@@ -396,6 +397,7 @@ def save_model_checkpoint(
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
             "use_mechanics_features": model.use_mechanics_features,

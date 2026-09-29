@@ -35,6 +35,11 @@ from poke_env.ps_client.account_configuration import AccountConfiguration  # noq
 from selfplay.run_selfplay import _safe_stop_listening, start_local_server  # noqa: E402
 from vgc.agent import VgcPlayer  # noqa: E402
 from vgc.config import FORMAT_ID, TEAMS_DIR  # noqa: E402
+from vgc.model_vocabulary import (  # noqa: E402
+    VOCABULARY_KEY,
+    current_vocabulary,
+    require_current_vocabulary,
+)
 from vgc.models import PolicyConfig  # noqa: E402
 from vgc.rl.distill import (  # noqa: E402
     DistillationConfig,
@@ -513,6 +518,7 @@ def save_checkpoint(
             "games_seen": games_seen,
             "ppo_config": asdict(ppo_config),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "use_meta_features": model.use_meta_features,
             "use_information_features": model.use_information_features,
             "use_mechanics_features": model.use_mechanics_features,
@@ -553,6 +559,7 @@ def load_training_checkpoint(
             f"unsupported PPO checkpoint architecture {architecture!r}; "
             f"expected {RL_ARCHITECTURE_VERSION!r}"
         )
+    require_current_vocabulary(checkpoint, path)
     checkpoint_use_meta = bool(checkpoint.get("use_meta_features", False))
     if checkpoint_use_meta != model.use_meta_features:
         raise ValueError(
