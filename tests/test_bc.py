@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from vgc.config import FORMAT_ID
 from vgc.bc.encoding import (
     ABILITY_TO_IDX,
     INDEX_DIM,
@@ -1053,6 +1054,9 @@ def test_train_mixes_extra_data_into_training_only(tmp_path) -> None:
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir()
     corpus_records = _synthetic_records(n_replays=8, rating=1300)
+    # Mixing requires an explicit format on every dataset (vgc.bc.dataset.check_format_mix).
+    for record in corpus_records:
+        record["format_id"] = FORMAT_ID
     corpus_path = _write_jsonl(corpus_dir, corpus_records)
 
     selfplay_dir = tmp_path / "selfplay"
@@ -1060,6 +1064,7 @@ def test_train_mixes_extra_data_into_training_only(tmp_path) -> None:
     selfplay_records = _synthetic_records(n_replays=10, rating=None)
     for record in selfplay_records:
         record["replay_id"] = f"selfplay-{record['replay_id']}"
+        record["format_id"] = FORMAT_ID
     selfplay_path = _write_jsonl(selfplay_dir, selfplay_records)
 
     expected_val_samples = len(BcTurnDataset(corpus_path, min_rating=1150, split="val"))

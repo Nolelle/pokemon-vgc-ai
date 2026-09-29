@@ -44,11 +44,13 @@ opponent observations. This repair does not redesign preview or hidden-set recov
 ## Format and replay corpus
 
 Schema 5 is format-agnostic: the same unknown / observed / no-action / outcome rules
-apply to every Champions replay. Record `format_id` on parsed datasets. The live
+apply to every Champions replay. `tools/parse_replays.py` stamps `format_id` on every
+parsed record and fails closed if the replay and its directory disagree or neither names
+a format. The live
 download path is `data/replays/<FORMAT_ID>/` (currently
 `data/replays/gen9championsvgc2026regmc/`). Public M-C replays are still scarce
-(~44 files). Keep the historical M-B tree
-(`data/replays/gen9championsvgc2026regmb/`, ~2940 files) for warm-start and prior
+(468 replays on 2026-09-29). Keep the historical M-B tree
+(`data/replays/gen9championsvgc2026regmb/`, 2939 replays) for warm-start and prior
 work. Fold new rated M-C games in incrementally. Do not rebuild usage priors from
 the small M-C snapshot. Mix formats in training only with an explicit format id.
 
