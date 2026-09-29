@@ -13,14 +13,19 @@ was re-exported on 2026-09-09 from Showdown `efe494857`: **390** legal species/f
 **166** items, **509** moves, **222** abilities. Readiness gates passed after that
 export. M-C ranked is 2026-09-09 through 2026-12-02.
 
-Public Showdown still has few rated M-C replays (~44 on disk). Keep the M-B replay tree
-(`data/replays/gen9championsvgc2026regmb/`, ~2940 files) as the historical warm-start
+Public Showdown still has relatively few rated M-C replays (468 on disk as of 2026-09-29,
+vs 2939 for M-B). Keep the M-B replay tree
+(`data/replays/gen9championsvgc2026regmb/`, 2939 replays) as the historical warm-start
 and prior corpus. Download new rated M-C games incrementally into
 `data/replays/gen9championsvgc2026regmc/` (`tools/download_replays.py` defaults to
 `FORMAT_ID`). Do **not** rebuild `data/usage/set_priors.json` or
-`data/usage/spreads.json` from the tiny M-C snapshot; those files remain M-B until the
+`data/usage/spreads.json` from the small M-C snapshot; those files remain M-B until the
 M-C corpus is large enough to be a prior. Mix formats in training only with an explicit
-`format_id` on every dataset.
+`format_id` on every dataset. `tools/parse_replays.py` stamps `format_id` on every record
+(replay's `formatid`, cross-checked against the directory name) and aborts without writing
+if either is missing/disagrees or a tree spans two formats; `vgc.bc.dataset.check_format_mix`
+refuses to combine any unlabelled dataset with another. Decision files parsed before
+2026-09-29 are unlabelled -- re-parse them before mixing.
 
 July–August gate numbers, the hybrid guided-search PASS, and the pure-RL 100k closeout
 are **M-B-era** measurements. Re-run before treating them as current M-C strength.
@@ -187,7 +192,7 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   priors (`data/usage/set_priors.json`, `vgc.sets.opponent_move_ids`). That priors file
   was built from the M-B replay corpus (`corpus_size: 2939`). Re-run
   `tools/build_set_priors.py` on the M-C replay dir only once that corpus is large
-  enough to be a prior, not a ~44-game sample. Offline gates run mutual-OTS-accept, so
+  enough to be a prior, not a few-hundred-game sample. Offline gates run mutual-OTS-accept, so
   the priors fill is a no-op there (verified 74/100 vs 74/100 same-session) -- don't
   expect gate results to reflect priors quality.
 - **Gate methodology: cross-session variance is +/-4-6 win-rate points** on the n=100-300

@@ -99,7 +99,7 @@ except ImportError as exc:  # pragma: no cover - exercised via test_bc.py's impo
         "vgc.bc.train requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.bc.dataset import BcTurnDataset
+from vgc.bc.dataset import BcTurnDataset, check_format_mix
 from vgc.bc.encoding import (
     ABILITY_VOCAB,
     ENCODER_LAYOUT_VERSION,
@@ -365,6 +365,7 @@ def train(
         )
 
     if extra_ds is not None and len(extra_ds) > 0:
+        check_format_mix([train_ds, extra_ds])
         combined_train_ds = ConcatDataset([train_ds, extra_ds])
         sample_weights = [1.0] * len(train_ds) + [config.selfplay_weight] * len(extra_ds)
         sampler = WeightedRandomSampler(
