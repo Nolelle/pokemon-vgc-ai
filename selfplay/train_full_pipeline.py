@@ -39,6 +39,7 @@ from vgc.rl.opponents import (
 )
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update
+from vgc.rl.wandb_run import add_wandb_args, start_wandb_run
 
 DEFAULT_MANIFEST = REPO_ROOT / "data" / "selfplay" / "archetype_pool_150" / "manifest.json"
 DEFAULT_INIT = REPO_ROOT / "runs" / "full_pipeline" / "imitation" / "best.pt"
@@ -106,6 +107,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--init", type=Path, default=DEFAULT_INIT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    add_wandb_args(parser)
     return parser.parse_args(argv)
 
 
@@ -529,6 +531,7 @@ def main(argv: list[str] | None = None) -> None:
     eval_opponents = [name for name, _weight in mix]
     prev_games_seen = games_seen
 
+    tracker = start_wandb_run(args, job_type="ppo", step_metric="games_seen")
     with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
         if not args.resume:
             initial_eval = evaluate_policy(
@@ -556,6 +559,7 @@ def main(argv: list[str] | None = None) -> None:
                 float(initial_eval["mean_opponent_win_rate"]),
             )
             print(f"eval 0: {initial_eval}", flush=True)
+            tracker.log_eval(initial_row)
 
         for iteration in range(start_iteration + 1, args.iterations + 1):
             started = time.time()
@@ -634,6 +638,7 @@ def main(argv: list[str] | None = None) -> None:
             }
             with metrics_path.open("a") as file:
                 file.write(json.dumps(row, sort_keys=True) + "\n")
+            tracker.log_train(row, games_this_iter=args.games_per_iteration)
             save_training_checkpoint(
                 args.out_dir / "latest.pt",
                 model,
@@ -689,7 +694,9 @@ def main(argv: list[str] | None = None) -> None:
                         evaluation=evaluation,
                     )
                 print(f"eval {iteration}: {evaluation}", flush=True)
+                tracker.log_eval(eval_row)
 
+    tracker.finish()
     print(f"best checkpoint: {args.out_dir / 'best.pt'}")
     print(f"latest checkpoint: {args.out_dir / 'latest.pt'}")
     print(f"metrics: {metrics_path}")

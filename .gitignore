@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .showdown-credentials.json
+wandb/
 .DS_Store
 .zshrc
 

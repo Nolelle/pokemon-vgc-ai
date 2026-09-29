@@ -33,6 +33,7 @@ from vgc.rl.model import CandidatePolicyValueNet
 from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
 from vgc.rl.player import PpoVgcPlayer
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update
+from vgc.rl.wandb_run import add_wandb_args, start_wandb_run
 
 DEFAULT_TEAM = REPO_ROOT / "teams" / "phase2_mirror.packed.txt"
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "ppo" / "fixed_mirror"
@@ -109,6 +110,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="enable first-principles damage, KO, Speed, threat, and synergy inputs",
     )
+    add_wandb_args(parser)
     return parser.parse_args(argv)
 
 
@@ -499,6 +501,7 @@ def main(argv: list[str] | None = None) -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = args.out_dir / "metrics.jsonl"
     eval_path = args.out_dir / "eval.jsonl"
+    tracker = start_wandb_run(args, job_type="ppo", step_metric="games_seen")
 
     model = CandidatePolicyValueNet(
         use_meta_features=False,
@@ -557,7 +560,7 @@ def main(argv: list[str] | None = None) -> None:
         evaled_targets: set[int] = set()
         if args.eval_games > 0:
             print(f"eval at 0 games ({args.eval_games} per opponent)", flush=True)
-            _record_evals(
+            initial_pool = _record_evals(
                 worker,
                 model=model,
                 team=team,
@@ -570,6 +573,7 @@ def main(argv: list[str] | None = None) -> None:
                 games_seen=0,
                 eval_path=eval_path,
             )
+            tracker.log_eval({"iteration": 0, "games_seen": 0, **initial_pool})
         for iteration in range(1, args.iterations + 1):
             started = time.time()
             buffer = RolloutBuffer()
@@ -634,6 +638,7 @@ def main(argv: list[str] | None = None) -> None:
             }
             with metrics_path.open("a") as metrics_file:
                 metrics_file.write(json.dumps(row, sort_keys=True) + "\n")
+            tracker.log_train(row, games_this_iter=args.games_per_iteration)
             save_checkpoint(
                 args.out_dir / "latest.pt",
                 model,
@@ -659,7 +664,7 @@ def main(argv: list[str] | None = None) -> None:
                 and iteration % args.eval_every_iterations == 0
             )
             if args.eval_games > 0 and (due_targets or eval_by_interval):
-                _record_evals(
+                pool = _record_evals(
                     worker,
                     model=model,
                     team=team,
@@ -672,8 +677,10 @@ def main(argv: list[str] | None = None) -> None:
                     games_seen=games_seen,
                     eval_path=eval_path,
                 )
+                tracker.log_eval({"iteration": iteration, "games_seen": games_seen, **pool})
                 evaled_targets.update(due_targets)
 
+    tracker.finish()
     if args.iterations > 0:
         print(f"checkpoint: {args.out_dir / 'latest.pt'}")
         print(f"metrics: {metrics_path}")

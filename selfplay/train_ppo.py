@@ -59,6 +59,7 @@ from vgc.rl.opponents import (  # noqa: E402
 )
 from vgc.rl.player import PpoVgcPlayer  # noqa: E402
 from vgc.rl.ppo import PpoConfig, RolloutBuffer, ppo_update  # noqa: E402
+from vgc.rl.wandb_run import add_wandb_args, start_wandb_run  # noqa: E402
 
 DEFAULT_OUT_DIR = REPO_ROOT / "runs" / "ppo"
 DEFAULT_BC_CHECKPOINT = REPO_ROOT / "data" / "models" / "bc_policy_v4_selfplay.pt"
@@ -1877,6 +1878,7 @@ def parse_args() -> argparse.Namespace:
             "threat, switching, uncertainty, and two-slot synergy facts"
         ),
     )
+    add_wandb_args(parser)
     args = parser.parse_args()
     # Which PpoConfig-backed knobs the caller actually set on the command line. --resume
     # restores the checkpoint's saved PpoConfig wholesale, which would otherwise silently
@@ -2082,6 +2084,7 @@ def main() -> int:
     best_checkpoint_path = args.out_dir / "best.pt"
     best_evaluation_path = args.out_dir / "best_evaluation.json"
     pool_dir = args.out_dir / "opponent_pool"
+    tracker = start_wandb_run(args, job_type="ppo", step_metric="games_seen")
     best_eval_win_rate = -1.0
     if (
         args.resume is not None
@@ -2390,6 +2393,7 @@ def main() -> int:
             }
             with metrics_path.open("a") as metrics_file:
                 metrics_file.write(json.dumps(row, sort_keys=True) + "\n")
+            tracker.log_train(row, games_this_iter=int(result["games"]))
             checkpoint_path = args.out_dir / "latest.pt"
             save_checkpoint(
                 checkpoint_path,
@@ -2411,6 +2415,7 @@ def main() -> int:
                 evaluation["training_games"] = games_seen
                 improved = record_evaluation(evaluation, iteration=iteration)
                 last_evaluated_games = games_seen
+                tracker.log_eval(evaluation)
                 print(
                     f"frozen evaluation at {games_seen} games: "
                     f"wins={evaluation['wins']}/{evaluation['games']} "
@@ -2428,6 +2433,7 @@ def main() -> int:
                 evaluation,
                 iteration=last_iteration + args.iterations,
             )
+            tracker.log_eval(evaluation)
             print(
                 "frozen evaluation: "
                 f"wins={evaluation['wins']}/{evaluation['games']} "
@@ -2436,6 +2442,7 @@ def main() -> int:
             )
             _print_generalization(evaluation)
     finally:
+        tracker.finish()
         if server_process is not None:
             server_process.kill()
             server_process.wait(timeout=10)
