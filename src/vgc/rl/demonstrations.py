@@ -37,7 +37,10 @@ INVARIANT_FIELDS = (
 COLLECTION_SEMANTIC_FIELDS = (
     "format_id", "teacher_source", "information_contract", "policy_config", "opponents",
 )
-COLLECTION_PIN_FIELDS = frozenset({"repository_commit", "showdown_commit"})
+# Only the Showdown pin may drift across shards. Our own collection code must still pass
+# the tracked-tree equivalence check, because a code change can silently change what the
+# stored features mean even when every contract/config field is identical.
+COLLECTION_PIN_FIELDS = frozenset({"showdown_commit"})
 
 
 def _require_save_headroom(path: Path, *, min_free_bytes: int = 2 * 1024**3) -> None:
@@ -119,8 +122,8 @@ def validate_source_compatibility(metadata: Sequence[dict]) -> None:
                 except subprocess.CalledProcessError:
                     pass
             if field in COLLECTION_PIN_FIELDS and _collection_semantics_match(metadata):
-                # Incremental M-C shard collection spans multiple clean commits while the
-                # teacher contract stays fixed; refuse only when semantics diverge.
+                # Incremental M-C shard collection spans Showdown re-pins while the teacher
+                # contract stays fixed; refuse only when semantics diverge.
                 pins = sorted({str(source[field])[:12] for source in metadata})
                 warnings.warn(
                     f"dataset sources disagree on {field} ({', '.join(pins)}); "

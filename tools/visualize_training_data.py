@@ -354,7 +354,7 @@ def cmd_plot(args: argparse.Namespace) -> None:
         for fmt, mark in ((MB, "M-B"), (MC, "M-C")):
             rows = [r for r in ladder if r.get("format") == fmt]
             if rows:
-                ax[0].plot(range(len(rows)), [r["rating"] for r in rows], label=f"{mark} n={len(rows)} win={np.mean([not r['lost'] for r in rows]):.0%}")
+                ax[0].plot(range(len(rows)), [r["rating"] for r in rows], label=f"{mark} n={len(rows)} win={np.mean([bool(r.get('won')) for r in rows]):.0%}")
         ax[0].axhline(1700, color="r", ls="--", label="goal 1700")
         ax[0].legend()
         ax[0].set_title("Our rating after each game")
@@ -364,7 +364,7 @@ def cmd_plot(args: argparse.Namespace) -> None:
             rows = [r for r in ladder if r.get("format") == fmt and r.get("opponent_rating")]
             ys, labels = [], []
             for lo, hi in zip(bins, bins[1:]):
-                grp = [not r["lost"] for r in rows if lo <= r["opponent_rating"] < hi]
+                grp = [bool(r.get("won")) for r in rows if lo <= r["opponent_rating"] < hi]
                 ys.append(np.mean(grp) if grp else np.nan)
                 labels.append(f"{lo}-{hi}\n(n={len(grp)})")
             ax[1].plot(range(len(ys)), ys, marker="o", label=mark)

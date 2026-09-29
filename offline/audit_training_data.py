@@ -315,6 +315,14 @@ def audit(
         "errors": errors,
         "counts": counts,
         "metadata": metadata,
+        "source_pins": sorted(
+            {
+                (str(m.get("repository_commit")), str(m.get("showdown_commit")))
+                for p in payloads
+                for top in [dict(p.get("metadata") or {})]
+                for m in [top, *(top.get("source_metadata") or [])]
+            }
+        ),
         "examples": examples,
     }
 
