@@ -219,6 +219,7 @@ class RecordingVgcPlayer(VgcPlayer):
         record["player"] = battle.player_role
         record["turn"] = battle.turn
         record["rating"] = None
+        record["format_id"] = self.format
         record["replay_id"] = f"{self.replay_tag}-{battle.battle_tag}"
         action, action_status = recorded_joint_action(battle, order)
         record["action"] = action
