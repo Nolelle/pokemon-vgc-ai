@@ -842,21 +842,35 @@ def test_distillation_split_is_game_disjoint() -> None:
 def test_distillation_improves_teacher_agreement_on_held_out_games() -> None:
     torch.manual_seed(2)
     indices, scalars = _state()
-    samples = [
-        DistillationSample(
-            battle_id=f"battle-{battle}",
-            state_indices=indices.copy(),
-            state_scalars=scalars.copy(),
-            history_scalars=_history(),
-            candidates=_distinct_candidates(),
-            teacher_action_index=0,
-        )
-        for battle in range(6)
-        for _turn in range(4)
-    ]
-    train, val = split_samples_by_battle(samples, val_fraction=0.33, seed=0)
+
+    def samples_for(teacher_action_index: int) -> list[DistillationSample]:
+        return [
+            DistillationSample(
+                battle_id=f"battle-{battle}",
+                state_indices=indices.copy(),
+                state_scalars=scalars.copy(),
+                history_scalars=_history(),
+                candidates=_distinct_candidates(),
+                teacher_action_index=teacher_action_index,
+            )
+            for battle in range(6)
+            for _turn in range(4)
+        ]
+
     model = CandidatePolicyValueNet()
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
+    # Every sample is the same position, so the untrained model makes one choice for all of
+    # them. Teach a different candidate, otherwise it can already agree 100% by chance and
+    # "improves" is unsatisfiable.
+    teacher = next(
+        index
+        for index in range(len(_distinct_candidates().move_indices))
+        if evaluate_agreement(model, samples_for(index), batch_size=32, device="cpu")[
+            "accuracy"
+        ]
+        == 0.0
+    )
+    train, val = split_samples_by_battle(samples_for(teacher), val_fraction=0.33, seed=0)
     before = evaluate_agreement(model, val, batch_size=32, device="cpu")
 
     metrics = distill_policy(

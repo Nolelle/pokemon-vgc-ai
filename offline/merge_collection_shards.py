@@ -50,6 +50,7 @@ def main() -> int:
         "collector": "offline/merge_collection_shards.py",
         "requested_games": sum(int(entry["requested_games"]) for entry in source_metadata),
         "source_datasets": [str(path.resolve()) for path in args.inputs],
+        "source_metadata": source_metadata,
     }
     save_demonstrations(args.out, merged, metadata=metadata)
     print(f"merged {len(merged)} samples / {battles} battles / {teams} teams -> {args.out}")

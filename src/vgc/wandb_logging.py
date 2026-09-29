@@ -106,8 +106,6 @@ def config_from_namespace(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
-# Late import guard: Path is used in _json_safe
-from pathlib import Path  # noqa: E402
 
 
 class WandbSession:
