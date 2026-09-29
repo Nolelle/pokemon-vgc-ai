@@ -7,13 +7,17 @@ turn-by-turn summary of what was publicly observed.
 
 - Observed facts come from the replay's protocol log only.
 - The bot's own rule-based loss guess (`vgc.postmortem.classify_loss`, stored in
-  `runs/ladder.jsonl`) is kept in a separate field so reviewers can hide it and avoid
-  anchoring on it.
+  `runs/ladder.jsonl`) goes in a separate file, so reviewers don't anchor on it.
 - Opponent usernames and nicknames are dropped; Pokemon are named by species.
 - A fixed, seeded subset is marked `holdout`. Those games are labelled like the rest,
   but are not looked at while designing Jev's questions, so they can test it fairly.
 
+Writes three files under runs/review/: the JSON data, a Markdown sheet to fill in by
+hand, and the bot's guesses in their own Markdown file. An existing sheet is never
+overwritten (it holds your labels) unless --force is given.
+
     .venv/bin/python tools/build_loss_review.py
+    .venv/bin/python tools/build_loss_review.py --collect   # check + export labels
 """
 
 from __future__ import annotations
@@ -26,7 +30,30 @@ from pathlib import Path
 
 from vgc.config import FORMAT_ID, RUNS_DIR
 
-DEFAULT_OUTPUT = RUNS_DIR / "review" / "loss_review_mc.json"
+REVIEW_DIR = RUNS_DIR / "review"
+DEFAULT_OUTPUT = REVIEW_DIR / "loss_review_mc.json"
+SHEET_NAME = "loss_review_mc.md"
+GUESSES_NAME = "loss_review_mc_bot_guesses.md"
+LABELS_NAME = "loss_review_mc_labels.json"
+
+# Review areas a person picks from. Keep in sync with any Jev question built later:
+# the labels are the answer key for it.
+AREAS = {
+    "team_selection": "Team pick or leads: brought the wrong four, or opened with a bad pair",
+    "speed_control": "Speed control: lost the race to move first (Tailwind, Trick Room, "
+    "priority, Scarf)",
+    "positioning": "Positioning and Protect: targeting, switching, Protect timing, "
+    "or leaving a Pokemon exposed",
+    "weather_field": "Weather or terrain: lost the fight over sun, rain, sand, snow or terrain",
+    "damage_misread": "Damage misread: expected a KO that didn't happen, or took a bigger "
+    "hit than expected",
+    "luck": "Luck decided it: a critical hit, miss, full paralysis or side effect swung it",
+    "outmatched": "Outmatched: bad matchup, no reasonable play would have saved it",
+    "other": "Something else: describe it in the notes",
+    "cant_tell": "Can't tell: the log does not show why",
+}
+CONFIDENCE = ("sure", "likely", "unsure")
+LABEL_FIELDS = ("main", "also", "turns", "sure", "notes")
 HOLDOUT_SEED = 20260929
 HOLDOUT_FRACTION = 0.35
 
@@ -151,6 +178,10 @@ def summarize_log(log: str, our_side: str) -> dict:
                 flags["our_full_para" if side_of(parts[2]) == our_side else "their_full_para"] += 1
         elif tag == "-supereffective":
             add(f"  super effective on {who(parts[2])}")
+        elif tag == "-ability" and len(parts) > 3:
+            add(f"{who(parts[2])}'s {parts[3]} activated")
+        elif tag == "-activate" and len(parts) > 3 and "Protect" in parts[3]:
+            add(f"  {who(parts[2])} blocked it with Protect")
         elif tag == "-status":
             add(f"  {who(parts[2])} got status {parts[3]}")
         elif tag == "-mega":
@@ -223,18 +254,194 @@ def build(ladder_path: Path, format_id: str) -> list[dict]:
     return games
 
 
+def _team_line(preview: list[str], brought: list[str], leads: list[str]) -> str:
+    def matches(a: str, b: str) -> bool:
+        return a == b or a.startswith(b + "-") or b.startswith(a + "-")
+
+    parts = []
+    for species in preview:
+        if any(matches(species, lead) for lead in leads):
+            parts.append(f"{species} (lead)")
+        elif any(matches(species, mon) for mon in brought):
+            parts.append(species)
+        else:
+            parts.append(f"[{species}]")
+    return ", ".join(parts)
+
+
+def _flag_line(flags: dict) -> str:
+    names = {
+        "crit_against_us": "critical hits against us",
+        "crit_for_us": "critical hits for us",
+        "our_misses": "our misses",
+        "their_misses": "their misses",
+        "our_full_para": "times we were fully paralysed",
+        "their_full_para": "times they were fully paralysed",
+    }
+    return "; ".join(f"{count} {names[key]}" for key, count in flags.items() if count)
+
+
+def render_sheet(games: list[dict]) -> str:
+    lines = [
+        "# Ladder loss review (Regulation M-C)",
+        "",
+        "Label each loss by filling in the lines under **Your label**. Write after the",
+        "colon; leave the rest of the file alone. Save as you go, in as many sittings as",
+        "you like. Games marked HOLDOUT are kept aside to test the model fairly: label",
+        "them the same way.",
+        "",
+        "**main** (required) and **also** (optional): one key from this list:",
+        "",
+        *[f"- `{key}`: {text}" for key, text in AREAS.items()],
+        "",
+        "**turns**: turn numbers that show it, e.g. `2, 3`.  ",
+        f"**sure**: one of {', '.join(f'`{c}`' for c in CONFIDENCE)}.  ",
+        "**notes**: plain words, one line: what went wrong and what the bot should have done.",
+        "",
+        "Teams: (lead) = led with it, plain = brought (for them: seen in battle),",
+        "[brackets] = left in the back. The bot's own guesses are in a separate file,",
+        f"`{GUESSES_NAME}`. Read it only after you've labelled, if at all.",
+        "",
+    ]
+    for index, game in enumerate(games, 1):
+        tag = " (HOLDOUT)" if game["holdout"] else ""
+        lines += [
+            "---",
+            "",
+            f"## Loss {index}{tag}: game {game['id']}",
+            "",
+            f"{game['date']} · {game['turns_played']} turns · our rating "
+            f"{game['our_rating']} vs their {game['opponent_rating']}",
+            "",
+            f"- Our team: {_team_line(game['our_preview'], game['our_brought'], game['our_leads'])}",
+            "- Their team: "
+            + _team_line(game["their_preview"], game["their_revealed"], game["their_leads"]),
+        ]
+        flag_line = _flag_line(game["flags"])
+        if flag_line:
+            lines.append(f"- Luck events: {flag_line}")
+        lines += ["", "```"]
+        for turn in game["turns"]:
+            lines.append("Start" if turn["turn"] == 0 else f"Turn {turn['turn']}")
+            lines += [f"  {event}" for event in turn["events"]]
+        lines += ["```", "", "**Your label**", ""]
+        lines += [f"- {field}: " for field in LABEL_FIELDS]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def render_guesses(games: list[dict]) -> str:
+    lines = [
+        "# The bot's own loss guesses",
+        "",
+        "Rule-based guesses from `vgc.postmortem.classify_loss`. Read these only after",
+        "labelling a game yourself.",
+        "",
+    ]
+    for index, game in enumerate(games, 1):
+        lines.append(f"## Loss {index}: game {game['id']}")
+        reasons = (game.get("bot_guess") or {}).get("reasons") or []
+        if not reasons:
+            lines.append("- no guess recorded")
+        for reason in reasons:
+            lines.append(f"- {reason['category']}: {reason['evidence']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+_HEADING_RE = re.compile(r"^## Loss (\d+)(?: \(HOLDOUT\))?: game (\d+)\s*$")
+_FIELD_RE = re.compile(r"^- (main|also|turns|sure|notes):\s*(.*)$")
+
+
+def collect_labels(sheet: str, games: list[dict]) -> tuple[list[dict], list[str]]:
+    """Parse filled-in labels; returns (labels, problems). Blank games are skipped."""
+
+    by_id = {game["id"]: game for game in games}
+    labels: list[dict] = []
+    problems: list[str] = []
+    current: dict | None = None
+    in_label = False
+
+    def finish() -> None:
+        if current is None or not any(current["fields"].values()):
+            return
+        fields = current["fields"]
+        where = f"Loss {current['index']}"
+        main = fields.get("main", "").strip("` ").lower()
+        also = fields.get("also", "").strip("` ").lower()
+        sure = fields.get("sure", "").strip("` ").lower()
+        if main not in AREAS:
+            problems.append(f"{where}: main '{main}' is not one of the keys")
+        if also and also not in AREAS:
+            problems.append(f"{where}: also '{also}' is not one of the keys")
+        if sure and sure not in CONFIDENCE:
+            problems.append(f"{where}: sure '{sure}' should be one of {', '.join(CONFIDENCE)}")
+        turns = [int(t) for t in re.findall(r"\d+", fields.get("turns", ""))]
+        game = by_id.get(current["id"], {})
+        labels.append(
+            {
+                "game_id": current["id"],
+                "battle_tag": game.get("battle_tag"),
+                "holdout": game.get("holdout"),
+                "main": main,
+                "also": also or None,
+                "turns": turns,
+                "sure": sure or None,
+                "notes": fields.get("notes", ""),
+            }
+        )
+
+    for line in sheet.splitlines():
+        heading = _HEADING_RE.match(line)
+        if heading:
+            finish()
+            current = {"index": int(heading.group(1)), "id": heading.group(2), "fields": {}}
+            in_label = False
+            continue
+        if current is None:
+            continue
+        if line.strip() == "**Your label**":
+            in_label = True
+            continue
+        field = _FIELD_RE.match(line) if in_label else None
+        if field:
+            current["fields"][field.group(1)] = field.group(2).strip()
+    finish()
+    return labels, problems
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ladder", type=Path, default=RUNS_DIR / "ladder.jsonl")
     parser.add_argument("--format-id", default=FORMAT_ID)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    args = parser.parse_args()
-    games = build(args.ladder, args.format_id)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(games, indent=1))
-    print(
-        f"wrote {len(games)} losses ({sum(g['holdout'] for g in games)} holdout) to {args.output}"
+    parser.add_argument("--force", action="store_true", help="overwrite an existing sheet")
+    parser.add_argument(
+        "--collect", action="store_true", help="check the filled-in sheet and export labels"
     )
+    args = parser.parse_args()
+    review_dir = args.output.parent
+    sheet_path = review_dir / SHEET_NAME
+
+    if args.collect:
+        games = json.loads(args.output.read_text())
+        labels, problems = collect_labels(sheet_path.read_text(), games)
+        out = review_dir / LABELS_NAME
+        out.write_text(json.dumps(labels, indent=1))
+        print(f"{len(labels)} of {len(games)} losses labelled -> {out}")
+        for problem in problems:
+            print(f"  fix: {problem}")
+        return
+
+    games = build(args.ladder, args.format_id)
+    review_dir.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(games, indent=1))
+    (review_dir / GUESSES_NAME).write_text(render_guesses(games))
+    if sheet_path.exists() and not args.force:
+        print(f"kept existing {sheet_path} (it may hold your labels; --force to rebuild)")
+    else:
+        sheet_path.write_text(render_sheet(games))
+    print(f"wrote {len(games)} losses ({sum(g['holdout'] for g in games)} holdout) to {review_dir}")
 
 
 if __name__ == "__main__":
