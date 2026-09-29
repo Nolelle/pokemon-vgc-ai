@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "efe4948570d5e8189751792136d26e71710c6c66"
+    "showdown_commit": "a5df8274e85b0889bf2a9b3422a08b39732374fc"
   },
   "format": {
     "game_type": "doubles",
@@ -54,7 +54,7 @@
   "counts": {
     "legal_species_and_formes": 390,
     "legal_base_species": 293,
-    "legal_moves": 509,
+    "legal_moves": 510,
     "legal_abilities": 222,
     "legal_items": 166,
     "merged_conditions": 35
@@ -727,6 +727,7 @@
       "memento",
       "metalburst",
       "metalsound",
+      "meteorassault",
       "meteorbeam",
       "meteormash",
       "milkdrink",
@@ -2549,6 +2550,12 @@
         "onTryHeal": [
           "ripen"
         ],
+        "onMaybeTrapPokemon": [
+          "runaway"
+        ],
+        "onTrapPokemon": [
+          "runaway"
+        ],
         "onModifyAccuracy": [
           "sandveil",
           "snowcloak",
@@ -3630,7 +3637,6 @@
         "bind",
         "charge",
         "confuseray",
-        "curse",
         "destinybond",
         "detect",
         "disable",
@@ -3690,6 +3696,7 @@
         "icehammer",
         "leafstorm",
         "makeitrain",
+        "meteorassault",
         "outrage",
         "overheat",
         "petaldance",
@@ -3776,9 +3783,6 @@
         "dragontail",
         "roar",
         "whirlwind"
-      ],
-      "nonGhostTarget": [
-        "curse"
       ],
       "ignoreDefensive": [
         "darkestlariat",
@@ -4248,6 +4252,7 @@
         "memento",
         "metalburst",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "mirrorcoat",
@@ -4644,6 +4649,7 @@
         "memento",
         "metalburst",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "mistyexplosion",
@@ -5715,6 +5721,7 @@
         "focuspunch",
         "instruct",
         "kingsshield",
+        "meteorassault",
         "outrage",
         "petaldance",
         "phantomforce",
@@ -5773,6 +5780,7 @@
         "gigaimpact",
         "hydrocannon",
         "hyperbeam",
+        "meteorassault",
         "rockwrecker"
       ],
       "nonsky": [
@@ -5831,6 +5839,7 @@
       ],
       "punch": [
         "bulletpunch",
+        "doubleshock",
         "drainpunch",
         "dynamicpunch",
         "firepunch",
@@ -6081,6 +6090,7 @@
         "megakick",
         "memento",
         "metalsound",
+        "meteorassault",
         "meteorbeam",
         "meteormash",
         "moonblast",

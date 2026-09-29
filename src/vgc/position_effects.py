@@ -83,6 +83,9 @@ _SUPPLEMENT: dict[str, int] = {
     "perish1": HURTS_HOLDER,
     "perish2": HURTS_HOLDER,
     "perish3": HURTS_HOLDER,
+    # Ghost-type Curse: the move data no longer declares the volatile (Showdown a5df8274e
+    # applies it inside the move callback), so the derivation cannot see it.
+    "curse": HURTS_HOLDER,
     # Set by trapping abilities (Arena Trap, Shadow Tag, Magnet Pull) rather than a move.
     "trapped": HURTS_HOLDER,
     # Slow Start halves Attack and Speed for five turns. Ability-driven, unambiguous.

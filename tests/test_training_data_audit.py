@@ -270,3 +270,45 @@ def test_load_training_dataset_single_keeps_ids_multi_namespaces(tmp_path) -> No
         f"{file_sha256(second)}:game-0",
     ]
     assert len(multi_metadata["source_datasets"]) == 2
+
+
+def test_source_compatibility_allows_clean_pin_drift_but_not_semantic_drift() -> None:
+    from vgc.rl.demonstrations import validate_source_compatibility
+
+    base = _metadata()
+    moved_pin = {**base, "showdown_commit": "c" * 40}
+    with pytest.warns(UserWarning, match="disagree on showdown_commit"):
+        validate_source_compatibility([base, moved_pin])
+
+    with pytest.raises(ValueError, match="disagree on showdown_commit"):
+        validate_source_compatibility([base, {**moved_pin, "showdown_dirty": True}])
+    # Our own collection code may not drift unless its tracked trees are identical.
+    with pytest.raises(ValueError, match="disagree on repository_commit"):
+        validate_source_compatibility([base, {**base, "repository_commit": "d" * 40}])
+    with pytest.raises(ValueError, match="disagree on"):
+        validate_source_compatibility([base, {**moved_pin, "format_id": "other"}])
+
+
+def test_audit_reports_every_showdown_pin(tmp_path) -> None:
+    first = tmp_path / "shard-a.pt"
+    second = tmp_path / "shard-b.pt"
+    manifest = tmp_path / "split_manifest.json"
+    train = [_sample("battle-a", "team-a", "team-b")]
+    validation = [_sample("battle-b", "team-c", "team-d")]
+    save_demonstrations(first, train, metadata=_metadata())
+    save_demonstrations(second, validation, metadata={**_metadata(), "showdown_commit": "c" * 40})
+    save_split_manifest(
+        manifest,
+        dataset_paths=[first, second],
+        train=train,
+        validation=validation,
+        group_by="team",
+        seed=1,
+        val_fraction=0.5,
+    )
+
+    with pytest.warns(UserWarning, match="disagree on showdown_commit"):
+        report = audit([first, second], manifest)
+
+    assert report["verdict"] == "PASS", report["errors"]
+    assert {pin[1] for pin in report["source_pins"]} == {"b" * 40, "c" * 40}

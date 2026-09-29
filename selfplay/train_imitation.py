@@ -717,9 +717,8 @@ def main(argv: list[str] | None = None) -> None:
             ),
             device=args.device,
             val_samples=validation_samples,
+            on_epoch=lambda epoch, payload: wandb_session.log(payload, step=epoch),
         )
-        for epoch_row in training.get("val_history", []):
-            wandb_session.log({"val": epoch_row}, step=int(epoch_row.get("epoch", 0)))
         after = evaluate_agreement(
             model, validation_samples, batch_size=args.batch_size, device=args.device
         )
