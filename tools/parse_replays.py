@@ -13,14 +13,18 @@ Usage:
 The default `--replays-dir` is `data/replays/<FORMAT_ID>/` (currently the small M-C
 tree). For the historical warm-start corpus, pass
 `--replays-dir data/replays/gen9championsvgc2026regmb`. Schema 5 labels are
-format-agnostic; record `format_id` if you mix trees. See
-`docs/replay_label_contract.md`.
+format-agnostic, so every output record is stamped with `format_id` (see
+`resolve_format_id`): the replay's own `formatid` field, cross-checked against the
+directory name when that name is a format id. A missing or disagreeing format aborts
+the run without touching `--out`, and so does a tree whose replays span more than one
+format -- one output file is one format. See `docs/replay_label_contract.md`.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -38,6 +42,39 @@ DEFAULT_OUT_PATH = DATA_DIR.parent / "bc" / "decisions.jsonl"
 # instead of just a one-line summary -- see this module's docstring/CLAUDE.md's
 # validation contract for why 90% is the bar.
 SUCCESS_RATE_INVESTIGATE_THRESHOLD = 0.90
+
+# Showdown format ids look like `gen9championsvgc2026regmc`. A `--replays-dir` whose name
+# matches this is treated as a claim about the format of every replay inside it.
+_FORMAT_ID_RE = re.compile(r"^gen\d+[a-z0-9]+$")
+
+
+class FormatIdError(ValueError):
+    """A replay's format could not be determined, or two sources disagree on it."""
+
+
+def resolve_format_id(payload: dict, replays_dir: Path, path: Path | None = None) -> str:
+    """The format id to stamp on every record parsed from `payload`.
+
+    Sources: the replay's own `formatid` field and `replays_dir`'s name (only when that
+    name looks like a format id). They must agree when both exist; at least one must
+    exist. Raises `FormatIdError` otherwise -- never guesses, because a mislabelled
+    record silently mixes regulations in training.
+    """
+    where = path or replays_dir
+    raw = payload.get("formatid")
+    from_replay = raw.strip() if isinstance(raw, str) and raw.strip() else None
+    from_dir = replays_dir.name if _FORMAT_ID_RE.match(replays_dir.name) else None
+    if from_replay and from_dir and from_replay != from_dir:
+        raise FormatIdError(
+            f"{where}: replay formatid {from_replay!r} disagrees with directory {from_dir!r}"
+        )
+    format_id = from_replay or from_dir
+    if format_id is None:
+        raise FormatIdError(
+            f"{where}: no formatid in the replay and directory name {replays_dir.name!r} "
+            "is not a format id"
+        )
+    return format_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,41 +124,62 @@ def main() -> int:
     showteam_player_slots = 0
     replays_with_resolved_winner = 0
     outcomes: Counter = Counter()
+    format_ids: Counter = Counter()
 
-    with tmp_path.open("w") as out_file:
-        for path in files:
-            replays_seen += 1
-            try:
-                payload = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError) as exc:
-                replays_failed += 1
-                fail_reasons[f"unreadable_file: {type(exc).__name__}"] += 1
-                continue
+    try:
+        with tmp_path.open("w") as out_file:
+            for path in files:
+                replays_seen += 1
+                try:
+                    payload = json.loads(path.read_text())
+                except (json.JSONDecodeError, OSError) as exc:
+                    replays_failed += 1
+                    fail_reasons[f"unreadable_file: {type(exc).__name__}"] += 1
+                    continue
+                if not isinstance(payload, dict):
+                    replays_failed += 1
+                    fail_reasons["unreadable_file: not_a_json_object"] += 1
+                    continue
 
-            replay_id = payload.get("id", path.stem)
-            rating = payload.get("rating")
-            log = payload.get("log")
-            if not isinstance(log, str) or not log:
-                replays_failed += 1
-                fail_reasons["missing_log_field"] += 1
-                continue
+                # Before any parse-failure bookkeeping: a replay we cannot attribute to a
+                # format is a data-contract violation, not a parse miss to count past.
+                format_id = resolve_format_id(payload, args.replays_dir, path)
+                format_ids[format_id] += 1
+                if len(format_ids) > 1:
+                    raise FormatIdError(
+                        f"{args.replays_dir} mixes formats {sorted(format_ids)}; parse each "
+                        "format's tree into its own output file"
+                    )
 
-            result = parse_replay(replay_id, rating, log)
-            if not result.ok:
-                replays_failed += 1
-                fail_reasons[result.fail_reason or "unknown"] += 1
-                continue
+                replay_id = payload.get("id", path.stem)
+                rating = payload.get("rating")
+                log = payload.get("log")
+                if not isinstance(log, str) or not log:
+                    replays_failed += 1
+                    fail_reasons["missing_log_field"] += 1
+                    continue
 
-            replays_parsed += 1
-            showteam_player_slots += len(result.showteam_players)
-            if result.winner is not None:
-                replays_with_resolved_winner += 1
-            for key, count in result.skipped.items():
-                skipped_by_reason[key] += count
-            for record in result.records:
-                records_by_kind[record["decision_kind"]] += 1
-                outcomes[record.get("outcome", "unresolved")] += 1
-                out_file.write(json.dumps(record, sort_keys=True) + "\n")
+                result = parse_replay(replay_id, rating, log)
+                if not result.ok:
+                    replays_failed += 1
+                    fail_reasons[result.fail_reason or "unknown"] += 1
+                    continue
+
+                replays_parsed += 1
+                showteam_player_slots += len(result.showteam_players)
+                if result.winner is not None:
+                    replays_with_resolved_winner += 1
+                for key, count in result.skipped.items():
+                    skipped_by_reason[key] += count
+                for record in result.records:
+                    record["format_id"] = format_id
+                    records_by_kind[record["decision_kind"]] += 1
+                    outcomes[record.get("outcome", "unresolved")] += 1
+                    out_file.write(json.dumps(record, sort_keys=True) + "\n")
+    except FormatIdError as exc:
+        tmp_path.unlink(missing_ok=True)
+        print(f"ERROR: {exc}\n{args.out} was not written.", file=sys.stderr)
+        return 2
 
     tmp_path.replace(args.out)
 
@@ -130,6 +188,7 @@ def main() -> int:
     showteam_rate = showteam_player_slots / (2 * replays_seen) if replays_seen else 0.0
 
     print("parse_replays summary:")
+    print(f"  format_id:         {', '.join(sorted(format_ids)) or '(none)'}")
     print(f"  replays seen:      {replays_seen}")
     print(f"  replays parsed:    {replays_parsed} ({success_rate:.1%})")
     print(f"  replays failed:    {replays_failed}")

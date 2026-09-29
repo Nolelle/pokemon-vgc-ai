@@ -60,12 +60,25 @@ still dropped exactly as before; it only changes what happens to `rating is None
 specifically. `vgc.bc.train.train()`'s `extra_data`/`selfplay_weight` knobs are the
 caller that actually sets this True, and only for that extra dataset -- the main corpus
 dataset is always built with the default `False`.
+
+## Format ids
+
+Every record `tools/parse_replays.py` and `vgc.bc.selfplay.RecordingVgcPlayer` write
+carries `format_id`. The dataset records the set it saw in `format_ids` (checked over
+EVERY record in the file, before the rating/split filters, so both splits of one file
+agree). A file where only some records are labelled raises `FormatMixError`. A fully
+unlabelled file still loads (legacy data from before the stamp), but
+`check_format_mix` refuses to combine it with any other dataset: mixing formats is only
+allowed when every dataset says which format it is (CLAUDE.md, and
+`docs/replay_label_contract.md`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 try:
@@ -87,6 +100,32 @@ from vgc.bc.encoding import (
 )
 
 DEFAULT_VAL_FRACTION = 0.1
+
+
+class FormatMixError(ValueError):
+    """Records or datasets would be mixed without an explicit `format_id` on each."""
+
+
+def check_format_mix(datasets: Sequence[BcTurnDataset]) -> set[str]:
+    """Returns the union of `format_ids` across `datasets` that will be trained together.
+
+    Raises `FormatMixError` when more than one dataset is combined and any of them is
+    unlabelled -- its format cannot be verified, so it might be a different regulation.
+    Labelled datasets of DIFFERENT formats are allowed (that is the explicit-label
+    contract), but warned about so the mix is visible in the run log.
+    """
+    if len(datasets) > 1:
+        unlabelled = [str(ds.jsonl_path) for ds in datasets if not ds.format_ids]
+        if unlabelled:
+            raise FormatMixError(
+                f"refusing to mix datasets without format_id: {unlabelled}. Re-parse them "
+                "with tools/parse_replays.py (or re-record self-play) so every record is "
+                "stamped."
+            )
+    combined: set[str] = set().union(*(ds.format_ids for ds in datasets))
+    if len(combined) > 1:
+        warnings.warn(f"training mixes formats {sorted(combined)}", stacklevel=2)
+    return combined
 
 
 def split_for_replay(replay_id: str, val_fraction: float = DEFAULT_VAL_FRACTION) -> str:
@@ -126,6 +165,9 @@ class BcTurnDataset(Dataset):
         self.no_target_count = 0
         self.no_value_count = 0
         self.replays_included: set[str] = set()
+        # Formats seen across ALL records (pre-filter); empty = legacy unlabelled file.
+        self.format_ids: set[str] = set()
+        unlabelled_records = 0
 
         with self.jsonl_path.open() as file:
             for line in file:
@@ -133,6 +175,11 @@ class BcTurnDataset(Dataset):
                 if not line:
                     continue
                 record = json.loads(line)
+                format_id = record.get("format_id")
+                if isinstance(format_id, str) and format_id.strip():
+                    self.format_ids.add(format_id.strip())
+                else:
+                    unlabelled_records += 1
                 if record.get("decision_kind") != "turn":
                     continue
                 rating = record.get("rating")
@@ -163,6 +210,12 @@ class BcTurnDataset(Dataset):
                     added_any = True
                 if added_any:
                     self.replays_included.add(replay_id)
+
+        if self.format_ids and unlabelled_records:
+            raise FormatMixError(
+                f"{self.jsonl_path}: {unlabelled_records} record(s) lack format_id while "
+                f"others are labelled {sorted(self.format_ids)}"
+            )
 
     def __len__(self) -> int:
         return len(self._samples)
