@@ -1401,7 +1401,7 @@ def _score_status_move(
     if move_id in WIDE_DEFENSE_MOVES:
         spread_threats = 0
         for mon in ctx.opp_pokemon:
-            for known_id in normalized_move_ids(mon) if mon is not None else ():
+            for known_id in _opp_utility_move_ids(mon, ctx, config):
                 known_data = load_moves().get(known_id) or {}
                 if known_data.get("target") in _SPREAD_TARGETS_FOES_ONLY:
                     spread_threats += 1
@@ -1589,6 +1589,17 @@ def _score_sleep_move(
     return value, {"target_slot": idx, "utility_kind": "action_denial"}
 
 
+def _opp_utility_move_ids(mon, ctx: _Context, config: PolicyConfig) -> frozenset[str]:
+    """The opponent moves Taunt/Encore/Will-O-Wisp/Wide Guard key their value on:
+    revealed + set-prior fill (`config.status_utility_uses_set_priors`), else the
+    legacy revealed-only set."""
+    if mon is None:
+        return frozenset()
+    if config.status_utility_uses_set_priors:
+        return frozenset(opponent_move_ids(mon, priors=ctx.priors, config=config))
+    return normalized_move_ids(mon)
+
+
 def _score_targeted_denial(
     move_id: str,
     move_data: dict,
@@ -1604,7 +1615,7 @@ def _score_targeted_denial(
     idx = opp_targets[0]
     mon = ctx.opp_pokemon[idx]
     state = ctx.opp_states[idx]
-    known_ids = set(normalized_move_ids(mon)) if mon is not None else set()
+    known_ids = _opp_utility_move_ids(mon, ctx, config)
     known_status = sum(
         (load_moves().get(known_id) or {}).get("category") == "Status" for known_id in known_ids
     )
@@ -1646,7 +1657,7 @@ def _score_burn(
     mon = ctx.opp_pokemon[idx]
     if state is None or state.status is not None or "Fire" in state.types():
         return 0.0, {"reason": "burn_ineligible"}
-    known_ids = normalized_move_ids(mon) if mon is not None else frozenset()
+    known_ids = _opp_utility_move_ids(mon, ctx, config)
     physical = sum(
         (load_moves().get(move_id) or {}).get("category") == "Physical" for move_id in known_ids
     )
