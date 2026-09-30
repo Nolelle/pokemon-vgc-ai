@@ -1316,3 +1316,70 @@ def test_search_joint_orders_hypotheses_1_matches_identity_helper(monkeypatch) -
     )
     identity = search_module.search_joint_orders(object(), config)
     assert _search_identity_pairs(baseline) == _search_identity_pairs(identity)
+
+
+# --- ladder game 2678505187 turn 5 regressions ---------------------------------------
+
+
+def test_opp_switch_pool_excludes_fainted_and_unbrought_preview_pokemon() -> None:
+    from vgc.search import _opp_switch_pool
+
+    def poke(species: str, fainted: bool = False) -> SimpleNamespace:
+        return SimpleNamespace(species=species, fainted=fainted)
+
+    preview = [poke(s) for s in ("rillaboom", "incineroar", "charizard", "metagross")]
+    ctx = _build_ctx(
+        our_states=[None, None],
+        opp_states=[None, None],
+        our_pokemon=[None, None],
+        opp_pokemon=[None, poke("rillaboom")],
+    )
+    # Preview copies never learn they fainted; only opponent_team does.
+    ctx.battle.teampreview_opponent_team = preview
+    ctx.battle.opponent_team = {"p1: Rillaboom": poke("rillaboom")}
+    assert [s for s, _ in _opp_switch_pool(ctx, PolicyConfig())] == [
+        "incineroar",
+        "charizard",
+        "metagross",
+    ]
+
+    # Four revealed (Mega form matches its preview base species): Charizard unbrought.
+    ctx.battle.opponent_team = {
+        "a": poke("rillaboom"),
+        "b": poke("incineroar", fainted=True),
+        "c": poke("metagrossmega"),
+        "d": poke("empoleon", fainted=True),
+    }
+    assert [s for s, _ in _opp_switch_pool(ctx, PolicyConfig())] == ["metagross"]
+    legacy = PolicyConfig(search_public_bench_filter=False)
+    assert "charizard" in [s for s, _ in _opp_switch_pool(ctx, legacy)]
+
+
+def test_sleeping_our_own_ally_earns_no_utility_credit() -> None:
+    ctx = _build_ctx(
+        our_states=[_klefki(), _garchomp()],
+        opp_states=[_garchomp(), None],
+        our_pokemon=[_mon(species="klefki"), _mon(species="garchomp")],
+        opp_pokemon=[_mon(species="garchomp"), None],
+    )
+    our_order = _fake_order(_fake_single("sleeppowder", move_target=-2), None)
+    no_op = OppResponse(slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none"))
+
+    fixed = resolve_exchange(our_order, no_op, ctx, PolicyConfig())
+    legacy = resolve_exchange(
+        our_order, no_op, ctx, PolicyConfig(search_sleep_credit_foes_only=False)
+    )
+
+    assert fixed.our_states[1].status == "slp"  # it still lands on our ally...
+    assert fixed.our_utility_value == 0.0  # ...but is not scored as a gain
+    assert legacy.our_utility_value > 0.0
+
+
+def test_no_prior_species_still_gets_attack_candidates() -> None:
+    from vgc.sets import opponent_move_ids
+
+    rillaboom = SimpleNamespace(species="rillaboom", moves={})
+    enabled = PolicyConfig(set_prior_learnset_fallback=True)
+    filled = opponent_move_ids(rillaboom, priors={"species": {}}, config=enabled)
+    assert filled == ["woodhammer"]  # its best STAB attack; no invented coverage
+    assert opponent_move_ids(rillaboom, priors={"species": {}}, config=PolicyConfig()) == []

@@ -119,7 +119,7 @@ from vgc.bc.policy import (
 )
 from vgc.belief_scoring import belief_ordered_candidates
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
-from vgc.data import load_moves
+from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.evaluator import (
     _ABILITY_WEATHER,
@@ -319,6 +319,63 @@ def _our_pressure_on_opp_slot(ctx: _Context, opp_idx: int) -> float:
     return best
 
 
+def _base_species_id(species_id: str) -> str:
+    data = load_species().get(species_id) or {}
+    return to_id(data.get("baseSpecies")) or species_id
+
+
+def _opp_switch_pool(ctx: _Context, config: PolicyConfig) -> list[tuple[str, object]]:
+    """Opponent Pokemon that could legally switch in, as (base species id, Pokemon).
+
+    Team-preview copies never learn they fainted, and preview shows six while the
+    opponent brought four, so the preview list alone offers switches into fainted or
+    unbrought Pokemon (whose `opponent_state` is a 0-HP or phantom board). Public
+    information rules both out: `opponent_team` marks faints, and once four distinct
+    Pokemon have appeared the other two previewed ones were not brought. A revealed
+    Pokemon is used over its preview copy so its real HP/moves/item reach the state.
+    Species match on base species, since a Mega's revealed species differs from preview.
+    """
+
+    battle = ctx.battle
+    preview = list(getattr(battle, "teampreview_opponent_team", None) or [])
+    if not config.search_public_bench_filter:
+        legacy_active = {
+            to_id(mon.species) for mon in ctx.opp_pokemon if mon is not None and not mon.fainted
+        }
+        return [
+            (to_id(mon.species), mon)
+            for mon in preview
+            if to_id(getattr(mon, "species", None))
+            and to_id(mon.species) not in legacy_active
+            and not getattr(mon, "fainted", False)
+        ]
+    revealed: dict[str, object] = {}
+    for mon in (getattr(battle, "opponent_team", None) or {}).values():
+        species_id = _base_species_id(to_id(getattr(mon, "species", None)))
+        if species_id:
+            revealed[species_id] = mon
+    active = {
+        _base_species_id(to_id(mon.species))
+        for mon in ctx.opp_pokemon
+        if mon is not None and not mon.fainted
+    }
+    bring_known = len(revealed) >= 4
+    pool: list[tuple[str, object]] = []
+    seen: set[str] = set()
+    for preview_mon in preview:
+        species_id = _base_species_id(to_id(getattr(preview_mon, "species", None)))
+        if not species_id or species_id in seen or species_id in active:
+            continue
+        seen.add(species_id)
+        if bring_known and species_id not in revealed:
+            continue
+        mon = revealed.get(species_id, preview_mon)
+        if getattr(mon, "fainted", False):
+            continue
+        pool.append((species_id, mon))
+    return pool
+
+
 def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> list[_OppSlotAction]:
     """Candidate actions for one opponent slot: the top `search_opp_moves_per_slot`
     known damaging (move, target) pairs by expected damage, plus an always-included
@@ -432,19 +489,12 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     utility_actions.sort(key=lambda action: action.value, reverse=True)
     candidates.extend(utility_actions[: max(0, config.search_opp_utility_per_slot)])
 
-    # Previewed-but-not-active Pokemon are plausible defensive pivots. Retain the switch-
-    # ins that take the least estimated damage from our current board; response weighting
-    # below scales them by the evaluator's pressure-derived switch probability.
-    preview = list(getattr(ctx.battle, "teampreview_opponent_team", None) or [])
-    active_species = {
-        to_id(mon.species) for mon in ctx.opp_pokemon if mon is not None and not mon.fainted
-    }
+    # Opponent bench Pokemon that can still come in are plausible defensive pivots. Retain
+    # the switch-ins that take the least estimated damage from our current board; response
+    # weighting below scales them by the evaluator's pressure-derived switch probability.
     usage = load_usage_spreads()
     switch_actions: list[_OppSlotAction] = []
-    for bench_mon in preview:
-        species_id = to_id(getattr(bench_mon, "species", None))
-        if not species_id or species_id in active_species or getattr(bench_mon, "fainted", False):
-            continue
+    for species_id, bench_mon in _opp_switch_pool(ctx, config):
         bench_state = opponent_state(bench_mon, usage=usage)
         worst_incoming = 0.0
         for our_idx in ctx.our_alive():
@@ -847,6 +897,8 @@ def _apply_action(
     weather_for_exchange: str | None,
     ctx: _Context,
     result: ExchangeResult,
+    *,
+    sleep_credit_foes_only: bool = True,
 ) -> None:
     actor_states = our_states if action.side == "our" else opp_states
     actor_state = actor_states[action.slot]
@@ -915,7 +967,8 @@ def _apply_action(
                 # state is a conservative representation of the following turn.
                 if hit_probability >= 0.5:
                     target_state.status = "slp"
-                realized_probability = max(realized_probability, hit_probability)
+                if side != action.side or not sleep_credit_foes_only:
+                    realized_probability = max(realized_probability, hit_probability)
         if action.side == "our":
             result.our_utility_value += action.utility_value * realized_probability
             if action.move_id in REDIRECTION_MOVES:
@@ -1088,6 +1141,7 @@ def resolve_exchange(
             weather_for_exchange,
             ctx,
             result,
+            sleep_credit_foes_only=config.search_sleep_credit_foes_only,
         )
 
     # `_apply_action` keeps each partially protected slot in the Protect-failure branch
