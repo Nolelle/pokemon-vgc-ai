@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from vgc.config import DATA_DIR
 from vgc.damage import PokemonState, to_id
+from vgc.data import load_learnsets, load_moves, load_species
 from vgc.models import PolicyConfig
 from vgc.stats import SPSpread, default_opponent_nature, default_opponent_spread
 
@@ -200,7 +201,15 @@ def opponent_move_ids(
     species_id = to_id(pokemon.species)
     entry = (priors.get("species") or {}).get(species_id) if priors else None
     if not entry or entry.get("appearances", 0) < config.set_prior_min_games:
-        return revealed
+        if not config.set_prior_learnset_fallback:
+            return revealed
+        filled = list(revealed)
+        for move_id in learnset_fallback_move_ids(species_id):
+            if len(filled) >= config.set_prior_max_moves:
+                break
+            if move_id not in filled:
+                filled.append(move_id)
+        return filled
 
     revealed_set = set(revealed)
     move_counts: dict[str, int] = entry.get("moves") or {}
@@ -215,6 +224,84 @@ def opponent_move_ids(
         filled.append(move_id)
         revealed_set.add(move_id)
     return filled
+
+
+# Legal damaging moves that are poor stand-ins for "what this Pokemon hits us with this
+# turn": only usable on the first turn out, only while asleep, land turns later, fail
+# when the user is hit first, faint the user, or need a precondition this state-free guess cannot check
+# (terrain, a consumed Berry, other moves used first, a foe's priority move).
+# Recharge/charge-turn moves are excluded by their data flags.
+_FALLBACK_EXCLUDED_MOVES = frozenset(
+    {
+        "fakeout",
+        "firstimpression",
+        "focuspunch",
+        "snore",
+        "sleeptalk",
+        "dreameater",
+        "futuresight",
+        "doomdesire",
+        "steelroller",
+        "belch",
+        "lastresort",
+        "upperhand",
+        "explosion",
+        "selfdestruct",
+        "mistyexplosion",
+    }
+)
+
+
+@lru_cache(maxsize=512)
+def learnset_fallback_move_ids(species_id: str) -> tuple[str, ...]:
+    """Best guess at a no-prior species' attacks, from its Champions learnset alone.
+
+    Used by `opponent_move_ids` when a species has no usable corpus prior (the checked-in
+    priors are M-B-era and miss much of M-C -- Rillaboom, Salamence, Indeedee-F...). An
+    empty list there made the search treat a full-HP attacker as harmless. This returns
+    the strongest legal damaging move of each of the species' OWN types (STAB only),
+    ordered by base power x the matching base attacking stat x accuracy -- at most two.
+
+    Deliberately not "best move of every type": that version gave each unknown foe four
+    strong attacks of four types, i.e. perfect coverage no real set has, and the bot
+    answered by Protecting ~4.7x as often (same-session A/B on the six mc_ladder teams:
+    5.5% on mc_ladder_04). It is a threat estimate, not a set prediction: no utility
+    moves (Fake Out, Protect, Tailwind), items/abilities ignored. Mega/alternate formes
+    without their own learnset use the base species'.
+    """
+
+    species = load_species()
+    data = species.get(species_id) or {}
+    learnsets = load_learnsets()
+    learnset = learnsets.get(species_id) or learnsets.get(to_id(data.get("baseSpecies"))) or {}
+    types = set(data.get("types") or ())
+    base_stats = data.get("baseStats") or {}
+    moves = load_moves()
+    best_by_type: dict[str, tuple[float, str]] = {}
+    for move_id in learnset:
+        move = moves.get(move_id)
+        if move is None or move.get("isNonstandard") is not None:
+            continue
+        if move["category"] == "Status" or move_id in _FALLBACK_EXCLUDED_MOVES:
+            continue
+        flags = move.get("flags") or {}
+        base_power = int(move.get("basePower") or 0)
+        if base_power <= 0 or flags.get("recharge") or flags.get("charge"):
+            continue
+        stat = base_stats.get("atk" if move["category"] == "Physical" else "spa", 0)
+        accuracy = move.get("accuracy")
+        # `accuracy: true` means it never misses; bool is an int, so check it first.
+        hit = (
+            1.0 if accuracy is True or not isinstance(accuracy, (int, float)) else accuracy / 100.0
+        )
+        if move.get("type") not in types:
+            continue
+        score = base_power * stat * hit
+        current = best_by_type.get(move["type"])
+        if current is None or (score, move_id) > current:
+            best_by_type[move["type"]] = (score, move_id)
+    ranked = sorted(best_by_type.values(), key=lambda row: (-row[0], row[1]))
+    return tuple(move_id for _score, move_id in ranked)
 
 
 def normalize_item(item: str | None) -> str | None:

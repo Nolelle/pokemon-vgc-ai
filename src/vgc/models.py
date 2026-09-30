@@ -475,6 +475,12 @@ class PolicyConfig:
     # Number of previewed bench candidates retained as plausible defensive switches for
     # each opposing slot. Search resolves these before moves, like the real engine.
     search_opp_switches_per_slot: int = 2
+    # Offer opponent switch-ins only into Pokemon public information says can still come
+    # in: not fainted (per `opponent_team`; preview copies never learn they fainted) and,
+    # once four distinct opponents have appeared, brought (bring-four). Uses the revealed
+    # Pokemon's real HP/moves. False is the legacy control: every non-active preview
+    # Pokemon, at full HP, including fainted and unbrought ones.
+    search_public_bench_filter: bool = True
     # Exchange-value cost when the opponent successfully establishes an important
     # non-damaging effect. Individual utility actions scale this shared currency.
     search_opp_utility_weight: float = 25.0
@@ -531,6 +537,16 @@ class PolicyConfig:
     # somehow more than this many are already revealed (this only caps how many PRIOR
     # moves get layered on top, never truncates real information from Open Team Sheets).
     set_prior_max_moves: int = 4
+    # When a species has NO usable prior (absent from set_priors.json or below
+    # set_prior_min_games), fill unrevealed moves from its learnset's best legal STAB
+    # attacks (`vgc.sets.learnset_fallback_move_ids`) instead of leaving them empty.
+    # OFF: an unrevealed no-prior attacker then has no attacks, so the search sees it
+    # as harmless (ladder game 2678505187: a full-HP Rillaboom scored as zero threat to
+    # our 1-HP Venusaur), which covers ~21% of M-C preview slots. Not enabled because
+    # the same-session A/B on the six teams/mc_ladder_* teams (2026-09-29, 300 games
+    # each) was 50.6% overall but -29 to +19 points per team -- six teams cannot tell a
+    # real edge from a team-specific swing. Needs a larger no-prior-species team pool.
+    set_prior_learnset_fallback: bool = False
 
     # --- Team preview (vgc.team_preview.build_team_order) -------------------------------
     # Weight on the pairwise expected-damage-exchange ratio term (our estimated output

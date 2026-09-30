@@ -384,6 +384,37 @@ prints the gate; it must say `verdict: PASS` or training and ladder play refuse 
   on `-fieldend` and fed opponent-response scoring a wrong board. Open: 2/140 recall-gate
   decisions still skip with `Can't switch: trapped` on a mirror root; not yet diagnosed.
 
+## Search opponent model: bench, self-sleep, no-prior species (2026-09-29)
+
+Found from ladder game 2678505187 turn 5 (the bot put its own Incineroar to sleep while a
+full-HP Rillaboom was about to KO its 1-HP Venusaur). `vgc.search` changes, each with a
+`PolicyConfig` legacy control:
+
+- `search_public_bench_filter` (ON): opponent switch-ins come from `_opp_switch_pool`,
+  not raw `teampreview_opponent_team`. Preview copies never get `fainted=True`, and
+  preview shows six of a bring-four, so the old list offered switches into fainted and
+  unbrought Pokemon. poke-env keeps the base species name after Mega Evolution
+  (`store_species=False`), so set-prior lookups survive a Mega.
+- Self-sleep: the search credited a sleep move on OUR ally as a gain (+25 x accuracy,
+  the same kind of sign error as Rung 3a). Fixed on main by 701a66c
+  (`vgc.principles.harms_ally_target`, `ally_harmful_status_penalty`), which scores it
+  as a cost. This branch's narrower `search_sleep_credit_foes_only` was dropped on merge.
+- `set_prior_learnset_fallback` (**OFF**): best legal STAB attacks from the learnset for
+  species with no usable prior. `data/usage/set_priors.json` (M-B) covers only 173 of
+  310 legal non-Mega species. That leaves ~21% of M-C preview slots with no prior moves
+  (Rillaboom is in ~61% of M-C games, plus Salamence, Indeedee-F, Golisopod), and they
+  read as harmless until they reveal moves. A "best move of every type" version was
+  measured and is dangerous: foes got perfect four-type coverage and the bot Protected
+  ~4.7x as often (5.5% on mc_ladder_04). STAB-only was 50.6% overall but -29..+19 points
+  per team. Six teams cannot settle it.
+
+Same-session A/Bs (`runs/eval/opp_model_fixes_*`): search fixes on the 160-team pool
+1424/2880 = 49.4%, cluster-robust [0.474, 0.515] (a wash; the pool has zero no-prior
+species, so the fallback cannot be tested there). On the six `teams/mc_ladder_*` teams
+(`data/selfplay/mc_ladder_pool/manifest.json`, gitignored), search-only was 50.9%, and
+the A/A was 50.2%. These are correctness fixes, not strength claims. Testing the fallback
+needs a pool with many teams that use no-prior species.
+
 ## Rung 2 (belief-aware shortlist): built, gated, not enabled
 
 `vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the

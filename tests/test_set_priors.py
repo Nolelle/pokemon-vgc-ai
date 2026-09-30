@@ -221,7 +221,7 @@ def test_opponent_move_ids_dedups_revealed_moves_from_fill() -> None:
 def test_opponent_move_ids_min_games_threshold_respected() -> None:
     fake = _FakeMovesPokemon(species="garchomp", moves={"earthquake": None})
     priors = {"species": {"garchomp": {"appearances": 2, "moves": {"protect": 2}}}}
-    config = PolicyConfig(set_prior_min_games=5)
+    config = PolicyConfig(set_prior_min_games=5, set_prior_learnset_fallback=False)
 
     result = opponent_move_ids(fake, priors=priors, config=config)
 
@@ -232,15 +232,20 @@ def test_opponent_move_ids_missing_species_is_revealed_only() -> None:
     fake = _FakeMovesPokemon(species="mewtwo", moves={"psychic": None})
     priors = {"species": {"garchomp": {"appearances": 100, "moves": {"protect": 90}}}}
 
-    result = opponent_move_ids(fake, priors=priors, config=PolicyConfig())
+    legacy = PolicyConfig(set_prior_learnset_fallback=False)
+    assert opponent_move_ids(fake, priors=priors, config=legacy) == ["psychic"]
 
-    assert result == ["psychic"]
+    # With the learnset STAB fallback on, revealed moves stay first (Mewtwo's only
+    # fallback pick is Psychic, already revealed, so nothing is added or duplicated).
+    enabled = PolicyConfig(set_prior_learnset_fallback=True)
+    assert opponent_move_ids(fake, priors=priors, config=enabled) == ["psychic"]
 
 
 def test_opponent_move_ids_empty_priors_is_revealed_only() -> None:
     fake = _FakeMovesPokemon(species="garchomp", moves={"earthquake": None})
 
-    result = opponent_move_ids(fake, priors={}, config=PolicyConfig())
+    config = PolicyConfig(set_prior_learnset_fallback=False)
+    result = opponent_move_ids(fake, priors={}, config=config)
 
     assert result == ["earthquake"]
 

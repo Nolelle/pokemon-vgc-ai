@@ -118,3 +118,13 @@
   - Directional hints only, none conclusive: speed pressure, opponent Tailwind (8 vs 3), Salamence in their four (9/23 vs 3/23), and our misses (13 vs 6).
   - Needs more games before any finding.
 - Added `offline/review_lost_decisions.py`: exact-Showdown re-check of every lost-game decision at a wider budget. 195 decisions, live choice reproduced 99%, median regret 10, 21% over 100 points. The biggest regrets are mostly "Protect with one Pokemon left", a one-turn-horizon artifact. Found a real bug: game 2678505187 T5, our Venusaur used Sleep Powder on our own Incineroar (the search overturned the myopic pick). 9 decisions were skipped with `KeyError: THREEQUESTIONMARKS` ("???" type) in the mirror.
+
+## 2026-09-29 — search opponent model: fainted/unbrought switches, no-prior species
+
+- Game 2678505187 turn 5: foe had only Rillaboom left (bring-4 fully revealed). The search's only foe responses were "switch->incineroar" (fainted) and "switch->charizard" (unbrought). Rillaboom had no moves: no revealed moves, no M-B prior. It picked Sleep Powder on its OWN Incineroar (+18.75 = 25 utility x 0.75 accuracy credited as our gain).
+- `vgc.search._opp_switch_pool` + `search_public_bench_filter` (on): faint status from opponent_team, bring-four once 4 are revealed, base-species match, revealed object preferred. `vgc.sets.learnset_fallback_move_ids` + `set_prior_learnset_fallback` (OFF, see CLAUDE.md for why).
+- Turn 5 rebuilt: legacy reproduces the recorded self-sleep; shipped config picks Sludge Bomb + Flare Blitz into Rillaboom. The foe is still modeled as "pass", because the fallback is off.
+- A/Bs: pool160 49.4% [0.474,0.515]; mc6 search-only 50.9%; mc6 A/A 50.2%; mc6 all-on coverage-fallback 40.0% (fallback-only 41.4%, mc_ladder_04 5.5%); STAB-only fallback 50.6% (-29..+19/team).
+- Merged main (701a66c already fixed the self-sleep credit more fully: signed cost, redirects): dropped this branch's `search_sleep_credit_foes_only` knob and its test in favor of main's version. The A/B numbers above included this branch's sleep fix.
+- Codex review: fixed accuracy:true scored as 1% (bool is int) and conditional moves (Steel Roller/Belch/Last Resort) in the fallback; also excluded self-KO moves.
+- Tests: 3 regression tests in test_search.py; set_priors tests pin the fallback-off path. Unit suite 1100 passed, 2 known data-missing failures. Readiness gates blocked in this worktree: data/selfplay was absent and the tree was dirty. Not committed.
