@@ -106,6 +106,7 @@ from vgc.principles import (
     SPEED_CONTROL_MOVES,
     WIDE_DEFENSE_MOVES,
     detect_team_signals,
+    harms_ally_target,
     is_speed_drop_attack,
     normalized_move_ids,
     utility_kind,
@@ -1345,6 +1346,24 @@ def _score_status_move(
 ) -> tuple[float, dict]:
     if move_id in _PROTECT_MOVES:
         return _score_protect(actor_slot, ctx, config)
+    targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
+    if move_data.get("target") in _SINGLE_TARGETS and single.move_target in (-1, -2) and not targets:
+        # Aimed at an empty/fainted ally slot: Showdown does not retarget it, the move
+        # fails ([notarget]). Parting Shot used to keep its full value here.
+        return 0.0, {"reason": "fainted_ally_target"}
+    if targets and all(is_ally for _idx, is_ally in targets):
+        # A foe-directed status move aimed at our own partner (sleep, Taunt, Thunder
+        # Wave, Will-O-Wisp, Parting Shot's stat drop) harms us. Scored below any real
+        # option rather than as a neutral 0 or, for Parting Shot, as if it hit a foe.
+        ally_idx = targets[0][0]
+        ally_state = ctx.our_states[ally_idx]
+        ally_ability = ally_state.ability if ally_state is not None else None
+        if harms_ally_target(move_id, ally_ability):
+            return -config.ally_harmful_status_penalty, {
+                "reason": "harmful_status_on_ally",
+                "target_slot": ally_idx,
+            }
+        return 0.0, {"reason": "ally_target_unmodeled", "target_slot": ally_idx}
     if move_id == "trickroom":
         return _score_trick_room(ctx, config)
     if move_id in SLEEP_MOVES:

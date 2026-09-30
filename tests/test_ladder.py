@@ -461,6 +461,7 @@ def test_run_live_session_counts_record_recovered_during_failure(monkeypatch) ->
 
 def _tiny_checkpoint(tmp_path):
     pytest.importorskip("torch")
+    from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary
     from vgc.rl.model import CandidatePolicyValueNet
     from vgc.rl.opponents import RL_ARCHITECTURE_VERSION
     import torch
@@ -471,6 +472,7 @@ def _tiny_checkpoint(tmp_path):
         {
             "model_state_dict": net.state_dict(),
             "architecture": RL_ARCHITECTURE_VERSION,
+            VOCABULARY_KEY: current_vocabulary(),
             "use_meta_features": False,
             "use_information_features": False,
             "use_tactical_features": False,

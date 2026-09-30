@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 
 from vgc.artifact_evidence import decision_evidence, file_sha256, read_verified_json
+from vgc.model_vocabulary import VOCABULARY_KEY, vocabulary_mismatches
 
 RELEASE_SCHEMA = "vgc-model-release-v1"
 MINIMUM_PAIRED_GAMES = 1500
@@ -78,6 +79,10 @@ def validate_model_release(
 
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
     _require(payload.get("architecture") == RL_ARCHITECTURE_VERSION, "incompatible model")
+    _require(
+        not vocabulary_mismatches(payload.get(VOCABULARY_KEY)),
+        "model was not trained on the current data/champions vocabulary",
+    )
     _require(payload.get("use_mechanics_features") is True, "model lacks mechanics inputs")
     trained = payload.get("trained_outputs", {})
     _require(trained.get("action_preferences") is True, "action training provenance missing")

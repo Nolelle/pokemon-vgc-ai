@@ -15,6 +15,12 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 
 from vgc.bc.encoding import TARGET_VOCAB
 from vgc.bc.model import BcPolicyNet, HIDDEN_DIM
+from vgc.model_vocabulary import (
+    EMBEDDING_KEYS,
+    VOCABULARY_KEY,
+    bc_checkpoint_vocabulary,
+    vocabulary_mismatches,
+)
 from vgc.rl.encoding import (
     HISTORY_SCALAR_DIM,
     INFORMATION_MOVES_PER_MON,
@@ -384,15 +390,33 @@ class CandidatePolicyValueNet(nn.Module):
         )
 
     def warm_start_state_encoder(self, checkpoint_path: str | Path) -> dict[str, int]:
-        """Load compatible BC embedding/trunk weights, ignoring old prediction heads."""
+        """Load compatible BC embedding/trunk weights, ignoring old prediction heads.
+
+        An embedding table is copied only if the source recorded the exact ordered tokens
+        the current data export uses (`vgc.model_vocabulary`); otherwise equal-shaped
+        rows would carry another token's meaning. Skipped tables stay freshly initialized
+        and are reported, never silently dropped.
+        """
 
         checkpoint = torch.load(Path(checkpoint_path), map_location="cpu", weights_only=False)
         source = checkpoint.get("model_state_dict", checkpoint.get("state_dict", checkpoint))
+        vocabulary = checkpoint.get(VOCABULARY_KEY) or bc_checkpoint_vocabulary(checkpoint)
+        stale_names = vocabulary_mismatches(vocabulary)
+        stale = {EMBEDDING_KEYS[name] for name in stale_names}
         target = self.state_encoder.state_dict()
         compatible = {
             key: value
             for key, value in source.items()
-            if key in target and target[key].shape == value.shape
+            if key in target and target[key].shape == value.shape and key not in stale
         }
         self.state_encoder.load_state_dict(compatible, strict=False)
-        return {"loaded": len(compatible), "available": len(target)}
+        if stale_names:
+            print(
+                f"  warm start: not copying {'/'.join(stale_names)} embeddings from "
+                f"{checkpoint_path} -- its vocabulary differs from the current data export"
+            )
+        return {
+            "loaded": len(compatible),
+            "available": len(target),
+            "stale_vocabulary_tables": len(stale_names),
+        }

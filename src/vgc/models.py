@@ -269,6 +269,11 @@ class PolicyConfig:
     # Base value for landing Sleep Powder on the fastest eligible (non-Grass, non-Overcoat,
     # not-already-statused) opposing target.
     sleep_powder_weight: float = 35.0
+    # Score for a foe-directed single-target status move (sleep, Taunt/Encore/Yawn,
+    # Thunder Wave, Will-O-Wisp, Parting Shot) aimed at our OWN partner, negated. Set
+    # equal to sleep_powder_weight: putting our ally to sleep costs what sleeping a foe
+    # earns. Ally abilities that benefit (see vgc.principles.harms_ally_target) score 0.
+    ally_harmful_status_penalty: float = 35.0
 
     # -- Status/utility: Helping Hand --------------------------------------------------------
     # Fraction of the partner slot's own expected-damage score counted as Helping Hand's

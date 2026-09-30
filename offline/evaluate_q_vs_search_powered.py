@@ -65,12 +65,14 @@ def _load(paths: list[Path]) -> list[Any]:
 def _predictions(model_path: Path, samples: list[Any], *, device: str) -> dict[tuple, float]:
     import torch
 
+    from vgc.model_vocabulary import require_current_vocabulary
     from vgc.rl.counterfactual_q import ActionResponseValueNet, predict_q
     from vgc.rl.opponents import load_snapshot
 
     payload = torch.load(model_path, map_location="cpu", weights_only=False)
     if payload.get("format") != "vgc-action-response-value-v1":
         raise SystemExit(f"unsupported checkpoint {payload.get('format')!r}")
+    require_current_vocabulary(payload, model_path, state_prefix="backbone.state_encoder.")
     model = ActionResponseValueNet(load_snapshot(Path(payload["base_checkpoint"]), device=device))
     model.load_state_dict(payload["model_state_dict"])
     values = predict_q(model, samples, batch_size=512, device=device)

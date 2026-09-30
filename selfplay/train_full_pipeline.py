@@ -28,6 +28,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.baselines import BASELINES
 from vgc.config import FORMAT_ID, REPO_ROOT
 from vgc.evaluation import clustered_interval, wilson_interval
+from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary
 from vgc.rl.agents import DirectAgent, make_direct_agent
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, SimWorker
 from vgc.rl.match import play_battle
@@ -185,6 +186,7 @@ def save_training_checkpoint(
     payload: dict[str, object] = {
         "model_state_dict": model.state_dict(),
         "architecture": RL_ARCHITECTURE_VERSION,
+        VOCABULARY_KEY: current_vocabulary(),
         "use_meta_features": model.use_meta_features,
         "use_information_features": model.use_information_features,
         "use_mechanics_features": model.use_mechanics_features,
