@@ -108,3 +108,13 @@
 - Fix: `vgc.principles.harms_ally_target` (foe-directed single-target status kinds; ally-ability exceptions incl. Guts/Flare Boost, Volt Absorb/Motor Drive, Contrary). Search resolves the final target at execution (foe Follow Me redirect, ally fainted mid-turn = fail) and signs the credit. Evaluator: `-PolicyConfig.ally_harmful_status_penalty` (35.0 = sleep_powder_weight) for harmful status on an alive ally, 0 for a fainted-ally slot. Enumeration unchanged (ally targets stay legal).
 - Evidence: all 372 saved decisions rebuilt before/after: exactly the 16 ally-harmful picks change, nothing else. New `tests/test_ally_target_harm.py` (13; 9 of the original 10 fail on old code). Unit suite 1110 passed, 2 pre-existing counterfactual_q data failures. Action gate 19/19 tests; verdict BLOCKED only for the dirty tree. Codex review: 4 findings (redirect, fainted mid-turn, Contrary, fainted-slot redirect), all fixed + tested.
 - Separate defect found (not fixed): opponent responses offered switches into fainted/unbrought mons, and Rillaboom has no M-B set priors, so every exchange was 0 that turn. Spawned as its own task. Not committed.
+
+## 2026-09-29 — Jev parked; loss study without human labels
+
+- Built `tools/build_loss_review.py` (plain-text hand-labelling sheet for the 23 M-C ladder losses, holdout of 8, bot guesses in a separate file, `--collect` validation). The owner is not a VGC expert, and AI-written labels can't serve as an answer key, so the Jev loss-tagging trial is parked. The status note is in CLAUDE.md/AGENTS.md.
+- Added `tools/loss_patterns.py`: checkable replay facts, losses vs wins (46 M-C ladder games, 23/23).
+  - The raw per-game "one of ours KO'd before acting" (22/23 vs 14/23) is inflated, because every loss has 4 faints.
+  - Per knockout, the share is 70% in losses vs 53% in wins (p≈0.10, optimistic).
+  - Directional hints only, none conclusive: speed pressure, opponent Tailwind (8 vs 3), Salamence in their four (9/23 vs 3/23), and our misses (13 vs 6).
+  - Needs more games before any finding.
+- Added `offline/review_lost_decisions.py`: exact-Showdown re-check of every lost-game decision at a wider budget. 195 decisions, live choice reproduced 99%, median regret 10, 21% over 100 points. The biggest regrets are mostly "Protect with one Pokemon left", a one-turn-horizon artifact. Found a real bug: game 2678505187 T5, our Venusaur used Sleep Powder on our own Incineroar (the search overturned the myopic pick). 9 decisions were skipped with `KeyError: THREEQUESTIONMARKS` ("???" type) in the mirror.
