@@ -125,6 +125,7 @@ from vgc.evaluator import (
     _ABILITY_WEATHER,
     _PROTECT_MOVES,
     _SELF_PROTECT_MOVES,
+    _SINGLE_TARGETS,
     _SPREAD_TARGETS_FOES_ONLY,
     _SPREAD_TARGETS_HITTING_ALLY,
     _Context,
@@ -139,7 +140,7 @@ from vgc.evaluator import (
     score_joint_orders,
 )
 from vgc.models import PolicyConfig
-from vgc.principles import REDIRECTION_MOVES, SLEEP_MOVES, utility_kind
+from vgc.principles import REDIRECTION_MOVES, SLEEP_MOVES, harms_ally_target, utility_kind
 from vgc.sets import load_usage_spreads, opponent_move_ids, opponent_state
 
 # --- opponent response candidates ---------------------------------------------------------
@@ -759,10 +760,17 @@ def _build_our_actions(
                         "recovery": 0.5,
                         "pivot": 0.6,
                     }.get(kind, 0.5)
-                    targets = _resolve_targets(move_data, slot, single.move_target, ctx)
-                    side_tagged = [
-                        ("opp", idx, False) for idx, is_ally in targets if not is_ally
-                    ] + [("our", idx, True) for idx, is_ally in targets if is_ally]
+                    single_target = move_data.get("target") in _SINGLE_TARGETS
+                    if single_target and single.move_target in (-1, -2):
+                        # Aimed at our partner's slot. Kept even if that partner is
+                        # down: an opposing Follow Me still pulls the move onto the
+                        # redirector; otherwise it fails. `_apply_action` decides which.
+                        side_tagged = [("our", -single.move_target - 1, True)]
+                    else:
+                        targets = _resolve_targets(move_data, slot, single.move_target, ctx)
+                        side_tagged = [
+                            ("opp", idx, False) for idx, is_ally in targets if not is_ally
+                        ] + [("our", idx, True) for idx, is_ally in targets if is_ally]
                     actions.append(
                         _Action(
                             side="our",
@@ -772,6 +780,7 @@ def _build_our_actions(
                             targets=side_tagged,
                             priority=int(move_data.get("priority", 0)),
                             utility_value=config.search_opp_utility_weight * utility_scale,
+                            spread=not single_target,
                         )
                     )
             continue
@@ -897,8 +906,6 @@ def _apply_action(
     weather_for_exchange: str | None,
     ctx: _Context,
     result: ExchangeResult,
-    *,
-    sleep_credit_foes_only: bool = True,
 ) -> None:
     actor_states = our_states if action.side == "our" else opp_states
     actor_state = actor_states[action.slot]
@@ -920,15 +927,31 @@ def _apply_action(
         pre_protect_hp[action.slot] = actor_state.hp_or_max()
         return
     if action.kind == "utility":
+        # The flat utility proxy is signed by WHO it finally lands on: a foe-directed
+        # effect (sleep, Taunt, Thunder Wave, ...) on the actor's own ally is a cost, not
+        # the benefit it would be against a foe. Before this, a Sleep Powder on our own
+        # Incineroar earned the full action-denial credit (ladder game 2678505187 T5).
+        # A single-target move goes to the FOE side's redirector (Follow Me / Rage
+        # Powder) if one is up, even when it was aimed at our own ally.
+        foe_redirector = opp_redirector[0] if action.side == "our" else our_redirector[0]
+        if not action.spread and foe_redirector is not None and action.targets:
+            foe_side = "opp" if action.side == "our" else "our"
+            action_targets = [(foe_side, foe_redirector, False)]
+        else:
+            action_targets = action.targets
         realized_probability = actor_probability
+        if action_targets and all(side == action.side for side, _i, _a in action_targets):
+            ally_state = actor_states[action_targets[0][1]]
+            if ally_state is None or ally_state.hp_or_max() <= 0:
+                realized_probability = 0.0  # partner is down: the move fails
+            elif harms_ally_target(action.move_id, ally_state.ability):
+                realized_probability = -actor_probability
+            else:
+                realized_probability = 0.0  # benefit not modeled; neither credit nor cost
         if action.move_id in SLEEP_MOVES:
-            realized_probability = 0.0
-            for side, original_idx, _is_ally in action.targets:
-                idx = original_idx
-                if side != action.side:
-                    redirector = our_redirector[0] if side == "our" else opp_redirector[0]
-                    if redirector is not None:
-                        idx = redirector
+            foe_hit = 0.0
+            own_hit = 0.0
+            for side, idx, _is_ally in action_targets:
                 target_states = our_states if side == "our" else opp_states
                 target_state = target_states[idx]
                 if target_state is None or target_state.hp_or_max() <= 0:
@@ -967,8 +990,12 @@ def _apply_action(
                 # state is a conservative representation of the following turn.
                 if hit_probability >= 0.5:
                     target_state.status = "slp"
-                if side != action.side or not sleep_credit_foes_only:
-                    realized_probability = max(realized_probability, hit_probability)
+                if side == action.side:
+                    own_hit = max(own_hit, hit_probability)
+                else:
+                    foe_hit = max(foe_hit, hit_probability)
+            # No ally ability benefits from sleep, so an own-side hit is always a cost.
+            realized_probability = foe_hit - own_hit
         if action.side == "our":
             result.our_utility_value += action.utility_value * realized_probability
             if action.move_id in REDIRECTION_MOVES:
@@ -1141,7 +1168,6 @@ def resolve_exchange(
             weather_for_exchange,
             ctx,
             result,
-            sleep_credit_foes_only=config.search_sleep_credit_foes_only,
         )
 
     # `_apply_action` keeps each partially protected slot in the Protect-failure branch

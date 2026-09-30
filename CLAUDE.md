@@ -395,8 +395,10 @@ full-HP Rillaboom was about to KO its 1-HP Venusaur). `vgc.search` changes, each
   preview shows six of a bring-four, so the old list offered switches into fainted and
   unbrought Pokemon. poke-env keeps the base species name after Mega Evolution
   (`store_species=False`), so set-prior lookups survive a Mega.
-- `search_sleep_credit_foes_only` (ON): a sleep move on OUR ally no longer earns
-  `our_utility_value` (it was +25 x accuracy, the same kind of sign error as Rung 3a).
+- Self-sleep: the search credited a sleep move on OUR ally as a gain (+25 x accuracy,
+  the same kind of sign error as Rung 3a). Fixed on main by 701a66c
+  (`vgc.principles.harms_ally_target`, `ally_harmful_status_penalty`), which scores it
+  as a cost. This branch's narrower `search_sleep_credit_foes_only` was dropped on merge.
 - `set_prior_learnset_fallback` (**OFF**): best legal STAB attacks from the learnset for
   species with no usable prior. `data/usage/set_priors.json` (M-B) covers only 173 of
   310 legal non-Mega species. That leaves ~21% of M-C preview slots with no prior moves
@@ -742,6 +744,14 @@ When Jev is appropriate:
 3. Batch independent judgments where possible.
 4. Keep questions and thresholds centralized.
 5. Validate important judgments with test cases.
+
+**Status: parked (2026-09-29).** No Jev code is in the bot. The first planned use,
+tagging why ladder games were lost, needs a VGC-competent person to hand-label an answer
+key first (`tools/build_loss_review.py` builds the sheet); labels written by another AI
+only measure AI-to-AI agreement. Until such a reviewer exists, study losses with code
+that needs no judgement: `tools/loss_patterns.py` (checkable facts, losses vs wins) and
+the engine re-check of lost decisions (`offline/review_lost_decisions.py`). Reopen Jev only with a real answer key or a new,
+concrete fuzzy-judgement need.
 
 Project rules for this bot (reviewed 2026-09-29; see the closed PR #8 for why):
 

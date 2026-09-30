@@ -1355,26 +1355,6 @@ def test_opp_switch_pool_excludes_fainted_and_unbrought_preview_pokemon() -> Non
     assert "charizard" in [s for s, _ in _opp_switch_pool(ctx, legacy)]
 
 
-def test_sleeping_our_own_ally_earns_no_utility_credit() -> None:
-    ctx = _build_ctx(
-        our_states=[_klefki(), _garchomp()],
-        opp_states=[_garchomp(), None],
-        our_pokemon=[_mon(species="klefki"), _mon(species="garchomp")],
-        opp_pokemon=[_mon(species="garchomp"), None],
-    )
-    our_order = _fake_order(_fake_single("sleeppowder", move_target=-2), None)
-    no_op = OppResponse(slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none"))
-
-    fixed = resolve_exchange(our_order, no_op, ctx, PolicyConfig())
-    legacy = resolve_exchange(
-        our_order, no_op, ctx, PolicyConfig(search_sleep_credit_foes_only=False)
-    )
-
-    assert fixed.our_states[1].status == "slp"  # it still lands on our ally...
-    assert fixed.our_utility_value == 0.0  # ...but is not scored as a gain
-    assert legacy.our_utility_value > 0.0
-
-
 def test_no_prior_species_still_gets_attack_candidates() -> None:
     from vgc.sets import opponent_move_ids
 

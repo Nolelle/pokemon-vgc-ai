@@ -288,6 +288,42 @@ def utility_kind(move_id: str) -> str | None:
     return None
 
 
+# Utility families whose whole value comes from landing on an OPPONENT: putting it to
+# sleep, taunting it, slowing it, burning it, dropping its stats. Aimed at our own ally
+# (legal in doubles -- `normal`-target moves can pick the partner) the same effect is
+# a loss for us, never a neutral no-op.
+_FOE_DIRECTED_UTILITY_KINDS = frozenset({"action_denial", "speed_control", "burn", "pivot"})
+_SINGLE_TARGET_KINDS = frozenset({"normal", "any", "adjacentFoe"})
+# The deliberate exceptions: an ally ability that turns the "harmful" status into a
+# benefit (Guts/Flare Boost/Quick Feet on a burn; Volt Absorb/Motor Drive/Lightning Rod
+# absorb Thunder Wave, Guts/Quick Feet profit from paralysis; Contrary turns Parting
+# Shot's and Scary Face's drops into boosts -- Defiant/Competitive do not trigger on an
+# ally's drop). The policy does not model that benefit, so these are scored neutral
+# rather than penalized -- the order stays available, it is just not rewarded.
+_ALLY_BENEFIT_ABILITIES = {
+    "willowisp": frozenset({"guts", "flareboost", "quickfeet"}),
+    "thunderwave": frozenset({"voltabsorb", "motordrive", "lightningrod", "guts", "quickfeet"}),
+    "partingshot": frozenset({"contrary"}),
+    "scaryface": frozenset({"contrary"}),
+}
+
+
+def harms_ally_target(move_id: str, ally_ability: str | None = None) -> bool:
+    """True if ``move_id`` aimed at our own ally is a self-inflicted harm.
+
+    Covers single-target status moves the policy values as foe-directed utility (sleep,
+    Taunt/Encore/Yawn/Disable, Thunder Wave/Scary Face, Will-O-Wisp, Parting Shot). An
+    ally ability in ``_ALLY_BENEFIT_ABILITIES`` is the deliberate-reason exception.
+    """
+    move_id = to_id(move_id)
+    move_data = load_moves().get(move_id) or {}
+    if move_data.get("category") != "Status" or move_data.get("target") not in _SINGLE_TARGET_KINDS:
+        return False
+    if utility_kind(move_id) not in _FOE_DIRECTED_UTILITY_KINDS:
+        return False
+    return to_id(ally_ability or "") not in _ALLY_BENEFIT_ABILITIES.get(move_id, frozenset())
+
+
 def is_speed_drop_attack(move_id: str) -> bool:
     return to_id(move_id) in {"icywind", "electroweb", "bulldoze"}
 
