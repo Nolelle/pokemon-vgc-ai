@@ -64,6 +64,7 @@ from poke_env.player.battle_order import DoubleBattleOrder
 from vgc.config import FORMAT_ID
 from vgc.node import find_node
 from vgc.own_team import apply_own_spreads, index_from_packed
+from vgc.poke_env_compat import normalize_for_poke_env
 
 DEFAULT_FORMAT = FORMAT_ID
 DEFAULT_SHOWDOWN_REPO = Path.home() / "code" / "projects" / "pokemon-showdown"
@@ -636,7 +637,7 @@ class DirectBattle:
                 continue
             else:
                 try:
-                    battle.parse_message(split)
+                    battle.parse_message(normalize_for_poke_env(split))
                 except KeyError as exc:
                     if split[1] in _TOLERATED_END_WITHOUT_START:
                         self._tolerated_end_without_start = (
