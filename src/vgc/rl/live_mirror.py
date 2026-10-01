@@ -26,7 +26,7 @@ from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
 from vgc.rl.exact_search import combine_belief_rankings
 from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
 from vgc.sets import (
-    load_set_priors,
+    set_priors_for,
     normalize_item,
     opponent_move_ids,
     opponent_spread_hypotheses,
@@ -132,7 +132,7 @@ def _opponent_sets(
     # Keep all such species ahead of preview-only possibilities so a later-turn mirror
     # cannot accidentally leave a fainted former active outside its concrete bring.
     ordered_ids = _ordered_unique([*active_ids, *known, *(brought or ()), *preview_by_id])
-    priors = load_set_priors()
+    priors = set_priors_for(config)
     species_data = load_species()
     legal_items = load_items()
     used_items: set[str] = set()

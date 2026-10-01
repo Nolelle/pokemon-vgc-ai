@@ -164,6 +164,11 @@ def load_set_priors(path: str | None = None) -> dict[str, Any]:
         return json.load(file)
 
 
+def set_priors_for(config: PolicyConfig) -> dict[str, Any]:
+    """`load_set_priors` for the file `config.set_priors_file` names in data/usage/."""
+    return load_set_priors(str(USAGE_DIR / config.set_priors_file))
+
+
 def opponent_move_ids(
     pokemon: ObservedPokemon,
     priors: dict[str, Any] | None = None,
@@ -197,7 +202,7 @@ def opponent_move_ids(
         return revealed
 
     if priors is None:
-        priors = load_set_priors()
+        priors = set_priors_for(config)
     species_id = to_id(pokemon.species)
     entry = (priors.get("species") or {}).get(species_id) if priors else None
     if not entry or entry.get("appearances", 0) < config.set_prior_min_games:

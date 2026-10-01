@@ -37,7 +37,7 @@ from vgc.evaluator import effective_speed
 from vgc.gameplan import build_gameplan
 from vgc.models import PolicyConfig
 from vgc.principles import TeamSignals, detect_team_signals
-from vgc.sets import load_set_priors, load_usage_spreads, opponent_move_ids, opponent_state
+from vgc.sets import load_usage_spreads, opponent_move_ids, opponent_state, set_priors_for
 from vgc.team_preview import (
     _LEADS_COUNT,
     _PICK_COUNT,
@@ -130,7 +130,7 @@ def predict_preview_choice(
         return []
 
     usage = load_usage_spreads()
-    priors = load_set_priors()
+    priors = set_priors_for(config)
 
     picker_states, picker_move_ids, picker_mons = _species_only_team(
         picker_species, usage, priors, config
@@ -261,7 +261,7 @@ def predict_preview_hybrid(
     if len(picker_species) < _PICK_COUNT or len(target_species) < _LEADS_COUNT:
         return []
 
-    priors = load_set_priors()
+    priors = set_priors_for(config)
     bring4_probs = _bring4_usage_distribution(picker_species, priors)
 
     matchup_candidates = predict_preview_choice(picker_species, target_species, config)

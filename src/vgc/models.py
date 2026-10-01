@@ -537,6 +537,11 @@ class PolicyConfig:
     # somehow more than this many are already revealed (this only caps how many PRIOR
     # moves get layered on top, never truncates real information from Open Team Sheets).
     set_prior_max_moves: int = 4
+    # Which set-prior file in data/usage/ the bot reads (`vgc.sets.set_priors_for`).
+    # "set_priors.json" is the M-C corpus build (2026-09-30, 14,048 games rated >=1200);
+    # "set_priors_regmb.json" is the previous M-B build, kept only as the legacy control
+    # for same-session A/Bs.
+    set_priors_file: str = "set_priors.json"
     # When a species has NO usable prior (absent from set_priors.json or below
     # set_prior_min_games), fill unrevealed moves from its learnset's best legal STAB
     # attacks (`vgc.sets.learnset_fallback_move_ids`) instead of leaving them empty.

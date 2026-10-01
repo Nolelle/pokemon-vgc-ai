@@ -281,7 +281,7 @@ def test_build_context_fills_protect_probability_from_priors_when_unrevealed(mon
     fake_priors = {
         "species": {"klefki": {"appearances": 50, "moves": {"protect": 45, "spikyshield": 2}}}
     }
-    monkeypatch.setattr(evaluator_module, "load_set_priors", lambda: fake_priors)
+    monkeypatch.setattr(evaluator_module, "set_priors_for", lambda config: fake_priors)
 
     ctx = build_context(fake_battle, PolicyConfig())
 
