@@ -154,6 +154,15 @@ def sync_showdown(
     # fork configured as `origin` cannot slip in commits that were never checked.
     log(f"showdown: fast-forwarding to {report.upstream_ref}")
     _run(["git", "merge", "--ff-only", report.upstream_ref], showdown_repo)
+    # A fast-forward is a no-op when local master is AHEAD of public master; pinning that
+    # would bless local-only commits as public parity.
+    if _git(showdown_repo, "rev-parse", "HEAD") != _git(
+        showdown_repo, "rev-parse", report.upstream_ref
+    ):
+        raise SyncBlocked(
+            f"{showdown_repo} has commits that are not on {report.upstream_ref}; "
+            "only public master can be pinned"
+        )
     node = find_node()
     log("showdown: force-rebuilding dist/sim")
     _run([node, "build", "--force"], showdown_repo, timeout=BUILD_TIMEOUT_SECONDS)
@@ -167,7 +176,8 @@ def sync_showdown(
         )
     except BaseException:
         # Never leave data/champions half-exported: restore the committed files.
-        _run(["git", "checkout", "--", str(data_dir)], repo_root)
+        # From HEAD, so files already staged for the refresh commit are restored too.
+        _run(["git", "checkout", "HEAD", "--", str(data_dir)], repo_root)
         raise
 
     if run_gates:
