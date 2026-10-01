@@ -34,7 +34,7 @@ from vgc.evaluator import (
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.opponent_belief import build_opponent_beliefs
-from vgc.sets import load_usage_spreads, opponent_spread_hypotheses, opponent_state
+from vgc.sets import opponent_spread_hypotheses, opponent_state, usage_spreads_for
 
 _SpreadAssignment = dict[int, tuple[dict[str, int], str]]
 _JointHypothesis = tuple[float, _SpreadAssignment]
@@ -61,6 +61,7 @@ def _species_hypotheses(
     species_id: str,
     posterior: dict | None,
     limit: int,
+    usage: dict[str, list[dict]],
 ) -> list[tuple[dict[str, int], str, float]]:
     """Top-`limit` spreads for one species, renormalised. Posterior when available."""
 
@@ -77,7 +78,7 @@ def _species_hypotheses(
     return [
         (dict(spread), nature, probability)
         for spread, nature, probability in opponent_spread_hypotheses(
-            species_id, limit=limit
+            species_id, usage, limit=limit
         )
     ]
 
@@ -112,7 +113,9 @@ def joint_spread_hypotheses(
         }
 
     per_slot = [
-        (idx, _species_hypotheses(to_id(getattr(mon, "species", None)), posterior, limit))
+        (idx, _species_hypotheses(
+            to_id(getattr(mon, "species", None)), posterior, limit, usage_spreads_for(config)
+        ))
         for idx, mon in slots
     ]
     combined: list[_JointHypothesis] = []
@@ -224,7 +227,7 @@ def _mixture_over_orders(
     hypotheses = joint_spread_hypotheses(
         battle, memory, config, limit=config.shortlist_belief_hypotheses
     )
-    usage = load_usage_spreads()
+    usage = usage_spreads_for(config)
     meta_team = recognize_meta_team(_preview_team(battle))
     mode = (
         _mode_assignment(battle, usage, meta_team)

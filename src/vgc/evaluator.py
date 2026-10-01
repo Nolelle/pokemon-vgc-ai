@@ -113,7 +113,7 @@ from vgc.principles import (
 )
 from vgc.sets import (
     set_priors_for,
-    load_usage_spreads,
+    usage_spreads_for,
     normalize_item,
     normalize_status,
     opponent_move_ids,
@@ -648,7 +648,7 @@ def build_context(
     config: PolicyConfig,
     opp_state_override: Mapping[int, PokemonState] | None = None,
 ) -> _Context:
-    usage = load_usage_spreads()
+    usage = usage_spreads_for(config)
     priors = set_priors_for(config)
     preview_team = list(getattr(battle, "teampreview_opponent_team", None) or [])
     if len(preview_team) != 6:

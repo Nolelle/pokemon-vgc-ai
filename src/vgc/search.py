@@ -141,7 +141,7 @@ from vgc.evaluator import (
 )
 from vgc.models import PolicyConfig
 from vgc.principles import REDIRECTION_MOVES, SLEEP_MOVES, harms_ally_target, utility_kind
-from vgc.sets import load_usage_spreads, opponent_move_ids, opponent_state
+from vgc.sets import opponent_move_ids, opponent_state, usage_spreads_for
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -493,7 +493,7 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     # Opponent bench Pokemon that can still come in are plausible defensive pivots. Retain
     # the switch-ins that take the least estimated damage from our current board; response
     # weighting below scales them by the evaluator's pressure-derived switch probability.
-    usage = load_usage_spreads()
+    usage = usage_spreads_for(config)
     switch_actions: list[_OppSlotAction] = []
     for species_id, bench_mon in _opp_switch_pool(ctx, config):
         bench_state = opponent_state(bench_mon, usage=usage)
@@ -1430,7 +1430,9 @@ def _best_joint_forecast_attacks(
     return best
 
 
-def _forecast_bench_states(side: str, ctx: _Context) -> list[PokemonState]:
+def _forecast_bench_states(
+    side: str, ctx: _Context, usage: dict[str, list[dict]]
+) -> list[PokemonState]:
     active_ids = {
         to_id(mon.species)
         for mon in (ctx.our_pokemon if side == "our" else ctx.opp_pokemon)
@@ -1453,7 +1455,7 @@ def _forecast_bench_states(side: str, ctx: _Context) -> list[PokemonState]:
         ][:2]
     mons = list((getattr(ctx.battle, "opponent_team", None) or {}).values())
     return [
-        opponent_state(mon)
+        opponent_state(mon, usage=usage)
         for mon in mons
         if not mon.fainted and to_id(mon.species) not in active_ids
     ][:2]
@@ -1501,10 +1503,10 @@ def forecast_position(
     our_states = [_copy_state(state) for state in exchange.our_states]
     opp_states = [_copy_state(state) for state in exchange.opp_states]
     our_safe = _safe_switch_count(
-        "our", _forecast_bench_states("our", ctx), opp_states, exchange, ctx, config
+        "our", _forecast_bench_states("our", ctx, usage_spreads_for(config)), opp_states, exchange, ctx, config
     )
     opp_safe = _safe_switch_count(
-        "opp", _forecast_bench_states("opp", ctx), our_states, exchange, ctx, config
+        "opp", _forecast_bench_states("opp", ctx, usage_spreads_for(config)), our_states, exchange, ctx, config
     )
     our_loss = opp_loss = 0.0
     our_faints = opp_faints = 0

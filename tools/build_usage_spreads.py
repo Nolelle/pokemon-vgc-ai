@@ -32,9 +32,9 @@ Usage:
     .venv/bin/python tools/build_usage_spreads.py
     .venv/bin/python tools/build_usage_spreads.py --input data/usage/other.json --top-n 5
 
-Default input is the M-B chaos dump `data/usage/gen9championsvgc2026regmb-1760.json`.
-The checked-in `data/usage/spreads.json` stays that source. Do not regenerate from a
-tiny M-C snapshot; wait for a same-format chaos-stats file.
+Default input is the M-C chaos dump `data/usage/gen9championsvgc2026regmc-1760.json`
+(Smogon 2026-09, 1760 cutoff, 1.63M battles). The previous M-B build is kept as
+`data/usage/spreads_regmb.json` (from `gen9championsvgc2026regmb-1760.json`) for A/Bs.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ from vgc.config import DATA_DIR  # noqa: E402
 from vgc.damage import to_id  # noqa: E402
 from vgc.stats import STAT_IDS  # noqa: E402
 
-DEFAULT_INPUT = REPO_ROOT / "data" / "usage" / "gen9championsvgc2026regmb-1760.json"
+DEFAULT_INPUT = REPO_ROOT / "data" / "usage" / "gen9championsvgc2026regmc-1760.json"
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "usage" / "spreads.json"
 DEFAULT_TOP_N = 3
 

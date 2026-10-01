@@ -20,7 +20,7 @@ from vgc.battle_memory import BattleMemory
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.evaluator import field_effective_speed
 from vgc.models import PolicyConfig
-from vgc.sets import load_usage_spreads, normalize_item, normalize_status, set_priors_for
+from vgc.sets import normalize_item, normalize_status, set_priors_for, usage_spreads_for
 from vgc.stats import (
     STAT_IDS,
     calculate_stats,
@@ -480,7 +480,7 @@ def build_opponent_beliefs(
     """Return one probability estimate per visible opponent preview species."""
 
     config = config or PolicyConfig()
-    usage = load_usage_spreads() if usage is None else usage
+    usage = usage_spreads_for(config) if usage is None else usage
     set_priors = set_priors_for(config) if set_priors is None else set_priors
     observed_by_species = {
         to_id(getattr(mon, "species", None)): mon
