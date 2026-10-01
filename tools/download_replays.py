@@ -11,8 +11,9 @@ Two endpoints, verified manually:
     id/rating/uploadtime/players fields plus the battle `log` text (and `views`/
     `formatid`/`format`/`private`/`password`).
 
-As of writing, the live format is `gen9championsvgc2026regmc`. Public M-C replays are
-still scarce (tens of rated games). The historical `gen9championsvgc2026regmb` tree has
+As of writing, the live format is `gen9championsvgc2026regmc`. On 2026-09-30 the public
+M-C listing held ~62.7k replays (~3k/day; 18.5k rated >=1200), so a full backfill needs
+`--max-pages` of roughly 1300+. The historical `gen9championsvgc2026regmb` tree has
 ~3000 replays, ~950 rated >=1200. `--min-rating` (default 1100) keeps this from
 downloading low-quality/ladder-noise games nobody would want to clone from. Re-run
 this tool incrementally as new M-C games appear; keep the M-B tree. Do not rebuild
@@ -80,16 +81,34 @@ def _meets_rating(entry: dict, min_rating: int) -> bool:
     return rating is not None and rating >= min_rating
 
 
-def should_download(entry: dict, min_rating: int, existing_ids: set[str]) -> bool:
+def player_id(name: str) -> str:
+    """Showdown's user id for a display name: lowercase, letters and digits only."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _has_excluded_player(entry: dict, excluded_players: frozenset[str]) -> bool:
+    return any(player_id(name) in excluded_players for name in entry.get("players") or ())
+
+
+def should_download(
+    entry: dict,
+    min_rating: int,
+    existing_ids: set[str],
+    excluded_players: frozenset[str] = frozenset(),
+) -> bool:
     """True if `entry` (one row from search.json, or a full replay detail payload --
     both carry the same id/rating fields) is worth fetching: it has an id, that id isn't
     already in `existing_ids` (an incremental re-run's on-disk replay ids -- see
-    `_existing_replay_ids`), and its rating clears `min_rating`.
+    `_existing_replay_ids`), its rating clears `min_rating`, and neither player is in
+    `excluded_players` (Showdown user ids -- see `player_id`; used to keep high-volume
+    ladder bots, including ours, out of a corpus meant to imitate people).
     """
     entry_id = entry.get("id")
     if not entry_id:
         return False
     if entry_id in existing_ids:
+        return False
+    if _has_excluded_player(entry, excluded_players):
         return False
     return _meets_rating(entry, min_rating)
 
@@ -223,6 +242,13 @@ def parse_args() -> argparse.Namespace:
         default=FORMAT_ID,
         help="Showdown format id to search (default: %(default)s)",
     )
+    parser.add_argument(
+        "--exclude-player",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="skip any replay with this player (repeatable; matched by Showdown user id)",
+    )
     return parser.parse_args()
 
 
@@ -230,10 +256,12 @@ def main() -> int:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     existing_ids = _existing_replay_ids(args.out)
+    excluded_players = frozenset(player_id(name) for name in args.exclude_player)
 
     pages_walked = 0
     replays_seen = 0
     skipped_by_rating = 0
+    skipped_by_player = 0
     already_present = 0
     newly_downloaded = 0
     before: int | None = None
@@ -252,10 +280,12 @@ def main() -> int:
 
         for entry in entries:
             replays_seen += 1
-            if not should_download(entry, args.min_rating, existing_ids):
+            if not should_download(entry, args.min_rating, existing_ids, excluded_players):
                 entry_id = entry.get("id")
                 if entry_id and entry_id in existing_ids:
                     already_present += 1
+                elif _has_excluded_player(entry, excluded_players):
+                    skipped_by_player += 1
                 else:
                     skipped_by_rating += 1
                 continue
@@ -283,6 +313,7 @@ def main() -> int:
     print(f"  pages walked:      {pages_walked}")
     print(f"  replays seen:      {replays_seen}")
     print(f"  skipped by rating: {skipped_by_rating}")
+    print(f"  skipped by player: {skipped_by_player}")
     print(f"  already present:   {already_present}")
     print(f"  newly downloaded:  {newly_downloaded}")
     print(f"  index rows:        {index_rows} ({args.out / 'index.jsonl'})")

@@ -32,11 +32,9 @@ Usage:
     .venv/bin/python tools/build_set_priors.py
     .venv/bin/python tools/build_set_priors.py --min-rating 1200
 
-The default `--replays-dir` is `data/replays/<FORMAT_ID>/` (currently the small M-C
-tree). Do not rebuild `data/usage/set_priors.json` from that snapshot. The checked-in
-file is the M-B corpus (`corpus_size: 2939`). Rebuild from
-`--replays-dir data/replays/gen9championsvgc2026regmb` until the M-C corpus is large
-enough to be a prior. Mix formats only with an explicit format id on the dataset.
+The default `--replays-dir` is `data/replays/<FORMAT_ID>/`. The checked-in file was
+rebuilt from the M-C corpus on 2026-09-30 with `--min-rating 1200` (`corpus_size:
+14445`); the earlier file was M-B (`corpus_size: 2939`). Mix formats only with an explicit format id on the dataset.
 """
 
 from __future__ import annotations

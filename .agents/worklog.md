@@ -135,3 +135,17 @@
 - The `infer_hidden_opponent_sets` flag is uncommitted work in the team-preview-tagging worktree and is not on this branch, so this uses its own flag.
 - 160-team pool A/B (36 games/team): 2862/5760 = 49.7%, cluster-robust [0.484, 0.509], FAIL -> ships False. Post hoc: 57 teams carrying the moves 51.6% [0.494, 0.538]; 103 unaffected teams 48.6% [0.471, 0.501] (effectively A/A, shows the noise).
 - Unit suite: 1112 passed, 2 known data-missing failures (counterfactual_q split files absent in the worktree). The worktree `.venv` is a symlink to the main checkout's venv, so gate-script tests can spawn it.
+
+## 2026-09-30 — M-C replay corpus survey (read-only, nothing downloaded)
+
+- On disk: 468 M-C replays, all uploaded on 2026-09-09 (launch day); 438 rated >=1100, 71 >=1200, 9 >=1300.
+- Public listing (search.json paged to the end, 1231 pages): 62,730 M-C replays 2026-09-09..09-30, ~2,500-3,700/day, none private. Rated >=1100: 33,351; >=1200: 18,469; >=1300: 9,556; >=1400: 2,928; >=1500: 680.
+- Bot-heavy accounts: pcrlbot12d159c39a (2322 games >=1100), Scorecard-Pokemon (1931), SC-SME (1659), SC-Control (1522), plus our own laplacestheorems. Excluding them: >=1200 13,995; >=1300 7,309.
+- `tools/download_replays.py` default `--max-pages 100` reaches only ~1.5 days back at this volume; a full backfill needs ~1300 pages and has no player/bot filter.
+
+## 2026-09-30 — M-C corpus backfill + set priors rebuilt (uncommitted)
+
+- `tools/download_replays.py --exclude-player` (repeatable, matched by Showdown user id). Downloaded 13,977 new M-C replays rated >=1200 back to launch, 0 failures; tree now 14,445 (113 MB). Skipped 11,645 bot-account listings.
+- Parsed to `data/bc/decisions_regmc.jsonl`: 14,445/14,445 replays, 277,636 records (199,658 turn / 49,088 forced switch / 28,890 preview), all format_id-stamped. M-B `decisions.jsonl` untouched.
+- `data/usage/set_priors.json` rebuilt from M-C (min rating 1200, 14,048 games, 272 species). Preview-slot coverage at set_prior_min_games=5: M-B file 77.5% -> M-C 99.9%.
+- Not run: the unit suite (auto-mode classifier denied it with PYTHONPATH=src; the symlinked main venv imports main's src without it). The new priors change live play (search opponent moves) and need a same-session A/B before merge. The 09-29 learnset-fallback A/Bs moved win rate, so the pool harness does exercise priors (unlike the mutual-OTS run_gates gates).

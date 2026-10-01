@@ -13,14 +13,17 @@ was re-exported on 2026-09-09 from Showdown `efe494857`: **390** legal species/f
 **166** items, **509** moves, **222** abilities. Readiness gates passed after that
 export. M-C ranked is 2026-09-09 through 2026-12-02.
 
-Public Showdown still has relatively few rated M-C replays (468 on disk as of 2026-09-29,
-vs 2939 for M-B). Keep the M-B replay tree
-(`data/replays/gen9championsvgc2026regmb/`, 2939 replays) as the historical warm-start
-and prior corpus. Download new rated M-C games incrementally into
-`data/replays/gen9championsvgc2026regmc/` (`tools/download_replays.py` defaults to
-`FORMAT_ID`). Do **not** rebuild `data/usage/set_priors.json` or
-`data/usage/spreads.json` from the small M-C snapshot; those files remain M-B until the
-M-C corpus is large enough to be a prior. Mix formats in training only with an explicit
+M-C replay corpus (2026-09-30): the public listing held 62.7k M-C replays (~3k/day).
+`data/replays/gen9championsvgc2026regmc/` now has 14,445 (13,977 rated >=1200 since
+launch, plus the 468 launch-day files), downloaded with `--min-rating 1200
+--max-pages 1400` and `--exclude-player` for the high-volume ladder bots
+(`pcrlbot12d159c39a`, `Scorecard-Pokemon`, `SC-SME`, `SC-Control`) and our own account.
+A full backfill needs ~1300 listing pages; the default `--max-pages 100` reaches back only
+~1.5 days. Parsed to `data/bc/decisions_regmc.jsonl` (277,636 decision records, all
+`format_id`-stamped). Keep the M-B tree (`data/replays/gen9championsvgc2026regmb/`, 2939
+replays) as history. `data/usage/set_priors.json` is now M-C (`corpus_size: 14445`,
+built at `--min-rating 1200`). `data/usage/spreads.json` remains M-B until a same-format
+chaos-stats file exists. Mix formats in training only with an explicit
 `format_id` on every dataset. `tools/parse_replays.py` stamps `format_id` on every record
 (replay's `formatid`, cross-checked against the directory name) and aborts without writing
 if either is missing/disagrees or a tree spans two formats; `vgc.bc.dataset.check_format_mix`
@@ -190,9 +193,7 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   `/acceptopenteamsheets`; ~0.2% of the 2939 **M-B** public replays contain a showteam).
   Opponent info in real games comes from in-battle reveals plus corpus-derived set
   priors (`data/usage/set_priors.json`, `vgc.sets.opponent_move_ids`). That priors file
-  was built from the M-B replay corpus (`corpus_size: 2939`). Re-run
-  `tools/build_set_priors.py` on the M-C replay dir only once that corpus is large
-  enough to be a prior, not a few-hundred-game sample. Offline gates run mutual-OTS-accept, so
+  was rebuilt from the M-C corpus on 2026-09-30 (14,048 games rated >=1200). Offline gates run mutual-OTS-accept, so
   the priors fill is a no-op there (verified 74/100 vs 74/100 same-session) -- don't
   expect gate results to reflect priors quality.
 - **Gate methodology: cross-session variance is +/-4-6 win-rate points** on the n=100-300
@@ -400,10 +401,10 @@ full-HP Rillaboom was about to KO its 1-HP Venusaur). `vgc.search` changes, each
   (`vgc.principles.harms_ally_target`, `ally_harmful_status_penalty`), which scores it
   as a cost. This branch's narrower `search_sleep_credit_foes_only` was dropped on merge.
 - `set_prior_learnset_fallback` (**OFF**): best legal STAB attacks from the learnset for
-  species with no usable prior. `data/usage/set_priors.json` (M-B) covers only 173 of
-  310 legal non-Mega species. That leaves ~21% of M-C preview slots with no prior moves
-  (Rillaboom is in ~61% of M-C games, plus Salamence, Indeedee-F, Golisopod), and they
-  read as harmless until they reveal moves. A "best move of every type" version was
+  species with no usable prior. The old M-B `set_priors.json` left ~22% of M-C preview
+  slots with no prior moves (Rillaboom, Salamence, Indeedee-F, Golisopod), and they read
+  as harmless until they revealed moves. The M-C rebuild (2026-09-30) covers 99.9% of
+  preview slots, so this fallback now matters only for rare species. A "best move of every type" version was
   measured and is dangerous: foes got perfect four-type coverage and the bot Protected
   ~4.7x as often (5.5% on mc_ladder_04). STAB-only was 50.6% overall but -29..+19 points
   per team. Six teams cannot settle it.
