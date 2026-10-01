@@ -631,8 +631,11 @@ shells on this machine, and `node` may also need an absolute path
 # is missing upstream commits on watched paths (mod, sim, lib, dex tables, rulesets, tags,
 # aliases, formats) that `vgc.showdown_relevance` cannot prove irrelevant to Reg M-C. Only
 # other-format edits to config/formats.ts and unrelated data/aliases.ts nicknames are
-# cleared (parsed with Showdown's own TypeScript via tools/parse_showdown_entries.mjs);
-# those print as "irrelevant_upstream_commits". Every other change blocks, and the report
+# cleared (parsed with Showdown's own TypeScript via tools/parse_showdown_entries.mjs),
+# and a formats edit only if the pinned BUILT Showdown can still load and serve the
+# commit's whole format list (its own loader + server format-list code, with the commit's
+# aliases; needs `dist/`) -- a broken neighbour format breaks ours too. Cleared commits
+# print as "irrelevant_upstream_commits". Every other change blocks, and the report
 # names which Reg M-C moves/abilities/etc. each blocking commit touched. When a sync is not
 # needed, `tools/sync_showdown.py` reports "already in parity" and does not pull. To update,
 # run tools/sync_showdown.py (below): it fast-forwards + `node build --force`es Showdown,

@@ -189,3 +189,10 @@
 - Watch list gained data/tags.ts (Mythical/Restricted Legendary bans), data/aliases.ts, data/formats-data.ts, lib, config/custom-formats.ts -- tags.ts was a real gap in the old checker.
 - On 2026-10-01's upstream: 3 commits cleared (October rotation, NDBH, Deltamon removal), 2 block (Supreme Overlord onEnd; Baneful Bunker status source).
 - Two Codex (Sol) review rounds: 6 false negatives in the first (line-based) version, 5 more adversarial ones in the second; all closed with regression tests (`tests/test_showdown_parity.py`, integration-marked, need a Showdown checkout with node_modules/typescript).
+
+## 2026-10-01 — Showdown parity: formats check runs Showdown's own loader
+
+- Codex found changed neighbour formats that parse fine but make Showdown throw while loading the shared format list (name `"!!!"`, `mod: null`, `maxLevel: 100`, a bare undefined identifier) were cleared as irrelevant.
+- Fix: after the static checks pass, `vgc.showdown_relevance` compiles the commit's `config/formats.ts` + `data/aliases.ts` with the checkout's esbuild/tsconfig, swaps them into the pinned BUILT checkout's `require.cache`, and runs `Dex.formats.all()` plus the server's `formatListText` getter (taken verbatim from `dist/server/rooms.js`). Any error blocks. Load step runs under Node `--permission` with an empty env (damage limitation only; network open).
+- Second Codex round on the first version found 5 more: section object stringification, stale (pinned) aliases, tsc-vs-esbuild class-field semantics, hidden formats blocking spuriously, inherited env credentials. All fixed; regression tests for each in `tests/test_showdown_parity.py` (34 pass). Real upstream rotation commits (6 most recent) still clear, ~1.4s each.
+- Third Codex round: mod existence came from the pinned build, not the commit. Loader now uses the commit's data/mods folders (deleted mod under an unchanged format blocks; a new mod + its format clears, its rule table checked against base gen9 data). 36 tests pass.

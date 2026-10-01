@@ -210,27 +210,43 @@ _RULESETS = (
 )
 
 
+# A neighbour on a non-base mod, so a commit can delete the mod under an unchanged entry.
+_MOD_ENTRY = "\t{\n\t\tname: \"[Gen 8] Kept\",\n\t\tmod: 'gen8',\n\t},\n"
+
+
 def _formats(other_ruleset: str = "'Standard'", other_name: str = "[Gen 9] Other") -> str:
     return (
         "export const Formats = [\n"
         + _OUR_ENTRY
         + f'\t{{\n\t\tname: "{other_name}",\n\t\truleset: [{other_ruleset}],\n\t}},\n'
+        + _MOD_ENTRY
         + "];\n"
     )
 
 
 def _aliases(*lines: str) -> str:
-    return "export const Aliases = {\n" + "".join(f"\t{line}\n" for line in lines) + "};\n"
+    # Showdown's alias loader also iterates CompoundWordNames; without it nothing loads.
+    return (
+        "export const Aliases = {\n"
+        + "".join(f"\t{line}\n" for line in lines)
+        + "};\nexport const CompoundWordNames: string[] = [];\n"
+    )
 
 
 _BASE_ALIASES = ('randbats: "[Gen 9] Random Battle",', '/* protect: "No Such Move", */')
 
 
-def _commit_upstream(tmp_path: Path, origin: Path, files: dict[str, str], message: str) -> None:
+def _commit_upstream(
+    tmp_path: Path, origin: Path, files: dict[str, str | None], message: str
+) -> None:
+    """Write each file, or delete it when its text is None."""
     work = tmp_path / "upstream_work"
     _git(tmp_path, "clone", str(origin), str(work))
     for relative, text in files.items():
         target = work / relative
+        if text is None:
+            target.unlink()
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
     _git(work, "add", "-A")
@@ -244,12 +260,15 @@ def format_repos(tmp_path: Path) -> tuple[Path, Path]:
 
     if not (SHOWDOWN_REPO / "node_modules" / "typescript").is_dir():
         pytest.skip(f"no Showdown checkout with TypeScript at {SHOWDOWN_REPO}")
+    if not (SHOWDOWN_REPO / "dist" / "server" / "rooms.js").is_file():
+        pytest.skip(f"Showdown checkout at {SHOWDOWN_REPO} is not built")
     local = tmp_path / "local"
     seed = {
         "config/formats.ts": _formats(),
         "data/aliases.ts": _aliases(*_BASE_ALIASES),
         "data/rulesets.ts": _RULESETS,
         "data/mods/champions/rulesets.ts": "export const Rulesets = {\n\tvgctimer: {},\n};\n",
+        "data/mods/gen8/scripts.ts": "export const Scripts = {};\n",
         "data/moves.ts": "export const Moves = {\n\tprotect: {\n\t\tpriority: 4,\n\t},\n};\n",
     }
     for relative, text in seed.items():
@@ -271,25 +290,41 @@ def _check(local: Path) -> ParityReport:
     return check_showdown_parity(local, _head(local), fetch=True, parser_repo=SHOWDOWN_REPO)
 
 
+_HARMLESS_CHANGES = {
+    "october rotation": {
+        "config/formats.ts": _formats("'Standard', 'Dynamax Clause'"),
+        "data/aliases.ts": _aliases(*_BASE_ALIASES, 'omotm: "[Gen 9] Bad n\' Boosted",'),
+    },
+    # Mod existence is judged at the commit, not against the pinned build.
+    "new mod with its format": {
+        "data/mods/reviewnewmod/scripts.ts": "export const Scripts = {};\n",
+        "config/formats.ts": _formats().replace(
+            "];", '\t{\n\t\tname: "[Gen 9] New Mod",\n\t\tmod: "reviewnewmod",\n\t},\n];'
+        ),
+    },
+    # The server never builds a hidden format's rule table, so it cannot break the list.
+    "hidden neighbour with a bad rule": {
+        "config/formats.ts": _formats("'No Such Review Rule'").replace(
+            '\t\tname: "[Gen 9] Other",',
+            '\t\tname: "[Gen 9] Other",\n'
+            "\t\tchallengeShow: false,\n\t\tsearchShow: false,\n\t\ttournamentShow: false,",
+        )
+    },
+}
+
+
 @pytest.mark.integration
+@pytest.mark.parametrize("message", sorted(_HARMLESS_CHANGES))
 def test_other_format_and_alias_edits_do_not_block(
-    tmp_path: Path, format_repos: tuple[Path, Path]
+    tmp_path: Path, format_repos: tuple[Path, Path], message: str
 ) -> None:
     local, origin = format_repos
-    _commit_upstream(
-        tmp_path,
-        origin,
-        {
-            "config/formats.ts": _formats("'Standard', 'Dynamax Clause'"),
-            "data/aliases.ts": _aliases(*_BASE_ALIASES, 'omotm: "[Gen 9] Bad n\' Boosted",'),
-        },
-        "october rotation",
-    )
+    _commit_upstream(tmp_path, origin, _HARMLESS_CHANGES[message], message)
 
     report = _check(local)
 
     assert report.ready, report.commit_reasons
-    assert any("october rotation" in line for line in report.irrelevant_upstream_commits)
+    assert any(message in line for line in report.irrelevant_upstream_commits)
 
 
 _FAKE_BOUNDARY = _formats().replace(
@@ -338,6 +373,56 @@ _BLOCKING_CHANGES = {
             "];", '\t{\n\t\tname: "[Gen 9] Other",\n\t},\n];'
         )
     },
+    # Parse cleanly but Showdown's loader throws on them, which breaks our format too.
+    "neighbour name with no alphanumerics": {"config/formats.ts": _formats(other_name="!!!")},
+    "neighbour with mod null": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",', '\t\tname: "[Gen 9] Other",\n\t\tmod: null,'
+        )
+    },
+    "neighbour with deprecated maxLevel": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",', '\t\tname: "[Gen 9] Other",\n\t\tmaxLevel: 100,'
+        )
+    },
+    "neighbour with an undefined identifier": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",', '\t\tname: "[Gen 9] Other",\n\t\tdesc: notDefined,'
+        )
+    },
+    "neighbour rule table rejected": {
+        "config/formats.ts": _formats("'Standard', 'Max Team Size = 30'")
+    },
+    # The server's format-list text cannot stringify a null-prototype object.
+    "neighbour section that is not text": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",',
+            '\t\tname: "[Gen 9] Other",\n\t\tsection: {__proto__: null},',
+        )
+    },
+    # The commit deletes a mod that an UNCHANGED neighbour still uses.
+    "neighbour whose mod the commit deletes": {
+        "data/mods/gen8/scripts.ts": None,
+        "config/formats.ts": _formats(other_name="[Gen 9] Other Renamed"),
+    },
+    # Resolves against the real (pinned) aliases, but not the commit's own.
+    "neighbour rule through a retargeted alias": {
+        "config/formats.ts": _formats("'randbats'").replace(
+            "];", '\t{\n\t\tname: "[Gen 9] Random Battle",\n\t},\n];'
+        ),
+        "data/aliases.ts": _aliases('randbats: "[Gen 9] Gone",', _BASE_ALIASES[1]),
+    },
+    # Showdown's esbuild build (useDefineForClassFields: false) keeps A's value; a
+    # plain TypeScript transpile would let B's field declaration erase it to "gen9".
+    "neighbour compiled as Showdown builds it": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",',
+            '\t\tname: "[Gen 9] Other",\n\t\tmod: {toString() {\n'
+            "\t\t\tclass A { value = 'notamod'; }\n"
+            "\t\t\tclass B extends A { value: string; }\n"
+            "\t\t\treturn new B().value || 'gen9';\n\t\t}} as any,",
+        )
+    },
     "shadowed alias initializer": {
         "data/aliases.ts": _aliases(*_BASE_ALIASES, "x: String(1),", 'x: "y",'),
     },
@@ -359,3 +444,5 @@ def test_changes_that_may_reach_our_format_block(
 
     assert not report.ready
     assert any(message in line for line in report.missing_upstream_commits), report.commit_reasons
+    if message.startswith("neighbour"):
+        assert "Showdown cannot load the format list" in str(report.commit_reasons)
