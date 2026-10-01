@@ -50,6 +50,9 @@
 //
 // Errors come back as {"rid":...,"id":...,"error":"<message>"} and never kill the
 // process: one malformed battle must not take down a worker hosting dozens of others.
+// Successful battle responses also carry `error`: null normally, or the last `|error|`
+// line / stream throw seen while settling (alongside `requestState` and the lines), so
+// check its value, not its presence.
 //
 // `p1`/`p2` in a response are the protocol lines that player received SINCE THE PREVIOUS
 // response for that battle (not cumulative), each already stripped of empty lines and

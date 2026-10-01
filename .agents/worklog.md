@@ -153,3 +153,7 @@
 - Local Showdown checkout is 10 commits past the pin (`a5df8274e` -> `bebf328c6`), parity BLOCKED; against it 11/149 integration tests failed. Against a clean pinned build: 149/149 pass, 0 skipped, unit 1112 passed. Upstream has 3 Champions rule fixes since the pin (Mega Sol/Electro Shot/Encore, Sheer Force, Curse+Follow Me) -- re-pin is a separate task.
 - Verified: full CI sequence rehearsed locally with the home Showdown path disabled; actionlint clean; watcher drift + network-failure paths rehearsed with stubbed `gh`; Linux CPU-torch resolution dry-run via `uv pip compile`. Not yet run on GitHub itself.
 - Merged main (Showdown re-pinned to bebf328c6 + `tools/sync_showdown.py`). Re-rehearsed CI on the merged tree against bebf328c6 with the home path disabled: unit 1116 passed, gates PASS, integration 149 passed / 0 skipped. Public master is 11 commits past the new pin (none in data/mods/champions), so the watcher's first run will open a drift issue; its text now points at `tools/sync_showdown.py`.
+
+## 2026-10-01 — test_rl_env follow-up (merged after the CI work)
+
+- Main's CI PR already fixed the same two stale tests. Kept main's fixes; this branch adds only a `requestState == "move"` assertion to the batch test (proves the good battle advanced past team preview), explanatory comments, and a note on the always-present `error` field in `tools/sim_worker.mjs`'s header.

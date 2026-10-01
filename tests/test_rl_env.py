@@ -325,6 +325,8 @@ def _replay_through_poke_env(battle_tag: str, bursts: list[list[str]], team: str
 def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, team: str) -> None:
     """The protocol-equivalence criterion in `docs/rl_roadmap.md`'s Phase 1."""
 
+    # poke-env's `_create_battle` only accepts a tag whose embedded format equals the
+    # player's own format, and `make_player` builds that player on the live format.
     tag = f"battle-{DEFAULT_FORMAT}-1"
     rng = random.Random(0)
     battle = DirectBattle.start(
@@ -426,7 +428,11 @@ def test_a_batch_reports_one_failure_without_failing_its_siblings(worker, team: 
             {"cmd": "choose", "id": "no-such-battle", "p1": "team 1234"},
         ]
     )
+    # Every worker response carries an `error` field (null on success) since a30bec3, so
+    # sim errors raised mid-stream surface next to the protocol lines. Check the value,
+    # and that the good battle really advanced past team preview.
     assert results[0]["error"] is None
+    assert results[0]["requestState"] == "move"
     assert "unknown battle id" in results[1]["error"]
     good.close()
 
