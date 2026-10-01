@@ -437,3 +437,23 @@ def test_step_rejects_a_choice_set_that_does_not_match_who_owes_one(worker, team
     with pytest.raises(ValueError, match="expects choices from"):
         battle.step({"p1": "team 1234"})
     battle.close()
+
+
+def test_hidden_trap_rejection_is_recoverable_only_when_trap_was_hidden() -> None:
+    # Showdown lets a `maybeTrapped` side try a switch, rejects it, and re-requests with
+    # `trapped` set (Mega Gengar's Shadow Tag). A switch tried while the request already
+    # said `trapped` is our legality bug and must stay fatal.
+    from types import SimpleNamespace
+
+    from vgc.rl.env import _is_hidden_trap_rejection
+
+    message = "[Unavailable choice] Can't switch: The active Pokémon is trapped"
+    hidden = SimpleNamespace(maybe_trapped=[True, False], trapped=[False, False])
+    known = SimpleNamespace(maybe_trapped=[True, False], trapped=[True, False])
+    untold = SimpleNamespace(maybe_trapped=[False, False], trapped=[False, False])
+
+    assert _is_hidden_trap_rejection(hidden, message)
+    assert not _is_hidden_trap_rejection(known, message)
+    assert not _is_hidden_trap_rejection(untold, message)
+    invalid = "[Invalid choice] Can't switch: The active Pokémon is trapped"
+    assert not _is_hidden_trap_rejection(hidden, invalid)

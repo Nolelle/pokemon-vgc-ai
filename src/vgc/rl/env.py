@@ -36,7 +36,12 @@ transformation, so callers can hand it a `DoubleBattleOrder` straight out of
 move -- correct against a live ladder opponent, wrong for an RL environment, where an
 illegal choice means our legality logic disagrees with the simulator and every
 trajectory collected after it is suspect. `DirectBattle.step` raises `InvalidChoice`
-instead. Same reasoning for unknown protocol messages: rather than skipping anything we
+instead. The one exception is Showdown's `[Unavailable choice]` for a hidden trap: a
+side told only `maybeTrapped` (e.g. facing a Mega Gengar's unannounced Shadow Tag) is
+allowed to try a switch, is rejected, and is immediately sent an updated request with
+`trapped` set -- the same flow poke-env follows on the ladder. `_ingest` accepts exactly
+that case (see `_is_hidden_trap_rejection`) and leaves the side owing a new choice.
+Same reasoning for unknown protocol messages: rather than skipping anything we
 do not recognize (which would silently drop battle state), only the known-cosmetic tags
 in `_COSMETIC_MESSAGES` are skipped and everything else reaches poke-env, which raises
 `NotImplementedError` on tags it cannot parse.
@@ -598,6 +603,7 @@ class DirectBattle:
     def _ingest(self, side: str, lines: Iterable[str]) -> None:
         battle = self.battles[side]
         saw_request = False
+        hidden_trap_rejection = False
         for line in lines:
             split = line.split("|")
             if len(split) < 2:
@@ -620,7 +626,12 @@ class DirectBattle:
             elif tag == "tie":
                 battle.tied()
             elif tag == "error":
-                raise InvalidChoice(f"{side} in battle {self.battle_id}: {'|'.join(split[2:])}")
+                message = "|".join(split[2:])
+                if _is_hidden_trap_rejection(battle, message):
+                    hidden_trap_rejection = True
+                    self.hidden_trap_rejections = getattr(self, "hidden_trap_rejections", 0) + 1
+                    continue
+                raise InvalidChoice(f"{side} in battle {self.battle_id}: {message}")
             elif tag in _COSMETIC_MESSAGES:
                 continue
             else:
@@ -647,10 +658,34 @@ class DirectBattle:
                             f"battle {self.battle_id}: {type(exc).__name__}: {exc}"
                         ) from exc
                     raise
+        if hidden_trap_rejection and not saw_request:
+            raise InvalidChoice(
+                f"{side} in battle {self.battle_id}: hidden-trap rejection without the "
+                "updated request Showdown always sends after one"
+            )
         if not saw_request:
             # No new request for this side this step means the simulator is not waiting
             # on it (it is mid-resolution, or the battle just ended).
             self._waiting[side] = True
+
+
+_HIDDEN_TRAP_REJECTION = "[Unavailable choice] Can't switch: The active Pokémon is trapped"
+
+
+def _is_hidden_trap_rejection(battle: Any, message: str) -> bool:
+    """True for Showdown's legal "you were secretly trapped" rejection (module docstring).
+
+    Only when the side was told `maybeTrapped` and not `trapped` -- a switch attempted
+    while the request already said `trapped` is our legality bug and stays fatal.
+    """
+    if not message.startswith(_HIDDEN_TRAP_REJECTION):
+        return False
+    maybe = list(getattr(battle, "maybe_trapped", None) or [])
+    known = list(getattr(battle, "trapped", None) or [])
+    return any(
+        flag and not (known[index] if index < len(known) else False)
+        for index, flag in enumerate(maybe)
+    )
 
 
 # --- batched operation ------------------------------------------------------------------
