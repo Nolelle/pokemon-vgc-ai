@@ -444,8 +444,10 @@ class DirectBattle:
         if seed is not None:
             payload["seed"] = list(seed)
         clone._apply(self.worker.request(payload))
-        if clone_bases is not None:
-            clone._waiting = dict(self._waiting)
+        # The source knows which sides the simulator is waiting on. A transcript rebuild
+        # cannot: after a hidden-trap rejection only the rejected side got a new request,
+        # but replaying the transcript leaves the other side's last request open too.
+        clone._waiting = dict(self._waiting)
         return clone
 
     def patch_public_state(

@@ -457,3 +457,41 @@ def test_hidden_trap_rejection_is_recoverable_only_when_trap_was_hidden() -> Non
     assert not _is_hidden_trap_rejection(untold, message)
     invalid = "[Invalid choice] Can't switch: The active Pokémon is trapped"
     assert not _is_hidden_trap_rejection(hidden, invalid)
+
+
+@pytest.mark.integration
+def test_hidden_trap_rejection_retries_live_and_fails_closed_in_search(worker, team: str) -> None:
+    """Mega Gengar's Shadow Tag: p2's left slot is known trapped, its right slot only
+    maybe trapped. Switching the known one is our bug (fatal); switching the maybe one
+    is Showdown's normal reveal flow, which a live game retries but an exact-search
+    branch must not score as a resolved turn."""
+    from vgc.rl.mechanics_oracle import evaluate_exact_branches
+
+    gengar = "Gengar||Gengarite|CursedBody|Protect,ShadowBall,SludgeBomb,PerishSong|Modest|2,,,32,,32||||50|"
+    p1_team = "]".join([gengar, *team.split("]")[1:]])
+    battle = DirectBattle.start(worker, "t-trap", p1_team, team, seed=[1, 2, 3, 4])
+    battle.step({"p1": "team 1234", "p2": "team 1234"})
+    battle.step({"p1": "move 1 mega, move 4", "p2": "move 4, move 4"})
+    assert battle.battles["p2"].trapped == [True, False]
+    assert battle.battles["p2"].maybe_trapped == [False, True]
+
+    with pytest.raises(InvalidChoice, match="hidden trap"):
+        evaluate_exact_branches(
+            battle,
+            [{"p1": "move 2 1, move 4", "p2": "move 2 1, switch 3"}],
+            future_seeds=[None],
+            branch_prefix="t-trap-branch",
+        )
+    with pytest.raises(InvalidChoice, match=r"\[Invalid choice\]"):
+        battle.clone("t-trap-known").step({"p1": "move 1, move 4", "p2": "switch 3, move 4"})
+
+    battle.step({"p1": "move 1, move 4", "p2": "move 2 1, switch 3"})
+    assert battle.sides_to_move() == ["p2"]
+    assert battle.battles["p2"].trapped == [True, True]
+    clone = battle.clone("t-trap-clone")
+    assert clone.sides_to_move() == ["p2"]
+    turn = battle.battles["p2"].turn
+    battle.step({"p2": "move 2 1, move 4"})
+    assert battle.battles["p2"].turn == turn + 1
+    clone.close()
+    battle.close()
