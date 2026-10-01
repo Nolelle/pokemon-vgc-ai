@@ -3,8 +3,8 @@
 # Runs the same parity check the readiness gates and the ladder runner enforce
 # (offline/check_showdown_parity.py). When public Showdown has moved on the tracked
 # paths, it opens -- or refreshes -- a single "Showdown drift" issue; when the pin is
-# current again, it closes that issue. Fixing it means re-pinning: see CLAUDE.md's
-# "Showdown parity" command block.
+# current again, it closes that issue. Fixing it means re-pinning with
+# tools/sync_showdown.py (ladder play also runs that sync automatically).
 name: showdown-watch
 
 on:
@@ -69,8 +69,8 @@ jobs:
             "$pin..origin/master" -- data/mods/champions)"
           {
             echo "The weekly check found commits on public Showdown that the pinned commit"
-            echo "\`${pin:0:9}\` does not have. While this is open, the readiness gates and"
-            echo "\`ladder/run_ladder.py\` refuse to run (they enforce the same check)."
+            echo "\`${pin:0:9}\` does not have. While this is open, the readiness gates block"
+            echo "(they enforce the same check); ladder play will try to sync first."
             echo
             echo "**Commits touching the Champions mod** (most likely to change game rules):"
             echo
@@ -85,9 +85,9 @@ jobs:
             echo '```'
             echo "</details>"
             echo
-            echo "To fix: pull and rebuild the local Showdown checkout, re-run both exporters,"
-            echo "re-pin \`mechanics_coverage.json\`, and re-run the gates (CLAUDE.md, \"Showdown"
-            echo "parity\"). Last checked: $(date -u +%Y-%m-%dT%H:%MZ) by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "To fix: run \`.venv/bin/python tools/sync_showdown.py\` locally and open a PR with"
+            echo "the refresh it commits; it stops for review if the Champions catalogue changed"
+            echo "shape. Last checked: $(date -u +%Y-%m-%dT%H:%MZ) by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           } > body.md
 
           if [ -n "$existing" ]; then
