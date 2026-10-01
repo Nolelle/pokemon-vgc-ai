@@ -591,7 +591,7 @@ shells on this machine, and `node` may also need an absolute path
 # STOPS for review if the catalog changed beyond its recorded commit/path (rerun with
 # --accept-catalog-changes once reviewed). The public ladder runner calls it automatically
 # (`--no-sync-showdown` to opt out). Training only checks the saved gate certificates, so
-# sync before a training run too. Last done 2026-09-30 -> 89905975e (M-C).
+# sync before a training run too. Last done 2026-09-30 -> bebf328c6 (M-C).
 .venv/bin/python offline/check_showdown_parity.py
 .venv/bin/python tools/sync_showdown.py
 
