@@ -13,7 +13,12 @@ template strings and string escapes cannot disguise a change:
 - `config/formats.ts`: cleared when the file outside the `Formats` array is identical,
   our format appears exactly once with an identical entry, and every changed entry has a
   plain string name that is neither our format's id nor any rule's id (formats and rules
-  share one lookup namespace). Other formats' entries may change freely.
+  share one lookup namespace). Other formats' entries may change freely, but only if
+  Showdown can still load the whole list: the new file is then handed to the pinned
+  checkout's BUILT code (`Dex.formats.all()`, then the server's own format-list getter,
+  which builds every visible format's rule table), with the commit's aliases, and any
+  error blocks. A broken neighbour breaks our format too, and Showdown's own code is the
+  only complete list of what it rejects.
 - `data/aliases.ts`: cleared when the file outside the `Aliases` object is identical and
   every alias whose effective value changed has a string target, and neither key nor old
   or new target is a Reg M-C species/move/item/ability, our format, or any rule
@@ -114,13 +119,26 @@ def node_parser(showdown_repo: Path, node: str | None = None) -> Parser:
             executable = find_node()
         else:
             executable = node
+        # A loadformats job evaluates upstream files nobody has reviewed yet: give it no
+        # environment (no inherited credentials) and only read access to the checkout
+        # and the script. Damage limitation, not a security boundary -- see the script.
+        sandbox: list[str] = []
+        env: dict[str, str] | None = None
+        if any(job["kind"] == "loadformats" for job in jobs):
+            sandbox = [
+                "--permission",
+                f"--allow-fs-read={Path(showdown_repo).resolve()}",
+                f"--allow-fs-read={PARSER_SCRIPT.parent}",
+            ]
+            env = {}
         result = subprocess.run(
-            [executable, str(PARSER_SCRIPT), str(showdown_repo)],
+            [executable, *sandbox, str(PARSER_SCRIPT), str(showdown_repo)],
             input=json.dumps(jobs),
             capture_output=True,
             text=True,
             check=False,
             timeout=PARSER_TIMEOUT_SECONDS,
+            env=env,
         )
         if result.returncode != 0:
             raise RuntimeError(f"parser failed: {(result.stderr or result.stdout).strip()}")
@@ -166,6 +184,8 @@ def classify_commit(
                     rule_ids,
                     lambda mod: mod == BASE_MOD or read_file(sha, f"data/mods/{mod}") is not None,
                 )
+                if not file_relevant:
+                    file_relevant, reason = _check_formats_load(sha, read_file, parse, reason)
             elif path == ALIASES_FILE:
                 file_relevant, reason = _classify_aliases(
                     parsed[("before", path)], parsed[("after", path)], context, rule_ids
@@ -266,6 +286,48 @@ def _classify_formats(
     if clash:
         return True, f"{FORMATS_FILE}: changed entry shares an id with rule(s) {clash}"
     return False, f"{FORMATS_FILE}: other formats only ({len(changed_ids)} entries changed)"
+
+
+def _check_formats_load(
+    sha: str, read_file: FileReader, parse: Parser, cleared_reason: str
+) -> tuple[bool, str]:
+    """Block unless Showdown's own loader accepts the commit's whole format list.
+
+    Rules and formats resolve through aliases, so the commit's aliases go in too.
+    Compiling (esbuild spawns a binary) and loading (sandboxed) run as separate processes.
+    """
+    compile_jobs = []
+    for path in (FORMATS_FILE, ALIASES_FILE):
+        text = read_file(sha, path)
+        if text is None:
+            raise RuntimeError(f"{path} missing at {sha}")
+        compile_jobs.append({"kind": "compile", "text": text, "file": path})
+    compiled = parse(compile_jobs)
+    for path, result in zip((FORMATS_FILE, ALIASES_FILE), compiled, strict=True):
+        if not result.get("ok"):
+            raise RuntimeError(f"could not compile {path}: {result.get('error')}")
+    formats_js, aliases_js = (result["js"] for result in compiled)
+    job = {"kind": "loadformats", "formats": formats_js, "aliases": aliases_js}
+    (result,) = parse([{**job, "mods": _mod_dirs(sha, read_file)}])
+    if not result.get("ok"):
+        raise RuntimeError(f"load check failed to run: {result.get('error')}")
+    if result.get("loadError") is not None:
+        error = result["loadError"]
+        return True, f"{FORMATS_FILE}: Showdown cannot load the format list ({error})"
+    if "loadError" not in result:
+        raise RuntimeError("load check returned no verdict")
+    return False, cleared_reason
+
+
+def _mod_dirs(sha: str, read_file: FileReader) -> list[str]:
+    """The data/mods folders at `sha` (`git show rev:dir` lists a tree, dirs end in /)."""
+    listing = read_file(sha, "data/mods")
+    if listing is None or not listing.startswith("tree "):
+        raise RuntimeError(f"could not list data/mods at {sha}")
+    mods = [line[:-1] for line in listing.splitlines()[1:] if line.endswith("/")]
+    if not mods:
+        raise RuntimeError(f"no mods listed at {sha}")
+    return mods
 
 
 def _entry_id(entry: dict) -> str:

@@ -4,7 +4,9 @@
 // template strings, regexes and string escapes unable to disguise a change.
 //
 // Usage: node tools/parse_showdown_entries.mjs <showdown_repo>
-//   stdin:  JSON list of jobs, each {"kind": "formats" | "aliases" | "rulesets", "text": "..."}
+//   stdin:  JSON list of jobs, each {"kind": "formats" | "aliases" | "rulesets", "text": "..."},
+//           {"kind": "compile", "text": "...", "file": "config/formats.ts"} or
+//           {"kind": "loadformats", "formats": "<js>", "aliases": "<js>", "mods": [...]}
 //   stdout: JSON list of results in the same order. Every result has "ok"; when false,
 //           "error" says why and the caller must treat the file as unclassifiable.
 //
@@ -19,8 +21,30 @@
 //             (value null = not a plain string)
 //             skeleton = the file with the Aliases object's contents removed.
 // rulesets -> {keys: [...]}  property names of the exported Rulesets object.
+// compile  -> {js}: `text` (repo-relative `file`) compiled exactly as Showdown's build
+//             does (tools/build-utils.js: esbuild, cjs, the checkout's tsconfig.json).
+//             Compiling runs no upstream code. esbuild spawns its binary, so compile
+//             jobs cannot share a process with loadformats (see below).
+// loadformats -> {loadError: null | "..."}: install `formats` and `aliases` (compiled
+//             JS for config/formats.ts and data/aliases.ts at the candidate commit) in
+//             place of the checkout's built copies, make the mod list `mods` (the
+//             commit's data/mods folders), then run the BUILT server's own
+//             code: Dex.formats.all() and the `formatListText` getter from
+//             dist/server/rooms.js, which the server runs to send clients the format
+//             list (it builds the rule table of every visible format). loadError is
+//             what Showdown threw. At most one per process (the Dex caches the list).
+//             Parsing alone cannot see e.g. a name with no alphanumerics, `mod: null`,
+//             a deprecated field, a bare identifier, or a rule that no longer resolves.
+//
+// vgc.showdown_relevance runs loadformats jobs with an empty environment under Node's
+// permission model (reads limited to the checkout and this script; no writes, child
+// processes or workers). That is damage limitation, not a security boundary: Node's
+// permission model does not contain malicious code, and network access stays open.
+// It is the same trust we already place in upstream: tools/sync_showdown.py builds and
+// runs these files.
 
-import {createRequire} from 'node:module';
+import Module, {createRequire} from 'node:module';
+import {readFileSync, realpathSync} from 'node:fs';
 import path from 'node:path';
 
 const showdownRepo = process.argv[2];
@@ -186,7 +210,86 @@ function parseRulesets(text) {
 	return {keys};
 }
 
-const PARSERS = {formats: parseFormats, aliases: parseAliases, rulesets: parseRulesets};
+function compile(text, file) {
+	const repo = path.resolve(showdownRepo);
+	const esbuild = createRequire(path.join(repo, 'package.json'))('esbuild');
+	const out = esbuild.buildSync({
+		stdin: {contents: text, loader: 'ts', sourcefile: file, resolveDir: path.join(repo, path.dirname(file))},
+		format: 'cjs',
+		tsconfig: path.join(repo, 'tsconfig.json'),
+		write: false,
+		logLevel: 'silent',
+	});
+	return {js: out.outputFiles[0].text};
+}
+
+function installModule(require, file, js) {
+	const stub = new Module(file);
+	stub.filename = file;
+	stub.paths = Module._nodeModulePaths(path.dirname(file));
+	require.cache[file] = stub;
+	stub._compile(js, file);
+	stub.loaded = true;
+}
+
+// The server's format-list getter, taken verbatim from the built dist/server/rooms.js.
+function serverFormatListGetter(dist, Dex) {
+	const file = path.join(dist, 'server', 'rooms.js');
+	const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+	const found = [];
+	const visit = node => {
+		if (ts.isGetAccessorDeclaration(node) && propertyName(node) === 'formatListText') found.push(node);
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	if (found.length !== 1) throw new Error(`expected one formatListText getter, found ${found.length}`);
+	const holder = new Function('Dex', 'Ladders', `return {${found[0].getText(source)}};`)(
+		Dex, {formatsListPrefix: ''}
+	);
+	return Object.getOwnPropertyDescriptor(holder, 'formatListText').get;
+}
+
+let loadedFormats = false;
+function loadFormats(job) {
+	if (loadedFormats) throw new Error('only one loadformats job per process');
+	loadedFormats = true;
+	// require.cache is keyed by real path; a symlinked path would leave the stub unused.
+	const repo = realpathSync(path.resolve(showdownRepo));
+	const dist = path.join(repo, 'dist');
+	const require = createRequire(path.join(repo, 'package.json'));
+	// Both are required lazily by the loader (Dex.loadAliases, Formats.load).
+	const stubs = [
+		[path.join(dist, 'data', 'aliases.js'), job.aliases],
+		[path.join(dist, 'config', 'formats.js'), job.formats],
+	];
+	for (const [file] of stubs) realpathSync(file);  // fails closed if the checkout is unbuilt
+	const {Dex} = require('./dist/sim/dex');
+	const getter = serverFormatListGetter(dist, Dex);
+	// Mods are the candidate commit's data/mods folders, not the pinned build's, so a
+	// deleted mod still used by an unchanged format fails and a newly added one exists.
+	// A new mod's own code is not in the build: it stands in as the base dex.
+	const dexes = Dex.dexes;
+	for (const mod of Object.keys(dexes)) {
+		if (dexes[mod] !== Dex && !job.mods.includes(mod)) delete dexes[mod];  // keep base, gen9
+	}
+	for (const mod of job.mods) dexes[mod] ??= Dex;
+	try {
+		for (const [file, js] of stubs) installModule(require, file, js);
+		Dex.formats.all();
+		getter.call({formatList: null});
+	} catch (err) {
+		return {loadError: String(err?.message ?? err)};
+	}
+	return {loadError: null};
+}
+
+const PARSERS = {
+	formats: job => parseFormats(job.text),
+	aliases: job => parseAliases(job.text),
+	rulesets: job => parseRulesets(job.text),
+	compile: job => compile(job.text, job.file),
+	loadformats: loadFormats,
+};
 
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -197,7 +300,7 @@ process.stdin.on('end', () => {
 		try {
 			const parser = PARSERS[job.kind];
 			if (!parser) throw new Error(`unknown kind ${job.kind}`);
-			return {ok: true, ...parser(job.text)};
+			return {ok: true, ...parser(job)};
 		} catch (err) {
 			return {ok: false, error: String(err?.message ?? err)};
 		}
