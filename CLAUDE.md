@@ -13,16 +13,22 @@ was re-exported on 2026-09-09 from Showdown `efe494857`: **390** legal species/f
 **166** items, **509** moves, **222** abilities. Readiness gates passed after that
 export. M-C ranked is 2026-09-09 through 2026-12-02.
 
-M-C replay corpus (2026-09-30): the public listing held 62.7k M-C replays (~3k/day).
-`data/replays/gen9championsvgc2026regmc/` now has 14,445 (13,977 rated >=1200 since
-launch, plus the 468 launch-day files), downloaded with `--min-rating 1200
---max-pages 1400` and `--exclude-player` for the high-volume ladder bots
-(`pcrlbot12d159c39a`, `Scorecard-Pokemon`, `SC-SME`, `SC-Control`) and our own account.
+M-C replay corpus (2026-10-01): the public listing held ~65k M-C replays (~3k/day).
+`data/replays/gen9championsvgc2026regmc/` has 20,215: every public game rated >=1200
+since launch, plus the 468 launch-day files (some 1100-1199). Downloaded with
+`--min-rating 1200 --max-pages 1400 --exclude-player laplacestheorems` (our own account).
+Ladder bots are NOT excluded by name: the per-game rating filter is the quality gate.
+Strong bots stay (`Scorecard-Pokemon`, `SC-SME`, `SC-Control`, median game rating
+1264-1301); the weak one (`pcrlbot12d159c39a`, median 1079) is mostly filtered out.
 A full backfill needs ~1300 listing pages; the default `--max-pages 100` reaches back only
-~1.5 days. Parsed to `data/bc/decisions_regmc.jsonl` (277,636 decision records, all
+~1.5 days. Parsed to `data/bc/decisions_regmc.jsonl` (389,762 decision records, all
 `format_id`-stamped). Keep the M-B tree (`data/replays/gen9championsvgc2026regmb/`, 2939
-replays) as history. `data/usage/set_priors.json` is now M-C (`corpus_size: 14445`,
-built at `--min-rating 1200`). `data/usage/spreads.json` is M-C since 2026-10-01: built
+replays) as history. `data/usage/set_priors.json` is M-C (`corpus_size: 20215`, built at
+`--min-rating 1200` from 19,818 games). Real-team pool: `data/selfplay/mc_sheet_pool_v2/`
+(314 teams, M-C spreads), split by `tools/split_team_pool.py` into
+`train_manifest.json` (226) and `holdout_manifest.json` (88), grouped by six-species set
+so near-copies never straddle the split. The M-C priors A/B numbers below were measured on
+the earlier 14,445-replay notes and the M-B-spread `mc_sheet_pool`. `data/usage/spreads.json` is M-C since 2026-10-01: built
 from Smogon's 2026-09 chaos stats (`gen9championsvgc2026regmc-1760.json`, 1.63M battles);
 `spreads_regmb.json` is the M-B control (`PolicyConfig.usage_spreads_file`). Mix formats in training only with an explicit
 `format_id` on every dataset. `tools/parse_replays.py` stamps `format_id` on every record
