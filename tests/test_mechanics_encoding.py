@@ -188,3 +188,24 @@ def test_mechanics_enabled_model_requires_and_reads_complete_snapshot() -> None:
     )
     assert logits.shape == (1, 2)
     assert values.shape == (1,)
+
+
+def test_mechanics_encoding_is_identical_alone_and_in_a_padded_batch() -> None:
+    # Live play encodes one snapshot unpadded; training batches pad shorter rows. The
+    # pooled-mask version admitted extra edge windows for padded rows, so the same
+    # snapshot encoded differently in the two settings.
+    torch = pytest.importorskip("torch")
+    from vgc.rl.model import CandidatePolicyValueNet
+
+    torch.manual_seed(0)
+    model = CandidatePolicyValueNet(use_mechanics_features=True).eval()
+    longest = 48
+    for length in range(5, 41):
+        row = torch.randint(1, 200, (1, length))
+        alone = model._encode_mechanics(row, torch.ones_like(row, dtype=torch.bool))
+        padded = torch.zeros((2, longest), dtype=torch.long)
+        padded[0, :length] = row[0]
+        padded[1] = torch.randint(1, 200, (longest,))
+        mask = padded != 0
+        batched = model._encode_mechanics(padded, mask)
+        assert torch.allclose(alone[0], batched[0], atol=1e-6), length
