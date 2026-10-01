@@ -540,7 +540,9 @@ class PolicyConfig:
     # Which set-prior file in data/usage/ the bot reads (`vgc.sets.set_priors_for`).
     # "set_priors.json" is the M-C corpus build (2026-09-30, 14,048 games rated >=1200);
     # "set_priors_regmb.json" is the previous M-B build, kept only as the legacy control
-    # for same-session A/Bs.
+    # for same-session A/Bs. 2026-10-01 A/Bs (M-C vs M-B): 160-team pool 48.5%
+    # [0.455, 0.515]; 298 real M-C sheets 51.9% [0.490, 0.547]. Neither is significant.
+    # This is a current-format data refresh, not a strength claim.
     set_priors_file: str = "set_priors.json"
     # When a species has NO usable prior (absent from set_priors.json or below
     # set_prior_min_games), fill unrevealed moves from its learnset's best legal STAB

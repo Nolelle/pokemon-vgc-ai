@@ -149,3 +149,13 @@
 - Parsed to `data/bc/decisions_regmc.jsonl`: 14,445/14,445 replays, 277,636 records (199,658 turn / 49,088 forced switch / 28,890 preview), all format_id-stamped. M-B `decisions.jsonl` untouched.
 - `data/usage/set_priors.json` rebuilt from M-C (min rating 1200, 14,048 games, 272 species). Preview-slot coverage at set_prior_min_games=5: M-B file 77.5% -> M-C 99.9%.
 - Not run: the unit suite (auto-mode classifier denied it with PYTHONPATH=src; the symlinked main venv imports main's src without it). The new priors change live play (search opponent moves) and need a same-session A/B before merge. The 09-29 learnset-fallback A/Bs moved win rate, so the pool harness does exercise priors (unlike the mutual-OTS run_gates gates).
+
+## 2026-10-01 — M-C priors A/B, real-team pool, two DirectBattle crash fixes
+
+- `PolicyConfig.set_priors_file` + `vgc.sets.set_priors_for` (all bot-side prior loads); M-B file kept as `data/usage/set_priors_regmb.json`. Battle-state gate `set_priors_sha256` re-pinned. Rain preview test pinned to M-B data (M-C bring frequencies change its prediction).
+- A/B 160-team pool: 2794/5760 = 48.5% [0.455, 0.515], tau 0.177; A/A 49.7%.
+- `tools/build_ladder_team_pool.py` -> `data/selfplay/mc_sheet_pool` (298 real M-C sheets, 0 validation failures; Stat Points filled from M-B spreads.json).
+- A/B real pool: 2782/5364 = 51.9% [0.490, 0.547], tau 0.229; A/A 48.9%. Post hoc by count of M-B-missing species 0/1/2+: 50.1/51.8/52.6%, overlapping. Wash; M-C stays default as a data refresh.
+- Real pool crashed DirectBattle twice: (1) hidden-trap `[Unavailable choice]` (Mega Gengar Shadow Tag) -> recover in live games, fail closed in `evaluate_exact_branches`, clones copy `_waiting` (Codex found the last two); (2) poke-env KeyError on the Round-chain `[from] move: Round` line -> `vgc.poke_env_compat.normalize_for_poke_env` in DirectBattle and VgcPlayer.
+- Tests: unit 1117 passed (2 known counterfactual_q data failures). Integration test_rl_env: new trap test passes; 2 pre-existing failures (old regmb format id in the pump test; worker batch error) spun off as a separate task.
+- Worktree now has its own `.venv` (uv sync --extra dev --extra train); the symlinked main venv imported main's src.
