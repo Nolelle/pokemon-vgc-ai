@@ -195,3 +195,167 @@ def test_ready_requires_clean_pin_fetch_and_no_missing() -> None:
     assert not replace(ok, pinned_matches_head=False).ready
     assert not replace(ok, fetch_error="timeout").ready
     assert not replace(ok, missing_upstream_commits=("abc subject",)).ready
+
+
+# --- relevance filter: clear only provably-unrelated commits, fail closed otherwise ---
+# These parse with the real Showdown checkout's TypeScript, so they run with the engine.
+
+_OUR_ENTRY = (
+    "\t{\n\t\tname: \"[Gen 9 Champions] VGC 2026 Reg M-C\",\n\t\tmod: 'champions',\n"
+    "\t\truleset: ['Flat Rules', 'VGC Timer'],\n\t},\n"
+)
+_RULESETS = (
+    "export const Rulesets = {\n\tflatrules: {\n\t\tname: 'Flat Rules',\n\t},\n"
+    "\tvgctimer: {\n\t\tname: 'VGC Timer',\n\t},\n\tspeciesclause: {\n\t\tname: 'x',\n\t},\n};\n"
+)
+
+
+def _formats(other_ruleset: str = "'Standard'", other_name: str = "[Gen 9] Other") -> str:
+    return (
+        "export const Formats = [\n"
+        + _OUR_ENTRY
+        + f'\t{{\n\t\tname: "{other_name}",\n\t\truleset: [{other_ruleset}],\n\t}},\n'
+        + "];\n"
+    )
+
+
+def _aliases(*lines: str) -> str:
+    return "export const Aliases = {\n" + "".join(f"\t{line}\n" for line in lines) + "};\n"
+
+
+_BASE_ALIASES = ('randbats: "[Gen 9] Random Battle",', '/* protect: "No Such Move", */')
+
+
+def _commit_upstream(tmp_path: Path, origin: Path, files: dict[str, str], message: str) -> None:
+    work = tmp_path / "upstream_work"
+    _git(tmp_path, "clone", str(origin), str(work))
+    for relative, text in files.items():
+        target = work / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-m", message)
+    _git(work, "push", "origin", "HEAD:master")
+
+
+@pytest.fixture
+def format_repos(tmp_path: Path) -> tuple[Path, Path]:
+    from vgc.config import SHOWDOWN_REPO
+
+    if not (SHOWDOWN_REPO / "node_modules" / "typescript").is_dir():
+        pytest.skip(f"no Showdown checkout with TypeScript at {SHOWDOWN_REPO}")
+    local = tmp_path / "local"
+    seed = {
+        "config/formats.ts": _formats(),
+        "data/aliases.ts": _aliases(*_BASE_ALIASES),
+        "data/rulesets.ts": _RULESETS,
+        "data/mods/champions/rulesets.ts": "export const Rulesets = {\n\tvgctimer: {},\n};\n",
+        "data/moves.ts": "export const Moves = {\n\tprotect: {\n\t\tpriority: 4,\n\t},\n};\n",
+    }
+    for relative, text in seed.items():
+        (local / relative).parent.mkdir(parents=True, exist_ok=True)
+        (local / relative).write_text(text)
+    _git(local, "init", "-b", "master")
+    _git(local, "add", "-A")
+    _git(local, "commit", "-m", "seed")
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "clone", "--bare", str(local), str(origin))
+    _git(local, "remote", "add", "origin", str(origin))
+    _git(local, "fetch", "origin")
+    return local, origin
+
+
+def _check(local: Path) -> ParityReport:
+    from vgc.config import SHOWDOWN_REPO
+
+    return check_showdown_parity(local, _head(local), fetch=True, parser_repo=SHOWDOWN_REPO)
+
+
+@pytest.mark.integration
+def test_other_format_and_alias_edits_do_not_block(
+    tmp_path: Path, format_repos: tuple[Path, Path]
+) -> None:
+    local, origin = format_repos
+    _commit_upstream(
+        tmp_path,
+        origin,
+        {
+            "config/formats.ts": _formats("'Standard', 'Dynamax Clause'"),
+            "data/aliases.ts": _aliases(*_BASE_ALIASES, 'omotm: "[Gen 9] Bad n\' Boosted",'),
+        },
+        "october rotation",
+    )
+
+    report = _check(local)
+
+    assert report.ready, report.commit_reasons
+    assert any("october rotation" in line for line in report.irrelevant_upstream_commits)
+
+
+_FAKE_BOUNDARY = _formats().replace(
+    "export const Formats = [\n",
+    "const flat = 'Flat Rules';\nexport const Formats = [\n",
+)
+
+_BLOCKING_CHANGES = {
+    "our entry": {"config/formats.ts": _formats().replace("'VGC Timer'", "'X'")},
+    "new format named like a rule": {"config/formats.ts": _formats(other_name="Species Clause")},
+    "duplicate of our format": {
+        "config/formats.ts": _formats(other_name="Gen 9 Champions VGC 2026 Reg MC")
+    },
+    "code outside the format list": {"config/formats.ts": _FAKE_BOUNDARY},
+    "unparseable formats": {"config/formats.ts": _formats().replace("];", "")},
+    "alias onto a legal move": {
+        "data/aliases.ts": _aliases(*_BASE_ALIASES, 'pp: "Protect",'),
+    },
+    "escaped legal alias key": {
+        "data/aliases.ts": _aliases(*_BASE_ALIASES, '"\\x70rotect": "No Such Move",'),
+    },
+    "alias onto a rule name": {
+        "data/aliases.ts": _aliases(*_BASE_ALIASES, 'flatrules: "Team Preview",'),
+    },
+    "comment edit activating an alias": {
+        "data/aliases.ts": _aliases(_BASE_ALIASES[0], 'protect: "No Such Move",'),
+    },
+    "spread hiding a rule name": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",',
+            '\t\tname: "[Gen 9] Other",\n\t\t...{name: "Species Clause"},',
+        )
+    },
+    "load-time code in another format": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",', '\t\tname: "[Gen 9] Other",\n\t\tdesc: (() => "x")(),'
+        )
+    },
+    "other format with a missing mod": {
+        "config/formats.ts": _formats().replace(
+            '\t\tname: "[Gen 9] Other",', '\t\tname: "[Gen 9] Other",\n\t\tmod: "nonexistent",'
+        )
+    },
+    "duplicate unrelated names": {
+        "config/formats.ts": _formats(other_name="[Gen 9] Other").replace(
+            "];", '\t{\n\t\tname: "[Gen 9] Other",\n\t},\n];'
+        )
+    },
+    "shadowed alias initializer": {
+        "data/aliases.ts": _aliases(*_BASE_ALIASES, "x: String(1),", 'x: "y",'),
+    },
+    "dex entry": {
+        "data/moves.ts": "export const Moves = {\n\tprotect: {\n\t\tpriority: 3,\n\t},\n};\n"
+    },
+}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("message", sorted(_BLOCKING_CHANGES))
+def test_changes_that_may_reach_our_format_block(
+    tmp_path: Path, format_repos: tuple[Path, Path], message: str
+) -> None:
+    local, origin = format_repos
+    _commit_upstream(tmp_path, origin, _BLOCKING_CHANGES[message], message)
+
+    report = _check(local)
+
+    assert not report.ready
+    assert any(message in line for line in report.missing_upstream_commits), report.commit_reasons

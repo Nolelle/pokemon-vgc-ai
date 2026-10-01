@@ -181,3 +181,11 @@
 ## 2026-10-01 — test_rl_env follow-up (merged after the CI work)
 
 - Main's CI PR already fixed the same two stale tests. Kept main's fixes; this branch adds only a `requestState == "move"` assertion to the batch test (proves the good battle advanced past team preview), explanatory comments, and a note on the always-present `error` field in `tools/sim_worker.mjs`'s header.
+
+## 2026-10-01 — Rulebook audit + relevance-aware Showdown parity
+
+- Audit: data/champions is a byte-identical re-export of the pinned Showdown (bebf328c6); static gates PASS; parity BLOCKED by 5 upstream commits from 2026-10-01.
+- `vgc.showdown_relevance` + `tools/parse_showdown_entries.mjs`: a missing upstream commit now blocks only if it cannot be proven irrelevant to Reg M-C. Cleared: config/formats.ts edits to other formats only, and data/aliases.ts nickname edits not touching legal species/moves/items/abilities, rules or our format. Both files are parsed with the checkout's own TypeScript (comments, escapes, templates cannot disguise changes). Changed entries with load-time code, spread/accessor keys, duplicate names, missing mods block. Dex-table blocks name the changed entries and which are in Reg M-C. Everything else (sim, lib, mod, rulesets, tags, dex tables) always blocks.
+- Watch list gained data/tags.ts (Mythical/Restricted Legendary bans), data/aliases.ts, data/formats-data.ts, lib, config/custom-formats.ts -- tags.ts was a real gap in the old checker.
+- On 2026-10-01's upstream: 3 commits cleared (October rotation, NDBH, Deltamon removal), 2 block (Supreme Overlord onEnd; Baneful Bunker status source).
+- Two Codex (Sol) review rounds: 6 false negatives in the first (line-based) version, 5 more adversarial ones in the second; all closed with regression tests (`tests/test_showdown_parity.py`, integration-marked, need a Showdown checkout with node_modules/typescript).

@@ -4,6 +4,10 @@ Exact mechanics are exact relative to the pinned local checkout, not to whatever
 play.pokemonshowdown.com currently deploys. This module fetches the public
 smogon/pokemon-showdown remote and reports Champions-relevant commits that HEAD
 does not contain.
+
+A missing commit blocks only if `vgc.showdown_relevance` cannot prove it irrelevant to
+our format (e.g. a `config/formats.ts` edit that touches only other formats). Cleared
+commits are still reported, as "behind but not relevant"; anything unclassifiable blocks.
 """
 
 from __future__ import annotations
@@ -14,11 +18,19 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from vgc.config import DATA_DIR, SHOWDOWN_REPO
+from vgc.config import DATA_DIR, FORMAT_ID, SHOWDOWN_REPO
+from vgc.showdown_relevance import (
+    classify_commit,
+    git_file_reader,
+    load_format_context,
+    node_parser,
+)
 
 DEFAULT_PATHS: tuple[str, ...] = (
     "data/mods/champions",
     "config/formats.ts",
+    # Merged into the format list when present (sim/dex-formats.ts).
+    "config/custom-formats.ts",
     "sim",
     "data/moves.ts",
     "data/abilities.ts",
@@ -32,6 +44,14 @@ DEFAULT_PATHS: tuple[str, ...] = (
     # Base clauses the format's ruleset pulls in (VGC Timer, Species/Item Clause, Open
     # Team Sheets); the champions mod overrides only some rules in its own rulesets.ts.
     "data/rulesets.ts",
+    # Flat Rules bans "Mythical" and "Restricted Legendary"; those categories live here.
+    "data/tags.ts",
+    # Name lookups resolve through aliases before the canonical tables.
+    "data/aliases.ts",
+    # Base species metadata the Champions mod does not override.
+    "data/formats-data.ts",
+    # Shared helpers used by the battle engine and team validator.
+    "lib",
 )
 CATALOG_PATH = DATA_DIR / "mechanics_catalog.json"
 DEFAULT_UPSTREAM_BRANCH = "master"
@@ -50,6 +70,10 @@ class ParityReport:
     fetched: bool
     fetch_error: str | None
     missing_upstream_commits: tuple[str, ...]
+    # Upstream commits on watched paths that were proven irrelevant to our format.
+    irrelevant_upstream_commits: tuple[str, ...] = ()
+    # (commit line, reason) for every classified commit, blocking or not.
+    commit_reasons: tuple[tuple[str, str], ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -67,10 +91,19 @@ def load_pinned_commit(catalog_path: Path | None = None) -> str:
 
 
 def format_parity_report(report: ParityReport) -> str:
-    if report.missing_upstream_commits:
-        missing = "\n".join(f"  {line}" for line in report.missing_upstream_commits)
-    else:
-        missing = "  (none)"
+    reasons: dict[str, list[str]] = {}
+    for line, reason in report.commit_reasons:
+        reasons.setdefault(line, []).append(reason)
+
+    def listing(lines: tuple[str, ...]) -> str:
+        if not lines:
+            return "  (none)"
+        out: list[str] = []
+        for line in lines:
+            out.append(f"  {line}")
+            out.extend(f"      - {reason}" for reason in reasons.get(line, ()))
+        return "\n".join(out)
+
     return "\n".join(
         [
             f"local_head: {report.local_head}",
@@ -80,8 +113,10 @@ def format_parity_report(report: ParityReport) -> str:
             f"upstream_ref: {report.upstream_ref}",
             f"fetched: {report.fetched}",
             f"fetch_error: {report.fetch_error}",
-            "missing_upstream_commits:",
-            missing,
+            "missing_upstream_commits (block -- affect Reg M-C or unproven):",
+            listing(report.missing_upstream_commits),
+            "irrelevant_upstream_commits (behind, but cannot affect Reg M-C):",
+            listing(report.irrelevant_upstream_commits),
         ]
     )
 
@@ -92,7 +127,12 @@ def check_showdown_parity(
     *,
     fetch: bool = True,
     paths: tuple[str, ...] = DEFAULT_PATHS,
+    data_dir: Path = DATA_DIR,
+    format_id: str = FORMAT_ID,
+    parser_repo: Path | None = None,
 ) -> ParityReport:
+    """`parser_repo` is the checkout whose TypeScript parses changed files (default:
+    `showdown_repo` itself; tests point it at a real checkout)."""
     if not showdown_repo.is_dir():
         return ParityReport(
             local_head="",
@@ -142,10 +182,16 @@ def check_showdown_parity(
                 missing_upstream_commits=(),
             )
 
-    missing, log_error = _missing_upstream_commits(showdown_repo, upstream_ref, paths)
+    commits, log_error = _missing_upstream_commits(showdown_repo, upstream_ref, paths)
+    missing: tuple[str, ...] = ()
+    irrelevant: tuple[str, ...] = ()
+    commit_reasons: tuple[tuple[str, str], ...] = ()
     if log_error is not None:
         fetch_error = log_error
-        missing = ()
+    else:
+        missing, irrelevant, commit_reasons = _classify_commits(
+            showdown_repo, commits, paths, data_dir, format_id, parser_repo or showdown_repo
+        )
     return ParityReport(
         local_head=local_head,
         local_dirty=local_dirty,
@@ -155,6 +201,8 @@ def check_showdown_parity(
         fetched=fetched,
         fetch_error=fetch_error,
         missing_upstream_commits=missing,
+        irrelevant_upstream_commits=irrelevant,
+        commit_reasons=commit_reasons,
     )
 
 
@@ -273,11 +321,47 @@ def _fetch(repo: Path, remote: str, branch: str) -> str | None:
     return None
 
 
+def _classify_commits(
+    repo: Path,
+    commits: tuple[tuple[str, str], ...],
+    paths: tuple[str, ...],
+    data_dir: Path,
+    format_id: str,
+    parser_repo: Path,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Split (sha, line) commits into blocking and provably irrelevant. Fails closed."""
+    missing: list[str] = []
+    irrelevant: list[str] = []
+    reasons: list[tuple[str, str]] = []
+    try:
+        context = load_format_context(data_dir, format_id)
+    except Exception as exc:
+        for _sha, line in commits:
+            missing.append(line)
+            reasons.append((line, f"could not load {data_dir} legality data ({exc})"))
+        return tuple(missing), (), tuple(reasons)
+    read_file = git_file_reader(repo)
+    parse = node_parser(parser_repo)
+    for sha, line in commits:
+        try:
+            result = _run_git(repo, ("diff", "--name-only", f"{sha}^", sha, "--", *paths))
+            if result.returncode != 0:
+                raise RuntimeError(_command_error(result, "git diff failed"))
+            files = [name for name in result.stdout.splitlines() if name.strip()]
+            verdict = classify_commit(sha, files, read_file, context, parse)
+            relevant, why = verdict.relevant, verdict.reasons
+        except Exception as exc:
+            relevant, why = True, (f"could not classify ({exc})",)
+        (missing if relevant else irrelevant).append(line)
+        reasons.extend((line, reason) for reason in why)
+    return tuple(missing), tuple(irrelevant), tuple(reasons)
+
+
 def _missing_upstream_commits(
     repo: Path,
     upstream_ref: str,
     paths: tuple[str, ...],
-) -> tuple[tuple[str, ...], str | None]:
+) -> tuple[tuple[tuple[str, str], ...], str | None]:
     try:
         result = _run_git(
             repo,
@@ -286,7 +370,7 @@ def _missing_upstream_commits(
                 upstream_ref,
                 "--not",
                 "HEAD",
-                f"--format={_LOG_FORMAT}",
+                f"--format=%H%x09{_LOG_FORMAT}",
                 "--",
                 *paths,
             ),
@@ -295,5 +379,9 @@ def _missing_upstream_commits(
         return (), str(exc)
     if result.returncode != 0:
         return (), _command_error(result, "git log failed")
-    commits = tuple(line.strip() for line in result.stdout.splitlines() if line.strip())
-    return commits, None
+    commits = tuple(
+        tuple(line.strip().split("\t", 1))  # (full sha, "short-sha subject")
+        for line in result.stdout.splitlines()
+        if line.strip()
+    )
+    return commits, None  # type: ignore[return-value]
