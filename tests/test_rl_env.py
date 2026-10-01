@@ -18,10 +18,10 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.actions import enumerate_joint_orders
 from vgc.battle_memory import BattleMemory
-from vgc.config import FORMAT_ID
 from vgc.own_team import apply_own_spreads
 from vgc.rl.encoding import TACTICAL_FEATURE_DIM, encode_candidates
 from vgc.rl.env import (
+    DEFAULT_FORMAT,
     DEFAULT_SHOWDOWN_REPO,
     DirectBattle,
     InvalidChoice,
@@ -326,8 +326,8 @@ def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, te
     """The protocol-equivalence criterion in `docs/rl_roadmap.md`'s Phase 1."""
 
     # poke-env's `_create_battle` only accepts a tag whose embedded format equals the
-    # player's own format, and `make_player` builds that player on the live FORMAT_ID.
-    tag = f"battle-{FORMAT_ID}-1"
+    # player's own format, and `make_player` builds that player on the live format.
+    tag = f"battle-{DEFAULT_FORMAT}-1"
     rng = random.Random(0)
     battle = DirectBattle.start(
         worker, tag, team, team, seed=[4, 4, 4, 4], usernames={"p1": "alpha", "p2": "beta"}
