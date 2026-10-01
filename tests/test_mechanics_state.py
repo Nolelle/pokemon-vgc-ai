@@ -137,7 +137,9 @@ def test_snapshot_preserves_all_observable_mechanics_state() -> None:
     assert {effect.id for effect in mon.effects} == {"confusion", "substitute"}
     assert mon.status == "par"
     assert mon.status_counter == 3
-    assert mon.must_recharge
+    # The request offers Hyper Voice, so the fixture's must_recharge flag is stale
+    # (see test_snapshot_drops_stale_must_recharge_unless_request_offers_only_recharge).
+    assert mon.must_recharge is False
     assert mon.protect_counter == 2
     assert mon.moves[0].id == "hypervoice"
     assert mon.moves[1].disabled
@@ -300,3 +302,19 @@ def test_snapshot_keeps_opponent_preparing_without_our_request() -> None:
 
     assert mon.preparing is True
     assert mon.preparing_move_id == "solarbeam"
+
+
+def test_snapshot_drops_stale_must_recharge_unless_request_offers_only_recharge() -> None:
+    # Choice Scarf Heliolisk: poke-env said must_recharge, Showdown's request still
+    # offered Hyper Beam. A mirror that forced the recharge sent `move 1` (a disabled
+    # Thunderbolt) to the real battle.
+    ours, _battle = _preparing_charizard_battle(available_move_ids=("hyperbeam",))
+    ours.preparing = False
+    ours.must_recharge = True
+    stale = snapshot_pokemon(ours, opponent=False, available_move_ids=("hyperbeam",))
+    real = snapshot_pokemon(ours, opponent=False, available_move_ids=("recharge",))
+    opponent = snapshot_pokemon(ours, opponent=True)
+
+    assert stale.must_recharge is False
+    assert real.must_recharge is True
+    assert opponent.must_recharge is True

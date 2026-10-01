@@ -269,6 +269,29 @@ def _request_confirmed_preparing(
     return False, None
 
 
+def _request_confirmed_must_recharge(
+    *,
+    opponent: bool,
+    must_recharge: bool,
+    available_move_ids: tuple[str, ...] | None,
+) -> bool:
+    """Whether a Hyper Beam-style recharge turn is actually in force.
+
+    Same rule as `_request_confirmed_preparing`: poke-env can leave
+    ``Pokemon.must_recharge`` set when Showdown did not require the recharge (seen on a
+    Choice Scarf Heliolisk whose request still offered Hyper Beam). Materialised in the
+    mirror, the stale flag made exact search choose ``recharge``, which reached the real
+    battle as ``move 1`` -- a disabled Thunderbolt. Our active slot must recharge only
+    when its request offers exactly ``recharge``; opponents keep the flag.
+    """
+
+    if opponent:
+        return must_recharge
+    if not must_recharge or available_move_ids is None:
+        return False
+    return tuple(move_id for move_id in available_move_ids if move_id) == ("recharge",)
+
+
 def snapshot_pokemon(
     pokemon: Any,
     *,
@@ -394,7 +417,11 @@ def snapshot_pokemon(
         preparing_move_id=preparing_move_id,
         preparing_target=preparing_target,
         preparing=preparing,
-        must_recharge=bool(getattr(pokemon, "must_recharge", False)),
+        must_recharge=_request_confirmed_must_recharge(
+            opponent=opponent,
+            must_recharge=bool(getattr(pokemon, "must_recharge", False)),
+            available_move_ids=available_move_ids,
+        ),
         protect_counter=int(getattr(pokemon, "protect_counter", 0) or 0),
         first_turn=bool(getattr(pokemon, "first_turn", False)),
         transformed=bool(getattr(pokemon, "transformed", False)),
