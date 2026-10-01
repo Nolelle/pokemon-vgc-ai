@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "a5df8274e85b0889bf2a9b3422a08b39732374fc"
+    "showdown_commit": "bebf328c69f5d065b4c0f738197e146cab699771"
   },
   "format": {
     "game_type": "doubles",
@@ -1973,9 +1973,6 @@
         ],
         "condition.onModifyType": [
           "electrify"
-        ],
-        "condition.onOverrideAction": [
-          "encore"
         ],
         "condition.onDamage": [
           "endure"

@@ -29,6 +29,9 @@ DEFAULT_PATHS: tuple[str, ...] = (
     "data/typechart.ts",
     "data/natures.ts",
     "data/scripts.ts",
+    # Base clauses the format's ruleset pulls in (VGC Timer, Species/Item Clause, Open
+    # Team Sheets); the champions mod overrides only some rules in its own rulesets.ts.
+    "data/rulesets.ts",
 )
 CATALOG_PATH = DATA_DIR / "mechanics_catalog.json"
 DEFAULT_UPSTREAM_BRANCH = "master"

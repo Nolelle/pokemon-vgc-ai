@@ -628,11 +628,15 @@ shells on this machine, and `node` may also need an absolute path
 
 # Showdown parity -- both gates and the public ladder run this; it fetches origin/master
 # and BLOCKS if the local checkout is dirty, differs from the catalog's pinned commit, or
-# is missing upstream commits on mod/sim paths. To update: in the showdown repo
-# `git pull --ff-only origin master && node build --force` (unforced `node build` can
-# leave a stale dist/sim), then rerun both exporters below and re-pin
-# `mechanics_coverage.json`'s `catalog_sha256`. Last done 2026-09-29 -> a5df8274e (M-C).
+# is missing upstream commits on mod/sim paths. To update, run tools/sync_showdown.py
+# (below): it fast-forwards + `node build --force`es Showdown, re-exports data/champions and
+# the mechanics catalog, re-pins `catalog_sha256`, commits, and runs the three gates. It
+# STOPS for review if the catalog changed beyond its recorded commit/path (rerun with
+# --accept-catalog-changes once reviewed). The public ladder runner calls it automatically
+# (`--no-sync-showdown` to opt out). Training only checks the saved gate certificates, so
+# sync before a training run too. Last done 2026-09-30 -> bebf328c6 (M-C).
 .venv/bin/python offline/check_showdown_parity.py
+.venv/bin/python tools/sync_showdown.py
 
 # Start the local server (from the showdown repo, port 8000, no auth)
 cd /Users/edmundyu/code/projects/pokemon-showdown && node pokemon-showdown start --no-security
