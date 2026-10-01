@@ -136,6 +136,30 @@
 - 160-team pool A/B (36 games/team): 2862/5760 = 49.7%, cluster-robust [0.484, 0.509], FAIL -> ships False. Post hoc: 57 teams carrying the moves 51.6% [0.494, 0.538]; 103 unaffected teams 48.6% [0.471, 0.501] (effectively A/A, shows the noise).
 - Unit suite: 1112 passed, 2 known data-missing failures (counterfactual_q split files absent in the worktree). The worktree `.venv` is a symlink to the main checkout's venv, so gate-script tests can spawn it.
 
+## 2026-09-30 — M-C replay corpus survey (read-only, nothing downloaded)
+
+- On disk: 468 M-C replays, all uploaded on 2026-09-09 (launch day); 438 rated >=1100, 71 >=1200, 9 >=1300.
+- Public listing (search.json paged to the end, 1231 pages): 62,730 M-C replays 2026-09-09..09-30, ~2,500-3,700/day, none private. Rated >=1100: 33,351; >=1200: 18,469; >=1300: 9,556; >=1400: 2,928; >=1500: 680.
+- Bot-heavy accounts: pcrlbot12d159c39a (2322 games >=1100), Scorecard-Pokemon (1931), SC-SME (1659), SC-Control (1522), plus our own laplacestheorems. Excluding them: >=1200 13,995; >=1300 7,309.
+- `tools/download_replays.py` default `--max-pages 100` reaches only ~1.5 days back at this volume; a full backfill needs ~1300 pages and has no player/bot filter.
+
+## 2026-09-30 — M-C corpus backfill + set priors rebuilt (uncommitted)
+
+- `tools/download_replays.py --exclude-player` (repeatable, matched by Showdown user id). Downloaded 13,977 new M-C replays rated >=1200 back to launch, 0 failures; tree now 14,445 (113 MB). Skipped 11,645 bot-account listings.
+- Parsed to `data/bc/decisions_regmc.jsonl`: 14,445/14,445 replays, 277,636 records (199,658 turn / 49,088 forced switch / 28,890 preview), all format_id-stamped. M-B `decisions.jsonl` untouched.
+- `data/usage/set_priors.json` rebuilt from M-C (min rating 1200, 14,048 games, 272 species). Preview-slot coverage at set_prior_min_games=5: M-B file 77.5% -> M-C 99.9%.
+- Not run: the unit suite (auto-mode classifier denied it with PYTHONPATH=src; the symlinked main venv imports main's src without it). The new priors change live play (search opponent moves) and need a same-session A/B before merge. The 09-29 learnset-fallback A/Bs moved win rate, so the pool harness does exercise priors (unlike the mutual-OTS run_gates gates).
+
+## 2026-10-01 — M-C priors A/B, real-team pool, two DirectBattle crash fixes
+
+- `PolicyConfig.set_priors_file` + `vgc.sets.set_priors_for` (all bot-side prior loads); M-B file kept as `data/usage/set_priors_regmb.json`. Battle-state gate `set_priors_sha256` re-pinned. Rain preview test pinned to M-B data (M-C bring frequencies change its prediction).
+- A/B 160-team pool: 2794/5760 = 48.5% [0.455, 0.515], tau 0.177; A/A 49.7%.
+- `tools/build_ladder_team_pool.py` -> `data/selfplay/mc_sheet_pool` (298 real M-C sheets, 0 validation failures; Stat Points filled from M-B spreads.json).
+- A/B real pool: 2782/5364 = 51.9% [0.490, 0.547], tau 0.229; A/A 48.9%. Post hoc by count of M-B-missing species 0/1/2+: 50.1/51.8/52.6%, overlapping. Wash; M-C stays default as a data refresh.
+- Real pool crashed DirectBattle twice: (1) hidden-trap `[Unavailable choice]` (Mega Gengar Shadow Tag) -> recover in live games, fail closed in `evaluate_exact_branches`, clones copy `_waiting` (Codex found the last two); (2) poke-env KeyError on the Round-chain `[from] move: Round` line -> `vgc.poke_env_compat.normalize_for_poke_env` in DirectBattle and VgcPlayer.
+- Tests: unit 1117 passed (2 known counterfactual_q data failures). Integration test_rl_env: new trap test passes; 2 pre-existing failures (old regmb format id in the pump test; worker batch error) spun off as a separate task.
+- Worktree now has its own `.venv` (uv sync --extra dev --extra train); the symlinked main venv imported main's src.
+
 ## 2026-09-30 — Showdown re-pinned to 89905975e; automatic sync before ladder play
 
 - Parity was BLOCKED: 7 upstream commits behind a5df8274e, 3 of them Champions rule fixes (Encore action override moved into onStart, Curse + Follow Me targeting, Sheer Force no longer suppressing Berserk/Pickpocket/Eject Button, Mega Sol + Electro Shot). Pulled, force-built, re-exported. Only catalog change: `condition.onOverrideAction: encore` removed (Encore already covered by the move-execution family). Re-pinned; all three gates PASS (128/57/19 tests).

@@ -108,3 +108,13 @@ def test_next_before_cursor_custom_page_size() -> None:
     entries = [_entry(uploadtime=100), _entry(uploadtime=99), _entry(uploadtime=98)]
     assert next_before_cursor(entries, page_size=3) == 98
     assert next_before_cursor(entries, page_size=4) is None
+
+
+def test_should_download_false_when_a_player_is_excluded() -> None:
+    entry = {"id": "x-1", "rating": 1500, "players": ["Some Player", "PCRL Bot 1"]}
+    excluded = frozenset({"pcrlbot1"})
+    assert (
+        should_download(entry, min_rating=1100, existing_ids=set(), excluded_players=excluded)
+        is False
+    )
+    assert should_download(entry, min_rating=1100, existing_ids=set()) is True

@@ -10,8 +10,8 @@ Usage:
     .venv/bin/python tools/parse_replays.py
     .venv/bin/python tools/parse_replays.py --replays-dir data/replays/other --limit 50
 
-The default `--replays-dir` is `data/replays/<FORMAT_ID>/` (currently the small M-C
-tree). For the historical warm-start corpus, pass
+The default `--replays-dir` is `data/replays/<FORMAT_ID>/` (the M-C tree, 14,445
+replays as of 2026-09-30). For the historical warm-start corpus, pass
 `--replays-dir data/replays/gen9championsvgc2026regmb`. Schema 5 labels are
 format-agnostic, so every output record is stamped with `format_id` (see
 `resolve_format_id`): the replay's own `formatid` field, cross-checked against the

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
-from vgc.rl.env import DirectBattle, SIDES
+from vgc.rl.env import SIDES, DirectBattle, InvalidChoice
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,16 @@ def evaluate_exact_branches(
             branch_id = f"{branch_prefix}-{choice_index}-{seed_index}"
             clone = root.clone(branch_id, seed=seed)
             try:
+                rejections_before = getattr(clone, "hidden_trap_rejections", 0)
                 result = clone.step(dict(choices))
+                if getattr(clone, "hidden_trap_rejections", 0) != rejections_before:
+                    # DirectBattle lets a live game retry after Showdown's hidden-trap
+                    # rejection, but this branch never resolved its turn: scoring its
+                    # unchanged board would read the rejected switch as a free exchange.
+                    raise InvalidChoice(
+                        f"branch {branch_id}: switch rejected by a hidden trap; the turn "
+                        "did not resolve"
+                    )
                 branches.append(
                     ExactMechanicsBranch(
                         branch_id=branch_id,

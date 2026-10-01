@@ -172,16 +172,16 @@ def test_predicted_rain_engine_opponent_shifts_our_own_bring_four(monkeypatch) -
     """
     import vgc.preview_predict as preview_predict_module
 
-    real_load_set_priors = preview_predict_module.load_set_priors
+    real_set_priors_for = preview_predict_module.set_priors_for
 
-    def boosted_priors(path=None):
-        real = real_load_set_priors(path)
+    def boosted_priors(config):
+        real = real_set_priors_for(config)
         species = dict(real.get("species") or {})
         species["pelipper"] = {**species.get("pelipper", {}), "appearances": 100_000}
         species["barraskewda"] = {**species.get("barraskewda", {}), "appearances": 100_000}
         return {"meta": real.get("meta", {}), "species": species}
 
-    monkeypatch.setattr(preview_predict_module, "load_set_priors", boosted_priors)
+    monkeypatch.setattr(preview_predict_module, "set_priors_for", boosted_priors)
 
     our_team_text = (
         "Raichu||Leftovers|Static|Thunderbolt,Protect,FocusBlast,VoltSwitch|Timid|2,,,32,,32||||50|]"
@@ -200,10 +200,15 @@ def test_predicted_rain_engine_opponent_shifts_our_own_bring_four(monkeypatch) -
         opp_team = [_bare_opponent(s) for s in opp_species]
         return _FakeBattle(our_team, opp_team)
 
+    # Pinned to the M-B priors this scenario was built around: it tests the preview-
+    # prediction mechanism, and M-C bring frequencies predict this rain six differently.
+    priors_file = "set_priors_regmb.json"
     config_on = PolicyConfig(
-        use_preview_prediction=True, team_preview_opponent_worst_case_weight=0.9
+        use_preview_prediction=True,
+        team_preview_opponent_worst_case_weight=0.9,
+        set_priors_file=priors_file,
     )
-    config_off = PolicyConfig(use_preview_prediction=False)
+    config_off = PolicyConfig(use_preview_prediction=False, set_priors_file=priors_file)
 
     order_on = build_team_order(make_battle(), config_on)
     order_off = build_team_order(make_battle(), config_off)

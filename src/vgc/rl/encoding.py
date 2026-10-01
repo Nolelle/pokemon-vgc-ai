@@ -50,7 +50,7 @@ from vgc.opponent_belief import (
 )
 from vgc.own_team import spread_index
 from vgc.principles import utility_kind
-from vgc.sets import load_set_priors, opponent_move_ids
+from vgc.sets import opponent_move_ids, set_priors_for
 from vgc.stats import STAT_IDS, calculate_stats
 
 NUM_ORDER_SLOTS = 2
@@ -486,7 +486,7 @@ def _encode_meta_context(battle, config: PolicyConfig) -> np.ndarray:
     opponent_archetype = _archetype_one_hot(_opponent_species_ids(battle))
     our_archetype = _archetype_one_hot(_our_species_ids(battle))
 
-    priors = load_set_priors() if config.use_set_priors else {}
+    priors = set_priors_for(config) if config.use_set_priors else {}
     active_opponents = list(getattr(battle, "opponent_active_pokemon", None) or [])
     active_opponents = (active_opponents + [None, None])[:META_ACTIVE_SLOTS]
     prior_scalars: list[float] = []
