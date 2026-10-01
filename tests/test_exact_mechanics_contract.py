@@ -69,6 +69,8 @@ def test_a_recorded_teacher_label_is_backed_by_real_showdown_branches() -> None:
     from vgc.rl.distill import PUBLIC_TEACHER_SOURCE_ID, TeacherRecordingPlayer
 
     pool = REPO_ROOT / "data" / "selfplay" / "archetype_pool_150"
+    if not pool.is_dir():
+        pytest.skip("archetype_pool_150 teams are unavailable")
     team = (pool / "rain_offense" / "team_11.packed.txt").read_text().strip()
     opponent_team = (
         pool / "triple_setup_balance" / "team_02.packed.txt"

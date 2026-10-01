@@ -21,6 +21,7 @@ from vgc.battle_memory import BattleMemory
 from vgc.own_team import apply_own_spreads
 from vgc.rl.encoding import TACTICAL_FEATURE_DIM, encode_candidates
 from vgc.rl.env import (
+    DEFAULT_FORMAT,
     DEFAULT_SHOWDOWN_REPO,
     DirectBattle,
     InvalidChoice,
@@ -324,7 +325,7 @@ def _replay_through_poke_env(battle_tag: str, bursts: list[list[str]], team: str
 def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, team: str) -> None:
     """The protocol-equivalence criterion in `docs/rl_roadmap.md`'s Phase 1."""
 
-    tag = "battle-gen9championsvgc2026regmb-1"
+    tag = f"battle-{DEFAULT_FORMAT}-1"
     rng = random.Random(0)
     battle = DirectBattle.start(
         worker, tag, team, team, seed=[4, 4, 4, 4], usernames={"p1": "alpha", "p2": "beta"}
@@ -425,7 +426,7 @@ def test_a_batch_reports_one_failure_without_failing_its_siblings(worker, team: 
             {"cmd": "choose", "id": "no-such-battle", "p1": "team 1234"},
         ]
     )
-    assert "error" not in results[0]
+    assert results[0]["error"] is None
     assert "unknown battle id" in results[1]["error"]
     good.close()
 

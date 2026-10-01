@@ -31,4 +31,7 @@ def test_mechanics_catalog_matches_fully_merged_champions_dex() -> None:
         (REPO_ROOT / "data" / "champions" / "mechanics_catalog.json").read_text()
     )
 
+    # Where the checkout lives is machine-specific; the pinned commit is still compared.
+    for catalog in (generated, checked_in):
+        catalog["generated_from"].pop("showdown_repo", None)
     assert generated == checked_in

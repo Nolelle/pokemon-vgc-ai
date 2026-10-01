@@ -1,0 +1,97 @@
+# Weekly: is the pinned Showdown commit still current with public smogon/pokemon-showdown?
+#
+# Runs the same parity check the readiness gates and the ladder runner enforce
+# (offline/check_showdown_parity.py). When public Showdown has moved on the tracked
+# paths, it opens -- or refreshes -- a single "Showdown drift" issue; when the pin is
+# current again, it closes that issue. Fixing it means re-pinning: see CLAUDE.md's
+# "Showdown parity" command block.
+name: showdown-watch
+
+on:
+  schedule:
+    - cron: "17 14 * * 1" # Mondays 14:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# One run at a time, so a manual and a scheduled run cannot both create the issue.
+concurrency:
+  group: showdown-watch
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ISSUE_TITLE: "Showdown drift: public Showdown is ahead of the pinned commit"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out pinned Showdown with history
+        run: |
+          echo "VGC_SHOWDOWN_REPO=$RUNNER_TEMP/showdown" >> "$GITHUB_ENV"
+          .github/scripts/checkout_pinned_showdown.sh "$RUNNER_TEMP/showdown" --history
+      - name: Parity check
+        id: parity
+        run: |
+          set +e
+          python3 offline/check_showdown_parity.py > parity.txt
+          status=$?
+          set -e
+          cat parity.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Open, refresh or close the drift issue
+        run: |
+          existing="$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" \
+            --json number,title --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -1)"
+
+          if [ "${{ steps.parity.outputs.status }}" = "0" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Parity check passes again: the pin is current."
+            fi
+            exit 0
+          fi
+
+          # Only a clean fetch that lists missing commits is drift. Anything else (network
+          # error, timeout, broken checkout) fails this run without touching the issue.
+          if ! grep -qx 'fetch_error: None' parity.txt \
+            || ! grep -qx 'pinned_matches_head: True' parity.txt \
+            || grep -qx '  (none)' parity.txt; then
+            echo "::error::parity check failed for a reason other than upstream drift"
+            exit 1
+          fi
+
+          pin="$(git -C "$VGC_SHOWDOWN_REPO" rev-parse HEAD)"
+          champions="$(git -C "$VGC_SHOWDOWN_REPO" log --format='%h %s' \
+            "$pin..origin/master" -- data/mods/champions)"
+          {
+            echo "The weekly check found commits on public Showdown that the pinned commit"
+            echo "\`${pin:0:9}\` does not have. While this is open, the readiness gates and"
+            echo "\`ladder/run_ladder.py\` refuse to run (they enforce the same check)."
+            echo
+            echo "**Commits touching the Champions mod** (most likely to change game rules):"
+            echo
+            echo '```'
+            echo "${champions:-(none)}"
+            echo '```'
+            echo
+            echo "<details><summary>Full parity report</summary>"
+            echo
+            echo '```'
+            cat parity.txt
+            echo '```'
+            echo "</details>"
+            echo
+            echo "To fix: pull and rebuild the local Showdown checkout, re-run both exporters,"
+            echo "re-pin \`mechanics_coverage.json\`, and re-run the gates (CLAUDE.md, \"Showdown"
+            echo "parity\"). Last checked: $(date -u +%Y-%m-%dT%H:%MZ) by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > body.md
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file body.md
+          fi

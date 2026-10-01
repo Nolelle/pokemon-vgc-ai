@@ -5,13 +5,17 @@ offline/run_matches.py, tests) should import these instead of hardcoding paths/i
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Local Pokemon Showdown checkout this project drives (server + validator + data source).
 # Not part of this repo -- cloned/built separately. See CLAUDE.md for setup.
-SHOWDOWN_REPO = Path("/Users/edmundyu/code/projects/pokemon-showdown")
+# `VGC_SHOWDOWN_REPO` overrides it (CI builds the pinned commit elsewhere).
+SHOWDOWN_REPO = Path(
+    os.environ.get("VGC_SHOWDOWN_REPO", "/Users/edmundyu/code/projects/pokemon-showdown")
+).expanduser()
 
 # "[Gen 9 Champions] VGC 2026 Reg M-C" -- doubles, bring-6-pick-4, level 50, Megas allowed.
 # The format offers mutual-consent Open Team Sheets, but the bot rejects them and assumes

@@ -135,3 +135,11 @@
 - The `infer_hidden_opponent_sets` flag is uncommitted work in the team-preview-tagging worktree and is not on this branch, so this uses its own flag.
 - 160-team pool A/B (36 games/team): 2862/5760 = 49.7%, cluster-robust [0.484, 0.509], FAIL -> ships False. Post hoc: 57 teams carrying the moves 51.6% [0.494, 0.538]; 103 unaffected teams 48.6% [0.471, 0.501] (effectively A/A, shows the noise).
 - Unit suite: 1112 passed, 2 known data-missing failures (counterfactual_q split files absent in the worktree). The worktree `.venv` is a symlink to the main checkout's venv, so gate-script tests can spawn it.
+
+## 2026-10-01 — GitHub Actions CI + weekly Showdown drift watcher
+
+- Added `.github/workflows/ci.yml` (unit: ruff + pytest; engine: pinned Showdown build, seeded pool rebuild, static gates, `-m integration` with a zero-skip guard) and `showdown-watch.yml` (weekly parity check -> one drift issue).
+- `VGC_SHOWDOWN_REPO` env override in `vgc.config`; `vgc.rl.env.DEFAULT_SHOWDOWN_REPO` now reads it (it was a second hardcoded copy -- Codex caught that the first rehearsal had silently used the drifted local checkout through it).
+- Stale tests fixed: rl_env batch test (worker now always returns `error: null`), parse-equivalence test (hardcoded `regmb` battle tag), catalog ground-truth (ignore machine path, still compare commit). Skip-if-missing for gitignored pools in counterfactual_q and the teacher-label contract test.
+- Local Showdown checkout is 10 commits past the pin (`a5df8274e` -> `bebf328c6`), parity BLOCKED; against it 11/149 integration tests failed. Against a clean pinned build: 149/149 pass, 0 skipped, unit 1112 passed. Upstream has 3 Champions rule fixes since the pin (Mega Sol/Electro Shot/Encore, Sheer Force, Curse+Follow Me) -- re-pin is a separate task.
+- Verified: full CI sequence rehearsed locally with the home Showdown path disabled; actionlint clean; watcher drift + network-failure paths rehearsed with stubbed `gh`; Linux CPU-torch resolution dry-run via `uv pip compile`. Not yet run on GitHub itself.

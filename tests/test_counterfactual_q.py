@@ -46,6 +46,13 @@ from vgc.rl.model import CandidatePolicyValueNet  # noqa: E402
 from vgc.rl.mechanics_encoding import MechanicsFeatures  # noqa: E402
 
 
+# The frozen split is checked against the 160-team pool, which is gitignored
+# (`data/selfplay/`) and rebuilt locally by `tools/build_archetype_pool.py`.
+requires_team_pool = pytest.mark.skipif(
+    not DEFAULT_MANIFEST.exists(),
+    reason=f"team pool not built in this checkout: {DEFAULT_MANIFEST}",
+)
+
 def _action(move: str) -> CandidateFeatures:
     return CandidateFeatures(
         move_indices=np.asarray([[MOVE_TO_IDX[move], MOVE_TO_IDX["protect"]]], dtype=np.int64),
@@ -194,13 +201,16 @@ def test_q_export_refuses_the_confirmation_partition(tmp_path) -> None:
         counterfactual_main(["--q-dataset", str(tmp_path / "unsafe.pt")])
 
 
+@requires_team_pool
 def test_frozen_q_split_declares_129_development_and_31_confirmation_teams() -> None:
     split = json.loads(DEFAULT_Q_TEAM_SPLIT.read_text())
-    all_labels = {team.label for team in load_team_pool(DEFAULT_MANIFEST)}
-    development_excluded = set(split["development_excluded"])
     confirmation_manifest_path = (
         DEFAULT_Q_TEAM_SPLIT.parents[2] / split["confirmation_source_manifest"]
     )
+    if not confirmation_manifest_path.exists():
+        pytest.skip(f"confirmation pool not built in this checkout: {confirmation_manifest_path}")
+    all_labels = {team.label for team in load_team_pool(DEFAULT_MANIFEST)}
+    development_excluded = set(split["development_excluded"])
     confirmation_manifest = json.loads(confirmation_manifest_path.read_text())
     rows_by_file = {row["file"]: row for row in confirmation_manifest}
     confirmation_files = split["confirmation_files"]
@@ -238,6 +248,7 @@ def test_frozen_q_split_declares_129_development_and_31_confirmation_teams() -> 
     assert confirmation_hashes.isdisjoint(old_hashes)
 
 
+@requires_team_pool
 def test_q_development_subpartitions_are_disjoint_before_matchmaking() -> None:
     split = json.loads(DEFAULT_Q_TEAM_SPLIT.read_text())
     all_teams = load_team_pool(DEFAULT_MANIFEST)
