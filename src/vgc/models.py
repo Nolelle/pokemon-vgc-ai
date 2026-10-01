@@ -547,6 +547,16 @@ class PolicyConfig:
     # each) was 50.6% overall but -29 to +19 points per team -- six teams cannot tell a
     # real edge from a team-specific swing. Needs a larger no-prior-species team pool.
     set_prior_learnset_fallback: bool = False
+    # Taunt/Encore (count of status moves), Will-O-Wisp (physical share of damaging
+    # moves) and Wide Guard (count of foe spread moves) in `vgc.evaluator` read the
+    # opponent's moves through `opponent_move_ids` (revealed + set-prior fill) like the
+    # rest of the evaluator. False is the legacy control: revealed moves only, so on the
+    # ladder those three score ~0 until the foe has actually used the moves they key on.
+    # Not enabled: 160-team pool A/B (2026-09-30, seed default, 5760 games) was
+    # 2862/5760 = 49.7%, cluster-robust [0.484, 0.509] -- a wash. Only 57/160 pool teams
+    # carry Encore/Will-O-Wisp/Wide Guard (none Taunt); those read 51.6% [0.494, 0.538]
+    # post hoc, which is inside the noise the other 103 (unaffected) teams show (48.6%).
+    status_utility_uses_set_priors: bool = False
 
     # --- Team preview (vgc.team_preview.build_team_order) -------------------------------
     # Weight on the pairwise expected-damage-exchange ratio term (our estimated output

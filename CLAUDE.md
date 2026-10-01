@@ -415,6 +415,14 @@ species, so the fallback cannot be tested there). On the six `teams/mc_ladder_*`
 the A/A was 50.2%. These are correctness fixes, not strength claims. Testing the fallback
 needs a pool with many teams that use no-prior species.
 
+Status-utility scoring (2026-09-30): `vgc.evaluator`'s Taunt/Encore, Will-O-Wisp and
+Wide Guard values read the foe's moves revealed-only, so they score ~0 early on the
+ladder. `PolicyConfig.status_utility_uses_set_priors` routes them through
+`opponent_move_ids` instead. **OFF**: 160-team pool A/B 2862/5760 = 49.7%, cluster-robust
+[0.484, 0.509]. Only 57/160 pool teams carry those moves (no Taunt), so the pool is weak
+for this; the post-hoc 57-team subgroup (51.6%) was within the noise of the 103
+unaffected teams (48.6%). Result: `runs/eval/status_utility_priors_pool160.json`.
+
 ## Rung 2 (belief-aware shortlist): built, gated, not enabled
 
 `vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the
