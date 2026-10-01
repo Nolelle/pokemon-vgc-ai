@@ -1,0 +1,89 @@
+# Two jobs, run in parallel:
+#   unit   -- ruff + the default (non-integration) pytest suite. ~2-3 min.
+#   engine -- builds public Showdown at the PINNED commit, rebuilds the seeded team pool,
+#             runs the three readiness gates' static checks and every integration test.
+#
+# What this deliberately does NOT check: whether the pin is still current with public
+# Showdown. That is showdown-watch.yml's job, so an upstream commit can't turn every PR
+# red for reasons unrelated to the PR. Win-rate gates and training are not run here:
+# they take hours and swing +/-4-6 points between sessions (see CLAUDE.md).
+name: ci
+
+on:
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Install Python dependencies
+        run: .github/scripts/install_python_deps.sh
+      - name: Lint
+        run: .venv/bin/ruff check .
+      - name: Unit tests
+        run: .venv/bin/python -m pytest -q -rfs
+
+  engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Choose Showdown location
+        run: echo "VGC_SHOWDOWN_REPO=$RUNNER_TEMP/showdown" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Python dependencies
+        run: .github/scripts/install_python_deps.sh
+      - name: Read pinned Showdown commit
+        id: pin
+        run: >-
+          echo "commit=$(python3 -c 'import json; print(json.load(open("data/champions/mechanics_catalog.json"))["generated_from"]["showdown_commit"])')"
+          >> "$GITHUB_OUTPUT"
+      - name: Cache built Showdown
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.VGC_SHOWDOWN_REPO }}
+          key: showdown-${{ steps.pin.outputs.commit }}-node22
+      - name: Check out and build pinned Showdown
+        run: .github/scripts/checkout_pinned_showdown.sh "$VGC_SHOWDOWN_REPO" --build
+      - name: Rebuild the 160-team pool (seeded, byte-identical to local)
+        run: >-
+          .venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25
+          --seed 20260901 --out data/selfplay/archetype_pool_150
+      - name: Readiness gates (static)
+        run: |
+          .venv/bin/python offline/check_mechanics_readiness.py --static-only
+          .venv/bin/python offline/check_battle_state_readiness.py --static-only
+          .venv/bin/python offline/check_action_readiness.py --static-only
+      - name: Unit tests that need the team pool
+        run: .venv/bin/python -m pytest -q -rfs tests/test_counterfactual_q.py
+      - name: Integration tests against the pinned engine
+        # A skip here means a test could not find the engine or the pool -- i.e. lost
+        # coverage that would otherwise look green. Fail instead.
+        run: |
+          .venv/bin/python -m pytest -q -rfs -m integration | tee pytest.txt
+          if grep -qE '[0-9]+ skipped' pytest.txt; then
+            echo "::error::integration tests were skipped; the engine or team pool was not found"
+            exit 1
+          fi

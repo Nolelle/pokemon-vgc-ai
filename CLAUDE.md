@@ -687,6 +687,23 @@ VGC_TRACE=1 .venv/bin/python offline/run_matches.py --p1 vgc --p2 heuristic --n 
 node tools/sim_probe.mjs /Users/edmundyu/code/projects/pokemon-showdown scenario.json
 ```
 
+## CI (GitHub Actions, 2026-10-01)
+
+- `.github/workflows/ci.yml`, on every PR and push to main: **unit** (ruff + default
+  pytest) and **engine** (clones public Showdown at the catalog's pinned commit, builds
+  it, rebuilds `archetype_pool_150` with the seeded command below -- byte-identical to
+  local -- runs the three readiness gates `--static-only`, then `pytest -m integration`).
+  The engine job fails if any integration test skips: a skip there means a test could
+  not find the engine or pool, i.e. silently lost coverage.
+- It does NOT check whether the pin is current, so upstream commits cannot turn
+  unrelated PRs red. `.github/workflows/showdown-watch.yml` does that weekly and keeps
+  one "Showdown drift" issue open/updated/closed.
+- `VGC_SHOWDOWN_REPO` overrides `vgc.config.SHOWDOWN_REPO` (the only place the path
+  lives; `vgc.rl.env.DEFAULT_SHOWDOWN_REPO` reads it). CI installs torch from the CPU
+  index, constrained to `uv.lock` (`.github/scripts/install_python_deps.sh`, Linux only).
+- Not in CI on purpose: win-rate gates, training, ladder play (credentials stay local),
+  formatting checks.
+
 ## Testing and iteration preference (2026-09-07)
 
 Prioritize getting the battle bot running and iterating on data and training. Do not
