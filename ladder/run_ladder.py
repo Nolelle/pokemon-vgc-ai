@@ -64,6 +64,7 @@ from vgc.mechanics_gate import enforce_mechanics_gate_for_cli  # noqa: E402
 from vgc.battle_state_gate import enforce_battle_state_gate_for_cli  # noqa: E402
 from vgc.action_gate import enforce_action_gate_for_cli  # noqa: E402
 from vgc.showdown_parity import enforce_showdown_parity_for_cli  # noqa: E402
+from vgc.showdown_sync import SyncBlocked, sync_showdown  # noqa: E402
 from vgc.postmortem import classify_loss  # noqa: E402
 
 USERNAME_ENV = "VGC_SHOWDOWN_USERNAME"
@@ -769,6 +770,14 @@ def parse_args() -> argparse.Namespace:
         help="hybrid mode only: heuristic-reserved slots inside the shortlist budget",
     )
     parser.add_argument("--device", default="cpu", help="learned-policy inference device")
+    parser.add_argument(
+        "--no-sync-showdown",
+        action="store_true",
+        help=(
+            "public ladder only: do not auto-update Showdown/data before playing; a parity "
+            "mismatch then just blocks (see tools/sync_showdown.py)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -776,6 +785,16 @@ def main() -> int:
     args = parse_args()
     if args.n < 1:
         raise ValueError("--n must be at least 1")
+    if not args.local_smoke and not args.no_sync_showdown:
+        try:
+            synced = sync_showdown(log=lambda line: print(f"sync: {line}"))
+        except SyncBlocked as exc:
+            raise SystemExit(f"Blocked public ladder play: {exc}") from exc
+        if synced.status == "synced":
+            # Rule data was re-exported under this process; restart so nothing already
+            # imported keeps the old tables.
+            print("sync: restarting with the refreshed data")
+            os.execv(sys.executable, [sys.executable, *sys.argv, "--no-sync-showdown"])
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
     config = session_config(args.search, args.bc, args.value, args.horizon)
     if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
