@@ -144,3 +144,9 @@
 - Training entry points still only check the saved gate certificates, not live parity.
 - Second Codex (Sol) review of the final branch: Encore catalog acceptance confirmed safe (4 upstream Encore/Prankster cases + bot Encore checks pass); gate-retry fix confirmed. Fixed: local master ahead of public master could be pinned (now requires HEAD == fetched upstream ref; verified on a throwaway clone), and rollback after a failed commit left staged files (now restores from HEAD; verified with a forced pre-commit failure). Open, owner's call: the catalog diff only sees handler names, so behaviour changes inside existing handlers (e.g. the Sheer Force fix) are auto-accepted once the gates pass.
 - First real automatic sync: upstream bebf328c6 (Statmon format, config/formats.ts only) -> synced, catalog content unchanged, three gates PASS, committed 9b77271.
+
+## 2026-10-01 — two stale test_rl_env integration tests fixed
+
+- identically test: hard-coded M-B battle tag; poke-env rejects tags whose format != player format (now FORMAT_ID). Tag built from FORMAT_ID.
+- one_failure test: worker sends `error: null` on success since a30bec3; test asserted key absence. Now asserts `error is None` and `requestState == "move"`.
+- `-m integration tests/test_rl_env.py`: 11 passed. Worktree `.venv` symlinked to main checkout venv; ran with PYTHONPATH=src.
