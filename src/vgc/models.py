@@ -544,6 +544,11 @@ class PolicyConfig:
     # [0.455, 0.515]; 298 real M-C sheets 51.9% [0.490, 0.547]. Neither is significant.
     # This is a current-format data refresh, not a strength claim.
     set_priors_file: str = "set_priors.json"
+    # Which Stat Point/nature usage file in data/usage/ the bot reads for hidden opponent
+    # spreads (`vgc.sets.usage_spreads_for`). "spreads.json" is built from Smogon's
+    # 2026-09 M-C chaos stats (1760 cutoff, 1.63M battles); "spreads_regmb.json" is the
+    # previous M-B build, kept only as the legacy control for same-session A/Bs.
+    usage_spreads_file: str = "spreads.json"
     # When a species has NO usable prior (absent from set_priors.json or below
     # set_prior_min_games), fill unrevealed moves from its learnset's best legal STAB
     # attacks (`vgc.sets.learnset_fallback_move_ids`) instead of leaving them empty.

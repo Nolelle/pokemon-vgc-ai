@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
         "vgc.rl.distill requires the 'train' extra (torch) -- run `uv sync --extra train`."
     ) from exc
 
-from vgc.actions import describe_order
+from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
 from vgc.rl.guided_selection import (
@@ -290,6 +290,18 @@ class TeacherRecordingPlayer(VgcPlayer):
             return self._recording_failure(battle, "exact search is disabled")
         if not scored:
             return self._recording_failure(battle, "exact search returned no legal ranking")
+        # The search ranks orders enumerated on its mirror root. If the mirror's request
+        # disagrees with the real battle's (a stale poke-env flag materialised as a lock or
+        # recharge), a ranked order can be illegal here: Showdown would reject it and the
+        # label would describe a position that does not exist. Skip such decisions.
+        legal_here = {order.message for order in enumerate_joint_orders(battle)}
+        illegal = [entry.order for entry in scored if entry.order.message not in legal_here]
+        if illegal:
+            return self._recording_failure(
+                battle,
+                f"mirror/real request mismatch: {len(illegal)} ranked order(s) illegal on "
+                f"the real battle, e.g. {illegal[0].message!r}",
+            )
 
         chosen = scored[0].order
         teacher_description = describe_order(chosen)

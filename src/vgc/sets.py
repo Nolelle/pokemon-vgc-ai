@@ -164,6 +164,11 @@ def load_set_priors(path: str | None = None) -> dict[str, Any]:
         return json.load(file)
 
 
+def usage_spreads_for(config: PolicyConfig) -> dict[str, list[dict[str, Any]]]:
+    """`load_usage_spreads` for the file `config.usage_spreads_file` names in data/usage/."""
+    return load_usage_spreads(str(USAGE_DIR / config.usage_spreads_file))
+
+
 def set_priors_for(config: PolicyConfig) -> dict[str, Any]:
     """`load_set_priors` for the file `config.set_priors_file` names in data/usage/."""
     return load_set_priors(str(USAGE_DIR / config.set_priors_file))

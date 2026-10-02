@@ -1608,6 +1608,11 @@ def _reconstructed_scenario_candidates(ctx: _Context, config: PolicyConfig) -> d
     }
 
 
+# Scenarios below were built on the M-B usage spreads; they test mechanisms, and M-C
+# spreads (data/usage/spreads.json, Smogon 2026-09) move these particular numbers.
+_MB_SPREADS = "spreads_regmb.json"
+
+
 def test_reconstructed_postmortem_scenario_trick_room_reaches_top_three() -> None:
     """Reconstructs the real postmortem trace (gen9championsvgc2026regmb-2651715825):
     Venusaur+Farigiraf (meta1 sets, real Stat Points/nature/moves) vs Sneasler+Blaziken
@@ -1622,7 +1627,7 @@ def test_reconstructed_postmortem_scenario_trick_room_reaches_top_three() -> Non
     blaziken = _fast_opponent("blaziken")
     battle = _FakeFullBattle([venusaur, farigiraf], [sneasler, blaziken], [venusaur, farigiraf])
 
-    config = PolicyConfig(log_decisions=True)
+    config = PolicyConfig(usage_spreads_file=_MB_SPREADS, log_decisions=True)
     ctx = build_context(battle, config)
     candidates = _reconstructed_scenario_candidates(ctx, config)
     ranked = sorted(candidates.items(), key=lambda kv: -kv[1])
@@ -1652,9 +1657,13 @@ def test_reconstructed_postmortem_scenario_old_formula_ranked_trick_room_worse()
         ranked_names = [name for name, _score in sorted(candidates.items(), key=lambda kv: -kv[1])]
         return min(i for i, name in enumerate(ranked_names) if "trickroom" in name)
 
-    with_flip_rank = trick_room_rank(PolicyConfig(log_decisions=True))
+    with_flip_rank = trick_room_rank(
+        PolicyConfig(usage_spreads_file=_MB_SPREADS, log_decisions=True)
+    )
     without_flip_rank = trick_room_rank(
-        PolicyConfig(log_decisions=True, speed_control_flip_weight=0.0)
+        PolicyConfig(
+            usage_spreads_file=_MB_SPREADS, log_decisions=True, speed_control_flip_weight=0.0
+        )
     )
     assert with_flip_rank < without_flip_rank
 

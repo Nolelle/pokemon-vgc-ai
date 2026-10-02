@@ -41,6 +41,49 @@ def enumerate_joint_orders(battle: DoubleBattle) -> list[DoubleBattleOrder]:
     return DoubleBattleOrder.join_orders(first_orders, second_orders)
 
 
+def locked_move_ids(battle) -> dict[int, str]:
+    """Active slot -> id of the move it is locked into, from the current request."""
+    request = getattr(battle, "last_request", None) or {}
+    if request.get("forceSwitch") or request.get("teamPreview") or request.get("wait"):
+        return {}
+    locked: dict[int, str] = {}
+    for slot, active in enumerate(request.get("active") or []):
+        moves = (active or {}).get("moves") or []
+        if len(moves) == 1 and "target" not in moves[0] and moves[0].get("id") != "recharge":
+            locked[slot] = moves[0].get("id")
+    return locked
+
+
+def index_locked_choice(battle, message: str) -> str:
+    """Rewrite a choice so a locked move (Outrage, Petal Dance, ...) is sent as `move 1`.
+
+    While a Pokemon is locked, Showdown's request lists only that move and omits its
+    `target`. Choosing it by name (`move outrage`, poke-env's form) makes Showdown fall
+    back to target type `normal` (`move.target || 'normal'` in `sim/side.ts`) and reject
+    it with "needs a target"; by index it is accepted.
+
+    This must run where a choice is SENT, against the request of the battle it is sent
+    to (`DirectBattle.step_payload`, `VgcPlayer._handle_battle_request`), never when
+    orders are enumerated: an order can be enumerated against a different battle object
+    than the one it is sent to (the search's mirror), and an enumeration-time `move 1`
+    reached a real battle whose slot was not locked, where index 1 was a disabled
+    Thunderbolt. Sending-time also covers poke-env's own pickers (random/default
+    fallbacks, baseline opponents).
+    """
+    locked = locked_move_ids(battle)
+    if not locked or not isinstance(message, str):
+        return message
+    prefix = "/choose " if message.startswith("/choose ") else ""
+    parts = message.removeprefix(prefix).split(", ")
+    for slot, locked_id in locked.items():
+        if slot >= len(parts):
+            continue
+        tokens = parts[slot].split()
+        if len(tokens) >= 2 and tokens[0] == "move" and tokens[1] == locked_id:
+            parts[slot] = "move 1" + (" mega" if "mega" in tokens[2:] else "")
+    return prefix + ", ".join(parts)
+
+
 def _describe_single(order: SingleBattleOrder) -> str:
     target = order.order
     if isinstance(target, Move):

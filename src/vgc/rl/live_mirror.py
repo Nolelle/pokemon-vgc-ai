@@ -27,6 +27,7 @@ from vgc.rl.exact_search import combine_belief_rankings
 from vgc.rl.hidden_state import HiddenStateHypothesis, enumerate_hidden_state_hypotheses
 from vgc.sets import (
     set_priors_for,
+    usage_spreads_for,
     normalize_item,
     opponent_move_ids,
     opponent_spread_hypotheses,
@@ -139,7 +140,7 @@ def _opponent_sets(
     result: list[dict[str, object]] = []
     for species_id in ordered_ids:
         mon = known.get(species_id) or preview_by_id[species_id]
-        state = opponent_state(mon)
+        state = opponent_state(mon, usage=usage_spreads_for(config))
         set_assignment = (set_assignments or {}).get(species_id) or {}
         assigned_moves = [to_id(move) for move in set_assignment.get("moves", [])]
         moves = [
@@ -228,7 +229,7 @@ def _species_spread_beliefs(
     species_ids = _active_opponent_species(battle)
     if memory is None:
         return {
-            species_id: opponent_spread_hypotheses(species_id, limit=limit)
+            species_id: opponent_spread_hypotheses(species_id, usage_spreads_for(config), limit=limit)
             for species_id in species_ids
         }
     posterior = {
@@ -239,14 +240,14 @@ def _species_spread_beliefs(
     for species_id in species_ids:
         belief = posterior.get(species_id)
         if belief is None or not belief.hypotheses:
-            result[species_id] = opponent_spread_hypotheses(species_id, limit=limit)
+            result[species_id] = opponent_spread_hypotheses(species_id, usage_spreads_for(config), limit=limit)
             continue
         kept = sorted(
             belief.hypotheses, key=lambda entry: -entry.probability
         )[:limit]
         total = sum(entry.probability for entry in kept)
         if total <= 0.0:
-            result[species_id] = opponent_spread_hypotheses(species_id, limit=limit)
+            result[species_id] = opponent_spread_hypotheses(species_id, usage_spreads_for(config), limit=limit)
             continue
         result[species_id] = [
             (entry.sp, entry.nature, entry.probability / total) for entry in kept

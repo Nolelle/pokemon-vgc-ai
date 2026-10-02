@@ -295,12 +295,18 @@ class CandidatePolicyValueNet(nn.Module):
             raise ValueError("every mechanics-enabled row must contain a complete snapshot")
         embedded = self.mechanics_embedding(tokens).transpose(1, 2)
         convolved = F.relu(self.mechanics_conv(embedded))
-        pooled_mask = F.max_pool1d(
-            mask.to(convolved.dtype).unsqueeze(1),
-            kernel_size=7,
-            stride=4,
-            padding=3,
-        ).bool()
+        # Keep exactly the windows an unpadded copy of each row would produce: window i
+        # centres on byte i*stride and exists when that byte is inside the snapshot.
+        # Pooling the mask instead admitted one or two extra edge windows whenever a
+        # row was right-padded, so the same snapshot encoded differently alone (live
+        # play) and inside a padded training batch. Pad bytes embed to zero
+        # (padding_idx=0), matching the convolution's own zero padding.
+        lengths = mask.bool().sum(dim=1)
+        centres = (
+            torch.arange(convolved.shape[2], device=convolved.device)
+            * self.mechanics_conv.stride[0]
+        )
+        pooled_mask = (centres.unsqueeze(0) < lengths.unsqueeze(1)).unsqueeze(1)
         masked = convolved.masked_fill(~pooled_mask, 0.0)
         counts = pooled_mask.sum(dim=2).clamp_min(1).to(convolved.dtype)
         mean = masked.sum(dim=2) / counts

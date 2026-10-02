@@ -264,12 +264,17 @@ def test_no_memory_matches_the_corpus_prior_for_a_real_species() -> None:
         assert assignment[0][1] == nature
 
 
+# Scenarios below were built on the M-B usage spreads; they test mechanisms, and M-C
+# spreads (data/usage/spreads.json, Smogon 2026-09) move these particular numbers.
+_MB_SPREADS = "spreads_regmb.json"
+
+
 def test_speed_observation_moves_the_top_joint_hypothesis_off_the_prior() -> None:
     battle = _battle(
         our_active=[_our_mon("garchomp", evs=None, nature=None)],
         opp_active=[_opp_mon("charizard"), None],
     )
-    prior = joint_spread_hypotheses(battle, None, PolicyConfig(), limit=3)
+    prior = joint_spread_hypotheses(battle, None, PolicyConfig(usage_spreads_file=_MB_SPREADS), limit=3)
     if len(prior) < 2:
         pytest.skip("charizard has a single corpus spread in this checkout")
 
@@ -287,7 +292,7 @@ def test_speed_observation_moves_the_top_joint_hypothesis_off_the_prior() -> Non
             opponent_species="charizard", threshold=cutoff, relation="at_most"
         )
     )
-    posterior = joint_spread_hypotheses(battle, memory, PolicyConfig(), limit=3)
+    posterior = joint_spread_hypotheses(battle, memory, PolicyConfig(usage_spreads_file=_MB_SPREADS), limit=3)
     assert posterior[0][1] != prior[0][1]
     assert speed_of(posterior[0][1]) <= cutoff
 
@@ -417,10 +422,10 @@ def test_belief_ordered_candidates_hypotheses_1_returns_the_same_list() -> None:
 
 def test_belief_mixture_crosses_the_shortlist_boundary() -> None:
     battle = _crossing_battle()
-    myopic = score_joint_orders(battle)
+    myopic = score_joint_orders(battle, PolicyConfig(usage_spreads_file=_MB_SPREADS))
     scores_before = [entry.score for entry in myopic]
     ranked = belief_ordered_candidates(
-        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+        battle, myopic, PolicyConfig(usage_spreads_file=_MB_SPREADS, shortlist_belief_hypotheses=3)
     )
     assert len(ranked) == len(myopic)
     assert {id(entry) for entry in ranked} == {id(entry) for entry in myopic}
@@ -480,6 +485,7 @@ def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
     )
 
     config_one = PolicyConfig(
+        usage_spreads_file=_MB_SPREADS,
         shortlist_belief_hypotheses=1,
         search_our_candidates=_CROSSING_K,
         search_diverse_candidates=False,
@@ -487,6 +493,7 @@ def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
         search_opp_candidates=4,
     )
     config_three = PolicyConfig(
+        usage_spreads_file=_MB_SPREADS,
         shortlist_belief_hypotheses=3,
         search_our_candidates=_CROSSING_K,
         search_diverse_candidates=False,

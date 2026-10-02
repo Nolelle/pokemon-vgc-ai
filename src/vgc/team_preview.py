@@ -51,7 +51,7 @@ from vgc.gameplan import build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.principles import TeamSignals, detect_team_signals
-from vgc.sets import load_usage_spreads, opponent_state
+from vgc.sets import opponent_state, usage_spreads_for
 
 _LEADS_COUNT = 2
 _PICK_COUNT = 4
@@ -132,7 +132,7 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
         order = list(range(1, _PICK_COUNT + 1))
         return "/team " + "".join(str(i) for i in order)
 
-    usage = load_usage_spreads()
+    usage = usage_spreads_for(config)
     meta_team = recognize_meta_team(opp_team)
     # A held Mega stone is public information. Preview the matchup value of the potential
     # Mega form (including weather abilities); the turn evaluator separately decides
