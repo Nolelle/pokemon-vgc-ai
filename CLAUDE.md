@@ -607,6 +607,15 @@ learned policy on M-C needs retraining first.
   existing is not approval.
 - Expanded holdout hygiene: exclude byte-identical training-pool teams by packed
   content, not filename.
+- **First M-C student (2026-10-02), not approved.** Teacher collection at 20308ce on
+  `mc_sheet_pool_v2` (train 226 / holdout 88 teams, team-disjoint): 5 train shards (34,002
+  decisions; shard 1 lost to a full disk) + holdout shard (4,529 decisions, 600 games),
+  skip rate 0.3-0.6%. `runs/mcv2/train_v1/best.pt` (warm start `runs/mcv2/bc_regmc`, M-B
+  recipe, best epoch 4/7). Holdout recall: pure R@10 91.8% (LCB 0.907), **guided@10 LCB
+  0.920 = FAIL** (bar 0.98). The heuristic's own top-10 contains the teacher's pick 90.9%
+  of the time, so the student roughly equals the shortlist it imitates: the K=10 teacher
+  caps it (see the 2026-10-01 architecture review). Next: A/B search width (K=10/20/40)
+  before re-collecting with a wider teacher. `runs/` is gitignored.
 
 ## Pure-RL 100k scaling closeout: do not promote or scale this recipe further
 
