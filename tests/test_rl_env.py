@@ -502,3 +502,34 @@ def test_hidden_trap_rejection_retries_live_and_fails_closed_in_search(worker, t
     assert battle.battles["p2"].turn == turn + 1
     clone.close()
     battle.close()
+
+
+@pytest.mark.integration
+def test_locked_move_orders_are_accepted_by_showdown(worker, team: str) -> None:
+    """While locked into Outrage, Showdown's request omits the move's target and rejects
+    `move outrage` with "needs a target"; every order the bot enumerates must still be
+    accepted, because DirectBattle rewrites the locked slot to `move 1` when sending."""
+    salamence = (
+        "Salamence||LifeOrb|Intimidate|Outrage,Protect,DracoMeteor,DragonDance|Adamant"
+        "|2,32,,,,32||||50|"
+    )
+    p1_team = "]".join([salamence, *team.split("]")[1:]])
+    battle = DirectBattle.start(worker, "t-lock", p1_team, team, seed=[5, 6, 7, 8])
+    battle.step({"p1": "team 1234", "p2": "team 1234"})
+    battle.step({"p1": "move outrage, move 4", "p2": "move 1, move 4"})
+    assert battle.battles["p1"].last_request["active"][0]["moves"] == [
+        {"move": "Outrage", "id": "outrage"}
+    ]
+    orders = enumerate_joint_orders(battle.battles["p1"])
+    assert orders
+    assert any(choice_string(order).startswith("move outrage") for order in orders)
+    for index, order in enumerate(orders):
+        branch = battle.clone(f"t-lock-{index}")
+        branch.step({"p1": choice_string(order), "p2": "move 1, move 4"})
+        branch.close()
+    # poke-env's own pickers (random/default fallbacks, baseline opponents) send the
+    # move by name; DirectBattle rewrites it at send time.
+    by_name = battle.clone("t-lock-by-name")
+    by_name.step({"p1": "move outrage, move 4", "p2": "move 1, move 4"})
+    by_name.close()
+    battle.close()

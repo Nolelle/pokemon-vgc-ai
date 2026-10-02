@@ -200,7 +200,7 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   `/acceptopenteamsheets`; ~0.2% of the 2939 **M-B** public replays contain a showteam).
   Opponent info in real games comes from in-battle reveals plus corpus-derived set
   priors (`data/usage/set_priors.json`, `vgc.sets.opponent_move_ids`). That priors file
-  was rebuilt from the M-C corpus on 2026-09-30 (14,048 games rated >=1200). Offline gates run mutual-OTS-accept, so
+  was rebuilt from the M-C corpus on 2026-10-01 (19,818 games rated >=1200). Offline gates run mutual-OTS-accept, so
   the priors fill is a no-op there (verified 74/100 vs 74/100 same-session) -- don't
   expect gate results to reflect priors quality.
 - **Gate methodology: cross-session variance is +/-4-6 win-rate points** on the n=100-300

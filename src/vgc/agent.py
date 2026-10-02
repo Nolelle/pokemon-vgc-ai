@@ -21,7 +21,7 @@ from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
-from vgc.actions import choice_wire_message, describe_order
+from vgc.actions import choice_wire_message, describe_order, index_locked_choice
 from vgc.battle_state_replay import DecisionReplayRecorder
 from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
@@ -114,6 +114,7 @@ class VgcPlayer(Player):
                 choice = await choice
             message = choice.message
         if message:
+            message = index_locked_choice(battle, message)
             await self.ps_client.send_message(message, battle.battle_tag)
 
     async def _handle_battle_message(self, split_messages) -> None:

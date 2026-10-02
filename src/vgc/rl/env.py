@@ -61,6 +61,7 @@ from typing import Any, Iterable, Sequence
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import DoubleBattleOrder
 
+from vgc.actions import index_locked_choice
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO
 from vgc.node import find_node
 from vgc.own_team import apply_own_spreads, index_from_packed
@@ -531,7 +532,10 @@ class DirectBattle:
             )
         payload: dict[str, Any] = {"cmd": "choose", "id": self.battle_id}
         for side in SIDES:
-            payload[side] = choices.get(side)
+            choice = choices.get(side)
+            payload[side] = (
+                index_locked_choice(self.battles[side], choice) if choice is not None else None
+            )
         return payload
 
     def apply_response(self, response: dict[str, Any]) -> StepResult:
