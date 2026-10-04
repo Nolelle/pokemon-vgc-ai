@@ -912,3 +912,48 @@ class PolicyConfig:
     # Time allowed for one call when no timer is announced (offline/direct env), where
     # the clock guard imposes no budget of its own.
     llm_offline_budget_s: float = 20.0
+
+    # --- Live exact-search judge (vgc.exact_judge; OFF by default) -----------------------
+    # The shipped decision path is `vgc.search.search_joint_orders` (~50 ms). Exact grading
+    # (offline/grade_positions.py: public mirror + Showdown branches) finds a better move
+    # among the candidates that search ranked lower, or skipped, on a sizeable share of
+    # positions, so the fast search's JUDGEMENT may be the bottleneck rather than its
+    # shortlist. With this on, the fast search runs exactly as before; then the exact engine
+    # re-ranks its best `exact_judge_top_k` candidates (plus `exact_judge_extra_myopic`
+    # skipped ones) through `vgc.rl.public_search.public_information_exact_search` -- the same
+    # public-information boundary live hybrid play uses, never a private simulator root --
+    # and the exact-best order is played. Any error, timeout, or empty result keeps the fast
+    # search's pick. False = behaviour byte-identical to before this feature existed.
+    exact_judge_live: bool = False
+    # How many of the fast search's best-ranked candidates the exact engine re-ranks.
+    exact_judge_top_k: int = 6
+    # Also judge this many of the fast search's UNSEARCHED candidates, taken in myopic-rank
+    # order (the ones the shortlist cut). 0 = judge only the fast search's own top-K.
+    exact_judge_extra_myopic: int = 0
+    # Wall-clock cap on one judged decision. With an announced timer the cap is
+    # min(this, the clock guard's remaining time for the decision - exact_judge_margin_s);
+    # with no timer (offline/direct env) it is this value. A judge that runs out of time
+    # keeps the fast search's pick (and its search is abandoned, never waited on).
+    exact_judge_budget_s: float = 3.0
+    # Time held back from the clock guard's remaining decision time for sending the move.
+    exact_judge_margin_s: float = 1.0
+    # Exact-search width for the judge, mapped onto the existing exact_search_* settings /
+    # search_opp_candidates. Defaults match the diagnostic width offline/grade_positions.py
+    # graded at (about 0.4 s per position when the machine is idle): two sampled futures per
+    # branch, four opponent replies, one hidden-information belief.
+    exact_judge_future_samples: int = 2
+    exact_judge_opp_candidates: int = 4
+    # Applies to the spread, set, bring and sleep-timer belief counts and their joint cap.
+    exact_judge_hypotheses: int = 1
+    # What the judge maximises: "exchange_value" is the pure one-turn position change from
+    # the Showdown branches (what the grader measured); "score" is the exact search's final
+    # blend (myopic term + exact term).
+    exact_judge_metric: str = "exchange_value"
+    # The exact-best order must beat the fast search's own pick by MORE than this on the
+    # chosen metric to overturn it (0.0 = any strict improvement; ~10 is about a 10%-HP
+    # swing, the grader's "clearly better" margin).
+    exact_judge_overturn_margin: float = 0.0
+    # Non-empty = also append one JSON line per judged decision to this file (a path
+    # relative to the CWD). Lets an offline A/B, whose players are discarded after each
+    # game, report judge latency/overturn/fallback rates. Empty = in-memory log only.
+    exact_judge_log_path: str = ""
