@@ -48,6 +48,26 @@ def bind_cancel(event: threading.Event) -> None:
     _cancel_var.set(event)
 
 
+# `time.monotonic()` instant by which the current guarded decision must be finished, set
+# on the worker side so deep code (the LLM proposer) can size its own wait. None = no limit.
+_deadline_var: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "vgc_clock_deadline", default=None
+)
+
+
+def bind_deadline(deadline: float | None) -> None:
+    """Bind the monotonic deadline of the current guarded decision (worker side)."""
+
+    _deadline_var.set(deadline)
+
+
+def time_left() -> float | None:
+    """Seconds until the current guarded decision's deadline, or None when unbounded."""
+
+    deadline = _deadline_var.get()
+    return None if deadline is None else max(0.0, deadline - time.monotonic())
+
+
 # Showdown charges the timer in whole ticks (`TICK_TIME` in room-battle.ts).
 TICK_S = 5.0
 

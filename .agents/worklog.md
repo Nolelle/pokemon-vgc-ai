@@ -220,3 +220,10 @@
 - Codex code review: 6 findings, all fixed. Tests: 1178 passed; ruff clean.
 - Readiness gates BLOCKED only by Showdown parity (6 upstream commits incl. October tier shifts, Champions Mega Scizor) -> run tools/sync_showdown.py as a separate change before ladder/training.
 - Worktree note: .venv is a symlink to the main checkout's venv; run with PYTHONPATH=$PWD/src (main checkout dir is on an older branch).
+
+## 2026-10-03 — Next build slice: Luna wired in (off by default), speed test, saved positions
+- Showdown synced to 9fb3a5b99 (Champions tier shifts) in its own PR #25; gates pass after sync.
+- Built: vgc.llm.facts (public board -> ~2.65k-token packet, guesses labelled, spread-aware damage facts), vgc.llm.proposer + search_joint_orders(order_proposer=, extra_candidates=) behind PolicyConfig.llm_proposer_enabled=False (engine scores LLM proposals like any candidate; disabled path unchanged), llm_control_extra_candidates for the equal-time arm, teams/owner/plans/*.md, offline/llm_speed_test.py, vgc.positions + offline/record_positions.py + offline/grade_positions.py (rebuild public roots from decision-replay bundles; exact-search grading; tune/test split by six-species identity; overall/coverage/conditional shares clustered by opponent team). `openai` added as optional extra `llm`.
+- Real Luna speed test (300 calls, $0.084 total incl. pilot): none p50 2.1 s / p95 3.1 s / max 4.9 s, $0.00024/call; low p50 2.9 s / p95 6.2 s / max 8.4 s, $0.00030/call; 100% valid; ~54% of input cached. Results in runs/llm/speed_test.json.
+- Codex reviews: 7 findings on this slice (shared spend meter per file + file lock, budget recomputed before calling, spread damage, hidden Speed always GUESS, split by species identity, honest grading denominators, decided-from-start classification) — all fixed. Tests 1196 passed; ruff clean.
+- Next: offline proposer screen on recorded positions (~$0.05), then equal-time calibration and the confirmation head-to-head per docs/llm_test_protocol.md.

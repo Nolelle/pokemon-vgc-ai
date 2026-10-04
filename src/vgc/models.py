@@ -831,3 +831,36 @@ class PolicyConfig:
     # Forced replacements after a faint have one sensible answer most of the time.
     clock_cap_forced_switch_s: float = 4.0
     clock_cap_preview_s: float = 30.0
+
+    # --- LLM move proposer (vgc.llm.proposer; OFF by default) -----------------------------
+    # The LLM (GPT-6 Luna) only PROPOSES up to 3 of our joint orders by ID from a numbered
+    # list the engine built. Proposals are ADDED to the search's candidate shortlist
+    # (deduplicated) and scored by the same search as every other candidate, so the
+    # engine keeps the last word and the LLM can never pick an illegal or unscored move.
+    # Any failure (bad answer, timeout, spend cap, no API key) just means "no extra
+    # candidates". False = behaviour byte-identical to before this feature existed.
+    llm_proposer_enabled: bool = False
+    # Model id sent to the API; must be in `vgc.llm.spend.PRICE_TABLE`.
+    llm_model: str = "gpt-6-luna"
+    # Name or path of the team plan text handed to `vgc.llm.facts.load_team_plan`.
+    # Empty = no plan text.
+    llm_team_plan: str = ""
+    # One JSON line per call (plus late arrivals) is appended here; relative to the CWD.
+    llm_log_path: str = "runs/llm/calls.jsonl"
+    # Persistent local spend tally (survives restarts; a corrupt file fails closed).
+    llm_spend_file: str = "runs/llm/spend.json"
+    # Hard cap in USD on cumulative spend recorded in `llm_spend_file`.
+    llm_budget_cap_usd: float = 20.0
+    # Non-empty = use `vgc.llm.client.FakeLLMClient` with this scenario (e.g. "valid",
+    # "stalled") instead of the real API: a $0 end-to-end run. The fake run keeps spend
+    # in memory only and never touches `llm_spend_file`.
+    llm_fake_scenario: str = ""
+    # Equal-time CONTROL arm: when the proposer is OFF, widen our search shortlist by this
+    # many extra candidates (taken in ranking order) so the control spends roughly the
+    # time the LLM arm spends waiting/searching. 0 = no change. Calibrate before use.
+    llm_control_extra_candidates: int = 0
+    # Clock held back from the LLM call for the rest of the search and sending the move.
+    llm_safety_margin_s: float = 1.5
+    # Time allowed for one call when no timer is announced (offline/direct env), where
+    # the clock guard imposes no budget of its own.
+    llm_offline_budget_s: float = 20.0

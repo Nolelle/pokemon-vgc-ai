@@ -33,6 +33,7 @@ from vgc.clock import (
     ClockTracker,
     WorkerSlot,
     bind_cancel,
+    bind_deadline,
     budget_seconds,
     cancelled,
     run_with_deadline,
@@ -368,7 +369,7 @@ class VgcPlayer(Player):
             )
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
-            scored = search_joint_orders(battle, self.config)
+            scored = self._search(battle, memory)
         elif self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
             scored = score_joint_orders(battle, self.config)
         if scored:
@@ -381,10 +382,31 @@ class VgcPlayer(Player):
                 memory.record_choice(
                     int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
                 )
+            if self.config.llm_proposer_enabled:
+                record_note("llm_chosen", bool(scored[0].breakdown.get("llm_proposed")))
             record_note("battle_memory", memory.summary())
             return scored[0].order
         record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
+
+    def _search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
+        """`search_joint_orders`, plus the LLM proposer (or the equal-time control's extra
+        candidates) when configured. With both off this is exactly the plain call."""
+        if self.config.llm_proposer_enabled:
+            from vgc.llm.proposer import make_order_proposer
+
+            return search_joint_orders(
+                battle,
+                self.config,
+                order_proposer=make_order_proposer(battle, self.config, memory),
+            )
+        if self.config.llm_control_extra_candidates > 0:
+            return search_joint_orders(
+                battle,
+                self.config,
+                extra_candidates=self.config.llm_control_extra_candidates,
+            )
+        return search_joint_orders(battle, self.config)
 
     def decide_teampreview(self, battle: AbstractBattle) -> str:
         """Choose a teampreview order: `vgc.team_preview.build_team_order`, or poke-env's
@@ -443,8 +465,9 @@ class VgcPlayer(Player):
                 value = decide()
                 reason = "none"
             else:
+                deadline = None if budget.seconds is None else start + budget.seconds
                 result = run_with_deadline(
-                    lambda: self._run_isolated(decide, cancel),
+                    lambda: self._run_isolated(decide, cancel, deadline),
                     lambda: self._run_isolated(fallback, None)[0],
                     budget,
                     slot=self._worker_slot(),
@@ -489,13 +512,16 @@ class VgcPlayer(Player):
 
     @staticmethod
     def _run_isolated(
-        fn: Callable[[], object], cancel: threading.Event | None
+        fn: Callable[[], object],
+        cancel: threading.Event | None,
+        deadline: float | None = None,
     ) -> tuple[object, object]:
         """Run ``fn`` in a copied context with its own throwaway `DecisionTrace`."""
 
         def inner() -> tuple[object, object]:
             if cancel is not None:
                 bind_cancel(cancel)
+            bind_deadline(deadline)
             start_trace()
             return fn(), current_trace()
 

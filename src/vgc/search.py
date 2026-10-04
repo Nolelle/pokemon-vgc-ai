@@ -99,7 +99,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cmp_to_key, partial
 from itertools import product
@@ -1719,6 +1719,57 @@ def _validate_selected_partition(
         raise ValueError("candidate selector must partition the complete legal order list")
 
 
+def _widen_search_candidates(
+    ranked: list[ScoredOrder],
+    searched: list[ScoredOrder],
+    unsearched: list[ScoredOrder],
+    proposed: Sequence[object],
+    extra: int,
+) -> tuple[list[ScoredOrder], list[ScoredOrder], set[int], set[int]]:
+    """Add externally proposed orders (and/or `extra` ranking-order fillers) to the
+    searched block, deduplicated. Returns (searched, unsearched, proposed ids, added ids)
+    where the id sets are `id(entry)` for every entry the proposer named / newly added.
+
+    Never removes or reorders an existing searched entry, so with nothing proposed and
+    extra == 0 the partition is returned unchanged.
+    """
+
+    by_key: dict[str, ScoredOrder] = {}
+    for entry in ranked:
+        try:
+            by_key.setdefault(describe_order(entry.order), entry)
+        except Exception:  # noqa: BLE001 - an undescribable order simply cannot be proposed
+            continue
+    searched = list(searched)
+    unsearched = list(unsearched)
+    proposed_ids: set[int] = set()
+    added_ids: set[int] = set()
+    searched_ids = {id(entry) for entry in searched}
+    for order in proposed:
+        try:
+            entry = by_key.get(describe_order(order))  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001
+            entry = None
+        if entry is None:
+            continue
+        proposed_ids.add(id(entry))
+        if id(entry) not in searched_ids:
+            searched.append(entry)
+            searched_ids.add(id(entry))
+            added_ids.add(id(entry))
+    if extra > 0:
+        for entry in unsearched:
+            if extra <= 0:
+                break
+            if id(entry) not in searched_ids:
+                searched.append(entry)
+                searched_ids.add(id(entry))
+                added_ids.add(id(entry))
+                extra -= 1
+    unsearched = [entry for entry in unsearched if id(entry) not in searched_ids]
+    return searched, unsearched, proposed_ids, added_ids
+
+
 # --- top-level entry point ---------------------------------------------------------------
 
 
@@ -1729,6 +1780,8 @@ def search_joint_orders(
     candidate_selector: SearchCandidateSelector | None = None,
     leaf_observer: SearchLeafObserver | None = None,
     leaf_value_adjuster: SearchLeafValueAdjuster | None = None,
+    order_proposer: Callable[[list[ScoredOrder]], Sequence[object]] | None = None,
+    extra_candidates: int = 0,
 ) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn using the shallow 2-ply
     search, best first. See the module docstring for the full pipeline.
@@ -1747,6 +1800,12 @@ def search_joint_orders(
     lowest searched final score (`min(searched finals) - 1.0 - tail_index`, strictly
     descending so the tail's own myopic order is preserved beneath the searched block,
     never above it) instead of using its own myopic-derived score directly.
+
+    ``order_proposer`` (the LLM proposer, see `vgc.llm.proposer`) is called once with the
+    ranked legal list and returns orders to ADD to the searched block; they are scored
+    exactly like every other candidate and flagged ``breakdown["llm_proposed"]``.
+    ``extra_candidates`` widens the searched block by that many ranking-order entries (the
+    equal-time control arm). Both default to off, which leaves the search untouched.
     """
     started_at = time.perf_counter()
     config = config or PolicyConfig()
@@ -1786,6 +1845,34 @@ def search_joint_orders(
     else:
         searched, unsearched = candidate_selector(list(ranked), config)
         _validate_selected_partition(ranked, searched, unsearched, config)
+
+    proposed_ids: set[int] = set()
+    if order_proposer is not None or extra_candidates > 0:
+        proposed: Sequence[object] = ()
+        if order_proposer is not None:
+            try:
+                proposed = order_proposer(list(ranked))
+            except Exception:  # noqa: BLE001 - the proposer is advisory; never fatal
+                proposed = ()
+        searched, unsearched, proposed_ids, added_ids = _widen_search_candidates(
+            ranked,
+            searched,
+            unsearched,
+            proposed,
+            0 if order_proposer is not None else extra_candidates,
+        )
+        record_note(
+            "llm_candidates",
+            {
+                "proposed": [
+                    describe_order(e.order) for e in ranked if id(e) in proposed_ids
+                ],
+                "added_to_shortlist": [
+                    describe_order(e.order) for e in ranked if id(e) in added_ids
+                ],
+                "mode": "proposer" if order_proposer is not None else "control_extra",
+            },
+        )
 
     # Every (candidate, response) exchange is resolved FIRST, across the whole searched
     # block, so the value head (if active) can be scored in ONE batched forward pass
@@ -1863,6 +1950,8 @@ def search_joint_orders(
         )
         breakdown["n_responses"] = len(responses)
         breakdown["searched"] = True
+        if id(entry) in proposed_ids:
+            breakdown["llm_proposed"] = True
         scored.append(ScoredOrder(order=entry.order, score=final_score, breakdown=breakdown))
         searched_finals.append(final_score)
         shadow_actions.append(

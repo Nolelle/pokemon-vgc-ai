@@ -17,6 +17,10 @@ train = [
     "torch>=2.13.0",
     "wandb>=0.19.0",
 ]
+# GPT-6 Luna advisor (vgc.llm); imported lazily, so the default install never needs it.
+llm = [
+    "openai>=3.24.0",
+]
 
 [tool.ruff]
 line-length = 100

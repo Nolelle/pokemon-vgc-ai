@@ -2,7 +2,8 @@
 
 Spend is persisted to a small JSON file so the cap survives restarts. A corrupt file fails
 closed (spent is set to the cap) rather than silently resetting to zero. One process is
-assumed to own the file; the in-process lock does not protect against two bot processes.
+assumed to own the file; a file lock plus re-read-before-write keeps concurrent meters and
+processes from overwriting each other's tallies.
 """
 
 from __future__ import annotations
@@ -10,8 +11,15 @@ from __future__ import annotations
 import json
 import os
 import threading
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows: thread lock only
+    fcntl = None  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)
@@ -64,47 +72,104 @@ class Reservation:
 
 
 class SpendMeter:
+    """Cap-enforcing spend tally, safe across threads, meters and processes.
+
+    The JSON file is the source of truth. Every reserve/settle/cancel takes the in-process
+    lock plus an exclusive file lock, re-reads the file, applies its change and writes it
+    back, so two meters (or two bot processes) on one file merge instead of overwriting.
+    """
+
     def __init__(self, path: str | Path | None = None, cap_usd: float = 20.0,
                  model: str = "gpt-6-luna") -> None:
         self.path = Path(path) if path else None
         self.cap_usd = float(cap_usd)
         self.model = model
         self._lock = threading.Lock()
+        self._uid = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._next_id = 1
-        self._reserved: dict[int, float] = {}
+        self._reserved: dict[int, float] = {}  # this meter's own holds
+        self._foreign: dict[str, float] = {}  # holds other live meters/processes persisted
         self.spent_usd = 0.0
         self.calls = 0
         self._load()
 
-    def _load(self) -> None:
+    def _key(self, res_id: int) -> str:
+        return f"{self._uid}:{res_id}"
+
+    def _read_disk(self) -> dict | None:
+        """The file's contents, `{}` if absent, or None if unreadable (fail closed)."""
         if self.path is None or not self.path.exists():
-            return
+            return {}
         try:
             data = json.loads(self.path.read_text())
-            self.spent_usd = float(data["spent_usd"])
-            self.calls = int(data.get("calls", 0))
-            # Requests sent but never settled (crash mid-call) may have been billed:
-            # count each at its reserved worst case.
-            outstanding = data.get("reserved", {})
-            self.spent_usd += sum(float(v) for v in outstanding.values())
-            if outstanding:
-                self._save()
+            float(data["spent_usd"])
+            return data
         except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _refresh(self) -> None:
+        """Merge the on-disk state into memory. Call with the locks held."""
+        if self.path is None:
+            return
+        data = self._read_disk()
+        if data is None:
             self.spent_usd = self.cap_usd  # fail closed
+            return
+        if not data:
+            return
+        self.spent_usd = float(data["spent_usd"])
+        self.calls = int(data.get("calls", 0))
+        own = {self._key(i) for i in self._reserved}
+        try:
+            self._foreign = {
+                str(k): float(v) for k, v in data.get("reserved", {}).items() if k not in own
+            }
+        except (ValueError, TypeError, AttributeError):
+            self.spent_usd = self.cap_usd
+
+    @contextmanager
+    def _txn(self):
+        """Exclusive section: thread lock + cross-process file lock + fresh disk state."""
+        with self._lock:
+            lock_file = None
+            if self.path is not None and fcntl is not None:
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    lock_file = open(self.path.with_suffix(self.path.suffix + ".lock"), "a")
+                    fcntl.flock(lock_file, fcntl.LOCK_EX)
+                except OSError:
+                    lock_file = None
+            try:
+                self._refresh()
+                yield
+            finally:
+                if lock_file is not None:
+                    try:
+                        fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    finally:
+                        lock_file.close()
+
+    def _load(self) -> None:
+        with self._txn():
+            if self.path is None or not self.path.exists() or not self._foreign:
+                return
+            # Holds left by an earlier run (crash mid-call) may have been billed: count
+            # each at its reserved worst case.
+            self.spent_usd += sum(self._foreign.values())
+            self._foreign = {}
+            self._save()
 
     def _save(self) -> None:
         if self.path is None:
             return
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp = self.path.with_suffix(self.path.suffix + f".{self._uid}.tmp")
+            reserved = dict(self._foreign)
+            reserved.update({self._key(k): v for k, v in self._reserved.items()})
             tmp.write_text(json.dumps(
-                    {
-                        "spent_usd": self.spent_usd,
-                        "calls": self.calls,
-                        "reserved": {str(k): v for k, v in self._reserved.items()},
-                    }
-                ))
+                {"spent_usd": self.spent_usd, "calls": self.calls, "reserved": reserved}
+            ))
             os.replace(tmp, self.path)
         except OSError:
             pass  # in-memory meter still enforces the cap for this process
@@ -118,12 +183,12 @@ class SpendMeter:
 
     @property
     def committed_usd(self) -> float:
-        return self.spent_usd + sum(self._reserved.values())
+        return self.spent_usd + sum(self._reserved.values()) + sum(self._foreign.values())
 
     def reserve(self, input_tokens_bound: int, max_output_tokens: int) -> Reservation | None:
         """Hold the worst-case cost of a request, or return None if the cap would break."""
         worst = self.worst_case_usd(input_tokens_bound, max_output_tokens)
-        with self._lock:
+        with self._txn():
             if self.committed_usd + worst > self.cap_usd:
                 return None
             res = Reservation(self._next_id, worst)
@@ -134,7 +199,7 @@ class SpendMeter:
 
     def settle(self, res: Reservation, actual_usd: float | None = None) -> None:
         """Release the hold and book the actual cost (default: the worst case)."""
-        with self._lock:
+        with self._txn():
             held = self._reserved.pop(res.id, None)
             if held is None:
                 return
@@ -144,6 +209,34 @@ class SpendMeter:
 
     def cancel(self, res: Reservation) -> None:
         """Release the hold with no charge (request never reached the provider)."""
-        with self._lock:
+        with self._txn():
             if self._reserved.pop(res.id, None) is not None:
                 self._save()
+
+
+_shared_lock = threading.Lock()
+_shared: dict[str, SpendMeter] = {}
+
+
+def shared_meter(path: str | Path | None, cap_usd: float, model: str = "gpt-6-luna") -> SpendMeter:
+    """One process-wide meter per spend file, enforcing the SMALLEST cap ever requested.
+
+    Configs that share a spend file but differ in cap must not keep separate tallies (each
+    would see only its own spend and together overshoot). `path=None` (in-memory) gets a
+    private meter.
+    """
+    if path is None:
+        return SpendMeter(None, cap_usd, model)
+    key = str(Path(path).expanduser().resolve())
+    with _shared_lock:
+        meter = _shared.get(key)
+        if meter is None:
+            meter = _shared[key] = SpendMeter(key, cap_usd, model)
+        else:
+            meter.cap_usd = min(meter.cap_usd, float(cap_usd))
+        return meter
+
+
+def reset_shared_meters() -> None:
+    with _shared_lock:
+        _shared.clear()
