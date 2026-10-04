@@ -481,6 +481,34 @@ class PolicyConfig:
     # Pokemon's real HP/moves. False is the legacy control: every non-active preview
     # Pokemon, at full HP, including fainted and unbrought ones.
     search_public_bench_filter: bool = True
+    # Model a Pokemon that has Mega Evolved as its Mega forme (Mega stats, types and
+    # ability). poke-env keeps `Pokemon.species` as the BASE species after a Mega Evolution
+    # (`|-mega|` loads the Mega's data with `store_species=False`), so before this fix every
+    # live state for an evolved opponent -- and for ours until the next request -- carried the
+    # base stats and types with the Mega ability. True (the fix) builds the state through
+    # `vgc.sets.live_form`; False is exactly the old behaviour, kept only as the legacy
+    # control for same-session A/Bs (same pattern as `search_respect_our_protect_odds`).
+    # Threaded through the evaluator/search/belief-scoring state builders; the feature
+    # encoders, reward shaping and LLM fact packet always use the fixed form.
+    mega_state_uses_evolved_form: bool = True
+    # Let the opponent Mega Evolve in the search's response model. Off (legacy): the search
+    # only ever evolves OUR Pokemon (`mega=True` orders), and an opponent Mega Evolves only
+    # once it has actually done so on the board. On: while the opponent has not Mega
+    # Evolved this game (one Mega per side per battle), an active opponent presumed to hold
+    # its Mega stone gets, next to each move/Protect/utility response, a twin that Mega
+    # Evolves first -- Mega stats, types and ability apply for that exchange (and any weather
+    # ability the Mega sets), exactly as our own `mega=True` orders already do. Never two
+    # Megas in one response. A stone is "presumed held" if the item is known (Open Team
+    # Sheet, reveal) or, with the item hidden (the usual ladder case), if the species'
+    # corpus set prior holds that stone in at least `search_opp_mega_prior_share` of its
+    # appearances.
+    search_model_opponent_mega: bool = False
+    # Minimum share of a species' corpus appearances (data/usage/set_priors.json `items`)
+    # that its Mega stone must hold for an UNREVEALED item to be presumed a Mega holder by
+    # `search_model_opponent_mega`. Mega stones are the most-held item of nearly every Mega
+    # species (Charizard-Y ~70%); 0.5 means "more likely than not". Unused when that knob
+    # is off.
+    search_opp_mega_prior_share: float = 0.5
     # Exchange-value cost when the opponent successfully establishes an important
     # non-damaging effect. Individual utility actions scale this shared currency.
     search_opp_utility_weight: float = 25.0
@@ -516,6 +544,23 @@ class PolicyConfig:
     # Search a strategically diverse top-K (best switch/control/non-Protect lines as well
     # as raw myopic leaders) so a setup line cannot be pruned before horizon evaluation.
     search_diverse_candidates: bool = True
+    # Apply stat-stage changes in the fast search (vgc.setup_boosts). Today a setup move
+    # (Swords Dance, Dragon Dance, Quiver Dance, Shell Smash, Calm Mind, Belly Drum, ...)
+    # gets only a flat utility credit in the search and never changes a stat stage, so the
+    # rolling horizon cannot see the payoff through damage and Speed. On: the move's stage
+    # changes (clamped +/-6, Contrary/Simple honoured, Shell Smash's defence drops,
+    # Belly Drum / Clangorous Soul HP cost, Growth doubled in sun) are applied to the actor
+    # (or the partner, for Coaching/Aromatic Mist/Howl) in the post-exchange state for BOTH
+    # sides, and Coaching/Aromatic Mist become searchable and shortlist-eligible as
+    # "setup" lines. False = byte-identical to the previous search. The myopic evaluator
+    # (setup_base_value) is unchanged either way.
+    search_apply_setup_boosts: bool = False
+    # Fraction of the flat search utility (search_opp_utility_weight x kind scale) a
+    # boost-modelled move keeps while search_apply_setup_boosts is on. 0.0 = the simulated
+    # payoff replaces the flat proxy (no double count); 1.0 = flat credit on top of the
+    # simulated payoff (the double-counting variant, kept as an A/B arm). Unused when the
+    # master switch is off.
+    setup_boost_flat_utility_scale: float = 0.0
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json

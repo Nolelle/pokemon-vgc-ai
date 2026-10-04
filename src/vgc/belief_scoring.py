@@ -149,6 +149,7 @@ def _opp_states_for_hypothesis(
     assignment: _SpreadAssignment,
     usage: dict,
     meta_team,
+    evolved_form: bool = True,
 ) -> dict[int, PokemonState]:
     actives = list(getattr(battle, "opponent_active_pokemon", None) or [])
     override: dict[int, PokemonState] = {}
@@ -161,7 +162,9 @@ def _opp_states_for_hypothesis(
         # A recognised meta team tells us the nature outright; only the Stat Points stay
         # hypothetical in that case.
         meta_nature = known_nature(meta_team, mon)
-        state = opponent_state(mon, usage=usage, nature_override=meta_nature)
+        state = opponent_state(
+            mon, usage=usage, nature_override=meta_nature, evolved_form=evolved_form
+        )
         state.sp_spread = dict(spread)
         state.nature = meta_nature or nature
         override[idx] = state
@@ -246,7 +249,9 @@ def _mixture_over_orders(
         ):
             per_hypothesis_aligned.append(list(mode_aligned_scores))
             continue
-        override = _opp_states_for_hypothesis(battle, assignment, usage, meta_team)
+        override = _opp_states_for_hypothesis(
+            battle, assignment, usage, meta_team, config.mega_state_uses_evolved_form
+        )
         ctx = build_context(
             battle, config, opp_state_override=override if override else None
         )
