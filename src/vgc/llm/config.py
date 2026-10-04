@@ -18,6 +18,11 @@ class LLMConfig:
     model: str = "gpt-6-luna"
     # Options shown to the model per turn (engine top picks + switch/Protect top-ups).
     max_options: int = 30
+    # Blind options: hide the engine's rank/score and shuffle the option numbering, so the
+    # model judges moves on the facts instead of copying the engine's order. The first
+    # real screen (2026-10-04) showed ranked, scored options anchored Luna to the engine's
+    # top picks (2 novel proposals in 733).
+    blind_options: bool = False
     # Proposals we keep from an answer.
     max_proposals: int = 3
 

@@ -49,6 +49,7 @@ def llm_config_for(config: PolicyConfig) -> LLMConfig:
         model=config.llm_model,
         max_proposals=MAX_PROPOSALS,
         spend_cap_usd=config.llm_budget_cap_usd,
+        blind_options=config.llm_blind_options,
     )
 
 

@@ -274,6 +274,8 @@ def main() -> int:
     ap.add_argument("--log", type=Path, default=LLM_DIR / "screen_calls.jsonl")
     ap.add_argument("--model", default=LLMConfig().model)
     ap.add_argument("--tag", default="", help="suffix for the output file names")
+    ap.add_argument("--blind", action="store_true",
+                    help="hide engine rank/score and shuffle option numbering")
     ap.add_argument("--skip-clear-gap", action="store_true",
                     help="skip positions the live proposer would skip (engine top-2 gap >= clear_gap)")
     args = ap.parse_args()
@@ -289,7 +291,7 @@ def main() -> int:
     if args.limit:
         positions = positions[: args.limit]
 
-    llm_cfg = LLMConfig(model=args.model, spend_cap_usd=args.max_usd)
+    llm_cfg = LLMConfig(model=args.model, spend_cap_usd=args.max_usd, blind_options=args.blind)
     if args.fake:
         if args.fake == "novel":
             client: Any = NovelFakeClient()

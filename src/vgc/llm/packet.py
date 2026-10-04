@@ -49,13 +49,22 @@ def classify_order(order_text: str) -> str:
     return "attack"
 
 
-def build_options(scored_orders: Sequence[Any], max_options: int = 30) -> list[Option]:
+def build_options(
+    scored_orders: Sequence[Any],
+    max_options: int = 30,
+    *,
+    blind: bool = False,
+    seed: str | None = None,
+) -> list[Option]:
     """Number the engine's best orders P01.. in engine rank order.
 
     `scored_orders` is best-first and each item needs `.order` and `.score` (a
     `vgc.evaluator.ScoredOrder`). The top (max_options - 4) are kept, then topped up with
     the two best switch lines and two best Protect lines if not already in, then filled by
     rank. IDs are stable for a given ranking: P01 is always the engine's top pick.
+
+    With ``blind`` the same options are numbered in a shuffled order (deterministic in
+    ``seed``) and their notes carry only the move kind, never the engine's score or rank.
     """
     if not scored_orders or max_options <= 0:
         return []
@@ -77,13 +86,17 @@ def build_options(scored_orders: Sequence[Any], max_options: int = 30) -> list[O
         if i not in chosen:
             chosen.append(i)
     chosen.sort()
+    if blind:
+        import random
+
+        random.Random(seed or "").shuffle(chosen)
     top = float(scored_orders[0].score)
     width = max(2, len(str(len(chosen))))
     return [
         Option(
             id=f"P{n:0{width}d}",
             order=texts[i],
-            note=f"engine score {float(scored_orders[i].score):.1f} "
+            note=kinds[i] if blind else f"engine score {float(scored_orders[i].score):.1f} "
             f"({float(scored_orders[i].score) - top:+.1f} vs top); {kinds[i]}",
             kind=kinds[i],
         )

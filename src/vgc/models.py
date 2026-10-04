@@ -859,6 +859,9 @@ class PolicyConfig:
     # many extra candidates (taken in ranking order) so the control spends roughly the
     # time the LLM arm spends waiting/searching. 0 = no change. Calibrate before use.
     llm_control_extra_candidates: int = 0
+    # Hide the engine's rank/score from the LLM and shuffle option numbering
+    # (vgc.llm.config.LLMConfig.blind_options). Off until the blind screen decides.
+    llm_blind_options: bool = False
     # Clock held back from the LLM call for the rest of the search and sending the move.
     llm_safety_margin_s: float = 1.5
     # Time allowed for one call when no timer is announced (offline/direct env), where
