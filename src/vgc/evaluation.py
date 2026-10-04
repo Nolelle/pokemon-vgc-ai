@@ -378,3 +378,87 @@ def clustered_mean(clusters: Sequence[ValueCluster]) -> ClusteredMean:
         clustered_se=clustered_se,
         se_floor=math.sqrt(tau2 / k),
     )
+
+
+# --- Sequential / checkpointed gates -------------------------------------------------
+
+
+def plan_rounds(games_per_unit: int, chunk_games: int | None, granule: int) -> list[int]:
+    """Split each unit's `games_per_unit` into rounds of about `chunk_games` games.
+
+    A "unit" is one sampling cell of a gate (one team, or one our-team x opponent-team
+    pair). Every round must keep each unit side-balanced, so round sizes are multiples
+    of `granule` (2 for seat alternation, 4 when seat and team-orientation both
+    alternate). `chunk_games=None` -> one round, i.e. the unchanged non-sequential gate.
+    """
+
+    if granule < 1 or games_per_unit < granule or games_per_unit % granule:
+        raise ValueError(f"games_per_unit must be a positive multiple of {granule}")
+    if chunk_games is None:
+        return [games_per_unit]
+    if chunk_games < granule or chunk_games % granule:
+        raise ValueError(f"per-round games must be a positive multiple of {granule}")
+    rounds = [chunk_games] * (games_per_unit // chunk_games)
+    if games_per_unit % chunk_games:
+        rounds.append(games_per_unit % chunk_games)
+    return rounds
+
+
+def futility_stop(
+    clusters: Sequence[Cluster], min_effect: float, z: float = 1.96, min_clusters: int = 10
+) -> bool:
+    """True when the target gain `min_effect` is no longer reachable (futility only).
+
+    Stops only if the cluster-robust upper bound is below `0.5 + min_effect`: even the
+    optimistic end of the interval misses the effect the experiment was built to prove.
+    There is deliberately NO success counterpart. Stopping early on a good-looking
+    interval is a repeated significance test -- looking every N games and declaring a win
+    the first time the lower bound clears 50% multiplies the false-positive rate several
+    times over. Stopping for futility only ever makes it harder to declare success, so
+    it cannot raise false positives (it costs a little power, which is the trade).
+    Refuses to fire below `min_clusters` clusters, where the sandwich SE is too noisy to
+    trust for a stopping decision.
+    """
+
+    usable = [(int(w), int(g)) for w, g in clusters if int(g) > 0]
+    if len(usable) < min_clusters:
+        return False
+    _, high = clustered_interval(usable, z)
+    return high < 0.5 + min_effect
+
+
+def merge_cluster_results(
+    results: Sequence[dict], key: str, extra_keys: Sequence[str] = ()
+) -> list[dict]:
+    """Sum per-unit gate results that share `results[i][key]` (first-seen order).
+
+    Sums `games/p1_wins/p2_wins/draws` and the per-seat counters, game-weights
+    `mean_turns`, and keeps the first row's other fields (`extra_keys` are summed too).
+    Used to accumulate checkpoint rounds, and to collapse (our team, opponent team)
+    pair cells into one cluster per opponent team.
+    """
+
+    summed = ("games", "p1_wins", "p2_wins", "draws", *SEAT_KEYS, *extra_keys)
+    merged: dict[str, dict] = {}
+    for row in results:
+        target = merged.get(str(row[key]))
+        if target is None:
+            target = dict(row)
+            target["_turns"] = float(row.get("mean_turns", 0.0)) * int(row["games"])
+            for name in summed:
+                target[name] = int(row.get(name, 0))
+            merged[str(row[key])] = target
+            continue
+        target["_turns"] += float(row.get("mean_turns", 0.0)) * int(row["games"])
+        for name in summed:
+            target[name] += int(row.get(name, 0))
+    out = []
+    for target in merged.values():
+        turns = target.pop("_turns")
+        target["mean_turns"] = turns / target["games"] if target["games"] else 0.0
+        out.append(target)
+    return out
+
+
+SEAT_KEYS: tuple[str, ...] = ("p1_seat_games", "p1_seat_wins", "p2_seat_games", "p2_seat_wins")
+"""Per-unit counters from the CANDIDATE arm's view: games it played as p1 / p2 and won."""

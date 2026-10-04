@@ -804,3 +804,30 @@ class PolicyConfig:
     # `search_faint_weight` already use, so a 10% win-probability swing (10 points) is
     # roughly comparable to a 10%-HP swing, not dominating or negligible by construction.
     value_head_weight: float = 1.0
+
+    # --- Clock guard (vgc.clock, enforced in vgc.agent.VgcPlayer) ------------------------
+    # Showdown's VGC Timer gives a ~420 s bank for the WHOLE game (plus 90 s of grace at
+    # the start), a 55 s cap per decision, and charges time in 5 s ticks. Nothing used to
+    # read it, so one slow decision could eat the bank. With the guard on, every decision
+    # gets a wall-clock budget derived from the remaining bank; the bot computes a cheap
+    # legal fallback first and sends it if the full decision misses the deadline. When the
+    # server has not announced a timer (offline/direct envs, timer not yet on) the guard
+    # is inert and decisions are exactly what they were. False = pre-guard behavior.
+    clock_guard_enabled: bool = True
+    # Pessimistic game length: budgets assume this many MORE decisions are still to come,
+    # at every point in the game. Pokemon left is not a bound (repeated Protect and
+    # switching make games long), so this is deliberately large.
+    clock_assumed_remaining_decisions: int = 25
+    # Seconds reserved per assumed remaining decision on top of its budget: one full
+    # Showdown tick, because even an instant decision can be charged a whole 5 s tick.
+    clock_reserve_per_decision_s: float = 5.0
+    # Slack kept back from the bank (and from the per-request cap) for network latency
+    # and tick rounding.
+    clock_safety_margin_s: float = 5.0
+    # Hard ceilings on one decision's budget by kind, whatever the bank allows.
+    clock_cap_normal_s: float = 12.0
+    # Endgame decisions (<= 2 Pokemon left on either side) may think longer.
+    clock_cap_critical_s: float = 20.0
+    # Forced replacements after a faint have one sensible answer most of the time.
+    clock_cap_forced_switch_s: float = 4.0
+    clock_cap_preview_s: float = 30.0
