@@ -466,6 +466,23 @@ def test_hidden_trap_rejection_is_recoverable_only_when_trap_was_hidden() -> Non
     assert not _is_hidden_trap_rejection(hidden, invalid)
 
 
+def test_hidden_disable_rejection_is_recoverable_but_invalid_disable_is_not() -> None:
+    # An unrevealed Imprison/Cursed Body: Showdown updates the request and answers with
+    # [Unavailable choice]; the same text as [Invalid choice] means we ignored a disable
+    # the request already showed, which stays fatal.
+    from types import SimpleNamespace
+
+    from vgc.rl.env import _is_hidden_trap_rejection
+
+    battle = SimpleNamespace(maybe_trapped=[False, False], trapped=[False, False])
+    assert _is_hidden_trap_rejection(
+        battle, "[Unavailable choice] Can't move: Floette's Protect is disabled"
+    )
+    assert not _is_hidden_trap_rejection(
+        battle, "[Invalid choice] Can't move: Floette's Protect is disabled"
+    )
+
+
 @pytest.mark.integration
 def test_hidden_trap_rejection_retries_live_and_fails_closed_in_search(worker, team: str) -> None:
     """Mega Gengar's Shadow Tag: p2's left slot is known trapped, its right slot only
