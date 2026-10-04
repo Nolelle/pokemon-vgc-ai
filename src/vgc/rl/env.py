@@ -642,6 +642,7 @@ class DirectBattle:
                 if _is_hidden_trap_rejection(battle, message):
                     hidden_trap_rejection = True
                     self.hidden_trap_rejections = getattr(self, "hidden_trap_rejections", 0) + 1
+                    self.last_hidden_rejection = message
                     continue
                 raise InvalidChoice(f"{side} in battle {self.battle_id}: {message}")
             elif tag in _COSMETIC_MESSAGES:
