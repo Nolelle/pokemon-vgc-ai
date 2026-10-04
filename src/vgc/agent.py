@@ -12,8 +12,11 @@ fall back to a legal random move and log the exception (mirrors pokemon-tcg-ai's
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import random
-from collections.abc import Awaitable
+import threading
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 
 from poke_env.battle.abstract_battle import AbstractBattle
@@ -25,6 +28,16 @@ from vgc.actions import choice_wire_message, describe_order, index_locked_choice
 from vgc.battle_state_replay import DecisionReplayRecorder
 from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
+from vgc.clock import (
+    Budget,
+    ClockTracker,
+    WorkerSlot,
+    bind_cancel,
+    bind_deadline,
+    budget_seconds,
+    cancelled,
+    run_with_deadline,
+)
 from vgc.decision_trace import (
     current_trace,
     finish_trace,
@@ -41,6 +54,22 @@ from vgc.opponent_belief import information_boundary_summary
 from vgc.own_team import apply_own_spreads
 from vgc.search import search_joint_orders
 from vgc.team_preview import build_team_order
+
+
+def _move_kind(battle: AbstractBattle) -> str:
+    """Clock-guard decision kind: forced switch, endgame ("critical"), or normal."""
+
+    forced = getattr(battle, "force_switch", False)
+    if any(forced) if isinstance(forced, list) else forced:
+        return "forced_switch"
+    try:
+        ours = sum(not mon.fainted for mon in battle.team.values())
+        # The opponent's team is only partly revealed; count what is known to be alive
+        # against the full bring of four.
+        theirs = 4 - sum(mon.fainted for mon in battle.opponent_team.values())
+    except Exception:  # noqa: BLE001 - classification must never break a decision
+        return "normal"
+    return "critical" if min(ours, theirs) <= 2 else "normal"
 
 
 class VgcPlayer(Player):
@@ -80,6 +109,13 @@ class VgcPlayer(Player):
         # but a gate must still detect that inference crashed and random fallback play
         # was used when VGC_TRACE is unset.
         self.fallback_count = 0
+        # Clock guard (vgc.clock): per-battle timer tracking, plus an always-on log of
+        # one record per decision (elapsed_ms, budget_s, bank_left_s, decision_kind,
+        # fallback_reason). A player that asks Showdown to start the timer itself knows a
+        # fresh bank is ticking even before the first "Time left" line arrives.
+        self._clock_trackers: dict[str, ClockTracker] = {}
+        self._assume_timer_on = bool(player_kwargs.get("start_timer_on_battle_start", False))
+        self.clock_log: list[dict[str, object]] = []
         player_kwargs.setdefault("battle_format", self.config.format_id)
         player_kwargs.setdefault("accept_open_team_sheet", self.config.accept_open_team_sheet)
         super().__init__(**player_kwargs)
@@ -138,6 +174,16 @@ class VgcPlayer(Player):
                 recorder.observe(battle_tag, message)
             if battle_tag:
                 self._memory_for_tag(battle_tag).observe_protocol([message])
+                if len(message) > 1 and message[1] in ("inactive", "inactiveoff"):
+                    self._clock_for_tag(battle_tag).observe(message)
+                elif len(message) > 2 and message[1] == "request" and message[2]:
+                    payload = "|".join(message[2:])
+                    # "wait" requests never start our clock; "update" requests are
+                    # resends of the same server request and do not restart it.
+                    if '"wait":true' not in payload:
+                        self._clock_for_tag(battle_tag).note_request(
+                            update='"update":true' in payload
+                        )
             await self._handle_battle_message_line([room, normalize_for_poke_env(message)])
 
     async def _handle_battle_message_line(self, split_messages) -> None:
@@ -238,6 +284,25 @@ class VgcPlayer(Player):
             memories[battle_tag] = BattleMemory(battle_tag=battle_tag)
         return memories[battle_tag]
 
+    def _clock_for_tag(self, battle_tag: str) -> ClockTracker:
+        # Lazy for the same reason as `_memory_for_tag` (tests build players via __new__).
+        trackers = getattr(self, "_clock_trackers", None)
+        if trackers is None:
+            trackers = {}
+            self._clock_trackers = trackers
+        if battle_tag not in trackers:
+            trackers[battle_tag] = ClockTracker(
+                assume_full_bank=bool(getattr(self, "_assume_timer_on", False))
+            )
+        return trackers[battle_tag]
+
+    def _worker_slot(self) -> WorkerSlot:
+        slot = getattr(self, "_decide_slot", None)
+        if slot is None:
+            slot = WorkerSlot()
+            self._decide_slot = slot
+        return slot
+
     def _memory_for(self, battle: AbstractBattle) -> BattleMemory:
         memory = self._memory_for_tag(battle.battle_tag)
         memory.observe_battle(battle)
@@ -304,7 +369,7 @@ class VgcPlayer(Player):
             )
         scored: list = []
         if self.config.use_two_ply_search and isinstance(battle, DoubleBattle):
-            scored = search_joint_orders(battle, self.config)
+            scored = self._search(battle, memory)
         elif self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
             scored = score_joint_orders(battle, self.config)
         if scored:
@@ -313,14 +378,35 @@ class VgcPlayer(Player):
                 scored = score_orders(policy, battle, scored, self.config)
             if self.config.log_decisions:
                 record_note("chosen_order_score", round(scored[0].score, 3))
-            if isinstance(scored[0].order, DoubleBattleOrder):
+            if isinstance(scored[0].order, DoubleBattleOrder) and not cancelled():
                 memory.record_choice(
                     int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
                 )
+            if self.config.llm_proposer_enabled:
+                record_note("llm_chosen", bool(scored[0].breakdown.get("llm_proposed")))
             record_note("battle_memory", memory.summary())
             return scored[0].order
         record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
+
+    def _search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
+        """`search_joint_orders`, plus the LLM proposer (or the equal-time control's extra
+        candidates) when configured. With both off this is exactly the plain call."""
+        if self.config.llm_proposer_enabled:
+            from vgc.llm.proposer import make_order_proposer
+
+            return search_joint_orders(
+                battle,
+                self.config,
+                order_proposer=make_order_proposer(battle, self.config, memory),
+            )
+        if self.config.llm_control_extra_candidates > 0:
+            return search_joint_orders(
+                battle,
+                self.config,
+                extra_candidates=self.config.llm_control_extra_candidates,
+            )
+        return search_joint_orders(battle, self.config)
 
     def decide_teampreview(self, battle: AbstractBattle) -> str:
         """Choose a teampreview order: `vgc.team_preview.build_team_order`, or poke-env's
@@ -331,6 +417,116 @@ class VgcPlayer(Player):
             return build_team_order(battle, self.config)
         return self.random_teampreview(battle)
 
+    # --- clock guard ----------------------------------------------------------------
+
+    def _cheap_order(self, battle: AbstractBattle) -> BattleOrder:
+        """Instant legal fallback: the myopic evaluator's top order, else random."""
+
+        if self.config.use_heuristic_evaluator and isinstance(battle, DoubleBattle):
+            scored = score_joint_orders(battle, self.config)
+            if scored:
+                return scored[0].order
+        return self.choose_random_move(battle)
+
+    def _cheap_teampreview(self, battle: AbstractBattle) -> str:
+        """Preview fallback: the heuristic pick (~25 ms measured), else random bring-4."""
+
+        if self.config.use_heuristic_evaluator:
+            return build_team_order(battle, self.config)
+        return self.random_teampreview(battle)
+
+    def _guarded(
+        self,
+        battle: AbstractBattle,
+        kind: str,
+        decide: Callable[[], object],
+        fallback: Callable[[], object],
+    ) -> object:
+        """Run ``decide`` under the clock budget; see `vgc.clock.run_with_deadline`.
+
+        With an unknown clock (offline direct env, or no timer announced) this is just
+        ``decide()`` -- same call, same exceptions, same trace. With a known clock the
+        decision runs on a worker thread against an isolated trace (merged back only if
+        it finishes in time, so a late worker can never write into a finished trace) and
+        the cheap fallback is sent if the deadline passes. Records one `clock_log` entry
+        and a ``clock`` trace note either way.
+        """
+
+        tracker = self._clock_for_tag(battle.battle_tag)
+        idx, state = tracker.begin_decision()
+        budget = budget_seconds(state, kind, self.config) if state else Budget(None, kind=kind)
+        parent_trace = current_trace()
+        cancel = threading.Event()
+        start = time.monotonic()
+        result = None
+        try:
+            slot = self._worker_slot()
+            if budget.seconds is None and not slot.busy():
+                value = decide()
+                reason = "none"
+            else:
+                deadline = None if budget.seconds is None else start + budget.seconds
+                result = run_with_deadline(
+                    lambda: self._run_isolated(decide, cancel, deadline),
+                    lambda: self._run_isolated(fallback, None)[0],
+                    budget,
+                    slot=self._worker_slot(),
+                )
+                reason = result.reason
+                if reason == "none":
+                    value, sub_trace = result.value
+                    if parent_trace is not None and sub_trace is not None:
+                        parent_trace.notes.update(sub_trace.notes)
+                        if sub_trace.fallback_used:
+                            record_fallback(sub_trace.fallback_reason or "decide() fallback")
+                else:
+                    value = result.value
+        finally:
+            elapsed = time.monotonic() - start
+            tracker.end_decision(idx, elapsed)
+            if result is None or result.reason != "none":
+                cancel.set()  # a still-running worker must not act on its late result
+        if reason == "exception":
+            self.fallback_count += 1
+            record_fallback(f"decide() raised {result.error!r}")
+            self.logger.warning("decide() raised under clock guard: %r", result.error)
+        if reason in ("deadline", "fallback-only", "previous-worker-busy"):
+            self.fallback_count += 1
+            record_fallback(f"clock guard: {reason} (budget {budget.seconds}s)")
+        if reason != "none" and isinstance(value, DoubleBattleOrder):
+            self._memory_for(battle).record_choice(
+                int(getattr(battle, "turn", 0) or 0), describe_order(value)
+            )
+        entry = {
+            "battle_tag": battle.battle_tag,
+            "turn": getattr(battle, "turn", None),
+            "decision_kind": kind,
+            "elapsed_ms": round(elapsed * 1000, 1),
+            "budget_s": budget.seconds,
+            "bank_left_s": None if budget.bank_left_s is None else round(budget.bank_left_s, 1),
+            "fallback_reason": reason,
+        }
+        self.clock_log.append(entry)
+        record_note("clock", entry)
+        return value
+
+    @staticmethod
+    def _run_isolated(
+        fn: Callable[[], object],
+        cancel: threading.Event | None,
+        deadline: float | None = None,
+    ) -> tuple[object, object]:
+        """Run ``fn`` in a copied context with its own throwaway `DecisionTrace`."""
+
+        def inner() -> tuple[object, object]:
+            if cancel is not None:
+                bind_cancel(cancel)
+            bind_deadline(deadline)
+            start_trace()
+            return fn(), current_trace()
+
+        return contextvars.copy_context().run(inner)
+
     # --- exception-safe wrappers (never override these) ---------------------------
 
     def choose_move(self, battle: AbstractBattle) -> BattleOrder:
@@ -338,7 +534,12 @@ class VgcPlayer(Player):
         chosen_order: BattleOrder | None = None
         replay_sequence = self._record_decision(battle, team_preview=False)
         try:
-            chosen_order = self.decide(battle)
+            chosen_order = self._guarded(
+                battle,
+                _move_kind(battle),
+                lambda: self.decide(battle),
+                lambda: self._cheap_order(battle),
+            )
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
             self.fallback_count += 1
@@ -385,7 +586,12 @@ class VgcPlayer(Player):
         chosen_order: str | None = None
         replay_sequence = self._record_decision(battle, team_preview=True)
         try:
-            chosen_order = self.decide_teampreview(battle)
+            chosen_order = self._guarded(
+                battle,
+                "preview",
+                lambda: self.decide_teampreview(battle),
+                lambda: self._cheap_teampreview(battle),
+            )
             return chosen_order
         except Exception as exc:  # noqa: BLE001 - must never crash a battle
             self.fallback_count += 1

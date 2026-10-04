@@ -29,6 +29,32 @@ in ways that matter here:
 ``--null-test`` runs both arms with the SAME config. It must land at 50%; anything else
 means the harness itself favors a seat or an arm, which would contaminate every result
 this gate has ever produced.
+
+## Asymmetric mode, checkpoints, seats (2026-10-03)
+
+``--our-teams A.packed.txt [B.packed.txt ...]`` switches from same-team mirrors to
+OUR team(s) vs each pool (opponent) team. A head-to-head between two arms on two
+DIFFERENT teams is confounded by which team is stronger, so each (our team, opponent
+team) pair is played in BOTH orientations -- half the games the candidate arm pilots our
+team and the incumbent pilots the opponent's, half the reverse -- and seats alternate
+inside each orientation. Team strength then cancels in expectation: an A/A run lands at
+50% by construction, and the win rate is the candidate arm's skill edge on these teams.
+
+**Clustering.** The CI clusters by OPPONENT team (pooled over our teams), not by
+(our team, opponent) pair. The same opponent team appears in every pair it is part of, so
+its games are correlated across pairs; treating pairs as independent would understate the
+variance by exactly that correlation. Our teams are fixed and few (2), so they are a
+fixed effect (reported per our-team in ``by_our_team``), not a population we generalise
+over. Consequently the power floor is set by the number of OPPONENT teams.
+
+``--checkpoint-games N`` plays in rounds of about N games and rewrites the output JSON
+after each round (``interim: true`` until the last). ``--futility-min-effect X`` may stop
+the run early ONLY when the CI upper bound is below ``0.5 + X`` (the target gain is no
+longer reachable). It never stops for success: checking every N games and declaring a
+win the first time the lower bound clears 50% is a repeated significance test and
+inflates false positives; the success decision is made once, at the fixed end.
+Futility stops cannot raise false positives (they only cost a little power).
+Win rates are also reported by seat (candidate arm as p1 vs as p2).
 """
 
 from __future__ import annotations
@@ -47,8 +73,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from vgc.config import FORMAT_ID, RUNS_DIR  # noqa: E402
 from vgc.evaluation import (  # noqa: E402
+    SEAT_KEYS,
     clustered_interval,
+    futility_stop,
     holm_rejections,
+    merge_cluster_results,
+    plan_rounds,
     student_t_cdf,
     variance_components,
     wilson_interval,
@@ -106,18 +136,41 @@ def balanced_chunks(entries: Sequence[dict[str, Any]], workers: int) -> list[lis
     return chunks
 
 
+ROUND_SEED_STRIDE = 1_000_003
+OUR_TEAM_SEED_STRIDE = 104_729
+
+
+def _seat_counts(outcomes: Sequence[Any], subject: str) -> dict[str, int]:
+    """Games `subject` played as p1 / p2 and how many it won from each seat."""
+
+    counts = dict.fromkeys(SEAT_KEYS, 0)
+    for outcome in outcomes:
+        seat = outcome.agent_sides[subject]
+        counts[f"{seat}_seat_games"] += 1
+        if outcome.winner == seat:
+            counts[f"{seat}_seat_wins"] += 1
+    return counts
+
+
 def _evaluate_chunk(
     entries: Sequence[dict[str, Any]],
     games_per_team: int,
     base_seed: int,
     arms: dict[str, dict[str, Any]],
+    round_index: int = 0,
 ) -> list[dict[str, Any]]:
-    """Play every team in `entries`. `arms` maps arm name -> PolicyConfig overrides.
+    """Play every unit in `entries`. `arms` maps arm name -> PolicyConfig overrides.
 
     Insertion order matters: the first arm is the one whose win rate the report is
     stated in terms of. Under `--null-test` the two override dicts are equal, and the
     only asymmetry left in the run is which seat each arm starts in -- which
     `run_series` alternates away.
+
+    A plain pool entry is a same-team mirror (original behaviour). An entry carrying
+    `our_team`/`our_name` is an asymmetric pair: half the games the first arm pilots our
+    team vs the opponent's, half the reverse (see the module docstring for why).
+    `round_index` only varies the seed, so each checkpoint round plays fresh games;
+    round 0 reproduces the pre-checkpoint seeds exactly.
     """
 
     (first_name, first_overrides), (second_name, second_overrides) = arms.items()
@@ -126,24 +179,59 @@ def _evaluate_chunk(
     results = []
     with SimWorker() as worker:
         for entry in entries:
-            team = str(entry["team"])
-            factories = {
-                first_name: partial(make_direct_agent, "vgc", team, config=first_config),
-                second_name: partial(make_direct_agent, "vgc", team, config=second_config),
-            }
-            outcomes = run_series(
-                worker,
-                factories,
-                {first_name: team, second_name: team},
-                games_per_team,
-                seed=base_seed + int(entry["index"]) * 1009,
+            seed = (
+                base_seed
+                + int(entry["index"]) * 1009
+                + int(entry.get("our_index", 0)) * OUR_TEAM_SEED_STRIDE
+                + round_index * ROUND_SEED_STRIDE
             )
+            opp_team = str(entry["team"])
+            extra: dict[str, Any] = {}
+            if "our_team" not in entry:
+                orientations = [(opp_team, opp_team, games_per_team)]
+            else:
+                our_team = str(entry["our_team"])
+                half = games_per_team // 2
+                # (first arm's team, second arm's team, games)
+                orientations = [(our_team, opp_team, half), (opp_team, our_team, half)]
+            outcomes = []
+            on_ours_games = on_ours_wins = 0
+            for orientation, (first_team, second_team, games) in enumerate(orientations):
+                series = run_series(
+                    worker,
+                    {
+                        first_name: partial(
+                            make_direct_agent, "vgc", first_team, config=first_config
+                        ),
+                        second_name: partial(
+                            make_direct_agent, "vgc", second_team, config=second_config
+                        ),
+                    },
+                    {first_name: first_team, second_name: second_team},
+                    games,
+                    seed=seed + orientation * 7,
+                )
+                outcomes.extend(series)
+                if "our_team" in entry and orientation == 0:
+                    on_ours_games = len(series)
+                    on_ours_wins = sum(1 for o in series if o.result_for(first_name) > 0)
             result = summarize(outcomes, first_name, second_name)
+            result.update(_seat_counts(outcomes, first_name))
+            if "our_team" in entry:
+                extra = {
+                    "our_team_name": str(entry["our_name"]),
+                    # Candidate-arm results while piloting OUR team (diagnostic only;
+                    # the headline rate pools both orientations).
+                    "on_our_team_games": on_ours_games,
+                    "on_our_team_wins": on_ours_wins,
+                }
             result.update(
                 {
                     "archetype": entry["archetype"],
                     "team_file": entry["file"],
-                    "seed": base_seed + int(entry["index"]) * 1009,
+                    "unit_id": entry.get("unit_id", entry["file"]),
+                    "seed": seed,
+                    **extra,
                 }
             )
             results.append(result)
@@ -171,7 +259,8 @@ def aggregate(results: Sequence[dict[str, Any]], label: str) -> dict[str, Any]:
         if games
         else 0.0
     )
-    return {
+    by_seat = seat_breakdown(results)
+    report = {
         "label": label,
         "teams": len(results),
         "games": games,
@@ -190,6 +279,38 @@ def aggregate(results: Sequence[dict[str, Any]], label: str) -> dict[str, Any]:
         "floor_detectable_effect": components.floor_detectable_effect,
         "mean_turns": mean_turns,
     }
+    if by_seat:
+        report["by_seat"] = by_seat
+    return report
+
+
+def seat_breakdown(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Candidate-arm win rate when seated as p1 vs p2, with cluster-robust intervals.
+
+    Seats alternate game by game, so the two seats should each hold ~half the games. A
+    seat rate far from the overall rate is a seat-dependent bias (or a real p1/p2
+    asymmetry in doubles) that the alternation cancels out of the headline number but
+    that is worth seeing. Empty for results without per-seat counters (older reports).
+    """
+
+    out: dict[str, Any] = {}
+    for seat in ("p1", "p2"):
+        clusters = [
+            (int(r.get(f"{seat}_seat_wins", 0)), int(r.get(f"{seat}_seat_games", 0)))
+            for r in results
+        ]
+        games = sum(g for _, g in clusters)
+        if not games:
+            return {}
+        wins = sum(w for w, _ in clusters)
+        low, high = clustered_interval(clusters)
+        out[seat] = {
+            "games": games,
+            "wins": wins,
+            "win_rate": wins / games,
+            "clustered": [low, high],
+        }
+    return out
 
 
 def archetype_guardrail(
@@ -231,8 +352,13 @@ def archetype_guardrail(
     }
 
 
-def build_report(team_results: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate the run and apply its predeclared pass conditions."""
+def build_report(team_results: Sequence[dict[str, Any]], min_gain: float = 0.0) -> dict[str, Any]:
+    """Aggregate the run and apply its predeclared pass conditions.
+
+    `min_gain` (default 0, the original gate) additionally requires the POINT estimate
+    to be at least `0.5 + min_gain` -- a lower bound just above 50% on a tiny edge is
+    not the effect the experiment was built to find.
+    """
 
     overall = aggregate(team_results, "overall")
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -241,13 +367,18 @@ def build_report(team_results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     by_archetype = {
         archetype: aggregate(results, archetype) for archetype, results in sorted(grouped.items())
     }
-    overall_pass = float(overall["clustered"][0]) > 0.5
+    overall_pass = float(overall["clustered"][0]) > 0.5 and float(overall["win_rate"]) >= (
+        0.5 + min_gain
+    )
     guardrail = archetype_guardrail(by_archetype)
     clearly_losing = guardrail["clearly_losing"]
     return {
         "passed": overall_pass and not clearly_losing,
         "pass_conditions": {
-            "overall": "95% cluster-robust (by team) lower bound > 0.50",
+            "overall": (
+                "95% cluster-robust (by team) lower bound > 0.50"
+                + (f" and point win rate >= {0.5 + min_gain:.3f}" if min_gain else "")
+            ),
             "archetype_guardrail": (
                 "no archetype clearly below 0.50 by a one-sided cluster-robust test, "
                 "Holm-corrected across archetypes at family-wise alpha 0.05"
@@ -312,6 +443,48 @@ def parse_args() -> argparse.Namespace:
         metavar="FIELD=VALUE",
         help="PolicyConfig override for the incumbent arm (repeatable); see --candidate.",
     )
+    parser.add_argument(
+        "--our-teams",
+        type=Path,
+        nargs="+",
+        default=None,
+        metavar="PATH",
+        help=(
+            "asymmetric mode: packed team file(s) of OURS; each plays every --manifest "
+            "team (the opponents) in both orientations. --games-per-team is then games "
+            "per (our team, opponent) pair and must be a multiple of 4. CI clusters by "
+            "opponent team."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-games",
+        type=int,
+        default=None,
+        help=(
+            "play in rounds of about this many TOTAL games (rounded to whole per-unit "
+            "chunks) and rewrite --output after each round with an interim report"
+        ),
+    )
+    parser.add_argument(
+        "--futility-min-effect",
+        type=float,
+        default=None,
+        metavar="X",
+        help=(
+            "futility-only early stop at checkpoints: stop when the cluster-robust CI "
+            "upper bound is below 0.5 + X. Never stops for success (repeated looks "
+            "inflate false positives); requires --checkpoint-games"
+        ),
+    )
+    parser.add_argument(
+        "--min-gain",
+        type=float,
+        default=0.0,
+        help=(
+            "also require the point win rate >= 0.5 + this at the fixed end (default 0 = "
+            "original gate). LLM-protocol runs pass 0.02, see docs/llm_test_protocol.md"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -363,51 +536,175 @@ def build_arms(
     return {CANDIDATE_NAME: dict(CANDIDATE_ARM), INCUMBENT_NAME: dict(INCUMBENT_ARM)}
 
 
+def load_our_teams(paths: Sequence[Path]) -> list[dict[str, Any]]:
+    """Read our packed team files; the name is the file stem without `.packed`."""
+
+    teams = []
+    for index, path in enumerate(paths):
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        teams.append(
+            {
+                "index": index,
+                "name": path.name.removesuffix(".txt").removesuffix(".packed"),
+                "team": path.read_text().strip(),
+            }
+        )
+    return teams
+
+
+def build_units(
+    entries: Sequence[dict[str, Any]], our_teams: Sequence[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Mirror mode: one unit per pool team. Asymmetric: one per (opponent, our team)."""
+
+    if not our_teams:
+        return [dict(entry) for entry in entries]
+    return [
+        {
+            **entry,
+            "our_index": ours["index"],
+            "our_name": ours["name"],
+            "our_team": ours["team"],
+            "unit_id": f"{entry['file']}|{ours['name']}",
+        }
+        for entry in entries
+        for ours in our_teams
+    ]
+
+
+def cluster_rows(unit_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cluster results: per pool/opponent team (collapses our-team pairs in asym mode)."""
+
+    return merge_cluster_results(unit_rows, "team_file")
+
+
+def asymmetric_extras(unit_rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Per-our-team results (each clustered by opponent team) for asymmetric runs."""
+
+    names = sorted({str(row["our_team_name"]) for row in unit_rows})
+    return {
+        "by_our_team": {
+            name: aggregate(
+                [row for row in unit_rows if row["our_team_name"] == name], f"our:{name}"
+            )
+            for name in names
+        },
+        "pair_results": sorted(unit_rows, key=lambda row: str(row["unit_id"])),
+    }
+
+
+def checkpoint_summary(report: dict[str, Any], round_index: int) -> dict[str, Any]:
+    overall = report["overall"]
+    return {
+        "round": round_index,
+        "games": overall["games"],
+        "win_rate": overall["win_rate"],
+        "clustered": overall["clustered"],
+        "by_seat": overall.get("by_seat", {}),
+    }
+
+
 def main() -> int:
     args = parse_args()
-    if args.games_per_team < 2 or args.games_per_team % 2:
-        raise SystemExit("--games-per-team must be a positive even number of at least 2")
+    asymmetric = args.our_teams is not None
+    granule = 4 if asymmetric else 2
+    if args.games_per_team < granule or args.games_per_team % granule:
+        raise SystemExit(
+            f"--games-per-team must be a positive multiple of {granule}"
+            + (" in asymmetric mode (both orientations x both seats)" if asymmetric else "")
+        )
+    if args.futility_min_effect is not None and args.checkpoint_games is None:
+        raise SystemExit("--futility-min-effect needs --checkpoint-games")
     entries = load_pool(args.manifest)
-    chunks = balanced_chunks(entries, args.workers)
+    our_teams = load_our_teams(args.our_teams) if asymmetric else None
+    units = build_units(entries, our_teams)
+    chunks = balanced_chunks(units, args.workers)
     arms = build_arms(args.null_test, args.candidate, args.incumbent)
-    total_games = len(entries) * args.games_per_team
+    chunk_games = None
+    if args.checkpoint_games is not None:
+        per_unit = args.checkpoint_games // len(units)
+        chunk_games = max(granule, per_unit - per_unit % granule)
+    rounds = plan_rounds(args.games_per_team, chunk_games, granule)
+    total_games = len(units) * args.games_per_team
     mode = "A/A NULL TEST (both arms identical)" if args.null_test else "A/B gate"
+    if asymmetric:
+        mode += f", asymmetric: {len(our_teams)} our team(s) x {len(entries)} opponent teams"
     print(
-        f"{mode}: {total_games} games across {len(entries)} teams with {len(chunks)} workers",
+        f"{mode}: {total_games} games across {len(units)} units with {len(chunks)} workers"
+        f" in {len(rounds)} round(s)",
         flush=True,
     )
+    (first_name, first_overrides), (second_name, second_overrides) = arms.items()
+    meta = {
+        "null_test": args.null_test,
+        "candidate": {"name": first_name, **first_overrides},
+        "incumbent": {"name": second_name, **second_overrides},
+        "manifest": str(args.manifest),
+        "our_teams": [str(path) for path in args.our_teams] if asymmetric else None,
+        "seed": args.seed,
+        "games_per_team": args.games_per_team,
+        "round_games_per_unit": rounds,
+        "workers": len(chunks),
+        "team_preview": "each bot's normal heuristic preview",
+        "clustering": ("opponent team (pooled over our teams)" if asymmetric else "pool team"),
+        "futility_min_effect": args.futility_min_effect,
+        "min_gain": args.min_gain,
+    }
+    all_rows: list[dict[str, Any]] = []
+    unit_rows: list[dict[str, Any]] = []
+    history: list[dict[str, Any]] = []
+    stopped_for_futility = False
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
-        futures = [
-            executor.submit(_evaluate_chunk, chunk, args.games_per_team, args.seed, arms)
-            for chunk in chunks
-        ]
-        team_results = []
-        for index, future in enumerate(futures, start=1):
-            chunk_results = future.result()
-            team_results.extend(chunk_results)
+        for round_index, games in enumerate(rounds):
+            futures = [
+                executor.submit(_evaluate_chunk, chunk, games, args.seed, arms, round_index)
+                for chunk in chunks
+            ]
+            for future in futures:
+                all_rows.extend(future.result())
+            unit_rows = merge_cluster_results(
+                all_rows, "unit_id", ("on_our_team_games", "on_our_team_wins")
+            )
+            clusters_now = cluster_rows(unit_rows)
+            report = build_report(clusters_now, args.min_gain)
+            history.append(checkpoint_summary(report, round_index + 1))
+            last = round_index == len(rounds) - 1
+            overall = report["overall"]
             print(
-                f"worker {index}/{len(futures)} complete: {len(chunk_results)} teams",
+                f"round {round_index + 1}/{len(rounds)}: {overall['wins']}/{overall['games']}"
+                f" = {overall['win_rate']:.3f}, cluster-robust "
+                f"[{overall['clustered'][0]:.3f}, {overall['clustered'][1]:.3f}]",
                 flush=True,
             )
+            if not last and args.futility_min_effect is not None:
+                stopped_for_futility = futility_stop(
+                    [(int(r["p1_wins"]), int(r["games"])) for r in clusters_now],
+                    args.futility_min_effect,
+                )
+            final = last or stopped_for_futility
+            report.update(meta)
+            report.update(
+                {
+                    "interim": not final,
+                    "stopped_for_futility": stopped_for_futility,
+                    "checkpoints": history,
+                    # Success is only ever declared at the fixed end of the run.
+                    "passed": bool(report["passed"]) and last and not stopped_for_futility,
+                }
+            )
+            if asymmetric:
+                report.update(asymmetric_extras(unit_rows))
+            args.output.write_text(json.dumps(report, indent=2, sort_keys=True))
+            if stopped_for_futility:
+                print(
+                    f"FUTILITY STOP after round {round_index + 1}: CI upper bound "
+                    f"{overall['clustered'][1]:.3f} < {0.5 + args.futility_min_effect:.3f}",
+                    flush=True,
+                )
+                break
 
-    report = build_report(team_results)
-    (first_name, first_overrides), (second_name, second_overrides) = arms.items()
-    report.update(
-        {
-            "null_test": args.null_test,
-            "candidate": {"name": first_name, **first_overrides},
-            "incumbent": {"name": second_name, **second_overrides},
-            "manifest": str(args.manifest),
-            "seed": args.seed,
-            "games_per_team": args.games_per_team,
-            "workers": len(chunks),
-            "team_preview": "each bot's normal heuristic preview",
-        }
-    )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True))
-
-    overall = report["overall"]
     print(
         f"overall: {overall['wins']}/{overall['games']} = {overall['win_rate']:.3f}\n"
         f"  cluster-robust 95% CI [{overall['clustered'][0]:.3f}, "
@@ -416,6 +713,13 @@ def main() -> int:
         f"  (design effect {overall['design_effect']:.2f}x)",
         flush=True,
     )
+    for seat, seat_result in overall.get("by_seat", {}).items():
+        print(
+            f"  as {seat}: {seat_result['wins']}/{seat_result['games']} = "
+            f"{seat_result['win_rate']:.3f}, cluster-robust "
+            f"[{seat_result['clustered'][0]:.3f}, {seat_result['clustered'][1]:.3f}]",
+            flush=True,
+        )
     print(
         f"  team-effect SD {overall['team_effect_sd']:.3f}; this run can certify an edge "
         f">= +{overall['minimum_detectable_effect'] * 100:.1f}pts, and this POOL can never "
@@ -423,6 +727,12 @@ def main() -> int:
         flush=True,
     )
     for name, result in report["by_archetype"].items():
+        print(
+            f"  {name}: {result['wins']}/{result['games']} = {result['win_rate']:.3f}, "
+            f"cluster-robust [{result['clustered'][0]:.3f}, {result['clustered'][1]:.3f}]",
+            flush=True,
+        )
+    for name, result in report.get("by_our_team", {}).items():
         print(
             f"  {name}: {result['wins']}/{result['games']} = {result['win_rate']:.3f}, "
             f"cluster-robust [{result['clustered'][0]:.3f}, {result['clustered'][1]:.3f}]",

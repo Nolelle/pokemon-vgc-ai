@@ -28,6 +28,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
     ) from exc
 
 from vgc.actions import describe_order, enumerate_joint_orders
+from vgc.clock import cancelled
 from vgc.agent import VgcPlayer
 from vgc.evaluator import score_joint_orders
 from vgc.rl.guided_selection import (
@@ -326,6 +327,8 @@ class TeacherRecordingPlayer(VgcPlayer):
         score_vector, searched_flags = (
             score_metadata if score_metadata is not None else (None, None)
         )
+        if cancelled():  # late worker after a clock deadline: this label was never played
+            return chosen
         self.distillation_samples.append(
             DistillationSample(
                 battle_id=battle.battle_tag,

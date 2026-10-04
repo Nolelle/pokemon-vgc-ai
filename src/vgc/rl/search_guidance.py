@@ -36,6 +36,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
     ) from exc
 
 from vgc.actions import describe_order, enumerate_joint_orders
+from vgc.clock import cancelled
 from vgc.agent import VgcPlayer
 from vgc.bc.policy import load_bc_policy, score_orders
 from vgc.decision_trace import record_note
@@ -668,6 +669,8 @@ class NeuralSearchPlayer(VgcPlayer):
             },
             "outcome": None,
         }
+        if cancelled():  # late worker after a clock deadline: this choice was never played
+            return scored[0].order
         self.decision_records.append(record)
         original_descriptions = encoded.action_descriptions
         searched_mask = np.asarray(

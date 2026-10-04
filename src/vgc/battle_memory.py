@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from vgc.clock import cancelled
 from vgc.damage import _SPREAD_TARGETS, to_id
 from vgc.data import load_moves
 
@@ -480,6 +481,8 @@ class BattleMemory:
         self.plan_breakers = gameplan.plan_breakers
 
     def record_choice(self, turn: int, order: str) -> None:
+        if cancelled():  # a decision that missed its clock deadline was never sent
+            return
         if not self.our_orders or self.our_orders[-1] != (turn, order):
             self.our_orders.append((turn, order))
         if self.turns and self.turns[-1].turn == turn:

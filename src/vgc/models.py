@@ -804,3 +804,63 @@ class PolicyConfig:
     # `search_faint_weight` already use, so a 10% win-probability swing (10 points) is
     # roughly comparable to a 10%-HP swing, not dominating or negligible by construction.
     value_head_weight: float = 1.0
+
+    # --- Clock guard (vgc.clock, enforced in vgc.agent.VgcPlayer) ------------------------
+    # Showdown's VGC Timer gives a ~420 s bank for the WHOLE game (plus 90 s of grace at
+    # the start), a 55 s cap per decision, and charges time in 5 s ticks. Nothing used to
+    # read it, so one slow decision could eat the bank. With the guard on, every decision
+    # gets a wall-clock budget derived from the remaining bank; the bot computes a cheap
+    # legal fallback first and sends it if the full decision misses the deadline. When the
+    # server has not announced a timer (offline/direct envs, timer not yet on) the guard
+    # is inert and decisions are exactly what they were. False = pre-guard behavior.
+    clock_guard_enabled: bool = True
+    # Pessimistic game length: budgets assume this many MORE decisions are still to come,
+    # at every point in the game. Pokemon left is not a bound (repeated Protect and
+    # switching make games long), so this is deliberately large.
+    clock_assumed_remaining_decisions: int = 25
+    # Seconds reserved per assumed remaining decision on top of its budget: one full
+    # Showdown tick, because even an instant decision can be charged a whole 5 s tick.
+    clock_reserve_per_decision_s: float = 5.0
+    # Slack kept back from the bank (and from the per-request cap) for network latency
+    # and tick rounding.
+    clock_safety_margin_s: float = 5.0
+    # Hard ceilings on one decision's budget by kind, whatever the bank allows.
+    clock_cap_normal_s: float = 12.0
+    # Endgame decisions (<= 2 Pokemon left on either side) may think longer.
+    clock_cap_critical_s: float = 20.0
+    # Forced replacements after a faint have one sensible answer most of the time.
+    clock_cap_forced_switch_s: float = 4.0
+    clock_cap_preview_s: float = 30.0
+
+    # --- LLM move proposer (vgc.llm.proposer; OFF by default) -----------------------------
+    # The LLM (GPT-6 Luna) only PROPOSES up to 3 of our joint orders by ID from a numbered
+    # list the engine built. Proposals are ADDED to the search's candidate shortlist
+    # (deduplicated) and scored by the same search as every other candidate, so the
+    # engine keeps the last word and the LLM can never pick an illegal or unscored move.
+    # Any failure (bad answer, timeout, spend cap, no API key) just means "no extra
+    # candidates". False = behaviour byte-identical to before this feature existed.
+    llm_proposer_enabled: bool = False
+    # Model id sent to the API; must be in `vgc.llm.spend.PRICE_TABLE`.
+    llm_model: str = "gpt-6-luna"
+    # Name or path of the team plan text handed to `vgc.llm.facts.load_team_plan`.
+    # Empty = no plan text.
+    llm_team_plan: str = ""
+    # One JSON line per call (plus late arrivals) is appended here; relative to the CWD.
+    llm_log_path: str = "runs/llm/calls.jsonl"
+    # Persistent local spend tally (survives restarts; a corrupt file fails closed).
+    llm_spend_file: str = "runs/llm/spend.json"
+    # Hard cap in USD on cumulative spend recorded in `llm_spend_file`.
+    llm_budget_cap_usd: float = 20.0
+    # Non-empty = use `vgc.llm.client.FakeLLMClient` with this scenario (e.g. "valid",
+    # "stalled") instead of the real API: a $0 end-to-end run. The fake run keeps spend
+    # in memory only and never touches `llm_spend_file`.
+    llm_fake_scenario: str = ""
+    # Equal-time CONTROL arm: when the proposer is OFF, widen our search shortlist by this
+    # many extra candidates (taken in ranking order) so the control spends roughly the
+    # time the LLM arm spends waiting/searching. 0 = no change. Calibrate before use.
+    llm_control_extra_candidates: int = 0
+    # Clock held back from the LLM call for the rest of the search and sending the move.
+    llm_safety_margin_s: float = 1.5
+    # Time allowed for one call when no timer is announced (offline/direct env), where
+    # the clock guard imposes no budget of its own.
+    llm_offline_budget_s: float = 20.0
