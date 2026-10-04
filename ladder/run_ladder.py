@@ -433,7 +433,11 @@ def resolve_output_paths(
 
 
 def session_config(
-    search: bool = True, bc: bool = False, value: bool = False, horizon: bool = True
+    search: bool = True,
+    bc: bool = False,
+    value: bool = False,
+    horizon: bool = True,
+    exact_judge: bool = False,
 ) -> PolicyConfig:
     """The `PolicyConfig` for one ladder session (smoke or live): the default config
     (robust-response search), optionally changed to the diagnostic myopic path
@@ -457,6 +461,10 @@ def session_config(
         config = replace(config, use_bc_policy=True)
     if value:
         config = replace(config, use_value_head=True)
+    if exact_judge:
+        # The exact engine re-ranks the fast search's shortlist within the clock budget
+        # (PolicyConfig.exact_judge_live; held-out A/B 2026-10-04: 54.4% vs fast search).
+        config = replace(config, exact_judge_live=True)
     return config
 
 
@@ -477,6 +485,8 @@ def _policy_tag(config: PolicyConfig) -> str:
         parts.append("bc")
     if config.use_value_head:
         parts.append("value")
+    if config.exact_judge_live:
+        parts.append("exactjudge")
     return "+".join(parts) if parts else "myopic"
 
 
@@ -729,6 +739,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--exact-judge",
+        action="store_true",
+        help=(
+            "let the exact Showdown engine re-rank the fast search's shortlist within the "
+            "turn clock (PolicyConfig.exact_judge_live)"
+        ),
+    )
+    parser.add_argument(
         "--value",
         action="store_true",
         help=(
@@ -796,7 +814,7 @@ def main() -> int:
             print("sync: restarting with the refreshed data")
             os.execv(sys.executable, [sys.executable, *sys.argv, "--no-sync-showdown"])
     artifacts_dir, log_path = resolve_output_paths(args.local_smoke, args.log, args.artifacts_dir)
-    config = session_config(args.search, args.bc, args.value, args.horizon)
+    config = session_config(args.search, args.bc, args.value, args.horizon, args.exact_judge)
     if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
         raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
     if args.policy_mode == "hybrid" and args.policy_checkpoint is None:
