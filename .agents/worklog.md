@@ -227,3 +227,10 @@
 - Real Luna speed test (300 calls, $0.084 total incl. pilot): none p50 2.1 s / p95 3.1 s / max 4.9 s, $0.00024/call; low p50 2.9 s / p95 6.2 s / max 8.4 s, $0.00030/call; 100% valid; ~54% of input cached. Results in runs/llm/speed_test.json.
 - Codex reviews: 7 findings on this slice (shared spend meter per file + file lock, budget recomputed before calling, spread damage, hidden Speed always GUESS, split by species identity, honest grading denominators, decided-from-start classification) — all fixed. Tests 1196 passed; ruff clean.
 - Next: offline proposer screen on recorded positions (~$0.05), then equal-time calibration and the confirmation head-to-head per docs/llm_test_protocol.md.
+
+## 2026-10-04 — Luna screen fails; exact judge wins (branch claude/clock-guard-llm-harness)
+- Luna proposer offline screen: ranked prompt anchored to engine (2 novel/733); blind prompt (LLMConfig.blind_options) novel on 200/300 but +2.3 pts vs matched engine-rank control, CI [−2.0, +6.7] → paused. Spend ~$0.31 total.
+- Fast-search A/Bs (2 owner teams vs 226 train teams, 1,808 games, MDE ~1.7): A/A 49.7; shortlist 20 49.5, 40 49.8; setup boosts 48.9; Mega fix 49.8 (kept); opponent Mega 50.3.
+- Mega bug fixed: poke-env keeps base species after Mega; states now use the Mega forme (legacy knob mega_state_uses_evolved_form). poke_env_compat patches -mega overwriting Mega-Z formes.
+- exact_judge_live (public exact search re-ranks fast top-6, ~0.5 s/decision): 54.8% [0.527,0.569] train; HOLDOUT 54.4% [0.513,0.575]. Timed local smoke OK. Ladder: --exact-judge.
+- Running: judge tuning on train split (top_k 10, extra_myopic 3, future_samples 4). Confirm any winner on holdout before adopting.
