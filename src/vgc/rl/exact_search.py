@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 from typing import Callable, Sequence
 
+from vgc.actions import describe_order
 from vgc.belief_scoring import belief_ordered_candidates
 from vgc.evaluator import ScoredOrder, score_joint_orders
 from vgc.field_control import field_control_value
@@ -195,12 +196,22 @@ def search_joint_orders_exact(
         config=config,
     )
     values: dict[tuple[int, int], list[float]] = defaultdict(list)
+    field_deltas: dict[int, list[float]] = defaultdict(list)
+    root_field = (
+        field_control_value(snapshot_battle(battle), config)
+        if config.exact_search_field_control
+        else 0.0
+    )
     per_choice = len(future_seeds)
     continuation_done = [branch.continuation_turns_completed for branch in branches]
     for branch_index, branch in enumerate(branches):
         choice_index = branch_index // per_choice
         owner = choice_owner[choice_index]
         values[owner].append(_position_value(branch.state_for(side), config) - before)
+        if config.exact_search_field_control:
+            field_deltas[owner[0]].append(
+                field_control_value(branch.state_for(side), config) - root_field
+            )
 
     results: list[ScoredOrder] = []
     searched_finals: list[float] = []
@@ -234,8 +245,18 @@ def search_joint_orders_exact(
                 "n_responses": len(opponent_orders),
                 "approximate_transition": False,
                 "continuation_turns": config.exact_search_continuation_turns,
+                # Diagnostics (no effect on ranking).
+                "response_values": list(response_means),
+                "response_weights": list(opponent_weights),
+                "response_orders": [
+                    describe_order(o) if o is not None else None for o in opponent_orders
+                ],
             }
         )
+        if config.exact_search_field_control and field_deltas.get(our_index):
+            breakdown["field_delta"] = sum(field_deltas[our_index]) / len(
+                field_deltas[our_index]
+            )
         results.append(ScoredOrder(entry.order, final, breakdown))
         searched_finals.append(final)
 
