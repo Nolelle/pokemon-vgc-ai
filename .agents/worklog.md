@@ -241,3 +241,9 @@
 - Ladder: `ladder/run_ladder.py --exact-judge --llm-preview medium`.
 - Rate limits: tier-1 500K TPM → ≤5 parallel games when the LLM is called per turn; preview (1 call/game) is fine at 9.
 - LLM spend total ~$9.36 of the $20 cap.
+
+## 2026-10-05 — Exact judge review + fixes (branch claude/judge-improvement-analysis-20688c)
+- Review (Opus + Codex/Sol, independent, agreed): exact `_position_value` has no KO term, scores Trick Room/weather/terrain 0, flat boosts/status, one-turn horizon, myopic double count; bookkeeping bugs (first reveal -100, fainted boosts kept, draws, belief diagnostics).
+- Built: `exact_search_consistent_accounting` (default True) fixes; `vgc_exact` player + pool harness `--player/--both` + per-arm fallback counts.
+- Found via exact A/A (62.9% p1): mirror always seated us p1 -> p2 decisions searched stale boards (30% wrong actives, 24% wrong weather). Fixed with `mirror_side`; A/A now p1 48.8 / p2 48.6. Also mirror usernames (won branch read as lost on named accounts; Codex review). p2-seat teacher labels in runs/mcv2 are suspect.
+- Tests 1203 unit + new integration seat/name tests pass; ruff clean. Accounting A/B (narrow width, 160 teams) running: runs/eval/exact_judge_accounting_ab.json.

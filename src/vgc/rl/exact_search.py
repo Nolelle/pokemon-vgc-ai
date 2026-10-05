@@ -52,11 +52,18 @@ def _hp_fraction(mon: PokemonMechanicsState) -> float:
     return max(0.0, min(1.0, mon.current_hp / mon.max_hp))
 
 
-def _side_position(side, config: PolicyConfig) -> float:
+def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None) -> float:
     score = 0.0
     hard_control = {"slp", "frz"}
     signed = config.exact_search_signed_effects
+    consistent = config.exact_search_consistent_accounting
+    if consistent and bring_size:
+        # Unseen opponent reserves are publicly known to exist (bring size) and to be
+        # untouched. Counting them up front keeps a first reveal from moving the score.
+        score += 100.0 * max(0, bring_size - len(side.pokemon))
     for mon in side.pokemon:
+        if consistent and mon.fainted:
+            continue  # poke-env keeps a fainted Pokemon's boosts and volatiles
         score += 100.0 * _hp_fraction(mon)
         if mon.status:
             weight = (
@@ -90,8 +97,10 @@ def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
         return 10_000.0
     if state.lost:
         return -10_000.0
+    if state.finished and config.exact_search_consistent_accounting:
+        return 0.0  # a draw: neither side's leftover board is worth anything
     return _side_position(state.our_side, config) - _side_position(
-        state.opponent_side, config
+        state.opponent_side, config, bring_size=state.team_size
     )
 
 
@@ -258,13 +267,29 @@ def combine_belief_rankings(
 
     best_weight, best_ranking = max(rankings, key=lambda row: row[0])
     totals: dict[str, float] = defaultdict(float)
+    # The score is averaged, so its reported parts must be too -- copying them from the
+    # modal belief let a log show exchange_value 0 beside a combined score of 25.
+    averaged_parts = ("exchange_value", "myopic_score")
+    part_totals: dict[tuple[str, str], float] = defaultdict(float)
+    part_counts: dict[tuple[str, str], int] = defaultdict(int)
     for weight, ranking in rankings:
         for entry in ranking:
             totals[entry.order.message] += weight * entry.score
+            for part in averaged_parts:
+                value = entry.breakdown.get(part)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    part_totals[(entry.order.message, part)] += weight * float(value)
+                    part_counts[(entry.order.message, part)] += 1
 
     combined: list[ScoredOrder] = []
     for entry in best_ranking:
         breakdown = dict(entry.breakdown)
+        for part in averaged_parts:
+            key = (entry.order.message, part)
+            if part_counts[key] == len(rankings):
+                breakdown[part] = part_totals[key] / total_weight
+            else:
+                breakdown.pop(part, None)  # not present under every belief: no honest mean
         breakdown.update(
             {
                 "belief_branches": len(rankings),

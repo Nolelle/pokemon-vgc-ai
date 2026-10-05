@@ -195,11 +195,14 @@ def grade_position(
                 root = mirror.rebase(root, battle, belief) if root is not None else mirror.build(
                     battle, belief
                 )
-                decision_battle = getattr(root, "_decision_battles", {}).get("p1", root.battles["p1"])
+                side = mirror.side_for(battle)
+                decision_battle = getattr(root, "_decision_battles", {}).get(
+                    side, root.battles[side]
+                )
                 decision_battle._vgc_battle_memory = memory
                 ranking = search_joint_orders_exact(
                     root,
-                    "p1",
+                    side,
                     search_cfg,
                     candidate_selector=selector,
                     randomness_key=position["position_id"],

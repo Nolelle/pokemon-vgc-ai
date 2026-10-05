@@ -462,6 +462,14 @@ class PolicyConfig:
     # public-mirror exact search was a no-op from 2026-08-28, so _position_value deltas
     # were a constant and no wrong sign inside it could move a decision.
     exact_search_signed_effects: bool = True
+    # Exact-branch bookkeeping fixes (2026-10-05). True: (1) an opponent Pokemon not yet
+    # revealed is counted at full health toward their bring size (the public
+    # `team_size`, 4 in this format), so the turn it first appears no longer reads as a
+    # 100-point loss for us; (2) a fainted Pokemon scores 0 -- poke-env keeps a fainted
+    # Pokemon's stat stages and volatiles, which kept paying out after the KO; (3) a
+    # finished game with no winner scores 0. Each was verified on a real direct battle.
+    # False is the exact legacy scorecard, kept only for same-session A/Bs.
+    exact_search_consistent_accounting: bool = True
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat

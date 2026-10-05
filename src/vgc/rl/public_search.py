@@ -17,7 +17,7 @@ from vgc.mechanics_state import snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.rl.exact_search import ExactCandidateSelector, combine_belief_rankings
 from vgc.rl.exact_search import search_joint_orders_exact
-from vgc.rl.live_mirror import LiveExactMirror
+from vgc.rl.live_mirror import LiveExactMirror, mirror_side
 
 PUBLIC_SEARCH_CONTRACT_VERSION = "public_search_v1"
 
@@ -91,7 +91,7 @@ def public_information_exact_search(
                     belief.weight,
                     search_joint_orders_exact(
                         root,
-                        "p1",
+                        mirror_side(battle),
                         config,
                         candidate_selector=candidate_selector,
                         randomness_key=randomness_key,

@@ -58,7 +58,7 @@ def _rank(
                 if root is not None
                 else mirror.build(view, hypothesis)
             )
-            ranked = search_joint_orders_exact(root, "p1", config)
+            ranked = search_joint_orders_exact(root, mirror.side_for(view), config)
             cache[id(hypothesis)] = ranked
             return ranked
 

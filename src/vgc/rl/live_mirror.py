@@ -45,6 +45,22 @@ def _ordered_unique(values):
     return list(dict.fromkeys(value for value in values if value))
 
 
+def mirror_side(battle) -> str:
+    """The seat our side holds in the mirror: the same one it holds in ``battle``.
+
+    The observation's parser state (and its p1:/p2: wire idents) belongs to the seat
+    it was observed from, and `DirectBattle.patch_public_state` can only reuse it as
+    the decision view when the mirror seats us identically. Seating a p2 observation
+    as mirror p1 left the search reading a template parser that the patch never
+    updated: on 2026-10-05, 30% of p2 decisions searched the wrong active Pokemon
+    and 24% the wrong weather, and exact-vs-exact A/A games went 63/37 to p1.
+    Search the returned root from this side.
+    """
+
+    role = getattr(battle, "player_role", None)
+    return role if role in ("p1", "p2") else "p1"
+
+
 def _team_preview_order(packed_team: str, battle) -> str:
     entries = Teambuilder.parse_packed_team(packed_team)
     species = [to_id(entry.species or entry.nickname) for entry in entries]
@@ -646,24 +662,37 @@ class LiveExactMirror:
             getattr(hypothesis, "sets", None),
             getattr(hypothesis, "brought", None),
         )
+        side = self.side_for(battle)
+        other = "p2" if side == "p1" else "p1"
+        teams = {side: self.own_packed_team, other: opponent_sets}
+        # Branch parsers start from a copy of the observation, which keeps the real
+        # account names; Showdown's `|win|` line names the simulator's players. They must
+        # agree, or a winning branch reads as a loss (-10,000) on any named account.
+        usernames = {
+            side: getattr(battle, "player_username", None) or side,
+            other: getattr(battle, "opponent_username", None) or other,
+        }
+        if usernames[side] == usernames[other]:
+            usernames = {"p1": "p1", "p2": "p2"}
         root = DirectBattle.start(
             self.worker,
             battle_id,
-            self.own_packed_team,
-            opponent_sets,
+            teams["p1"],
+            teams["p2"],
             seed=[1, 2, 3, 4],
+            usernames=usernames,
         )
         try:
             root.step(
                 {
-                    "p1": _team_preview_order(self.own_packed_team, battle),
+                    side: _team_preview_order(self.own_packed_team, battle),
                     # Opponent sets were ordered with the current active pair first.
-                    "p2": "team 1234",
+                    other: "team 1234",
                 }
             )
             root.patch_public_state(
                 snapshot_battle(battle),
-                perspective="p1",
+                perspective=side,
                 observation_battle=battle,
                 hidden_hypothesis=hypothesis.payload if hypothesis is not None else None,
             )
@@ -693,11 +722,17 @@ class LiveExactMirror:
             return self.build(battle, hypothesis)
         root.patch_public_state(
             snapshot_battle(battle),
-            perspective="p1",
+            perspective=self.side_for(battle),
             observation_battle=battle,
             hidden_hypothesis=hypothesis.payload,
         )
         return root
+
+    @staticmethod
+    def side_for(battle) -> str:
+        """See `mirror_side`."""
+
+        return mirror_side(battle)
 
     def close(self) -> None:
         self.worker.close()

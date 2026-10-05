@@ -152,12 +152,65 @@ def _seat_counts(outcomes: Sequence[Any], subject: str) -> dict[str, int]:
     return counts
 
 
+def _recorded_agent(built: list[Any], player: str, team: str, config: PolicyConfig):
+    """Build one battle's agent and remember it, so its exact-search counters survive."""
+
+    agent = make_direct_agent(player, team, config=config)
+    built.append(agent)
+    return agent
+
+
+EXACT_ARMS = ("candidate", "incumbent")  # by position: first arm, second arm
+EXACT_COUNT_KEYS = tuple(
+    f"{arm}_{key}" for arm in EXACT_ARMS for key in ("exact_decisions", "exact_fallbacks")
+)
+# Teacher collection ran at a 0.3-0.6% skip rate; well above that means the fast search,
+# not the exact judge, made a material share of one arm's moves.
+EXACT_FALLBACK_WARN_RATE = 0.05
+
+
+def _exact_counts(agents: Sequence[Any], first_name: str) -> dict[str, Any]:
+    """Per-arm exact-judge decisions vs fallbacks to the fast search (0 for plain `vgc`).
+
+    Kept per arm: pooling both would let one arm's failures hide under the warning line.
+    """
+
+    counts: dict[str, Any] = {key: 0 for key in EXACT_COUNT_KEYS}
+    reasons: list[str] = []
+    for agent in agents:
+        arm = EXACT_ARMS[0] if agent.name == first_name else EXACT_ARMS[1]
+        for key in ("exact_decisions", "exact_fallbacks"):
+            counts[f"{arm}_{key}"] += int(getattr(agent.player, key, 0))
+        reasons.extend(
+            f"{arm}: {reason}" for reason in getattr(agent.player, "exact_fallback_reasons", ())
+        )
+    counts["exact_fallback_examples"] = reasons[:5]
+    return counts
+
+
+def _exact_summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for arm in EXACT_ARMS:
+        decisions = sum(int(row.get(f"{arm}_exact_decisions", 0)) for row in rows)
+        fallbacks = sum(int(row.get(f"{arm}_exact_fallbacks", 0)) for row in rows)
+        summary[arm] = {
+            "exact_decisions": decisions,
+            "exact_fallbacks": fallbacks,
+            "exact_fallback_rate": fallbacks / decisions if decisions else None,
+        }
+    summary["exact_fallback_examples"] = [
+        example for row in rows for example in row.get("exact_fallback_examples", ())
+    ][:10]
+    return summary
+
+
 def _evaluate_chunk(
     entries: Sequence[dict[str, Any]],
     games_per_team: int,
     base_seed: int,
     arms: dict[str, dict[str, Any]],
     round_index: int = 0,
+    player: str = "vgc",
 ) -> list[dict[str, Any]]:
     """Play every unit in `entries`. `arms` maps arm name -> PolicyConfig overrides.
 
@@ -195,16 +248,17 @@ def _evaluate_chunk(
                 # (first arm's team, second arm's team, games)
                 orientations = [(our_team, opp_team, half), (opp_team, our_team, half)]
             outcomes = []
+            built: list[Any] = []
             on_ours_games = on_ours_wins = 0
             for orientation, (first_team, second_team, games) in enumerate(orientations):
                 series = run_series(
                     worker,
                     {
                         first_name: partial(
-                            make_direct_agent, "vgc", first_team, config=first_config
+                            _recorded_agent, built, player, first_team, first_config
                         ),
                         second_name: partial(
-                            make_direct_agent, "vgc", second_team, config=second_config
+                            _recorded_agent, built, player, second_team, second_config
                         ),
                     },
                     {first_name: first_team, second_name: second_team},
@@ -217,6 +271,7 @@ def _evaluate_chunk(
                     on_ours_wins = sum(1 for o in series if o.result_for(first_name) > 0)
             result = summarize(outcomes, first_name, second_name)
             result.update(_seat_counts(outcomes, first_name))
+            result.update(_exact_counts(built, first_name))
             if "our_team" in entry:
                 extra = {
                     "our_team_name": str(entry["our_name"]),
@@ -437,6 +492,26 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--both",
+        action="append",
+        default=None,
+        metavar="FIELD=VALUE",
+        help=(
+            "PolicyConfig override applied to BOTH arms (repeatable), e.g. a reduced exact "
+            "search width; not part of the arm names. Needs --candidate/--incumbent or "
+            "--null-test with --candidate."
+        ),
+    )
+    parser.add_argument(
+        "--player",
+        default="vgc",
+        help=(
+            "registered baseline both arms run: vgc (fast search, default) or vgc_exact "
+            "(every move from the public exact search -- required to test exact-only knobs "
+            "such as exact_search_*; slow)"
+        ),
+    )
+    parser.add_argument(
         "--incumbent",
         action="append",
         default=None,
@@ -621,6 +696,11 @@ def main() -> int:
     units = build_units(entries, our_teams)
     chunks = balanced_chunks(units, args.workers)
     arms = build_arms(args.null_test, args.candidate, args.incumbent)
+    shared = parse_overrides(args.both)
+    if shared:
+        if args.candidate is None and args.incumbent is None:
+            raise SystemExit("--both needs --candidate/--incumbent (explicit arms)")
+        arms = {name: {**shared, **overrides} for name, overrides in arms.items()}
     chunk_games = None
     if args.checkpoint_games is not None:
         per_unit = args.checkpoint_games // len(units)
@@ -650,6 +730,8 @@ def main() -> int:
         "clustering": ("opponent team (pooled over our teams)" if asymmetric else "pool team"),
         "futility_min_effect": args.futility_min_effect,
         "min_gain": args.min_gain,
+        "player": args.player,
+        "shared_overrides": shared,
     }
     all_rows: list[dict[str, Any]] = []
     unit_rows: list[dict[str, Any]] = []
@@ -659,7 +741,9 @@ def main() -> int:
     with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
         for round_index, games in enumerate(rounds):
             futures = [
-                executor.submit(_evaluate_chunk, chunk, games, args.seed, arms, round_index)
+                executor.submit(
+                    _evaluate_chunk, chunk, games, args.seed, arms, round_index, args.player
+                )
                 for chunk in chunks
             ]
             for future in futures:
@@ -696,6 +780,8 @@ def main() -> int:
             )
             if asymmetric:
                 report.update(asymmetric_extras(unit_rows))
+            exact = _exact_summary(all_rows)
+            report["exact_search"] = exact
             args.output.write_text(json.dumps(report, indent=2, sort_keys=True))
             if stopped_for_futility:
                 print(
@@ -705,6 +791,22 @@ def main() -> int:
                 )
                 break
 
+    for arm in EXACT_ARMS:
+        exact = report["exact_search"][arm]
+        if not exact["exact_decisions"]:
+            continue
+        print(
+            f"exact judge, {arm} arm: {exact['exact_decisions']} decisions, "
+            f"{exact['exact_fallbacks']} fell back to the fast search "
+            f"({exact['exact_fallback_rate']:.1%})",
+            flush=True,
+        )
+        if exact["exact_fallback_rate"] > EXACT_FALLBACK_WARN_RATE:
+            print(
+                f"  WARNING: over {EXACT_FALLBACK_WARN_RATE:.0%} of the {arm} arm's moves were "
+                "NOT the exact judge's; this run does not cleanly measure it.",
+                flush=True,
+            )
     print(
         f"overall: {overall['wins']}/{overall['games']} = {overall['win_rate']:.3f}\n"
         f"  cluster-robust 95% CI [{overall['clustered'][0]:.3f}, "

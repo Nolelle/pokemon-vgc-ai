@@ -572,6 +572,40 @@ its frozen value; this is not a calibration change and no new weight was added.
   branches in which an effect could appear or disappear. A targeted board that actually
   creates hazards/screens/Leech Seed would measure this properly; the pool cannot.
 
+## Exact judge: seat bug, bookkeeping fixes, and a harness that can measure it (2026-10-05)
+
+- **The public mirror searched a stale board whenever we were p2.** `LiveExactMirror`
+  always seated us as mirror p1, so a p2 observation could not become the decision view and
+  the search read a template parser the public patch never updated: ~30% of p2 decisions
+  had the wrong active Pokemon and ~24% the wrong weather. Exact-vs-exact A/A went
+  906/1440 = 62.9% for p1. `vgc.rl.live_mirror.mirror_side` now seats us in the
+  observation's own seat; every caller searches that side. After the fix the same A/A gave
+  p1 48.8% vs p2 48.6% (2880 games). **Treat p2-seat exact output before this fix as
+  suspect**: about half of the first M-C student's teacher labels (`runs/mcv2`), p2 hybrid
+  ladder decisions, and p2 graded/reviewed positions. Test: `tests/test_live_mirror_seat.py`.
+- **Account names.** Mirror battles used simulator names `p1`/`p2` while branch parsers
+  copy the observation's real account name, so on any named account a won branch read as
+  lost (-10,000). The mirror now starts Showdown under the observation's names. The
+  offline harness (names `p1`/`p2`) never hit this; ladder/hybrid and recorded ladder
+  positions did.
+- **Scorecard bookkeeping** (`PolicyConfig.exact_search_consistent_accounting`, ships
+  True; False = legacy control): unseen opponent reserves count toward the public bring
+  size so a first reveal is not a -100 swing; fainted Pokemon score 0 (poke-env keeps
+  their boosts/volatiles); draws score 0; `combine_belief_rankings` averages
+  `exchange_value`/`myopic_score` instead of copying the modal belief's.
+  Test: `tests/test_exact_judge_accounting.py`.
+- **Measuring the exact judge.** `evaluate_own_spread_pool.py` built only the fast-search
+  `vgc` player, so exact-only knobs were a null there by construction. `--player vgc_exact`
+  (`vgc.rl.exact_player.ExactSearchPlayer`) makes every move with the public exact search;
+  `--both FIELD=VALUE` sets a shared width; the report counts per-arm fallbacks to the fast
+  search and warns above 5%. Narrow width (`search_our_candidates=4`,
+  `exact_search_future_samples=1`, `search_opp_candidates=4`) plays 2880 games in ~25 min
+  on 10 workers (~0.3 s/decision). Results at narrow width are not production-width claims.
+- **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
+  (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
+  boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
+  +7.6 pts), myopic blend double-counts damage.
+
 ## Neural shortlist distillation (Phase 4): M-B-era guided gate, current models unapproved
 
 The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is trained
