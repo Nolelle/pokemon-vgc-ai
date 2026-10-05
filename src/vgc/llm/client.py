@@ -71,12 +71,20 @@ SCENARIOS = (
     "valid", "malformed_json", "unknown_id", "duplicate_ids", "stale_id", "refusal", "empty",
     "incomplete_max_output_tokens", "rate_limited", "connection_error", "slow", "stalled",
     "late_after_cancel", "plausible_false_reasoning",
+    "preview_three_species", "preview_bad_leads",
 )  # fmt: skip
 
 
 def _answer(ids: list[str], plan: str = "Pressure the right-hand target.", why: str = "good") -> str:
     return json.dumps(
         {"plan": plan, "proposals": [{"id": i, "why": why} for i in ids]}
+    )
+
+
+def _preview_answer(bring: list[str], leads: list[str]) -> str:
+    return json.dumps(
+        {"plan": "Lead with the pair that fits their likely bring.", "bring": bring,
+         "leads": leads, "why": "fake preview answer"}
     )
 
 
@@ -103,6 +111,8 @@ class FakeLLMClient:
         self.calls.append(packet)
         s = self.scenario
         ids = list(packet.option_ids)
+        if packet.kind == "preview":
+            return self._preview(packet, max_output_tokens, timeout_s)
         usage = {
             "input_tokens": len(packet.full_text) // 4,
             "output_tokens": 80,
@@ -150,6 +160,52 @@ class FakeLLMClient:
             )
         )
 
+    def _preview(self, packet: ContextPacket, max_output_tokens: int, timeout_s: float) -> RawResult:
+        """Scripted team-preview answers. `packet.option_ids` are OUR six species names.
+
+        The "valid" answer brings names[2:6] and leads names[5], names[3] (so it differs from
+        the natural 1234 order); the other scenarios break one rule each.
+        """
+        s = self.scenario
+        names = list(packet.option_ids)
+        usage = {"input_tokens": len(packet.full_text) // 4, "output_tokens": 80,
+                 "request_id": packet.request_id}
+
+        def ok(text: str | None, **kw: Any) -> RawResult:
+            return RawResult(text=text, **{**usage, **kw})
+
+        bring = names[2:6]
+        leads = [names[5], names[3]]
+        if s in ("valid", "slow", "plausible_false_reasoning"):
+            if s == "slow":
+                time.sleep(self.sleep_s)
+            return ok(_preview_answer(bring, leads))
+        if s == "malformed_json":
+            return ok('{"plan": "x", "bring": [')
+        if s in ("unknown_id", "stale_id"):
+            return ok(_preview_answer([*bring[:3], "Missingno"], leads))
+        if s == "duplicate_ids":
+            return ok(_preview_answer([names[0]] * 4, [names[0], names[0]]))
+        if s == "preview_three_species":
+            return ok(_preview_answer(bring[:3], bring[:2]))
+        if s == "preview_bad_leads":
+            return ok(_preview_answer(bring, [names[0], names[1]]))
+        if s == "refusal":
+            return ok(None, refusal="I can't help with that.")
+        if s == "empty":
+            return ok("")
+        if s == "incomplete_max_output_tokens":
+            return ok(None, status="incomplete", output_tokens=max_output_tokens)
+        if s == "rate_limited":
+            raise RateLimited("429 too many requests")
+        if s == "connection_error":
+            raise ConnectionFailed("connection reset")
+        if s == "stalled":
+            time.sleep(timeout_s + 0.15)
+            raise LLMTimeout("request timed out")
+        time.sleep(timeout_s + 0.3)  # late_after_cancel: ignores its own timeout
+        return ok(_preview_answer(bring, leads))
+
 
 # ---------------------------------------------------------------------------------------
 # Real client
@@ -187,9 +243,9 @@ class OpenAIResponsesClient:
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "vgc_advice",
+                    "name": "vgc_preview" if packet.kind == "preview" else "vgc_advice",
                     "strict": True,
-                    "schema": response_schema(packet.option_ids),
+                    "schema": packet.schema or response_schema(packet.option_ids),
                 }
             },
             "store": False,

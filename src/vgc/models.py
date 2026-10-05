@@ -916,6 +916,22 @@ class PolicyConfig:
     # the clock guard imposes no budget of its own.
     llm_offline_budget_s: float = 20.0
 
+    # --- LLM team-preview advisor (vgc.llm.preview; OFF by default) ----------------------
+    # After the heuristic picks bring-4 + leads (the fallback), the LLM sees our six, our
+    # team plan, their six with GUESSED sets and the predicted opponent bring/leads, and
+    # answers with a bring-4 and a lead pair (blind to the heuristic's own pick). A valid
+    # answer replaces the heuristic order; anything else (late, invalid, spend cap, no key)
+    # keeps the heuristic order. False = behaviour byte-identical to before. Reuses
+    # llm_model, llm_team_plan, llm_log_path, llm_spend_file, llm_budget_cap_usd,
+    # llm_fake_scenario and llm_safety_margin_s.
+    llm_preview_enabled: bool = False
+    # Reasoning effort for the preview call: "none", "low" or "medium" ("none" = answer
+    # directly; it is still an LLM call, just without thinking tokens).
+    llm_preview_level: str = "none"
+    # Longest we wait for the preview call (seconds); also capped by the clock left in the
+    # guarded preview decision minus llm_safety_margin_s.
+    llm_preview_budget_s: float = 20.0
+
     # --- Live exact-search judge (vgc.exact_judge; OFF by default) -----------------------
     # The shipped decision path is `vgc.search.search_joint_orders` (~50 ms). Exact grading
     # (offline/grade_positions.py: public mirror + Showdown branches) finds a better move

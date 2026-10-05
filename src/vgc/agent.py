@@ -445,7 +445,14 @@ class VgcPlayer(Player):
         evaluator is disabled.
         """
         if self.config.use_heuristic_evaluator:
-            return build_team_order(battle, self.config)
+            order = build_team_order(battle, self.config)
+            if self.config.llm_preview_enabled:
+                # Off by default. The heuristic order above is the fallback for every
+                # LLM failure (see vgc.llm.preview.choose_preview, which never raises).
+                from vgc.llm.preview import choose_preview
+
+                order = choose_preview(battle, self.config, order)
+            return order
         return self.random_teampreview(battle)
 
     # --- clock guard ----------------------------------------------------------------
