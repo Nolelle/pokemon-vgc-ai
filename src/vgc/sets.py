@@ -340,10 +340,153 @@ _normalize_item = normalize_item
 _normalize_status = normalize_status
 
 
+# --- Mega Evolution form detection -------------------------------------------------------
+#
+# poke-env applies a Mega Evolution WITHOUT renaming the Pokemon: `Pokemon.mega_evolve` and
+# `forme_change` (the `|-mega|` / `|detailschange|` handlers) load the Mega's dex entry with
+# `store_species=False`. So for an opponent that has Mega Evolved, `pokemon.species` is still
+# the BASE species while `base_stats`/types are the Mega's and `forme_change_ability` is set.
+# Building a `PokemonState` from `pokemon.species` therefore modelled such a Pokemon with
+# the base stats and types but the Mega ability. (Our own side usually recovers: the next
+# `|request|` carries "<Species>-Mega" details, which does rename `_species`.) The helpers
+# below recover the Mega forme from the evidence poke-env keeps, with the exported
+# `data/champions/species.json` as the source of truth for stats/ability.
+
+
+def _text(value: Any) -> str:
+    """`to_id` that tolerates a missing/non-string attribute (test stubs, mocks)."""
+
+    return (to_id(value) or "") if isinstance(value, str) else ""
+
+
+@lru_cache(maxsize=1)
+def _mega_formes_by_origin() -> dict[str, tuple[str, ...]]:
+    """Mega forme ids keyed by the exact forme they evolve from (`changesFrom`).
+
+    Keyed on `changesFrom`, not on the base species' `otherFormes`: the latter lists every
+    Mega on the base (Meowstic-F-Mega under Meowstic) while only Floette-Eternal,
+    Meowstic-F, Tatsugiri-Droopy, Magearna-Original, ... have the right to theirs.
+    """
+
+    index: dict[str, list[str]] = {}
+    for forme_id, data in load_species().items():
+        if data.get("isMega"):
+            origin = to_id(data.get("changesFrom")) or to_id(data.get("baseSpecies"))
+            index.setdefault(origin or "", []).append(forme_id)
+    return {origin: tuple(sorted(formes)) for origin, formes in index.items()}
+
+
+def mega_forme_ids(species_id: str) -> tuple[str, ...]:
+    """Ids of every Mega forme `species_id` can evolve into (empty if none)."""
+
+    return _mega_formes_by_origin().get(species_id, ())
+
+
+def mega_species_id(base_species_id: str, item_id: str | None) -> str | None:
+    """The mega forme's species id if `base_species_id` holding `item_id` can mega
+    evolve into one (a Mega whose `changesFrom` is that forme), else None. Pure lookup over
+    `vgc.data.load_species()` -- no battle state involved.
+    """
+    if not item_id:
+        return None
+    for forme_id in mega_forme_ids(base_species_id):
+        if to_id(load_species()[forme_id].get("requiredItem")) == item_id:
+            return forme_id
+    return None
+
+
+def evolved_mega_id(pokemon: Any) -> str | None:
+    """The Mega forme `pokemon` has already Mega Evolved into, else None.
+
+    Evidence, in order: (1) poke-env already stores the Mega species (our own side after the
+    next request, or an opponent that switched back in as "<Species>-Mega"); (2) the Pokemon's
+    species has Mega formes in `species.json` AND poke-env records a forme change into one
+    (`forme_change_ability` is set only for Mega/Primal/Tera-type forme changes) or its
+    `base_stats` differ from the base species' and equal a Mega's. When a species has
+    several Megas (Charizard X/Y, Garchomp, ...) the candidates are narrowed by the held
+    stone, then by matching base stats, then by the forme-change ability, each step applied
+    only if it leaves at least one candidate (poke-env's vanilla Mega abilities disagree
+    with the Champions mod for a few species, so ability alone is not trusted).
+    """
+
+    species_id = _text(getattr(pokemon, "species", None))
+    all_species = load_species()
+    species = all_species.get(species_id)
+    if species is None:
+        return None
+    if species.get("isMega"):
+        return species_id
+    candidates = list(mega_forme_ids(species_id))
+    if not candidates:
+        return None
+
+    stats = getattr(pokemon, "base_stats", None)
+    stats = dict(stats) if isinstance(stats, dict) else None
+    stat_matches: list[str] = []
+    if stats and stats != species.get("baseStats"):
+        stat_matches = [c for c in candidates if all_species[c].get("baseStats") == stats]
+    forme_ability = _text(getattr(pokemon, "forme_change_ability", None))
+    if not forme_ability and not stat_matches:
+        return None
+
+    item_id = _text(getattr(pokemon, "item", None))
+
+    def narrow(options: list[str], keep) -> list[str]:
+        return [c for c in options if keep(c)] or options
+
+    pool = narrow(
+        candidates,
+        lambda c: bool(item_id) and to_id(all_species[c].get("requiredItem")) == item_id,
+    )
+    pool = narrow(pool, lambda c: c in stat_matches)
+    pool = narrow(
+        pool,
+        lambda c: bool(forme_ability)
+        and to_id((all_species[c].get("abilities") or {}).get("0")) == forme_ability,
+    )
+    return pool[0]
+
+
+def pre_mega_species_id(species_id: str) -> str:
+    """The forme a Mega forme evolves from (`charizardmegay` -> `charizard`); any other id is
+    returned unchanged. For comparing a Mega-evolved `PokemonState` against ids keyed by the
+    pre-evolution species (team-preview gameplan, `BattleMemory.plan_breakers`).
+    """
+
+    data = load_species().get(species_id) or {}
+    return (to_id(data.get("changesFrom")) or species_id) if data.get("isMega") else species_id
+
+
+def live_form(
+    pokemon: Any, ability: str | None, item: str | None
+) -> tuple[str, str | None, str | None]:
+    """`(species_id, ability, item)` of the form `pokemon` is in right now.
+
+    Identity for a Pokemon that has not Mega Evolved. After a Mega Evolution the species is
+    the Mega forme (so stats and types are the Mega's, from `species.json`), the ability is
+    the Mega's unless poke-env tracks a later temporary override (Skill Swap, Mummy, ...),
+    and an unrevealed item becomes the Mega's required stone (`|-mega|` made it public).
+    """
+
+    species_id = _text(getattr(pokemon, "species", None))
+    mega_id = evolved_mega_id(pokemon)
+    if mega_id is None:
+        return species_id, ability, item
+    mega = load_species().get(mega_id) or {}
+    if not _text(getattr(pokemon, "temporary_ability", None)):
+        mega_ability = to_id((mega.get("abilities") or {}).get("0"))
+        if mega_ability:
+            ability = mega_ability
+    if item is None:
+        item = to_id(mega.get("requiredItem")) or None
+    return mega_id, ability, item
+
+
 def opponent_state(
     pokemon: ObservedPokemon,
     usage: dict[str, list[dict[str, Any]]] | None = None,
     nature_override: str | None = None,
+    evolved_form: bool = True,
 ) -> PokemonState:
     """Build a `PokemonState` for an opponent Pokemon observed through poke-env.
 
@@ -356,17 +499,23 @@ def opponent_state(
     :param nature_override: a higher-confidence hidden nature from an exactly recognized
         curated team. The live Open Team Sheet still supplies item/ability/moves; this
         only fills information the sheet does not reveal.
+    :param evolved_form: model a Pokemon that has Mega Evolved as its Mega forme (see
+        `live_form`); False is the legacy behaviour
+        (`PolicyConfig.mega_state_uses_evolved_form`).
     """
     if usage is None:
         usage = load_usage_spreads()
 
-    species_id = pokemon.species
-    spread_and_nature = _usage_spread_for_species(species_id, usage)
+    # Hidden spreads are keyed on poke-env's own species id (the base species until the
+    # Pokemon is re-parsed as "<Species>-Mega"); the STATE, though, must be the Mega forme
+    # once it has Mega Evolved -- see `live_form`.
+    spread_species_id = pokemon.species
+    spread_and_nature = _usage_spread_for_species(spread_species_id, usage)
     if spread_and_nature is not None:
         sp_spread, nature = spread_and_nature
     else:
-        sp_spread = default_opponent_spread(species_id)
-        nature = default_opponent_nature(species_id)
+        sp_spread = default_opponent_spread(spread_species_id)
+        nature = default_opponent_nature(spread_species_id)
     if nature_override is not None:
         nature = nature_override
 
@@ -376,14 +525,19 @@ def opponent_state(
         if stat in ("atk", "def", "spa", "spd", "spe") and value
     }
 
+    species_id, ability, item = pokemon.species, pokemon.ability or None, _normalize_item(
+        pokemon.item
+    )
+    if evolved_form:
+        species_id, ability, item = live_form(pokemon, ability, item)
     state = PokemonState(
         species_id=species_id,
         sp_spread=sp_spread,
         nature=nature,
         boosts=boosts,
         status=_normalize_status(pokemon.status),
-        item=_normalize_item(pokemon.item),
-        ability=pokemon.ability or None,
+        item=item,
+        ability=ability,
     )
     # poke-env reports current_hp/max_hp for OPPONENT Pokemon on a 0-100 or pixel scale,
     # not real Champions HP (see poke_env.battle.pokemon.Pokemon.current_hp's own

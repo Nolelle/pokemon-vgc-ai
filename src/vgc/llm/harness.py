@@ -88,7 +88,7 @@ def ungrounded_names(
 
 def _input_bound(packet: ContextPacket) -> int:
     """Upper bound on input tokens for everything the real client sends."""
-    schema = json.dumps(response_schema(packet.option_ids))
+    schema = json.dumps(packet.schema or response_schema(packet.option_ids))
     return max_input_tokens(packet.fixed_text, packet.turn_text, schema)
 
 
@@ -122,6 +122,8 @@ def _parse(
         return None, f"status_{raw.status}", 0
     if not raw.text or not raw.text.strip():
         return None, "empty", 0
+    if packet.kind == "preview":
+        return _parse_structured(raw, packet)
     try:
         data = json.loads(raw.text)
         plan = data["plan"]
@@ -149,6 +151,21 @@ def _parse(
     if not kept:
         return None, "no_valid_ids", invalid
     return Advice(plan=plan, proposals=tuple(kept)), "ok", invalid
+
+
+def _parse_structured(raw: RawResult, packet: ContextPacket) -> tuple[Advice | None, str, int]:
+    """Non-move answers (team preview): valid JSON object, then the packet's own validator."""
+    try:
+        data = json.loads(raw.text or "")
+        if not isinstance(data, dict) or not isinstance(data.get("plan"), str):
+            raise TypeError("bad shape")
+    except (ValueError, TypeError):
+        return None, "malformed_json", 0
+    if packet.validate is not None:
+        error = packet.validate(data)
+        if error:
+            return None, "invalid_answer", 1
+    return Advice(plan=data["plan"], proposals=(), data=data), "ok", 0
 
 
 class _Call:
@@ -208,7 +225,8 @@ def advise(
     except Exception as exc:  # last-resort guard: the engine fallback must always win
         _append(log_path, CallRecord(packet.request_id, (config or LLMConfig()).model, level,
                                      packet.prompt_sha256, status="harness_error",
-                                     error=f"{type(exc).__name__}: {exc}", turn=packet.turn))
+                                     error=f"{type(exc).__name__}: {exc}", turn=packet.turn,
+                                     kind=packet.kind))
         return None
 
 
@@ -238,7 +256,7 @@ def _advise(packet, client, level, budget_s, meter, log_path, cfg, vocab, clock)
                 output_tokens=raw.output_tokens if raw else 0,
                 latency_s=round(clock() - t0, 4), cost_usd=cost, status=status,
                 error=error, turn=packet.turn, attempt=attempt, invalid_ids=invalid,
-                ungrounded_names=flagged or [],
+                ungrounded_names=flagged or [], kind=packet.kind,
             ))
 
         t0 = clock()
@@ -260,7 +278,7 @@ def _advise(packet, client, level, budget_s, meter, log_path, cfg, vocab, clock)
                 output_tokens=c.raw.output_tokens if c.raw else 0,
                 latency_s=round(clock() - _t0, 4), status="late_ignored",
                 error=type(c.exc).__name__ if c.exc else "", turn=packet.turn,
-                attempt=_attempt))
+                attempt=_attempt, kind=packet.kind))
 
         call.on_late = late
         call.done.wait(timeout=max(0.0, deadline - clock()))
@@ -309,6 +327,8 @@ def _advise(packet, client, level, budget_s, meter, log_path, cfg, vocab, clock)
         flagged: list[str] = []
         if advice is not None:
             texts = [advice.plan, *(p.why for p in advice.proposals)]
+            if advice.data and isinstance(advice.data.get("why"), str):
+                texts.append(advice.data["why"])
             flagged = ungrounded_names(texts, packet.full_text, vocab)
         record(status, raw, invalid=invalid, flagged=flagged, cost=cost, t0=t0)
         if advice is not None or status not in _RETRYABLE:

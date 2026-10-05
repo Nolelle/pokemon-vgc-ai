@@ -54,6 +54,7 @@ from vgc.search import search_joint_orders
 
 POSITION_SCHEMA = "vgc-position-v1"
 DEFAULT_TOP_K = 6
+MYOPIC_TOP_N = 15  # how deep into the myopic ranking each position records
 
 
 class RecordingPlayer(VgcPlayer):
@@ -69,6 +70,9 @@ class RecordingPlayer(VgcPlayer):
     def __init__(self, *args: Any, top_k: int = DEFAULT_TOP_K, **kwargs: Any) -> None:
         self.top_k = top_k
         self.engine_rankings: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        # Per decision: our orders the live search actually scored ("searched set") and the
+        # myopic ranking's top MYOPIC_TOP_N, for the proposer screen (offline/propose_positions).
+        self.engine_candidates: dict[tuple[str, int], dict[str, Any]] = {}
         super().__init__(*args, **kwargs)
 
     def decide(self, battle):
@@ -92,8 +96,35 @@ class RecordingPlayer(VgcPlayer):
                 }
                 for entry in scored[: self.top_k]
             ]
+            self.engine_candidates[(battle.battle_tag, sequence)] = candidate_record(scored)
         memory.record_choice(int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order))
         return scored[0].order
+
+
+def candidate_record(scored) -> dict[str, Any]:
+    """The searched set and the myopic top-N from a finished ``search_joint_orders`` list.
+
+    Every entry's ``breakdown`` carries ``searched`` and ``myopic_score``; the stable sort by
+    ``myopic_score`` recovers the ranking the shortlist was cut from.
+    """
+
+    by_myopic = sorted(
+        scored, key=lambda e: float(e.breakdown.get("myopic_score", e.score)), reverse=True
+    )
+    return {
+        "searched": [
+            describe_order(e.order) for e in scored if e.breakdown.get("searched") is True
+        ],
+        "myopic_top": [
+            {
+                "rank": i + 1,
+                "order": describe_order(e.order),
+                "wire": choice_wire_message(e.order),
+                "myopic_score": round(float(e.breakdown.get("myopic_score", e.score)), 4),
+            }
+            for i, e in enumerate(by_myopic[:MYOPIC_TOP_N])
+        ],
+    }
 
 
 class RecordingAgent(DirectAgent):
@@ -152,6 +183,7 @@ class RecordedGame:
     winner: str | None
     bundle: dict[str, Any]
     rankings: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    candidates: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 def play_recorded_game(
@@ -190,7 +222,10 @@ def play_recorded_game(
     rankings = {
         seq: rows for (tag, seq), rows in ours.player.engine_rankings.items() if tag == game_id
     }
-    return RecordedGame(game_id, seat, winner, bundle, rankings)
+    candidates = {
+        seq: rec for (tag, seq), rec in ours.player.engine_candidates.items() if tag == game_id
+    }
+    return RecordedGame(game_id, seat, winner, bundle, rankings, candidates)
 
 
 def sampleable_decisions(game: RecordedGame) -> list[int]:
@@ -343,6 +378,7 @@ __all__ = [
     "RecordedGame",
     "RecordingAgent",
     "RecordingPlayer",
+    "candidate_record",
     "load_bundle",
     "make_recording_agent",
     "play_recorded_game",

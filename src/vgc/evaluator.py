@@ -112,6 +112,8 @@ from vgc.principles import (
     utility_kind,
 )
 from vgc.sets import (
+    live_form,
+    mega_species_id,
     set_priors_for,
     usage_spreads_for,
     normalize_item,
@@ -348,26 +350,8 @@ def field_effective_speed(
     return speed
 
 
-def mega_species_id(base_species_id: str, item_id: str | None) -> str | None:
-    """The mega forme's species id if `base_species_id` holding `item_id` can mega
-    evolve into one of its `otherFormes`, else None. Pure lookup over
-    `vgc.data.load_species()` -- no battle state involved.
-    """
-    if not item_id:
-        return None
-    species = load_species().get(base_species_id)
-    if species is None:
-        return None
-    for forme_name in species.get("otherFormes") or ():
-        forme_id = to_id(forme_name)
-        forme_data = load_species().get(forme_id)
-        if (
-            forme_data
-            and forme_data.get("isMega")
-            and to_id(forme_data.get("requiredItem")) == item_id
-        ):
-            return forme_id
-    return None
+# `mega_species_id` now lives in `vgc.sets` (next to the Mega-form detection that builds live
+# states) and is imported above, so `vgc.evaluator.mega_species_id` keeps working.
 
 
 def mega_evolved_state(state: PokemonState) -> PokemonState:
@@ -583,14 +567,23 @@ def _screens_from(side_conditions) -> frozenset[str]:
     )
 
 
-def _our_pokemon_state(pokemon: Pokemon) -> PokemonState:
+def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonState:
     """Build a PokemonState for one of OUR OWN Pokemon. Unlike `vgc.sets.opponent_state`,
     our own Stat Points/nature are genuinely known (poke-env parses them straight from
     the Teambuilder team we supplied, see `Pokemon.evs`/`Pokemon.nature`'s docstrings) --
     only fall back to the same usage-based guess opponent_state uses if poke-env didn't
     populate them for some reason (defensive; shouldn't happen for our own team).
     """
-    species_id = to_id(pokemon.species)
+    # `live_form`: once a Pokemon has Mega Evolved its state is the Mega forme (poke-env keeps
+    # `species` as the base until the next request re-parses it as "<Species>-Mega").
+    # `evolved_form=False` is the legacy control (`PolicyConfig.mega_state_uses_evolved_form`).
+    species_id, ability, item = (
+        to_id(pokemon.species),
+        pokemon.ability or None,
+        normalize_item(pokemon.item),
+    )
+    if evolved_form:
+        species_id, ability, item = live_form(pokemon, ability, item)
     sp_spread = dict(zip(STAT_IDS, pokemon.evs, strict=True)) if pokemon.evs else None
     nature = pokemon.nature
     boosts = {
@@ -604,8 +597,8 @@ def _our_pokemon_state(pokemon: Pokemon) -> PokemonState:
         nature=nature,
         boosts=boosts,
         status=normalize_status(pokemon.status),
-        item=normalize_item(pokemon.item),
-        ability=pokemon.ability or None,
+        item=item,
+        ability=ability,
     )
     if sp_spread is None or nature is None:
         from vgc.stats import default_opponent_nature, default_opponent_spread
@@ -671,8 +664,9 @@ def build_context(
     while len(opp_pokemon) < 2:
         opp_pokemon.append(None)
 
+    evolved_form = config.mega_state_uses_evolved_form
     our_states = [
-        _our_pokemon_state(mon) if mon is not None and not mon.fainted else None
+        _our_pokemon_state(mon, evolved_form) if mon is not None and not mon.fainted else None
         for mon in our_pokemon
     ]
     opp_states: list[PokemonState | None] = []
@@ -681,7 +675,12 @@ def build_context(
             opp_states.append(opp_state_override[idx])
             continue
         opp_states.append(
-            opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+            opponent_state(
+                mon,
+                usage=usage,
+                nature_override=known_nature(meta_team, mon),
+                evolved_form=evolved_form,
+            )
             if mon is not None and not mon.fainted
             else None
         )
@@ -803,14 +802,19 @@ def build_context(
         for mon in (getattr(battle, "team", None) or {}).values()
         if mon is not None and not mon.fainted
     ]
-    our_gameplan_states = [_our_pokemon_state(mon) for mon in our_team_full]
+    our_gameplan_states = [_our_pokemon_state(mon, evolved_form) for mon in our_team_full]
     our_gameplan_move_ids = [list(mon.moves.keys()) if mon.moves else [] for mon in our_team_full]
 
     opp_team_full = [
         mon for mon in preview_team if mon is not None and not getattr(mon, "fainted", False)
     ]
     opp_gameplan_states = [
-        opponent_state(mon, usage=usage, nature_override=known_nature(meta_team, mon))
+        opponent_state(
+            mon,
+            usage=usage,
+            nature_override=known_nature(meta_team, mon),
+            evolved_form=evolved_form,
+        )
         for mon in opp_team_full
     ]
     opp_gameplan_move_ids = [
@@ -1719,7 +1723,7 @@ def _intimidate_immune(pokemon: Pokemon | None) -> bool:
 def _score_switch(
     incoming: Pokemon, actor_slot: int, ctx: _Context, config: PolicyConfig
 ) -> tuple[float, dict]:
-    incoming_state = _our_pokemon_state(incoming)
+    incoming_state = _our_pokemon_state(incoming, config.mega_state_uses_evolved_form)
     incoming_move_ids = list(incoming.moves.keys()) if incoming.moves else []
     opp_alive = ctx.opp_alive()
 

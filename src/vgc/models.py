@@ -489,6 +489,34 @@ class PolicyConfig:
     # Pokemon's real HP/moves. False is the legacy control: every non-active preview
     # Pokemon, at full HP, including fainted and unbrought ones.
     search_public_bench_filter: bool = True
+    # Model a Pokemon that has Mega Evolved as its Mega forme (Mega stats, types and
+    # ability). poke-env keeps `Pokemon.species` as the BASE species after a Mega Evolution
+    # (`|-mega|` loads the Mega's data with `store_species=False`), so before this fix every
+    # live state for an evolved opponent -- and for ours until the next request -- carried the
+    # base stats and types with the Mega ability. True (the fix) builds the state through
+    # `vgc.sets.live_form`; False is exactly the old behaviour, kept only as the legacy
+    # control for same-session A/Bs (same pattern as `search_respect_our_protect_odds`).
+    # Threaded through the evaluator/search/belief-scoring state builders; the feature
+    # encoders, reward shaping and LLM fact packet always use the fixed form.
+    mega_state_uses_evolved_form: bool = True
+    # Let the opponent Mega Evolve in the search's response model. Off (legacy): the search
+    # only ever evolves OUR Pokemon (`mega=True` orders), and an opponent Mega Evolves only
+    # once it has actually done so on the board. On: while the opponent has not Mega
+    # Evolved this game (one Mega per side per battle), an active opponent presumed to hold
+    # its Mega stone gets, next to each move/Protect/utility response, a twin that Mega
+    # Evolves first -- Mega stats, types and ability apply for that exchange (and any weather
+    # ability the Mega sets), exactly as our own `mega=True` orders already do. Never two
+    # Megas in one response. A stone is "presumed held" if the item is known (Open Team
+    # Sheet, reveal) or, with the item hidden (the usual ladder case), if the species'
+    # corpus set prior holds that stone in at least `search_opp_mega_prior_share` of its
+    # appearances.
+    search_model_opponent_mega: bool = False
+    # Minimum share of a species' corpus appearances (data/usage/set_priors.json `items`)
+    # that its Mega stone must hold for an UNREVEALED item to be presumed a Mega holder by
+    # `search_model_opponent_mega`. Mega stones are the most-held item of nearly every Mega
+    # species (Charizard-Y ~70%); 0.5 means "more likely than not". Unused when that knob
+    # is off.
+    search_opp_mega_prior_share: float = 0.5
     # Exchange-value cost when the opponent successfully establishes an important
     # non-damaging effect. Individual utility actions scale this shared currency.
     search_opp_utility_weight: float = 25.0
@@ -524,6 +552,23 @@ class PolicyConfig:
     # Search a strategically diverse top-K (best switch/control/non-Protect lines as well
     # as raw myopic leaders) so a setup line cannot be pruned before horizon evaluation.
     search_diverse_candidates: bool = True
+    # Apply stat-stage changes in the fast search (vgc.setup_boosts). Today a setup move
+    # (Swords Dance, Dragon Dance, Quiver Dance, Shell Smash, Calm Mind, Belly Drum, ...)
+    # gets only a flat utility credit in the search and never changes a stat stage, so the
+    # rolling horizon cannot see the payoff through damage and Speed. On: the move's stage
+    # changes (clamped +/-6, Contrary/Simple honoured, Shell Smash's defence drops,
+    # Belly Drum / Clangorous Soul HP cost, Growth doubled in sun) are applied to the actor
+    # (or the partner, for Coaching/Aromatic Mist/Howl) in the post-exchange state for BOTH
+    # sides, and Coaching/Aromatic Mist become searchable and shortlist-eligible as
+    # "setup" lines. False = byte-identical to the previous search. The myopic evaluator
+    # (setup_base_value) is unchanged either way.
+    search_apply_setup_boosts: bool = False
+    # Fraction of the flat search utility (search_opp_utility_weight x kind scale) a
+    # boost-modelled move keeps while search_apply_setup_boosts is on. 0.0 = the simulated
+    # payoff replaces the flat proxy (no double count); 1.0 = flat credit on top of the
+    # simulated payoff (the double-counting variant, kept as an A/B arm). Unused when the
+    # master switch is off.
+    setup_boost_flat_utility_scale: float = 0.0
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
@@ -867,8 +912,75 @@ class PolicyConfig:
     # many extra candidates (taken in ranking order) so the control spends roughly the
     # time the LLM arm spends waiting/searching. 0 = no change. Calibrate before use.
     llm_control_extra_candidates: int = 0
+    # Hide the engine's rank/score from the LLM and shuffle option numbering
+    # (vgc.llm.config.LLMConfig.blind_options). Off until the blind screen decides.
+    llm_blind_options: bool = False
+    # Highest reasoning effort the live proposer may use ("none", "low" or "medium").
+    # The 2026-10-04 offline screens found more thinking made Luna more conservative.
+    llm_max_live_level: str = "medium"
     # Clock held back from the LLM call for the rest of the search and sending the move.
     llm_safety_margin_s: float = 1.5
     # Time allowed for one call when no timer is announced (offline/direct env), where
     # the clock guard imposes no budget of its own.
     llm_offline_budget_s: float = 20.0
+
+    # --- LLM team-preview advisor (vgc.llm.preview; OFF by default) ----------------------
+    # After the heuristic picks bring-4 + leads (the fallback), the LLM sees our six, our
+    # team plan, their six with GUESSED sets and the predicted opponent bring/leads, and
+    # answers with a bring-4 and a lead pair (blind to the heuristic's own pick). A valid
+    # answer replaces the heuristic order; anything else (late, invalid, spend cap, no key)
+    # keeps the heuristic order. False = behaviour byte-identical to before. Reuses
+    # llm_model, llm_team_plan, llm_log_path, llm_spend_file, llm_budget_cap_usd,
+    # llm_fake_scenario and llm_safety_margin_s.
+    llm_preview_enabled: bool = False
+    # Reasoning effort for the preview call: "none", "low" or "medium" ("none" = answer
+    # directly; it is still an LLM call, just without thinking tokens).
+    llm_preview_level: str = "none"
+    # Longest we wait for the preview call (seconds); also capped by the clock left in the
+    # guarded preview decision minus llm_safety_margin_s.
+    llm_preview_budget_s: float = 20.0
+
+    # --- Live exact-search judge (vgc.exact_judge; OFF by default) -----------------------
+    # The shipped decision path is `vgc.search.search_joint_orders` (~50 ms). Exact grading
+    # (offline/grade_positions.py: public mirror + Showdown branches) finds a better move
+    # among the candidates that search ranked lower, or skipped, on a sizeable share of
+    # positions, so the fast search's JUDGEMENT may be the bottleneck rather than its
+    # shortlist. With this on, the fast search runs exactly as before; then the exact engine
+    # re-ranks its best `exact_judge_top_k` candidates (plus `exact_judge_extra_myopic`
+    # skipped ones) through `vgc.rl.public_search.public_information_exact_search` -- the same
+    # public-information boundary live hybrid play uses, never a private simulator root --
+    # and the exact-best order is played. Any error, timeout, or empty result keeps the fast
+    # search's pick. False = behaviour byte-identical to before this feature existed.
+    exact_judge_live: bool = False
+    # How many of the fast search's best-ranked candidates the exact engine re-ranks.
+    exact_judge_top_k: int = 6
+    # Also judge this many of the fast search's UNSEARCHED candidates, taken in myopic-rank
+    # order (the ones the shortlist cut). 0 = judge only the fast search's own top-K.
+    exact_judge_extra_myopic: int = 0
+    # Wall-clock cap on one judged decision. With an announced timer the cap is
+    # min(this, the clock guard's remaining time for the decision - exact_judge_margin_s);
+    # with no timer (offline/direct env) it is this value. A judge that runs out of time
+    # keeps the fast search's pick (and its search is abandoned, never waited on).
+    exact_judge_budget_s: float = 3.0
+    # Time held back from the clock guard's remaining decision time for sending the move.
+    exact_judge_margin_s: float = 1.0
+    # Exact-search width for the judge, mapped onto the existing exact_search_* settings /
+    # search_opp_candidates. Defaults match the diagnostic width offline/grade_positions.py
+    # graded at (about 0.4 s per position when the machine is idle): two sampled futures per
+    # branch, four opponent replies, one hidden-information belief.
+    exact_judge_future_samples: int = 2
+    exact_judge_opp_candidates: int = 4
+    # Applies to the spread, set, bring and sleep-timer belief counts and their joint cap.
+    exact_judge_hypotheses: int = 1
+    # What the judge maximises: "exchange_value" is the pure one-turn position change from
+    # the Showdown branches (what the grader measured); "score" is the exact search's final
+    # blend (myopic term + exact term).
+    exact_judge_metric: str = "exchange_value"
+    # The exact-best order must beat the fast search's own pick by MORE than this on the
+    # chosen metric to overturn it (0.0 = any strict improvement; ~10 is about a 10%-HP
+    # swing, the grader's "clearly better" margin).
+    exact_judge_overturn_margin: float = 0.0
+    # Non-empty = also append one JSON line per judged decision to this file (a path
+    # relative to the CWD). Lets an offline A/B, whose players are discarded after each
+    # game, report judge latency/overturn/fallback rates. Empty = in-memory log only.
+    exact_judge_log_path: str = ""
