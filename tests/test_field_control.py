@@ -118,3 +118,11 @@ def test_runtime_under_five_ms():
     for _ in range(200):
         field_control_value(state, CONFIG)
     assert (time.perf_counter() - started) / 200 < 0.005
+
+
+def test_speed_modifiers_round_like_showdown_so_ties_stay_ties() -> None:
+    from vgc.field_control import _showdown_modify
+
+    assert _showdown_modify(101, 1.5) == 151  # Scarfed 101 ties an unboosted 151
+    assert _showdown_modify(151, 0.5) == 75  # paralysis rounds half down
+    assert _showdown_modify(100, 2.0 * 1.5) == 300

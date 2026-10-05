@@ -189,7 +189,8 @@ def evaluate_exact_branches(
                         live.append((kwargs, clone))
                         keep = True
                     else:
-                        snapshot(kwargs, clone)
+                        # Asked for more turns but the game ended on the searched step.
+                        snapshot(kwargs, clone, continuation_ended_early=turns > 0)
                 finally:
                     if not keep:
                         clone.close()

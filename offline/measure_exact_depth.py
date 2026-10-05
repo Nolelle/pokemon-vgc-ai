@@ -113,6 +113,14 @@ def run_cell(cell: dict[str, Any]) -> dict[str, Any]:
                 )
         except DecisionCapReached:
             pass  # partial sample: the cap is for cells whose full games take too long
+        finally:
+            # An aborted game never reaches the battle-finished callback that closes each
+            # player's mirror worker; close them so leftover processes do not slow the
+            # next cell's timings.
+            for agent in built:
+                close = getattr(agent.player, "close_public_mirror", None)
+                if close is not None:
+                    close()
     ordered = sorted(times)
     fallbacks = sum(getattr(a.player, "exact_fallbacks", 0) for a in built)
     exact = sum(getattr(a.player, "exact_decisions", 0) for a in built)

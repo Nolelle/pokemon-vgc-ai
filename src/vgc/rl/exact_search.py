@@ -100,7 +100,9 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
             if not (field and effect.id == "tailwind")
         )
     else:
-        score += config.exact_search_effect_weight * len(side.side_conditions)
+        score += config.exact_search_effect_weight * sum(
+            1 for effect in side.side_conditions if not (field and effect.id == "tailwind")
+        )
     return score
 
 

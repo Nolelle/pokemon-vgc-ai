@@ -316,7 +316,9 @@ def _field_pct(
 class _Mon:
     """Everything the two sub-scores need from one Pokemon, computed once per call."""
 
-    __slots__ = ("active", "speeds", "speed_ability", "species_id", "ability", "moves")
+    __slots__ = (
+        "active", "speeds", "multiplier", "speed_ability", "species_id", "ability", "moves"
+    )
 
     def __init__(self, mon: Any, *, ours: bool, config: PolicyConfig) -> None:
         self.active = bool(mon.active)
@@ -348,7 +350,10 @@ class _Mon:
             multiplier *= 1.5
         if mon.status == "par":
             multiplier *= 0.5
-        self.speeds = tuple((_apply_stage(int(speed), stage) * multiplier, w) for speed, w in distribution)
+        # Integer staged Speed; Scarf/paralysis are applied with Tailwind and weather in
+        # `_speed_at` as ONE chained modifier, the way Showdown rounds them.
+        self.speeds = tuple((_apply_stage(int(speed), stage), w) for speed, w in distribution)
+        self.multiplier = multiplier
 
         if ours:
             move_ids = tuple(sorted(m.id for m in mon.moves))
@@ -370,14 +375,25 @@ def _alive_mons(side: Any, *, ours: bool, config: PolicyConfig) -> list[_Mon]:
     return result
 
 
+def _showdown_modify(value: int, factor: float) -> int:
+    """Showdown's `modify`: a 4096-based chained modifier, rounded half down.
+
+    Fractional speeds would turn exact ties (e.g. Scarfed 101 vs 151) into a sure first
+    move; Showdown compares these integers.
+    """
+
+    modifier = round(factor * 4096)
+    return (value * modifier + 2047) // 4096
+
+
 def _speed_at(mon: _Mon, weather: str | None, tailwind: bool) -> list[tuple[float, float]]:
-    factor = 1.0
+    factor = mon.multiplier
     if tailwind:
         factor *= 2.0
     if mon.speed_ability is not None and weather is not None:
         if _WEATHER_SPEED_ABILITY.get(weather) == mon.speed_ability:
             factor *= 2.0
-    return [(speed * factor, weight) for speed, weight in mon.speeds]
+    return [(float(_showdown_modify(int(speed), factor)), weight) for speed, weight in mon.speeds]
 
 
 def _p_before(ours: list[tuple[float, float]], theirs: list[tuple[float, float]], tr: bool) -> float:
