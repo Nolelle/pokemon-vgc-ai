@@ -45,6 +45,25 @@ This preference does not require deleting existing tests or relaxing release cri
 - Learned Q, opponent-response models, and the pure-RL 100k recipe are **closed**.
   Current learned checkpoints are experimental; search remains the decision authority.
 
+## Cursor Cloud specific instructions
+
+- Dependencies: `.github/scripts/install_python_deps.sh` (locked `dev` extra plus CPU
+  torch). Run `.venv/bin/python`. Node 22 is the nvm install under `~/.nvm`;
+  `vgc.node.find_node` selects it.
+- Pokemon Showdown is checked out at `~/pokemon-showdown` and symlinked to the
+  default `SHOWDOWN_REPO` path (`/Users/edmundyu/code/projects/pokemon-showdown`).
+  The pin is `data/champions/mechanics_catalog.json`. Set `VGC_SHOWDOWN_REPO` to
+  point somewhere else. Refresh with
+  `.github/scripts/checkout_pinned_showdown.sh ~/pokemon-showdown --build`.
+- Boot starts `node pokemon-showdown start --no-security` on port 8000.
+  `offline/run_matches.py` and `ladder/run_ladder.py --local-smoke` use that
+  server. `pytest -m integration` starts its own server on port 8000, so stop
+  the boot server before that suite.
+- `data/selfplay/archetype_pool_150` is not in git. Tests that need it skip
+  until `tools/build_archetype_pool.py --variants-per-archetype 25 --seed
+  20260901 --out data/selfplay/archetype_pool_150`.
+- Public ladder credentials are not required for local tests or smoke battles.
+
 ## TypeSafe/Jev usage
 
 Use TypeSafe/Jev for fuzzy or semantic judgment that would otherwise need brittle
