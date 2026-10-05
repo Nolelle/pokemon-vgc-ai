@@ -34,6 +34,8 @@ class Prices:
 
 PRICE_TABLE: dict[str, Prices] = {
     "gpt-6-luna": Prices(input=0.10, cached_input=0.01, cache_write=0.125, output=0.50),
+    # OpenAI pricing page, standard tier, short context (checked 2026-10-03).
+    "gpt-6.1-sol": Prices(input=2.00, cached_input=0.10, cache_write=2.50, output=10.00),
 }
 
 

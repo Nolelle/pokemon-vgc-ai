@@ -12,7 +12,9 @@ stream (``vgc.battle_state_replay`` decision-replay bundle), samples real decisi
 
 Each row carries: position id, game seed, our team, opponent team id, turn, the engine's
 top-K ranked orders (canonical ``describe_order`` strings + wire form + score) and the
-order it chose, and a team-disjoint ``split`` ("tune" / "test") keyed on the OPPONENT
+order it chose, the SEARCHED SET (our orders the live search scored) and the top 15 of the
+myopic ranking (``engine_searched`` / ``engine_myopic_top``; absent on older rows), and a
+team-disjoint ``split`` ("tune" / "test") keyed on the OPPONENT
 TEAM so a grader never tunes and tests on the same opponent team.
 
 Each position is verified by rebuilding it from the saved bundle and comparing the
@@ -106,6 +108,13 @@ def main() -> int:
     ap.add_argument("--max-games", type=int, default=60)
     ap.add_argument("--per-game", type=int, default=3, help="positions sampled per game")
     ap.add_argument("--min-turn", type=int, default=1)
+    ap.add_argument(
+        "--min-legal",
+        type=int,
+        default=0,
+        help="only sample decisions with at least this many legal joint orders (the proposer "
+        "screen needs > search_our_candidates=10, or every order is already searched)",
+    )
     ap.add_argument("--top-k", type=int, default=6, help="engine candidates recorded per position")
     ap.add_argument("--opponent", default="vgc", help="baseline playing the opponent team")
     ap.add_argument("--seed", type=int, default=20261003)
@@ -174,6 +183,7 @@ def main() -> int:
                 i
                 for i in sampleable_decisions(game)
                 if int(game.bundle["decisions"][i]["turn"]) >= args.min_turn
+                and len(game.bundle["decisions"][i]["legal_actions"]) >= args.min_legal
             ]
             rng.shuffle(candidates)
             kept = 0
@@ -212,6 +222,9 @@ def main() -> int:
                     "engine_chosen": decision["chosen_order"],
                     "engine_chosen_wire": decision["chosen_order_wire"],
                     "engine_top_k": ranking,
+                    # What the live search actually scored, and the myopic ranking's top 15.
+                    "engine_searched": game.candidates.get(index, {}).get("searched"),
+                    "engine_myopic_top": game.candidates.get(index, {}).get("myopic_top"),
                 }
                 out.write(json.dumps(row) + "\n")
                 out.flush()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,13 @@ class ContextPacket:
     option_ids: tuple[str, ...]
     request_id: str = ""  # one per turn/attempt chain; late answers for old ids are dropped
     turn: int | None = None
+    # "move" = pick option IDs (the default). "preview" = team-preview advice: the answer
+    # shape is `schema`, checked by `validate` (returns an error string, or None if fine).
+    kind: str = "move"
+    schema: dict[str, Any] | None = field(default=None, compare=False, repr=False)
+    validate: Callable[[dict[str, Any]], str | None] | None = field(
+        default=None, compare=False, repr=False
+    )
 
     @property
     def full_text(self) -> str:
@@ -45,6 +54,7 @@ class Proposal:
 class Advice:
     plan: str
     proposals: tuple[Proposal, ...]
+    data: dict[str, Any] | None = None  # parsed answer for non-"move" kinds
 
 
 @dataclass(frozen=True)
@@ -82,3 +92,4 @@ class CallRecord:
     invalid_ids: int = 0
     ungrounded_names: list[str] = field(default_factory=list)
     ts: float = 0.0
+    kind: str = "move"  # "move" | "preview"

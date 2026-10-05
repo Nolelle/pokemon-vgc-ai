@@ -175,9 +175,10 @@ def evaluate_exact_branches(
                         # DirectBattle lets a live game retry after Showdown's hidden-trap
                         # rejection, but this branch never resolved its turn: scoring its
                         # unchanged board would read the rejected switch as a free exchange.
+                        reason = getattr(clone, "last_hidden_rejection", "") or "hidden trap"
                         raise InvalidChoice(
-                            f"branch {branch_id}: switch rejected by a hidden trap; the "
-                            "turn did not resolve"
+                            f"branch {branch_id}: choice rejected by hidden information "
+                            f"({reason}); the turn did not resolve"
                         )
                     kwargs = {
                         "branch_id": branch_id,

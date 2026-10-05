@@ -70,6 +70,11 @@ Protect/switch).
 4. Adapt: if the engine's top option is already clearly best, say so and propose it first; \
 only overrule the engine when a fact above supports it."""
 
+# Blind-options variant: no mention of the engine's ranking, which the model cannot see.
+REASONING_CHECKLIST_BLIND = REASONING_CHECKLIST.split("4. Adapt:")[0] + (
+    "4. Adapt: judge every option on the facts above; the options are listed in no "
+    "particular order, so do not assume the first ones are best.")
+
 # Prior moves/items seen in fewer than this share of a species' games are noise.
 _MIN_PRIOR_SHARE = 0.05
 
@@ -336,8 +341,10 @@ def _opponent_guess_lines(battle: Any, priors: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _fixed_text(battle: Any, team_plan: str, priors: dict[str, Any]) -> str:
-    parts = [RULES_DIGEST, REASONING_CHECKLIST]
+def _fixed_text(
+    battle: Any, team_plan: str, priors: dict[str, Any], blind: bool = False
+) -> str:
+    parts = [RULES_DIGEST, REASONING_CHECKLIST_BLIND if blind else REASONING_CHECKLIST]
     team = _safe(lambda: _our_team_lines(battle), [])
     if team:
         parts.append("## OUR TEAM (known exactly)\n" + "\n".join(team))
@@ -362,14 +369,16 @@ def _safe(fn: Any, default: Any) -> Any:
         return default
 
 
-def _fixed_for_battle(battle: Any, team_plan: str, priors: dict[str, Any]) -> str:
+def _fixed_for_battle(
+    battle: Any, team_plan: str, priors: dict[str, Any], blind: bool = False
+) -> str:
     """Build once per battle and reuse, so later turns cannot change a byte of it (item
     consumption, a Mega forme, newly revealed opponent Pokemon...)."""
-    digest = hashlib.sha256((team_plan or "").encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{int(blind)}|{team_plan or ''}".encode("utf-8")).hexdigest()
     cached = getattr(battle, _FIXED_ATTR, None)
     if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == digest:
         return str(cached[1])
-    text = _fixed_text(battle, team_plan, priors)
+    text = _fixed_text(battle, team_plan, priors, blind)
     try:
         setattr(battle, _FIXED_ATTR, (digest, text))
     except Exception:
@@ -735,7 +744,9 @@ def describe_order_text(battle: Any, order: Any) -> str:
         return str(getattr(order, "message", order))
 
 
-def _option_lines(battle: Any, scored: Sequence[Any], options: Sequence[Option]) -> list[str]:
+def _option_lines(
+    battle: Any, scored: Sequence[Any], options: Sequence[Option], blind: bool = False
+) -> list[str]:
     by_text: dict[str, tuple[int, Any]] = {}
     for rank, item in enumerate(scored, start=1):
         text = str(getattr(item.order, "message", None) or item.order)
@@ -748,6 +759,9 @@ def _option_lines(battle: Any, scored: Sequence[Any], options: Sequence[Option])
             lines.append(f"{opt.id}: {opt.order}  [{opt.note}]")
             continue
         rank, item = found
+        if blind:
+            lines.append(f"{opt.id}: {describe_order_text(battle, item.order)}  [{opt.kind}]")
+            continue
         gap = float(item.score) - top
         engine = f"engine #{rank}, score {float(item.score):.1f}" + (
             " (top)" if rank == 1 else f" ({gap:+.1f})")
@@ -798,13 +812,15 @@ def build_packet(
 
     cfg = llm_config or LLMConfig()
     policy = policy_config or PolicyConfig()
-    options = build_options(list(scored), cfg.max_options)
+    blind = bool(cfg.blind_options)
+    options = build_options(list(scored), cfg.max_options, blind=blind, seed=request_id)
     turn = _safe(lambda: int(getattr(battle, "turn", 0) or 0), 0)
     priors = _safe(lambda: set_priors_for(policy), {})
 
-    fixed = _safe(lambda: _fixed_for_battle(battle, team_plan, priors), "")
+    fixed = _safe(lambda: _fixed_for_battle(battle, team_plan, priors, blind), "")
     if not fixed:
-        fixed = "\n\n".join([RULES_DIGEST, REASONING_CHECKLIST])
+        checklist = REASONING_CHECKLIST_BLIND if blind else REASONING_CHECKLIST
+        fixed = "\n\n".join([RULES_DIGEST, checklist])
 
     sections = [f"## TURN {turn}"]
     for title, fn in (
@@ -819,7 +835,7 @@ def build_packet(
         lines = _safe(fn, [])
         if lines:
             sections.append(f"## {title}\n" + "\n".join(lines))
-    option_lines = _safe(lambda: _option_lines(battle, scored, options), None) or [
+    option_lines = _safe(lambda: _option_lines(battle, scored, options, blind), None) or [
         f"{o.id}: {o.order}  [{o.note}]" for o in options
     ]
     sections.append("## OPTIONS (answer with these IDs only)\n" + "\n".join(option_lines))
