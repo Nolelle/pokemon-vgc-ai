@@ -60,10 +60,13 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
     if consistent and bring_size:
         # Unseen opponent reserves are publicly known to exist (bring size) and to be
         # untouched. Counting them up front keeps a first reveal from moving the score.
-        score += 100.0 * max(0, bring_size - len(side.pokemon))
+        unseen = max(0, bring_size - len(side.pokemon))
+        score += (100.0 + config.exact_search_alive_weight) * unseen
     for mon in side.pokemon:
         if consistent and mon.fainted:
             continue  # poke-env keeps a fainted Pokemon's boosts and volatiles
+        if not mon.fainted:
+            score += config.exact_search_alive_weight
         score += 100.0 * _hp_fraction(mon)
         if mon.status:
             weight = (

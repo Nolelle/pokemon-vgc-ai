@@ -470,6 +470,43 @@ class PolicyConfig:
     # finished game with no winner scores 0. Each was verified on a real direct battle.
     # False is the exact legacy scorecard, kept only for same-session A/Bs.
     exact_search_consistent_accounting: bool = True
+    # Points per Pokemon still standing (brought and not fainted, unseen opponent
+    # reserves included), on top of its HP. Without it a KO was worth only the target's
+    # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,
+    # contradicting docs/search_contract.md section 4 ("faint differentials weighted above
+    # single-turn damage"). Same value as the fast search's search_faint_weight so the two
+    # judges price a KO alike. 0.0 is the legacy no-KO-term control for A/Bs.
+    exact_search_alive_weight: float = 90.0
+    # --- Speed / weather / terrain leaf value (vgc.field_control, 2026-10-05) ---
+    # Exact-branch value for who moves first and whose attacks the weather/terrain helps,
+    # over the turns AFTER the scored board (turns inside a simulated continuation are
+    # already paid for in HP). Off by default until a same-session A/B; False leaves
+    # _position_value byte-identical to the scorecard without it.
+    exact_search_field_control: bool = False
+    # How many future turns the leaf projects remaining Tailwind/Trick Room/weather/
+    # terrain over (each condition also stops at its own remaining duration).
+    exact_search_field_horizon: int = 3
+    # Per-turn multiplier for later projected turns (turn t weighs decay**(t-1)).
+    exact_search_field_decay: float = 0.8
+    # Points per projected turn for a complete move-order advantage (S_t = +1: every
+    # relevant matchup moves first for us). Starting value from the 2026-10-05 Codex
+    # design review; a full Trick Room flip for 3 turns is then worth ~2*8*2.44 = 39 pts,
+    # i.e. well under one Pokemon (100 HP + 90 alive). Uncalibrated.
+    exact_search_speed_order_weight: float = 8.0
+    # Points per projected turn per 1% of max HP of expected extra damage the current
+    # weather/terrain adds to a side's attacks (ours minus theirs), plus weather chip and
+    # Grassy healing in the same %HP currency. Uncalibrated starting value.
+    exact_search_field_fit_weight: float = 0.25
+    # --- Multi-turn exact continuation (2026-10-05) ---
+    # After the searched turn, keep each exact branch running this many more COMPLETED
+    # battle turns in the same Showdown clone, both sides playing the continuation policy
+    # below, then score the final board. 0 = the one-turn judge exactly as before.
+    exact_search_continuation_turns: int = 0
+    # Who picks moves inside a continuation: "myopic" = each side's top
+    # vgc.evaluator.score_joint_orders order; "search" = each side's top
+    # vgc.search.search_joint_orders order (the shipped fast search). Each side decides
+    # from its own fogged view of the clone.
+    exact_search_continuation_policy: str = "myopic"
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat
