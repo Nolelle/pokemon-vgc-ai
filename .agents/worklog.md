@@ -247,3 +247,10 @@
 - Built: `exact_search_consistent_accounting` (default True) fixes; `vgc_exact` player + pool harness `--player/--both` + per-arm fallback counts.
 - Found via exact A/A (62.9% p1): mirror always seated us p1 -> p2 decisions searched stale boards (30% wrong actives, 24% wrong weather). Fixed with `mirror_side`; A/A now p1 48.8 / p2 48.6. Also mirror usernames (won branch read as lost on named accounts; Codex review). p2-seat teacher labels in runs/mcv2 are suspect.
 - Tests 1203 unit + new integration seat/name tests pass; ruff clean. Accounting A/B (narrow width, 160 teams) running: runs/eval/exact_judge_accounting_ab.json.
+
+## 2026-10-05 (cont.) — field control + continuation (branch claude/exact-judge-field-horizon)
+- Built (Sonnet agents in parallel, Codex-reviewed): KO/alive term (ships 90), `vgc.field_control` speed/weather/terrain leaf (off), multi-turn exact continuation `exact_search_continuation_turns/policy` (off), `offline/measure_exact_depth.py`, `offline/diagnose_setup_ranking.py`.
+- Wins: KO term 52.5% [0.501,0.550]; myopic weight 0 53.5% (M-C train) / 53.7% (pool160) / 51.6% holdout (underpowered).
+- Nulls: field leaf (4 runs, 48.8-50.2%); continuation N=1/N=2 greedy (49.4%, 47.8%).
+- Running: N=1 with fast-search continuation and N=1 myopic, both with myopic weight 0 (runs/eval/mc_m0_depth1_*.json).
+- Disk was 99% full; freed ~8 GB (old worktree .venvs, Codex installer leftovers, Spotify cache).

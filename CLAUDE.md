@@ -601,6 +601,23 @@ its frozen value; this is not a calibration change and no new weight was added.
   search and warns above 5%. Narrow width (`search_our_candidates=4`,
   `exact_search_future_samples=1`, `search_opp_candidates=4`) plays 2880 games in ~25 min
   on 10 workers (~0.3 s/decision). Results at narrow width are not production-width claims.
+- **Follow-up results (2026-10-05, branch claude/exact-judge-field-horizon; narrow width,
+  `--player vgc_exact`, cluster-robust CIs).**
+  - KO term (`exact_search_alive_weight` 90 vs 0), 160-team pool: 52.5% [0.501, 0.550]. Ships at 90.
+  - **Drop the myopic blend** (`search_myopic_weight` 0 vs 1): M-C train 226 teams 53.5%
+    [0.501, 0.569]; archetype 160 pool 53.7% [0.508, 0.567]; M-C holdout 88 teams 51.6%
+    [0.467, 0.566] (underpowered, floor +4.1). The myopic score double-counts damage
+    (uncapped at remaining HP) on top of the exact value. The live `vgc.exact_judge`
+    already ranks by pure `exchange_value`, so it gets this for free.
+  - Field-control leaf (`vgc.field_control`, off): 50.2% (pool160), 49.3% x3 weights,
+    48.8% x3 on M-C train, 50.2% x3 with myopic 0. No effect. Diagnostic
+    (`offline/diagnose_setup_ranking.py`): setup moves are searched when legal (51/54) but
+    lose by a median ~200 pts (myopic ~86, one-turn exchange ~74); the field term's median
+    contribution is 0. Weather start turns are overwritten by poke-env every upkeep, so
+    weather duration is a guess.
+  - Multi-turn continuation (greedy myopic policy): N=1 49.4% (pool160), N=2 47.8% on M-C
+    train. Latency (narrow): N=1 p99 ~4 s, N=2 ~7 s, N=3 ~8 s myopic; production width
+    N=1 p99 ~42 s (does not fit the 12 s clock cap).
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
