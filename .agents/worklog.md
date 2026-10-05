@@ -227,3 +227,9 @@
 - Real Luna speed test (300 calls, $0.084 total incl. pilot): none p50 2.1 s / p95 3.1 s / max 4.9 s, $0.00024/call; low p50 2.9 s / p95 6.2 s / max 8.4 s, $0.00030/call; 100% valid; ~54% of input cached. Results in runs/llm/speed_test.json.
 - Codex reviews: 7 findings on this slice (shared spend meter per file + file lock, budget recomputed before calling, spread damage, hidden Speed always GUESS, split by species identity, honest grading denominators, decided-from-start classification) — all fixed. Tests 1196 passed; ruff clean.
 - Next: offline proposer screen on recorded positions (~$0.05), then equal-time calibration and the confirmation head-to-head per docs/llm_test_protocol.md.
+
+## 2026-10-05 — Exact judge review + fixes (branch claude/judge-improvement-analysis-20688c)
+- Review (Opus + Codex/Sol, independent, agreed): exact `_position_value` has no KO term, scores Trick Room/weather/terrain 0, flat boosts/status, one-turn horizon, myopic double count; bookkeeping bugs (first reveal -100, fainted boosts kept, draws, belief diagnostics).
+- Built: `exact_search_consistent_accounting` (default True) fixes; `vgc_exact` player + pool harness `--player/--both` + per-arm fallback counts.
+- Found via exact A/A (62.9% p1): mirror always seated us p1 -> p2 decisions searched stale boards (30% wrong actives, 24% wrong weather). Fixed with `mirror_side`; A/A now p1 48.8 / p2 48.6. Also mirror usernames (won branch read as lost on named accounts; Codex review). p2-seat teacher labels in runs/mcv2 are suspect.
+- Tests 1203 unit + new integration seat/name tests pass; ruff clean. Accounting A/B (narrow width, 160 teams) running: runs/eval/exact_judge_accounting_ab.json.

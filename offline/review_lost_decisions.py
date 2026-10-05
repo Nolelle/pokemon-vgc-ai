@@ -133,7 +133,11 @@ def deep_rank(mirror: LiveExactMirror, battle, memory, config: PolicyConfig, act
                 else mirror.build(battle, belief)
             )
             ranked = search_joint_orders_exact(
-                root, "p1", config, candidate_selector=selector, randomness_key=key
+                root,
+                mirror.side_for(battle),
+                config,
+                candidate_selector=selector,
+                randomness_key=key,
             )
             rankings.append((belief.weight, ranked))
     finally:

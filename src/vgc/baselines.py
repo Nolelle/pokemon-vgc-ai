@@ -73,7 +73,20 @@ def _make_vgc_shallow(team: str, battle_format: str, **kwargs) -> Player:
     return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
 
 
+def _make_vgc_exact(team: str, battle_format: str, **kwargs) -> Player:
+    """Every move from the public-information exact Showdown search (slow; offline A/Bs).
+
+    Imported lazily: it pulls in the simulator mirror, which the plain bot never needs.
+    """
+
+    from vgc.rl.exact_player import ExactSearchPlayer
+
+    config = kwargs.pop("config", None) or PolicyConfig(format_id=battle_format)
+    return ExactSearchPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
+
+
 BASELINES: dict[str, PlayerFactory] = {
+    "vgc_exact": _make_vgc_exact,
     "random": _make_random,
     "maxpower": _make_maxpower,
     "heuristic": _make_heuristic,
