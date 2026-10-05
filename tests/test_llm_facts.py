@@ -197,3 +197,16 @@ def test_threat_damage_uses_spread_target_count(monkeypatch):
     assert facts._hit_count("normal", 2, True) == 1
     assert facts._hit_count("allAdjacentFoes", 2, True) == 2
     assert facts._hit_count("allAdjacentFoes", 1, True) == 1
+
+
+def test_blind_options_hide_engine_rank_and_keep_the_same_choices(game):
+    sink, _ = game
+    battle, scored, _packet, options, turn = sink[0]
+    blind_cfg = LLMConfig(blind_options=True)
+    packet, blind = build_packet(
+        battle, scored, llm_config=blind_cfg, team_plan="", request_id=f"blind-{turn}",
+    )
+    option_block = packet.turn_text.split("## OPTIONS", 1)[1]
+    assert "engine #" not in option_block and "score" not in option_block
+    assert sorted(o.order for o in blind) == sorted(o.order for o in options)
+    assert "engine's top option" not in packet.fixed_text

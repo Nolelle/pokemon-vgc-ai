@@ -70,11 +70,11 @@ before it).
   turns reselect both sides' damaging moves jointly, but do not branch over later
   switches, Protects, or every status move. This is enough to value setup/payoff,
   mobility, and looming traps without pretending to reproduce the full Showdown engine.
-- **No opponent mega evolution.** We don't know the opponent's revealed mega item is
-  necessarily going to be used this exact turn, and modeling it would double the
-  response-candidate space for a v1 feature; `vgc.evaluator.opp_threat_score` already
-  factors the opponent's raw damage output (mega or not, whichever poke-env currently
-  reports) into the myopic half.
+- **No opponent mega evolution (unless `search_model_opponent_mega`).** By default an
+  opponent only counts as Mega once it has actually Mega Evolved on the board (its state is
+  then the Mega forme -- `vgc.sets.live_form`); a not-yet-evolved holder is modelled as its
+  base forme. With `search_model_opponent_mega` on, `_opp_mega_state` adds a Mega-evolving
+  twin of each response for a presumed stone holder (see that knob's comment).
 - **Charge/recharge moves (Solar Beam, Hyper Beam, ...) are simulated naively.**
   `resolve_exchange` calls `damage_range` directly for whatever move a response/order
   names, with no notion that a charge move's damage this turn is conditional on
@@ -141,7 +141,15 @@ from vgc.evaluator import (
 )
 from vgc.models import PolicyConfig
 from vgc.principles import REDIRECTION_MOVES, SLEEP_MOVES, harms_ally_target, utility_kind
-from vgc.sets import opponent_move_ids, opponent_state, usage_spreads_for
+from vgc.sets import (
+    evolved_mega_id,
+    mega_species_id,
+    opponent_move_ids,
+    opponent_state,
+    pre_mega_species_id,
+    usage_spreads_for,
+)
+from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -168,6 +176,9 @@ class _OppSlotAction:
     switch_state: PokemonState | None = None
     switch_species: str | None = None
     utility_value: float = 0.0
+    # Set (only under `search_model_opponent_mega`) when this action is taken AFTER the slot
+    # Mega Evolves: the Mega-evolved state `resolve_exchange` swaps in before any move.
+    mega_state: PokemonState | None = None
 
 
 # The Champions mod overrides ordinary Gen 9 sleep to use a hidden duration of either
@@ -292,7 +303,8 @@ def _describe_opp_slot_action(action: _OppSlotAction) -> str:
     if action.kind == "switch":
         return f"switch->{action.switch_species or 'unknown'}"
     target = f"@our{action.target_our_slot}" if action.target_our_slot is not None else ""
-    return f"{action.move_id}{target}"
+    mega = "+mega" if action.mega_state is not None else ""
+    return f"{action.move_id}{target}{mega}"
 
 
 def _our_pressure_on_opp_slot(ctx: _Context, opp_idx: int) -> float:
@@ -375,6 +387,61 @@ def _opp_switch_pool(ctx: _Context, config: PolicyConfig) -> list[tuple[str, obj
             continue
         pool.append((species_id, mon))
     return pool
+
+
+def _opp_mega_state(opp_idx: int, ctx: _Context, config: PolicyConfig) -> PokemonState | None:
+    """The Mega-evolved state of opponent slot `opp_idx` if it may Mega Evolve THIS turn.
+
+    None unless `search_model_opponent_mega` is on, the opponent has not Mega Evolved yet
+    (one per side per battle), and the slot's Pokemon is presumed to hold its Mega stone:
+    the item is known, or -- hidden, the usual ladder case -- the species' corpus set prior
+    holds the stone in at least `search_opp_mega_prior_share` of its appearances.
+    """
+    if not config.search_model_opponent_mega:
+        return None
+    if getattr(ctx.battle, "opponent_used_mega_evolve", False):
+        return None
+    mon = ctx.opp_pokemon[opp_idx]
+    state = ctx.opp_states[opp_idx]
+    if mon is None or state is None or evolved_mega_id(mon) is not None:
+        return None
+    item = state.item
+    if item is None:
+        entry = (ctx.priors.get("species") or {}).get(state.species_id) if ctx.priors else None
+        appearances = (entry or {}).get("appearances", 0)
+        if not appearances:
+            return None
+        for item_id, count in ((entry or {}).get("items") or {}).items():
+            if (
+                mega_species_id(state.species_id, item_id) is not None
+                and count / appearances >= config.search_opp_mega_prior_share
+            ):
+                item = item_id
+                break
+    if mega_species_id(state.species_id, item) is None:
+        return None
+    return mega_evolved_state(replace(state, item=item, boosts=dict(state.boosts)))
+
+
+def _move_value_into_us(attacker: PokemonState, action: _OppSlotAction, ctx: _Context) -> float | None:
+    """`_opp_slot_candidates`' cheap enumeration value for `action`'s move with `attacker`
+    (a Mega-evolved state), or None if the move is unsupported/immune into every target.
+    """
+    our_alive = ctx.our_alive()
+    spread = action.target_our_slot is None
+    field_state = ctx.field_state(
+        defender_is_ours=True, num_targets=max(1, len(our_alive)) if spread else 1
+    )
+    total, supported = 0.0, False
+    for our_idx in our_alive if spread else [action.target_our_slot]:
+        our_state = ctx.our_states[our_idx]
+        if our_state is None:
+            continue
+        result = damage_range(attacker, our_state, action.move_id, field_state)
+        if result.breakdown["move_supported"] and not result.breakdown["immune"]:
+            supported = True
+        total += result.expected_percent
+    return total if supported else None
 
 
 def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> list[_OppSlotAction]:
@@ -496,7 +563,9 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     usage = usage_spreads_for(config)
     switch_actions: list[_OppSlotAction] = []
     for species_id, bench_mon in _opp_switch_pool(ctx, config):
-        bench_state = opponent_state(bench_mon, usage=usage)
+        bench_state = opponent_state(
+            bench_mon, usage=usage, evolved_form=config.mega_state_uses_evolved_form
+        )
         worst_incoming = 0.0
         for our_idx in ctx.our_alive():
             our_state = ctx.our_states[our_idx]
@@ -522,6 +591,18 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     switch_actions.sort(key=lambda action: action.value, reverse=True)
     candidates.extend(switch_actions[: max(0, config.search_opp_switches_per_slot)])
 
+    mega_state = _opp_mega_state(opp_idx, ctx, config)
+    if mega_state is not None:
+        # Mega Evolution is free (it precedes the move), so every non-switch candidate has
+        # a twin that evolves first. Damaging twins are re-valued with the Mega's stats.
+        for action in [a for a in candidates if a.kind in {"move", "protect", "utility"}]:
+            value = action.value
+            if action.kind == "move":
+                value = _move_value_into_us(mega_state, action, ctx)
+                if value is None:
+                    continue
+            candidates.append(replace(action, value=value, mega_state=mega_state))
+
     if not candidates:
         candidates.append(_OppSlotAction(kind="none"))
     return candidates
@@ -543,6 +624,8 @@ def _enumerate_opp_responses(ctx: _Context, config: PolicyConfig) -> list[OppRes
                 and slot0_action.switch_species == slot1_action.switch_species
             ):
                 continue
+            if slot0_action.mega_state is not None and slot1_action.mega_state is not None:
+                continue  # one Mega Evolution per side per battle
             joint_score = slot0_action.value + slot1_action.value
             joint.append(
                 (
@@ -679,6 +762,10 @@ class _Action:
     # Probability the actor is awake/otherwise able to execute this action. The first
     # sleep fix uses the Champions-specific duration plus poke-env's observed counter.
     action_probability: float = 1.0
+    # Stat-stage changes to simulate when this utility action resolves. Only ever set
+    # while PolicyConfig.search_apply_setup_boosts is on (see `_attach_setup_boosts`), so
+    # with the knob off `_apply_action` never sees one.
+    boost_plan: SetupBoost | None = None
 
 
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
@@ -711,7 +798,8 @@ def _build_our_actions(
             continue
         target = single.order
         if isinstance(target, Pokemon):
-            our_states[slot] = _our_pokemon_state(target)  # switch: no action this turn
+            # switch: no action this turn
+            our_states[slot] = _our_pokemon_state(target, config.mega_state_uses_evolved_form)
             continue
         if not isinstance(target, Move):
             continue  # PassBattleOrder / str message order -- no-op
@@ -748,6 +836,8 @@ def _build_our_actions(
                 )
             else:
                 kind = utility_kind(move_id)
+                if kind is None and config.search_apply_setup_boosts and move_id in SETUP_BOOSTS:
+                    kind = "setup"  # e.g. Coaching/Aromatic Mist: no flat proxy exists today
                 if kind is not None:
                     utility_scale = {
                         "speed_control": 1.0,
@@ -871,6 +961,81 @@ def _build_opp_actions(opp_response: OppResponse, ctx: _Context) -> list[_Action
             )
         )
     return actions
+
+
+def _attach_setup_boosts(actions: list[_Action], config: PolicyConfig) -> None:
+    """Mark boost-modelled utility actions (either side) so `_apply_action` simulates their
+    stage changes, and replace their flat utility proxy by
+    `setup_boost_flat_utility_scale` x the proxy.
+
+    With the default scale of 0.0 the value of a setup move comes only from the
+    simulated payoff (damage and Speed through `forecast_position`), not from that payoff
+    plus a flat credit for the same thing. Only called when
+    `PolicyConfig.search_apply_setup_boosts` is on.
+    """
+    for action in actions:
+        if action.kind != "utility" or action.move_id not in SETUP_BOOSTS:
+            continue
+        action.boost_plan = SETUP_BOOSTS[action.move_id]
+        action.utility_value *= config.setup_boost_flat_utility_scale
+
+
+def _apply_setup_boost(
+    action: _Action,
+    actor_states: list[PokemonState | None],
+    weather: str | None,
+    result: ExchangeResult,
+) -> None:
+    """Apply `action.boost_plan` to the actor (and partner) in the post-exchange state.
+
+    Stages clamp at +/-6; a move with an HP cost (Belly Drum, Clangorous Soul) fails
+    when the actor is at or below the cost, or when it would change no stage, and
+    otherwise charges that HP to the actor's side like any other HP loss.
+    """
+    plan = action.boost_plan
+    actor = actor_states[action.slot]
+    if plan is None or actor is None:
+        return
+    sun = weather == "sun"
+    cost = 0
+    if plan.hp_cost > 0.0:
+        max_hp = actor.max_hp()
+        if max_hp <= 1 or actor.hp_or_max() <= max_hp * plan.hp_cost:
+            return
+        trial = dict(actor.boosts)
+        apply_stages(
+            trial,
+            plan.self_stages,
+            ability=actor.ability,
+            sun=sun,
+            doubled_in_sun=plan.doubled_in_sun,
+        )
+        if trial == actor.boosts:
+            return  # every stat already maxed: the move fails and costs nothing
+        cost = int(max_hp * plan.hp_cost)
+        actor.current_hp = actor.hp_or_max() - cost
+        loss_pct = cost / max_hp * 100.0
+        if action.side == "our":
+            result.our_hp_lost_pct += loss_pct
+        else:
+            result.opp_hp_lost_pct += loss_pct
+    apply_stages(
+        actor.boosts,
+        plan.self_stages,
+        ability=actor.ability,
+        sun=sun,
+        doubled_in_sun=plan.doubled_in_sun,
+    )
+    if plan.ally_stages:
+        ally = actor_states[1 - action.slot]
+        if ally is not None and ally.hp_or_max() > 0:
+            apply_stages(
+                ally.boosts,
+                plan.ally_stages,
+                ability=ally.ability,
+                sun=sun,
+                doubled_in_sun=plan.doubled_in_sun,
+            )
 
 
 def _action_order_cmp(a: _Action, b: _Action, trick_room: bool) -> int:
@@ -1004,6 +1169,10 @@ def _apply_action(
             result.opp_utility_value += action.utility_value * realized_probability
             if action.move_id in REDIRECTION_MOVES:
                 opp_redirector[0] = action.slot
+        if action.boost_plan is not None and actor_probability >= 0.5:
+            # Modal-branch convention (same as Tailwind/screens below): the stage changes
+            # persist into the forecast only when the move more likely than not goes off.
+            _apply_setup_boost(action, actor_states, weather_for_exchange, result)
         # Preserve the subset of global setup effects the damage/speed engine can
         # faithfully use on following turns. This is mechanical state, separate from
         # the flat immediate utility proxy above.
@@ -1103,7 +1272,15 @@ def resolve_exchange(
     for slot, slot_action in enumerate((opp_response.slot0, opp_response.slot1)):
         if slot_action.kind == "switch" and slot_action.switch_state is not None:
             opp_states[slot] = _copy_state(slot_action.switch_state)
+        elif slot_action.mega_state is not None:
+            # Mega Evolution resolves before any move, like ours in `_build_our_actions`.
+            opp_states[slot] = _copy_state(slot_action.mega_state)
+            mega_weather = _ABILITY_WEATHER.get(slot_action.mega_state.ability)
+            if mega_weather is not None and weather_override is None:
+                weather_for_exchange = mega_weather
     opp_actions = _build_opp_actions(opp_response, ctx)
+    if config.search_apply_setup_boosts:
+        _attach_setup_boosts(our_actions + opp_actions, config)
 
     our_tailwind = SideCondition.TAILWIND in ctx.battle.side_conditions
     opp_tailwind = SideCondition.TAILWIND in ctx.battle.opponent_side_conditions
@@ -1293,7 +1470,11 @@ def _matching_mon(state: PokemonState, mons: list[Pokemon]) -> Pokemon | None:
 
     for mon in mons:
         species_id = to_id(getattr(mon, "species", None))
-        if species_id == state.species_id or state.species_id.startswith(species_id):
+        if (
+            species_id == state.species_id
+            or state.species_id.startswith(species_id)
+            or species_id == pre_mega_species_id(state.species_id)
+        ):
             return mon
     return None
 
@@ -1431,7 +1612,7 @@ def _best_joint_forecast_attacks(
 
 
 def _forecast_bench_states(
-    side: str, ctx: _Context, usage: dict[str, list[dict]]
+    side: str, ctx: _Context, usage: dict[str, list[dict]], evolved_form: bool = True
 ) -> list[PokemonState]:
     active_ids = {
         to_id(mon.species)
@@ -1449,13 +1630,13 @@ def _forecast_bench_states(
         if selected:
             mons = selected
         return [
-            _our_pokemon_state(mon)
+            _our_pokemon_state(mon, evolved_form)
             for mon in mons
             if not mon.fainted and to_id(mon.species) not in active_ids
         ][:2]
     mons = list((getattr(ctx.battle, "opponent_team", None) or {}).values())
     return [
-        opponent_state(mon, usage=usage)
+        opponent_state(mon, usage=usage, evolved_form=evolved_form)
         for mon in mons
         if not mon.fainted and to_id(mon.species) not in active_ids
     ][:2]
@@ -1503,10 +1684,18 @@ def forecast_position(
     our_states = [_copy_state(state) for state in exchange.our_states]
     opp_states = [_copy_state(state) for state in exchange.opp_states]
     our_safe = _safe_switch_count(
-        "our", _forecast_bench_states("our", ctx, usage_spreads_for(config)), opp_states, exchange, ctx, config
+        "our",
+        _forecast_bench_states(
+            "our", ctx, usage_spreads_for(config), config.mega_state_uses_evolved_form
+        ),
+        opp_states, exchange, ctx, config
     )
     opp_safe = _safe_switch_count(
-        "opp", _forecast_bench_states("opp", ctx, usage_spreads_for(config)), our_states, exchange, ctx, config
+        "opp",
+        _forecast_bench_states(
+            "opp", ctx, usage_spreads_for(config), config.mega_state_uses_evolved_form
+        ),
+        our_states, exchange, ctx, config
     )
     our_loss = opp_loss = 0.0
     our_faints = opp_faints = 0
@@ -1560,7 +1749,8 @@ def forecast_position(
             if (
                 before is not None
                 and after is not None
-                and before.species_id in memory.plan_breakers
+                and {before.species_id, pre_mega_species_id(before.species_id)}
+                & memory.plan_breakers
                 and before.hp_or_max() > 0
                 and after.hp_or_max() <= 0
             ):
@@ -1569,7 +1759,8 @@ def forecast_position(
             if (
                 before is not None
                 and after is not None
-                and before.species_id == memory.current_win_con
+                and memory.current_win_con
+                in {before.species_id, pre_mega_species_id(before.species_id)}
                 and before.hp_or_max() > 0
                 and after.hp_or_max() <= 0
             ):
@@ -1616,7 +1807,10 @@ def _value_head_delta(v_after: float | None, v_before: float | None, config: Pol
     return config.value_head_weight * 100.0 * (v_after - v_before)
 
 
-def _order_tags(order: DoubleBattleOrder) -> frozenset[str]:
+def _order_tags(order: DoubleBattleOrder, setup_boosts: bool = False) -> frozenset[str]:
+    """Strategic-coverage tags for the diverse shortlist. ``setup_boosts`` (the
+    `search_apply_setup_boosts` knob) additionally tags boost-modelled moves with no
+    `utility_kind` of their own (Coaching, Aromatic Mist, Tidy Up) as ``"setup"``."""
     tags: set[str] = set()
     moves: list[str] = []
     for single in (order.first_order, order.second_order):
@@ -1633,6 +1827,8 @@ def _order_tags(order: DoubleBattleOrder) -> frozenset[str]:
             kind = utility_kind(move_id)
             if kind:
                 tags.add(kind)
+            elif setup_boosts and move_id in SETUP_BOOSTS:
+                tags.add("setup")
     if moves and not any(move_id in _PROTECT_MOVES for move_id in moves):
         tags.add("non_protect")
     if len(moves) == 2 and all(load_moves().get(move_id, {}).get("category") != "Status" for move_id in moves):
@@ -1653,6 +1849,7 @@ def _select_search_candidates(
     # the horizon sees at least one mobility, setup/control, all-out offense, and
     # non-Protect line when those exist anywhere in the legal list.
     selected = list(myopic[: max(1, cutoff // 2)])
+    tag_setup = config.search_apply_setup_boosts
     desired = (
         "switch",
         "speed_control",
@@ -1665,13 +1862,13 @@ def _select_search_candidates(
     for tag in desired:
         if len(selected) >= cutoff:
             break
-        if any(tag in _order_tags(entry.order) for entry in selected):
+        if any(tag in _order_tags(entry.order, tag_setup) for entry in selected):
             continue
         candidate = next(
             (
                 entry
                 for entry in myopic
-                if entry not in selected and tag in _order_tags(entry.order)
+                if entry not in selected and tag in _order_tags(entry.order, tag_setup)
             ),
             None,
         )

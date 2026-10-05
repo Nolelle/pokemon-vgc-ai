@@ -50,12 +50,17 @@ def public_information_exact_search(
     mirror: LiveExactMirror | None = None,
     candidate_selector: ExactCandidateSelector | None = None,
     audit: MutableMapping[str, object] | None = None,
+    rankings_out: list | None = None,
 ):
     """Rank actions using only a public reconstruction of ``battle``.
 
     A supplied mirror may be reused across decisions to avoid repeatedly starting its
     worker.  The temporary battle root is always closed here; a mirror created here is
     also closed here.  Attached private simulator attributes are never inspected.
+
+    ``rankings_out``, when given, receives the per-belief ``(weight, ranking)`` pairs
+    before they are combined, for callers (the live exact judge) that need each belief's
+    own exchange values rather than only the probability-weighted score.
     """
 
     if not own_packed_team:
@@ -93,6 +98,8 @@ def public_information_exact_search(
                     ),
                 )
             )
+        if rankings_out is not None:
+            rankings_out.extend(rankings)
         return combine_belief_rankings(rankings)
     finally:
         if root is not None:

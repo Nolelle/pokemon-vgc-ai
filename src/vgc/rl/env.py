@@ -40,7 +40,12 @@ instead. The one exception is Showdown's `[Unavailable choice]` for a hidden tra
 side told only `maybeTrapped` (e.g. facing a Mega Gengar's unannounced Shadow Tag) is
 allowed to try a switch, is rejected, and is immediately sent an updated request with
 `trapped` set -- the same flow poke-env follows on the ladder. `_ingest` accepts exactly
-that case (see `_is_hidden_trap_rejection`) and leaves the side owing a new choice.
+that case (see `_is_hidden_trap_rejection`) and leaves the side owing a new choice. The
+same holds for a move secretly disabled by hidden information (e.g. an unrevealed Imprison
+or Cursed Body): Showdown answers `[Unavailable choice] Can't move: X's Y is disabled` and
+re-sends the request with that move disabled. Showdown only ever uses `[Unavailable
+choice]` after it has updated the request (sim/side.ts `emitChoiceError`), so both cases
+are hidden-information rejections, not legality bugs; `[Invalid choice]` stays fatal.
 Same reasoning for unknown protocol messages: rather than skipping anything we
 do not recognize (which would silently drop battle state), only the known-cosmetic tags
 in `_COSMETIC_MESSAGES` are skipped and everything else reaches poke-env, which raises
@@ -637,6 +642,7 @@ class DirectBattle:
                 if _is_hidden_trap_rejection(battle, message):
                     hidden_trap_rejection = True
                     self.hidden_trap_rejections = getattr(self, "hidden_trap_rejections", 0) + 1
+                    self.last_hidden_rejection = message
                     continue
                 raise InvalidChoice(f"{side} in battle {self.battle_id}: {message}")
             elif tag in _COSMETIC_MESSAGES:
@@ -677,6 +683,7 @@ class DirectBattle:
 
 
 _HIDDEN_TRAP_REJECTION = "[Unavailable choice] Can't switch: The active Pokémon is trapped"
+_HIDDEN_DISABLE_REJECTION = "[Unavailable choice] Can't move: "
 
 
 def _is_hidden_trap_rejection(battle: Any, message: str) -> bool:
@@ -685,6 +692,10 @@ def _is_hidden_trap_rejection(battle: Any, message: str) -> bool:
     Only when the side was told `maybeTrapped` and not `trapped` -- a switch attempted
     while the request already said `trapped` is our legality bug and stays fatal.
     """
+    if message.startswith(_HIDDEN_DISABLE_REJECTION) and message.endswith(" is disabled"):
+        # A hidden disable (Imprison, Cursed Body...): Showdown already updated and
+        # re-sent the request, see the module docstring.
+        return True
     if not message.startswith(_HIDDEN_TRAP_REJECTION):
         return False
     maybe = list(getattr(battle, "maybe_trapped", None) or [])

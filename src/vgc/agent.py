@@ -88,6 +88,9 @@ class VgcPlayer(Player):
         self.config = config or PolicyConfig()
         record_decision_replays = bool(player_kwargs.pop("record_decision_replays", False))
         supplied_team = player_kwargs.get("team")
+        # The exact packed team string, for the live exact judge's public mirror
+        # (`PolicyConfig.exact_judge_live`); None when the team was not supplied as text.
+        self._own_packed_team = supplied_team if isinstance(supplied_team, str) else None
         self._decision_replay_recorder = (
             DecisionReplayRecorder(
                 own_packed_team=supplied_team if isinstance(supplied_team, str) else None,
@@ -390,6 +393,34 @@ class VgcPlayer(Player):
         return self.choose_random_move(battle)
 
     def _search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
+        """The fast search, then (opt-in) the exact judge over its best candidates.
+
+        With `PolicyConfig.exact_judge_live` off this is exactly `_fast_search`. With it
+        on, `vgc.exact_judge` re-ranks the fast search's top candidates through the public
+        exact mirror and returns the list with the exact-best order first; any failure or
+        timeout returns the fast search's own list.
+        """
+        scored = self._fast_search(battle, memory)
+        if self.config.exact_judge_live and scored:
+            scored = self._exact_judge().rerank(battle, memory, scored)
+        return scored
+
+    def _exact_judge(self):
+        judge = getattr(self, "_exact_judge_obj", None)
+        if judge is None:
+            from vgc.exact_judge import ExactJudge  # lazy: nothing loads when the knob is off
+
+            judge = ExactJudge(self.config, getattr(self, "_own_packed_team", None))
+            self._exact_judge_obj = judge
+        return judge
+
+    @property
+    def exact_judge_log(self) -> list[dict[str, object]]:
+        """One record per judged decision (empty when the judge is off or never ran)."""
+        judge = getattr(self, "_exact_judge_obj", None)
+        return judge.log if judge is not None else []
+
+    def _fast_search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
         """`search_joint_orders`, plus the LLM proposer (or the equal-time control's extra
         candidates) when configured. With both off this is exactly the plain call."""
         if self.config.llm_proposer_enabled:
@@ -414,7 +445,14 @@ class VgcPlayer(Player):
         evaluator is disabled.
         """
         if self.config.use_heuristic_evaluator:
-            return build_team_order(battle, self.config)
+            order = build_team_order(battle, self.config)
+            if self.config.llm_preview_enabled:
+                # Off by default. The heuristic order above is the fallback for every
+                # LLM failure (see vgc.llm.preview.choose_preview, which never raises).
+                from vgc.llm.preview import choose_preview
+
+                order = choose_preview(battle, self.config, order)
+            return order
         return self.random_teampreview(battle)
 
     # --- clock guard ----------------------------------------------------------------

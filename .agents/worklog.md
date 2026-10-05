@@ -227,3 +227,17 @@
 - Real Luna speed test (300 calls, $0.084 total incl. pilot): none p50 2.1 s / p95 3.1 s / max 4.9 s, $0.00024/call; low p50 2.9 s / p95 6.2 s / max 8.4 s, $0.00030/call; 100% valid; ~54% of input cached. Results in runs/llm/speed_test.json.
 - Codex reviews: 7 findings on this slice (shared spend meter per file + file lock, budget recomputed before calling, spread damage, hidden Speed always GUESS, split by species identity, honest grading denominators, decided-from-start classification) — all fixed. Tests 1196 passed; ruff clean.
 - Next: offline proposer screen on recorded positions (~$0.05), then equal-time calibration and the confirmation head-to-head per docs/llm_test_protocol.md.
+
+## 2026-10-04 — Luna screen fails; exact judge wins (branch claude/clock-guard-llm-harness)
+- Luna proposer offline screen: ranked prompt anchored to engine (2 novel/733); blind prompt (LLMConfig.blind_options) novel on 200/300 but +2.3 pts vs matched engine-rank control, CI [−2.0, +6.7] → paused. Spend ~$0.31 total.
+- Fast-search A/Bs (2 owner teams vs 226 train teams, 1,808 games, MDE ~1.7): A/A 49.7; shortlist 20 49.5, 40 49.8; setup boosts 48.9; Mega fix 49.8 (kept); opponent Mega 50.3.
+- Mega bug fixed: poke-env keeps base species after Mega; states now use the Mega forme (legacy knob mega_state_uses_evolved_form). poke_env_compat patches -mega overwriting Mega-Z formes.
+- exact_judge_live (public exact search re-ranks fast top-6, ~0.5 s/decision): 54.8% [0.527,0.569] train; HOLDOUT 54.4% [0.513,0.575]. Timed local smoke OK. Ladder: --exact-judge.
+- Running: judge tuning on train split (top_k 10, extra_myopic 3, future_samples 4). Confirm any winner on holdout before adopting.
+
+## 2026-10-04 (late) — LLM roles settled: move proposer closed, preview advisor wins
+- Fair proposer game test (exact judge ± Luna none, 5 workers, 0 rate limits): 50.2% [0.483,0.521]. GPT-6.1 Sol (`gpt-6.1-sol`, min effort low) offline +3.0 pts [−0.2,+6.2] ≈ Luna low. Move-proposer line CLOSED.
+- Team-preview advisor (llm_preview_enabled; blind; both arms exact judge; 2 owner teams vs 226 train teams): none 49.6%, low 51.6%, medium 53.9% [0.516,0.562]; HOLDOUT (88 teams, 1,408 games) medium 53.6% [0.508,0.564]. p50 15 s, p95 23 s, ~0.4% timeouts → heuristic fallback.
+- Ladder: `ladder/run_ladder.py --exact-judge --llm-preview medium`.
+- Rate limits: tier-1 500K TPM → ≤5 parallel games when the LLM is called per turn; preview (1 call/game) is fine at 9.
+- LLM spend total ~$9.36 of the $20 cap.

@@ -32,6 +32,20 @@ Proposals
                                    (``"/choose move rockslide, move earthquake"``).
                                    Orders illegal in the position are reported, not scored.
 
+Paired mode (``--compare LUNA.jsonl CONTROL.jsonl``)
+---------------------------------------------------
+The proposer screen (``offline/propose_positions.py``): two proposal files on the same
+positions.  Only each file's NOVEL orders (``novel_orders``: orders the live search did not
+already score) are graded, all in ONE exact search per position so the two arms share the
+engine pick, the belief branches and the random futures.  Per source it reports the share of
+ALL positions where a novel proposal beats the engine's pick by > margin (uncovered positions
+count as no improvement), coverage, and mean best gain; plus the PAIRED difference
+luna - control with a team-clustered CI (``clustered_mean`` over per-position differences,
+clustered by opponent team), for all positions and for contested-only ones.  Positions whose
+Luna call failed (status != ok) are excluded by default (``--keep-failed-calls`` keeps them).
+``--matched-count`` truncates the control to the number of Luna's novel orders (the control
+otherwise gets at least one order even when Luna proposed none).
+
 Value
 -----
 ``--metric exchange_value`` (default) is the pure exact one-turn position change from the
@@ -93,6 +107,16 @@ def load_proposals(path: Path) -> dict[str, list[str]]:
         if line.strip():
             row = json.loads(line)
             out.setdefault(str(row["position_id"]), []).extend(str(o) for o in row["orders"])
+    return out
+
+
+def load_rows(path: Path) -> dict[str, dict[str, Any]]:
+    """Proposal rows keyed by position id (the last row for an id wins)."""
+    out: dict[str, dict[str, Any]] = {}
+    for line in path.read_text().splitlines():
+        if line.strip():
+            row = json.loads(line)
+            out[str(row["position_id"])] = row
     return out
 
 
@@ -255,6 +279,184 @@ def grade_position(
     }
 
 
+def _source_view(
+    graded: dict[str, Any], keys: list[str], margin: float
+) -> dict[str, Any]:
+    """One arm's view of a graded position: only ``keys`` count as that arm's proposals."""
+
+    wanted = set(keys)
+    mine = [o for o in graded["orders"] if o["role"] == "proposal" and o["order"] in wanted]
+    best = max(mine, key=lambda row: row["value"], default=None)
+    gain = best["value"] - graded["engine_value"] if best else None
+    return {
+        "position_id": graded["position_id"],
+        "split": graded["split"],
+        "opp_team_id": graded["opp_team_id"],
+        "decided": graded["decided"],
+        "n_orders": len(keys),
+        "n_graded": len(mine),
+        "best_order": best["order"] if best else None,
+        "gain": gain,
+        "beats": bool(gain is not None and gain > margin),
+    }
+
+
+def grade_paired_position(
+    position: dict[str, Any],
+    run_dir: Path,
+    luna: dict[str, Any],
+    control: dict[str, Any],
+    config: PolicyConfig,
+    metric: str,
+    margin: float,
+    matched_count: bool = False,
+) -> dict[str, Any]:
+    """Grade the union of both arms' novel orders in one search; split the values by arm."""
+
+    luna_keys = [str(o) for o in luna["novel_orders"]]
+    control_keys = [str(o) for o in control["novel_orders"]]
+    if matched_count:
+        control_keys = control_keys[: len(luna_keys)]
+    union = list(dict.fromkeys([*luna_keys, *control_keys]))
+    graded = grade_position(position, run_dir, union, config, metric, margin)
+    views = {
+        "luna": _source_view(graded, luna_keys, margin),
+        "control": _source_view(graded, control_keys, margin),
+    }
+    return {
+        "position_id": position["position_id"],
+        "split": position["split"],
+        "opp_team_id": position["opp_team_id"],
+        "decided": graded["decided"],
+        "engine_order": graded["engine_order"],
+        "engine_value": graded["engine_value"],
+        "luna": views["luna"],
+        "control": views["control"],
+        "luna_status": luna.get("status"),
+        "overlap_orders": sorted(set(luna_keys) & set(control_keys)),
+        "orders": graded["orders"],
+        "illegal_proposals": graded["illegal_proposals"],
+        "belief_branches": graded["belief_branches"],
+        "rebuild_seconds": graded["rebuild_seconds"],
+        "search_seconds": graded["search_seconds"],
+        "total_seconds": graded["total_seconds"],
+    }
+
+
+def _paired_job(job: tuple) -> dict[str, Any]:
+    position, run_dir, luna, control, config, metric, margin, matched = job
+    try:
+        return grade_paired_position(
+            position, Path(run_dir), luna, control, config, metric, margin, matched
+        )
+    except Exception as exc:  # noqa: BLE001 - one bad position must not end the run
+        return {
+            "position_id": position["position_id"],
+            "split": position["split"],
+            "opp_team_id": position["opp_team_id"],
+            "error": f"{type(exc).__name__}: {exc}",
+            "trace": traceback.format_exc(limit=4),
+        }
+
+
+def _clustered(rows: list[dict[str, Any]], value) -> dict[str, Any]:
+    """Cluster-robust mean (by opponent team) of ``value(row)`` with a 95% interval."""
+    clusters: dict[str, list[float]] = {}
+    for row in rows:
+        clusters.setdefault(row["opp_team_id"], []).append(float(value(row)))
+    cm = clustered_mean(list(clusters.items()))
+    half = 1.96 * cm.clustered_se
+    return {
+        "mean": cm.mean,
+        "ci95": [cm.mean - half, cm.mean + half],
+        "positions": cm.items,
+        "opponent_teams": cm.clusters,
+        "cluster_robust_se": cm.clustered_se,
+        "se_floor": cm.se_floor,
+    }
+
+
+def _capped_gain(view: dict[str, Any]) -> float:
+    return 0.0 if view["gain"] is None else min(max(view["gain"], 0.0), CAP)
+
+
+def summarize_paired(results: list[dict[str, Any]], margin: float) -> dict[str, Any]:
+    graded = [r for r in results if "error" not in r]
+
+    def block(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        if not rows:
+            return {"positions": 0}
+        out: dict[str, Any] = {
+            "positions": len(rows),
+            "opponent_teams": len({r["opp_team_id"] for r in rows}),
+        }
+        for source in ("luna", "control"):
+            out[source] = {
+                f"overall_share_novel_beats_engine_by_gt_{margin:g}": _share(
+                    [r[source] for r in rows], lambda v: v["beats"]
+                ),
+                "coverage_share": _share(
+                    [r[source] for r in rows], lambda v: v["gain"] is not None
+                ),
+                "mean_best_gain_capped_300_all_positions": _clustered(
+                    [r[source] for r in rows], _capped_gain
+                ),
+                "mean_novel_orders_per_position": statistics.fmean(
+                    r[source]["n_orders"] for r in rows
+                ),
+            }
+        out["paired_luna_minus_control"] = {
+            f"share_beats_by_gt_{margin:g}": _clustered(
+                rows, lambda r: float(r["luna"]["beats"]) - float(r["control"]["beats"])
+            ),
+            "coverage_share": _clustered(
+                rows,
+                lambda r: float(r["luna"]["gain"] is not None)
+                - float(r["control"]["gain"] is not None),
+            ),
+            "mean_best_gain_capped_300": _clustered(
+                rows, lambda r: _capped_gain(r["luna"]) - _capped_gain(r["control"])
+            ),
+        }
+        out["positions_luna_only_beats"] = sum(
+            1 for r in rows if r["luna"]["beats"] and not r["control"]["beats"]
+        )
+        out["positions_control_only_beats"] = sum(
+            1 for r in rows if r["control"]["beats"] and not r["luna"]["beats"]
+        )
+        out["positions_both_beat"] = sum(
+            1 for r in rows if r["control"]["beats"] and r["luna"]["beats"]
+        )
+        out["positions_with_overlapping_orders"] = sum(1 for r in rows if r["overlap_orders"])
+        return out
+
+    seconds = [r["total_seconds"] for r in graded]
+    return {
+        "positions_graded": len(graded),
+        "positions_errored": len(results) - len(graded),
+        "error_reasons": sorted({r["error"][:100] for r in results if "error" in r}),
+        "all": block(graded),
+        "contested_only": block([r for r in graded if not r["decided"]]),
+        "decided_positions": sum(1 for r in graded if r["decided"]),
+        "by_split": {
+            split: block([r for r in graded if r["split"] == split])
+            for split in sorted({r["split"] for r in graded})
+        },
+        "seconds_per_position": {
+            "mean": statistics.fmean(seconds) if seconds else None,
+            "median": statistics.median(seconds) if seconds else None,
+            "max": max(seconds) if seconds else None,
+        },
+        "illegal_proposals": sum(len(r["illegal_proposals"]) for r in graded),
+        "caveat": (
+            "Both arms add orders the live search did NOT score; the paired difference is the "
+            "quality of WHICH orders were added, judged by one-turn exact Showdown value at "
+            "diagnostic width (a filter, not a win rate). Power is set by the number of "
+            "distinct opponent teams; read the CI, not the point estimate."
+        ),
+    }
+
+
 def _job(job: tuple) -> dict[str, Any]:
     position, run_dir, proposals, config, metric, margin = job
     try:
@@ -370,6 +572,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("positions_dir", type=Path, help="runs/positions/<run>")
     ap.add_argument("--proposals", default="engine-rank-2..4", help="engine-rank-A..B or a JSONL file")
+    ap.add_argument("--compare", nargs=2, type=Path, metavar=("LUNA", "CONTROL"), default=None,
+                    help="paired mode: two proposal JSONL files (see the docstring)")
+    ap.add_argument("--keep-failed-calls", action="store_true",
+                    help="paired mode: keep positions whose Luna call did not return advice")
+    ap.add_argument("--matched-count", action="store_true",
+                    help="paired mode: truncate the control to Luna's number of novel orders")
     ap.add_argument("--split", choices=("all", "tune", "test"), default="all")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--metric", choices=METRICS, default="exchange_value")
@@ -396,6 +604,8 @@ def main() -> int:
         positions = [p for p in positions if p["split"] == args.split]
     if args.limit:
         positions = positions[: args.limit]
+    if args.compare:
+        return run_paired(args, run_dir, positions)
     rank_spec = parse_rank_spec(args.proposals)
     file_proposals = None if rank_spec else load_proposals(Path(args.proposals))
     config = grade_config(args)
@@ -444,6 +654,78 @@ def main() -> int:
     print(json.dumps(summary, indent=2))
     print(f"wrote {out_path}")
     return 0
+
+
+def run_paired(args: argparse.Namespace, run_dir: Path, positions: list[dict[str, Any]]) -> int:
+    luna_rows, control_rows = load_rows(args.compare[0]), load_rows(args.compare[1])
+    config = grade_config(args)
+    jobs, skipped = [], {"missing_row": 0, "failed_call": 0}
+    for position in positions:
+        pid = position["position_id"]
+        luna, control = luna_rows.get(pid), control_rows.get(pid)
+        if luna is None or control is None:
+            skipped["missing_row"] += 1
+            continue
+        if not args.keep_failed_calls and luna.get("status") not in (None, "ok"):
+            skipped["failed_call"] += 1
+            continue
+        jobs.append(
+            (position, str(run_dir), luna, control, config, args.metric, args.margin,
+             args.matched_count)
+        )
+    print(f"paired grading {len(jobs)} positions (skipped {skipped})", flush=True)
+    started = time.perf_counter()
+    results: list[dict[str, Any]] = []
+    iterator = (
+        ProcessPoolExecutor(max_workers=args.workers).map(_paired_job, jobs)
+        if args.workers > 1
+        else map(_paired_job, jobs)
+    )
+    for result in iterator:
+        results.append(result)
+        _print_paired_row(result, len(results), len(jobs))
+    summary = summarize_paired(results, args.margin)
+    summary["wall_seconds"] = round(time.perf_counter() - started, 1)
+    summary["skipped_positions"] = skipped
+    summary["luna_status_counts"] = {
+        status: sum(1 for row in luna_rows.values() if row.get("status") == status)
+        for status in sorted({str(row.get("status")) for row in luna_rows.values()})
+    }
+    output = {
+        "summary": summary,
+        "metric": args.metric,
+        "margin": args.margin,
+        "compare": [str(p) for p in args.compare],
+        "matched_count": args.matched_count,
+        "width": "production" if args.production_width else {
+            "future_samples": config.exact_search_future_samples,
+            "opp_candidates": config.search_opp_candidates,
+            "total_hypotheses": config.exact_search_total_hypotheses,
+        },
+        "positions": results,
+    }
+    out_path = args.output or run_dir / "grades_paired.json"
+    out_path.write_text(json.dumps(output, indent=2))
+    print(json.dumps(summary, indent=2))
+    print(f"wrote {out_path}")
+    return 0
+
+
+def _print_paired_row(result: dict[str, Any], index: int, total: int) -> None:
+    if "error" in result:
+        print(f"[{index}/{total}] {result['position_id']}: ERROR {result['error']}", flush=True)
+        return
+
+    def show(view: dict[str, Any]) -> str:
+        return "-" if view["gain"] is None else f"{view['gain']:+.1f}"
+
+    print(
+        f"[{index}/{total}] {result['position_id']}: engine {result['engine_value']:.1f}, "
+        f"luna gain {show(result['luna'])} ({result['luna']['n_orders']}), "
+        f"control gain {show(result['control'])} ({result['control']['n_orders']}), "
+        f"{result['total_seconds']:.1f}s",
+        flush=True,
+    )
 
 
 def _print_row(result: dict[str, Any], index: int, total: int) -> None:
