@@ -67,6 +67,11 @@ def select_judged(
     if extra_myopic > 0:
         skipped.sort(key=lambda e: -float(e.breakdown.get("myopic_score", e.score)))
         judged += skipped[: int(extra_myopic)]
+    # LLM proposals (vgc.llm.proposer) are always judged, wherever the fast search
+    # ranked them: the exact judge, not the fast search, decides whether they are better.
+    for entry in scored:
+        if entry.breakdown.get("llm_proposed") and all(entry is not j for j in judged):
+            judged.append(entry)
     return judged
 
 

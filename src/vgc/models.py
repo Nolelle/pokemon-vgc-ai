@@ -907,6 +907,9 @@ class PolicyConfig:
     # Hide the engine's rank/score from the LLM and shuffle option numbering
     # (vgc.llm.config.LLMConfig.blind_options). Off until the blind screen decides.
     llm_blind_options: bool = False
+    # Highest reasoning effort the live proposer may use ("none", "low" or "medium").
+    # The 2026-10-04 offline screens found more thinking made Luna more conservative.
+    llm_max_live_level: str = "medium"
     # Clock held back from the LLM call for the rest of the search and sending the move.
     llm_safety_margin_s: float = 1.5
     # Time allowed for one call when no timer is announced (offline/direct env), where
