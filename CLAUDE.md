@@ -622,6 +622,18 @@ its frozen value; this is not a calibration change and no new weight was added.
     49.9% [0.468, 0.530]. Four nulls: a fixed continuation policy does not help; do not
     raise N without a smarter continuation (e.g. a small search per continuation turn). Latency (narrow): N=1 p99 ~4 s, N=2 ~7 s, N=3 ~8 s myopic; production width
     N=1 p99 ~42 s (does not fit the 12 s clock cap).
+- **Condition durations were wrong in every exact branch** (fixed 2026-10-05, owner's
+  hunch, confirmed independently by Codex). poke-env restamps weather on every
+  `[upkeep]` line, and switch-in setters (Drought, Surge abilities) were charged a turn
+  Showdown never charges, so the mirror rebuilt weather wrong 56/72 and terrain 108/134
+  times (Trick Room/Tailwind were right). `vgc.condition_clock` counts Showdown's
+  `|upkeep|` ticks since each start line (both ingest paths, copied into mirror views);
+  known extenders on the setter (always for our side) count 8 turns from the start.
+  Re-verified 266/266 vs the live simulator; hidden opponent extenders still read 5 until
+  outlived (Smogon M-C: Pelipper Damp Rock 7%, other setters ~0%). Re-run with correct
+  timers on M-C train: field leaf x1 50.1%, x3 49.7% (still null); N=1 fast-search
+  continuation **46.3% [0.431, 0.495] -- worse**. Suspect: one random sample per branch
+  makes an extra simulated turn mostly dice noise; N=1 with 4 samples is the test.
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
