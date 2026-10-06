@@ -18,28 +18,23 @@ final board that is the next turn, for the root it is the turn being decided.
 
 Durations (verified against the real engine, 2026-10-05, ~60 direct battles)
 ---------------------------------------------------------------------------
-A snapshot condition's `turns` is the poke-env turn on which it was set, and the engine
-removes it at the end of the turn on which its duration runs out. Observed: Tailwind set
-on turn s is visible at decisions s+1..s+3 (last_active = s+3, duration 4 counting the
-setting turn). Terrains set on turn s>=1 are visible through s+4 (duration 5), and a
-terrain set by a turn-0 switch-in (s=0, no residual before turn 1) through turn 5. Rule:
+A snapshot condition's `turns` is its start turn as implied by Showdown's real duration
+ticks (`vgc.condition_clock`: poke-env's own stamp restarted weather every upkeep and
+charged switch-in setters a turn they never lost). With that, one rule holds for moves,
+switch-in setters and weather alike, verified 266/266 against the live simulator's
+remaining durations on 16 direct games (2026-10-05):
 
-    last_active_turn = s + D - 1    (s >= 1)        last_active_turn = D    (s == 0)
+    last_active_turn = s + D - 1
 
-with D = 4 (Tailwind), 5 (Trick Room, terrain; same engine mechanism, Trick Room itself
-only observed up to s+3 in the probe, never contradicting the rule). A condition covers
-projected turn t iff `state.turn + t - 1 <= last_active_turn`.
-
-WEATHER IS DIFFERENT: poke-env overwrites the weather's `turns` with the current turn on
-every `-weather ... [upkeep]` line (abstract_battle.py), so a snapshot cannot say when the
-weather began. Weather therefore is assumed to last `WEATHER_ASSUMED_REMAINING` more turns
-(permanent Desolate Land / Primordial Sea: unlimited). Whether weather is up at all, and
-which one, is exact; only its expiry is a flat guess.
+with D = 4 (Tailwind), 5 (Trick Room, terrain, weather). A condition covers projected
+turn t iff `state.turn + t - 1 <= last_active_turn`. Item extensions (8 turns) are only
+known once a condition outlives 5 turns; `vgc.condition_clock` then reports it net of the
+extension. Desolate Land / Primordial Sea are permanent.
 
 Not modeled (known gaps)
 ------------------------
-Duration extenders (Heat/Damp/Smooth/Icy Rock, Terrain Extender: 8 turns) because the
-setter's item is not recorded; priority moves; Psychic Terrain priority block, Misty/Electric
+Duration extenders (Heat/Damp/Smooth/Icy Rock, Terrain Extender: 8 turns) until the
+condition outlives its base duration; priority moves; Psychic Terrain priority block, Misty/Electric
 Terrain status blocks, Grassy Terrain's Earthquake halving; Sand / Snow defensive boosts;
 Protosynthesis / Quark Drive / Solar Power / Sand Force; speed-tie randomness beyond 0.5;
 unrevealed opponent Pokemon; hidden opponent abilities (used only when the species has a
@@ -74,11 +69,9 @@ from vgc.stats import calculate_stats, default_opponent_nature, default_opponent
 TAILWIND_DURATION = 4
 TRICK_ROOM_DURATION = 5
 TERRAIN_DURATION = 5
+WEATHER_DURATION = 5
 
-# Weather expiry is unknowable from poke-env (see docstring): assume this many more turns.
-# A 5-turn weather observed at a random point has ~2-3 turns left; set-up turns skew high.
-WEATHER_ASSUMED_REMAINING = 3
-# Same fallback for a Trick Room / Tailwind / terrain whose start turn is missing.
+# Fallback for a Trick Room / Tailwind / terrain whose start turn is missing.
 UNKNOWN_START_REMAINING = 2
 
 # Conversion from "relative gain in best expected attack power" to %-of-max-HP per turn.
@@ -129,7 +122,9 @@ def _last_active_turn(start: int | None, duration: int) -> int | None:
     """Last turn on which a condition set on turn `start` still applies (see docstring)."""
     if start is None:
         return None
-    return duration if start == 0 else start + duration - 1
+    # The snapshot's start turn already reflects Showdown's real duration ticks
+    # (vgc.condition_clock), so one rule covers moves, switch-in setters and weather.
+    return start + duration - 1
 
 
 def _turns_covered(turn: int, start: int | None, duration: int, horizon: int) -> int:
@@ -154,7 +149,8 @@ class _Conditions:
         elif weather_id in _PERMANENT_WEATHER:
             weather_turns = horizon
         else:
-            weather_turns = min(horizon, WEATHER_ASSUMED_REMAINING)
+            start = next(effect.turns for effect in state.weather if effect.id == weather_id)
+            weather_turns = _turns_covered(turn, start, WEATHER_DURATION, horizon)
         weather_name = _WEATHER_IDS.get(weather_id) if weather_id else None
         self.weather = [weather_name if t < weather_turns else None for t in range(horizon)]
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Iterable, Mapping
 
+from vgc.condition_clock import elapsed_ticks
 from vgc.damage import to_id
 from vgc.data import load_species
 from vgc.sets import normalize_item, normalize_status
@@ -68,6 +69,9 @@ def _effect_snapshots(
     values: Any,
     *,
     counter_kind: str,
+    battle: Any = None,
+    clock_kind: str | None = None,
+    clock_side: str | None = None,
 ) -> tuple[EffectSnapshot, ...]:
     if values is None:
         return ()
@@ -82,10 +86,19 @@ def _effect_snapshots(
         if not effect_id:
             continue
         serializable_raw = raw if isinstance(raw, (str, int, float, bool)) else None
+        turns = _optional_int(raw)
+        if clock_kind is not None and battle is not None:
+            # poke-env's start turn is wrong for weather (restamped every upkeep) and
+            # for switch-in setters; report the start implied by Showdown's real
+            # duration ticks instead (vgc.condition_clock).
+            ticks = elapsed_ticks(battle, clock_kind, effect_id, clock_side)
+            if ticks is not None:
+                turns = int(getattr(battle, "turn", 0) or 0) - ticks
+                serializable_raw = turns
         result.append(
             EffectSnapshot(
                 id=effect_id,
-                turns=_optional_int(raw),
+                turns=turns,
                 raw_value=serializable_raw,
                 counter_kind=(
                     "layers"
@@ -483,6 +496,13 @@ def _slot_available_move_ids(
     return available_move_ids[slot]
 
 
+def _side_role(battle: Any, *, opponent: bool) -> str | None:
+    role = getattr(battle, "player_role", None)
+    if role not in ("p1", "p2"):
+        return None
+    return ("p2" if role == "p1" else "p1") if opponent else role
+
+
 def _side_snapshot(
     battle: Any,
     *,
@@ -517,6 +537,9 @@ def _side_snapshot(
         side_conditions=_effect_snapshots(
             getattr(battle, f"{prefix}side_conditions", None),
             counter_kind="side_start_turn",
+            battle=battle,
+            clock_kind="side",
+            clock_side=_side_role(battle, opponent=opponent),
         ),
         force_switch=_bool_tuple(getattr(battle, f"{prefix}force_switch", False)),
         trapped=_bool_tuple(getattr(battle, f"{prefix}trapped", False)),
@@ -603,8 +626,18 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         finished=bool(getattr(battle, "finished", False)),
         won=bool(getattr(battle, "won", False)),
         lost=bool(getattr(battle, "lost", False)),
-        fields=_effect_snapshots(getattr(battle, "fields", None), counter_kind="start_turn"),
-        weather=_effect_snapshots(getattr(battle, "weather", None), counter_kind="start_turn"),
+        fields=_effect_snapshots(
+            getattr(battle, "fields", None),
+            counter_kind="start_turn",
+            battle=battle,
+            clock_kind="field",
+        ),
+        weather=_effect_snapshots(
+            getattr(battle, "weather", None),
+            counter_kind="start_turn",
+            battle=battle,
+            clock_kind="weather",
+        ),
         available_moves=available_moves,
         available_switches=tuple(
             tuple(to_id(getattr(mon, "species", mon)) for mon in slot_switches)

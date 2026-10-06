@@ -47,6 +47,7 @@ from vgc.decision_trace import (
     trace_enabled,
 )
 from vgc.evaluator import score_joint_orders
+from vgc.condition_clock import observe_condition_line
 from vgc.poke_env_compat import normalize_for_poke_env
 from vgc.config import REPO_ROOT, SHOWDOWN_REPO
 from vgc.models import PolicyConfig
@@ -188,6 +189,9 @@ class VgcPlayer(Player):
                             update='"update":true' in payload
                         )
             await self._handle_battle_message_line([room, normalize_for_poke_env(message)])
+            battles = getattr(self, "_battles", None)
+            if battle_tag and battles:
+                observe_condition_line(battles.get(battle_tag), message)
 
     async def _handle_battle_message_line(self, split_messages) -> None:
         """Work around poke-env 0.15's Open Team Sheets accept/reject race.

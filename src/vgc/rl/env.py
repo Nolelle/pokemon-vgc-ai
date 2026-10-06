@@ -70,6 +70,7 @@ from vgc.actions import index_locked_choice
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO
 from vgc.node import find_node
 from vgc.own_team import apply_own_spreads, index_from_packed
+from vgc.condition_clock import observe_condition_line
 from vgc.poke_env_compat import normalize_for_poke_env
 
 DEFAULT_FORMAT = FORMAT_ID
@@ -620,6 +621,7 @@ class DirectBattle:
             split = line.split("|")
             if len(split) < 2:
                 continue
+            observe_condition_line(battle, split)
             tag = split[1]
             if tag == "request":
                 # Rejoin rather than take split[2]: the request payload is JSON and may
