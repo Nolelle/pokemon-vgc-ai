@@ -635,6 +635,16 @@ its frozen value; this is not a calibration change and no new weight was added.
   continuation **46.3% [0.431, 0.495] -- worse**. Suspect: one random sample per branch
   makes an extra simulated turn mostly dice noise -- REJECTED: N=1 with 4 samples on both
   arms 47.3% [0.438, 0.508]. The fixed continuation policy is the prime suspect.
+- **Why the extra turn hurts, and the fixes tried (2026-10-06, M-C train, N=1, narrow).**
+  Flip diagnostic (10 games, 130 decisions): N=1 changed the pick in 56 (43%), chose
+  setup ~2x as often, and 20/56 flips were decided by a +-10,000 game end inside the
+  continuation. Fixes, each vs N=0: continuation weight 0.25 47.8%, 0.5 50.4%;
+  `exact_search_continuation_board_terminals` 47.8%; `exact_search_continuation_mode=search`
+  (2 of our x 2 opponent options, worst/expectation blend, ~1.6x slower, p99 ~5 s narrow)
+  47.8%; search + board terminals **50.1% [0.469, 0.533]** -- removes the harm, adds no
+  edge. All knobs ship off. Do not keep tuning continuation at narrow width; the next
+  hypothesis needs a different lever (wider first-turn search, or deeper search used only
+  offline for teacher labels where the 12 s cap does not apply).
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth

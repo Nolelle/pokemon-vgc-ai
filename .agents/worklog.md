@@ -254,3 +254,9 @@
 - Nulls: field leaf (4 runs, 48.8-50.2%); continuation N=1/N=2 greedy (49.4%, 47.8%).
 - N=1 with myopic weight 0: fast-search continuation 49.9%, greedy 47.4% (nulls). Shipped exact-only `exact_search_myopic_weight=0.0`.
 - Disk was 99% full; freed ~8 GB (old worktree .venvs, Codex installer leftovers, Spotify cache).
+
+## 2026-10-06 — condition clock + continuation fixes (branch claude/exact-judge-field-horizon)
+- Owner's hunch confirmed (and by Codex): weather/terrain durations wrong in every exact branch (poke-env restamps weather each upkeep; switch-in setters charged an extra turn). `vgc.condition_clock` fixes it: 266/266 match live sim; known extenders count 8 from the start.
+- With correct timers: field leaf 50.1%/49.7% (null); N=1 continuation 46.3% (worse); 4 samples 47.3% (noise rejected).
+- Flip diagnostic: N=1 flips 43% of picks, setup ~2x, 20/56 flips decided by mid-continuation game ends.
+- Fixes (all off): continuation weight (0.25: 47.8%, 0.5: 50.4%), board-scored continuation terminals (47.8%), 2x2 continuation search built by a Sonnet agent in a worktree (47.8%), 2x2 + board terminals 50.1% [0.469,0.533]. Harm removed, no gain.
