@@ -526,6 +526,18 @@ class PolicyConfig:
     # because of the searched move; on 2026-10-06 they decided 20/56 of the picks N=1
     # changed. A game ending on the searched turn itself still scores +-10,000.
     exact_search_continuation_board_terminals: bool = False
+    # How the continuation turn is played. "policy" = both sides play one fixed order (the
+    # continuation policy above), the behavior measured as a loss (46-49% exact-vs-exact).
+    # "search" = a small real search on the continuation turn (N=1 only): our top-K orders
+    # x the opponent's top-M orders, each pair stepped in its own clone of the post-turn
+    # board; the branch's continuation value is the max over our options of the same
+    # worst-case/expectation blend the first turn uses (search_worst_case_weight).
+    exact_search_continuation_mode: str = "policy"
+    # Our options on the continuation turn: top-K of our own fogged view's myopic scores.
+    exact_search_continuation_our_options: int = 2
+    # Opponent options on the continuation turn: top-M of THEIR fogged view's myopic
+    # scores, weighted by a softmax at search_response_temperature.
+    exact_search_continuation_opp_options: int = 2
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat

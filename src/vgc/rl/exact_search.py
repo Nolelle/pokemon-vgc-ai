@@ -115,6 +115,14 @@ def _board_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     )
 
 
+def _continuation_score(state: BattleMechanicsState, config: PolicyConfig) -> float:
+    """Score a board reached during continuation turns (see continuation_board_terminals)."""
+
+    if config.exact_search_continuation_board_terminals and (state.won or state.lost):
+        return _board_value(state, config)
+    return _position_value(state, config)
+
+
 def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     if state.won:
         return 10_000.0
@@ -202,6 +210,8 @@ def search_joint_orders_exact(
         future_seeds=future_seeds,
         branch_prefix=f"exact-{side}-{getattr(battle, 'turn', 0)}",
         config=config,
+        our_side=side,
+        score_state=lambda state: _continuation_score(state, config),
     )
     values: dict[tuple[int, int], list[float]] = defaultdict(list)
     field_deltas: dict[int, list[float]] = defaultdict(list)
@@ -217,17 +227,21 @@ def search_joint_orders_exact(
         owner = choice_owner[choice_index]
         turn1 = getattr(branch, "turn1_public_states", None)
         final_state = branch.state_for(side)
-        if (
-            turn1 is not None
-            and config.exact_search_continuation_board_terminals
-            and (final_state.won or final_state.lost)
-        ):
-            # The game ended during the continuation, i.e. under the fixed continuation
-            # policy, not because of the searched move: score the board, not +-10,000.
-            final = _board_value(final_state, config)
-        else:
-            final = _position_value(final_state, config)
-        if turn1 is not None and config.exact_search_continuation_weight != 1.0:
+        # A game that ended during the continuation ended under the continuation policy,
+        # not because of the searched move (see continuation_board_terminals).
+        final = (
+            _continuation_score(final_state, config)
+            if turn1 is not None
+            else _position_value(final_state, config)
+        )
+        cont_value = branch.continuation_value
+        if turn1 is not None and cont_value is not None:
+            # "search" continuation mode: the continuation-turn search is the later board.
+            mid = _position_value(dict(turn1)[side], config)
+            values[owner].append(
+                (mid - before) + config.exact_search_continuation_weight * (cont_value - mid)
+            )
+        elif turn1 is not None and config.exact_search_continuation_weight != 1.0:
             mid = _position_value(dict(turn1)[side], config)
             values[owner].append(
                 (mid - before) + config.exact_search_continuation_weight * (final - mid)

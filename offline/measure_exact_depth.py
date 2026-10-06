@@ -86,6 +86,7 @@ def run_cell(cell: dict[str, Any]) -> dict[str, Any]:
         format_id=FORMAT_ID,
         exact_search_continuation_turns=cell["turns"],
         exact_search_continuation_policy=cell["policy"],
+        exact_search_continuation_mode=cell.get("mode", "policy"),
         **WIDTHS[cell["width"]],
     )
     pool = json.loads(Path(cell["manifest"]).read_text())
@@ -130,6 +131,7 @@ def run_cell(cell: dict[str, Any]) -> dict[str, Any]:
     return {
         "turns": cell["turns"],
         "policy": cell["policy"],
+        "mode": cell.get("mode", "policy"),
         "width": cell["width"],
         "games": len(outcomes),
         "decision_cap": cap,
@@ -151,8 +153,10 @@ def run_cell(cell: dict[str, Any]) -> dict[str, Any]:
 
 def build_cells(args: argparse.Namespace) -> list[dict[str, Any]]:
     cells = []
-    for width, turns, policy in itertools.product(args.widths, args.turns_list, args.policies):
-        if turns == 0 and policy != args.policies[0]:
+    for width, turns, policy, mode in itertools.product(
+        args.widths, args.turns_list, args.policies, args.modes
+    ):
+        if turns == 0 and (policy != args.policies[0] or mode != args.modes[0]):
             continue  # policy is irrelevant without continuation
         if width == "production" and args.production_max_turns is not None:
             if turns > args.production_max_turns:
@@ -161,6 +165,7 @@ def build_cells(args: argparse.Namespace) -> list[dict[str, Any]]:
             {
                 "turns": turns,
                 "policy": "myopic" if turns == 0 else policy,
+                "mode": "policy" if turns == 0 else mode,
                 "width": width,
                 "games": args.games,
                 "seed": args.seed,
@@ -174,13 +179,13 @@ def build_cells(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def print_table(rows: list[dict[str, Any]]) -> None:
     head = (
-        f"{'width':<10}{'N':>2} {'policy':<7}{'dec/g':>7}{'p50':>7}{'p95':>7}{'p99':>7}"
+        f"{'width':<10}{'N':>2} {'policy':<7}{'mode':<7}{'dec/g':>7}{'p50':>7}{'p95':>7}{'p99':>7}"
         f"{'max':>7}{'think/g':>9}{'fallbk':>7}"
     )
     print(head)
     for r in rows:
         print(
-            f"{r['width']:<10}{r['turns']:>2} {r['policy']:<7}{r['decisions_per_game']:>7.1f}"
+            f"{r['width']:<10}{r['turns']:>2} {r['policy']:<7}{r['mode']:<7}{r['decisions_per_game']:>7.1f}"
             f"{r['p50_s']:>7.2f}{r['p95_s']:>7.2f}{r['p99_s']:>7.2f}{r['max_s']:>7.2f}"
             f"{r['thinking_s_per_game']:>9.1f}{r['exact_fallbacks']:>4}/{r['exact_decisions']}"
         )
@@ -191,6 +196,7 @@ def main() -> int:
     parser.add_argument("--games", type=int, default=2, help="games per cell")
     parser.add_argument("--turns-list", default="0,1,2,3")
     parser.add_argument("--policies", default="myopic,search")
+    parser.add_argument("--modes", default="policy", help="continuation modes: policy,search")
     parser.add_argument("--widths", default="narrow,production")
     parser.add_argument(
         "--production-max-turns",
@@ -215,6 +221,7 @@ def main() -> int:
     args.turns_list = [int(v) for v in args.turns_list.split(",")]
     args.policies = args.policies.split(",")
     args.widths = args.widths.split(",")
+    args.modes = args.modes.split(",")
     cells = build_cells(args)
     if args.workers > 1:
         with ProcessPoolExecutor(max_workers=args.workers) as pool:

@@ -11,8 +11,9 @@ Use this to create mechanics-correct teacher targets. Do not label a choice with
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
@@ -36,6 +37,9 @@ class ExactMechanicsBranch:
     continuation_truncated: bool = False  # step budget ran out / no side could move
     # Board right after the searched turn, before any continuation (None without one).
     turn1_public_states: tuple[tuple[str, BattleMechanicsState], ...] | None = None
+    # "search" continuation mode: value (searching side's view, scored by the caller's
+    # `score_state`) of the small continuation-turn search; None otherwise.
+    continuation_value: float | None = None
 
     def state_for(self, side: str) -> BattleMechanicsState:
         return dict(self.public_states)[side]
@@ -114,6 +118,108 @@ def _continue_branches(
             info[index]["streak"] = int(info[index]["streak"]) + 1 if rejected else 0
 
 
+def _softmax(scores: list[float], temperature: float) -> list[float]:
+    if not scores:
+        return [1.0]
+    scale = max(float(temperature), 1e-6)
+    top = max(scores)
+    raw = [math.exp((value - top) / scale) for value in scores]
+    total = sum(raw)
+    return [value / total for value in raw]
+
+
+def _search_continuation(
+    clones: list[DirectBattle],
+    base_turn: int,
+    config: PolicyConfig,
+    our_side: str,
+    score_state: Callable[[BattleMechanicsState], float],
+) -> list[dict[str, object]]:
+    """One real continuation turn per clone: our top-K x their top-M, each pair cloned.
+
+    Replacements left over from the searched turn are resolved with the fixed policy
+    first. Then, from each side's OWN fogged view, `score_joint_orders` gives our K and
+    their M options (the latter softmax-weighted). Every pair is stepped in a clone of
+    the branch clone WITHOUT a new seed, so all pairs of a branch share one random stream
+    and differ only by their choices (common random numbers). A pair whose step was
+    rejected by hidden information is dropped, never scored as a free exchange. Returns
+    per clone `{value, steps, truncated}`; value is None when no pair resolved.
+    """
+
+    from vgc.evaluator import score_joint_orders
+
+    policy = config.exact_search_continuation_policy
+    info = _continue_branches(clones, base_turn, 0, policy, config)  # up to turn base+1
+    other = "p2" if our_side == "p1" else "p1"
+    n_ours = max(1, int(config.exact_search_continuation_our_options))
+    n_opp = max(1, int(config.exact_search_continuation_opp_options))
+    results: list[dict[str, object]] = [
+        {"value": None, "steps": int(i["steps"]), "truncated": bool(i["truncated"])}
+        for i in info
+    ]
+    pairs: list[tuple[DirectBattle, dict[str, str]]] = []
+    owners: list[tuple[int, int, int]] = []  # (clone index, our option, opp option)
+    opp_weights: dict[int, list[float]] = {}
+    try:
+        for index, clone in enumerate(clones):
+            if clone.ended or results[index]["truncated"]:
+                continue
+            sides = clone.sides_to_move()
+            if our_side not in sides:
+                continue
+            ours = score_joint_orders(clone.battles[our_side], config)[:n_ours]
+            theirs = (
+                score_joint_orders(clone.battles[other], config)[:n_opp] if other in sides else []
+            )
+            if not ours:
+                continue
+            opp_orders = [entry.order for entry in theirs] or [None]
+            opp_weights[index] = _softmax(
+                [entry.score for entry in theirs], config.search_response_temperature
+            )
+            for a, ours_entry in enumerate(ours):
+                for b, opp_order in enumerate(opp_orders):
+                    pair = clone.clone(f"{clone.battle_id}-c{a}-{b}")
+                    choices = {our_side: choice_string(ours_entry.order)}
+                    if opp_order is not None:
+                        choices[other] = choice_string(opp_order)
+                    pairs.append((pair, choices))
+                    owners.append((index, a, b))
+        if not pairs:
+            return results
+        before = [getattr(pair, "hidden_trap_rejections", 0) for pair, _ in pairs]
+        step_many(clones[0].worker, pairs)
+        valid = [
+            getattr(pair, "hidden_trap_rejections", 0) == count
+            for (pair, _), count in zip(pairs, before)
+        ]
+        # Resolve forced replacements (fixed policy) until the continuation turn completes.
+        pair_info = _continue_branches(
+            [pair for pair, _ in pairs], base_turn + 1, 0, policy, config
+        )
+        table: dict[int, dict[int, dict[int, float]]] = {}
+        for (pair, _), (index, a, b), ok, pinfo in zip(pairs, owners, valid, pair_info):
+            if not ok or pinfo["truncated"]:
+                continue
+            table.setdefault(index, {}).setdefault(a, {})[b] = float(
+                score_state(snapshot_battle(pair.battles[our_side]))
+            )
+        worst_weight = config.search_worst_case_weight
+        for index, by_ours in table.items():
+            weights = opp_weights[index]
+            best: float | None = None
+            for by_opp in by_ours.values():
+                total = sum(weights[b] for b in by_opp)
+                expectation = sum(weights[b] * v for b, v in by_opp.items()) / total
+                option = worst_weight * min(by_opp.values()) + (1.0 - worst_weight) * expectation
+                best = option if best is None else max(best, option)
+            results[index]["value"] = best
+    finally:
+        for pair, _ in pairs:
+            pair.close()
+    return results
+
+
 def evaluate_exact_branches(
     root: DirectBattle,
     joint_choices: Sequence[dict[str, str]],
@@ -121,6 +227,8 @@ def evaluate_exact_branches(
     future_seeds: Sequence[Sequence[int] | None] = (None,),
     branch_prefix: str = "mechanics",
     config: PolicyConfig | None = None,
+    our_side: str | None = None,
+    score_state: Callable[[BattleMechanicsState], float] | None = None,
 ) -> list[ExactMechanicsBranch]:
     """Execute every `(joint choice, future seed)` branch in exact Showdown clones.
 
@@ -141,6 +249,12 @@ def evaluate_exact_branches(
         raise ValueError("at least one future seed is required")
     turns = int(config.exact_search_continuation_turns) if config is not None else 0
     policy = config.exact_search_continuation_policy if config is not None else "myopic"
+    mode = config.exact_search_continuation_mode if config is not None else "policy"
+    if mode not in ("policy", "search"):
+        raise ValueError(f"unknown exact_search_continuation_mode {mode!r}")
+    search_mode = turns > 0 and mode == "search"
+    if search_mode and (turns != 1 or our_side is None or score_state is None):
+        raise ValueError("search continuation needs N=1, our_side and score_state")
     expected_sides = set(root.sides_to_move())
     base_turn = _battle_turn(root)
     # (partial branch kwargs, clone) kept open only while a continuation still needs them.
@@ -203,12 +317,23 @@ def evaluate_exact_branches(
         if live:
             assert config is not None
             clones = [clone for _kwargs, clone in live]
-            info = _continue_branches(clones, base_turn, turns, policy, config)
+            if search_mode:
+                assert our_side is not None and score_state is not None
+                info = _search_continuation(clones, base_turn, config, our_side, score_state)
+            else:
+                info = _continue_branches(clones, base_turn, turns, policy, config)
             for (kwargs, clone), i in zip(live, info, strict=True):
-                done = max(0, min(turns, _battle_turn(clone) - base_turn - 1))
+                if search_mode:
+                    value = i["value"]
+                    done = 1 if value is not None else 0
+                    extra = {"continuation_value": value}
+                else:
+                    done = max(0, min(turns, _battle_turn(clone) - base_turn - 1))
+                    extra = {}
                 snapshot(
                     kwargs,
                     clone,
+                    **extra,
                     continuation_turns_completed=done,
                     continuation_steps=int(i["steps"]),
                     continuation_ended_early=bool(clone.ended and done < turns),
