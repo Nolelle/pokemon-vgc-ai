@@ -633,7 +633,8 @@ its frozen value; this is not a calibration change and no new weight was added.
   outlived (Smogon M-C: Pelipper Damp Rock 7%, other setters ~0%). Re-run with correct
   timers on M-C train: field leaf x1 50.1%, x3 49.7% (still null); N=1 fast-search
   continuation **46.3% [0.431, 0.495] -- worse**. Suspect: one random sample per branch
-  makes an extra simulated turn mostly dice noise; N=1 with 4 samples is the test.
+  makes an extra simulated turn mostly dice noise -- REJECTED: N=1 with 4 samples on both
+  arms 47.3% [0.438, 0.508]. The fixed continuation policy is the prime suspect.
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
