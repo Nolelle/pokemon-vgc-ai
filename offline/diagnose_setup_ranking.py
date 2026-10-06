@@ -104,7 +104,7 @@ def quartiles(xs: list[float]) -> dict:
 
 
 def analyse(config: PolicyConfig) -> dict:
-    wm, wp, w = config.search_myopic_weight, config.search_position_weight, config.search_worst_case_weight
+    wm, wp, w = config.exact_search_myopic_weight, config.search_position_weight, config.search_worst_case_weight
     decs = [r for r in RECORDS if r["top"] is not None]
     n_total = len(RECORDS)
 

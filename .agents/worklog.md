@@ -252,5 +252,5 @@
 - Built (Sonnet agents in parallel, Codex-reviewed): KO/alive term (ships 90), `vgc.field_control` speed/weather/terrain leaf (off), multi-turn exact continuation `exact_search_continuation_turns/policy` (off), `offline/measure_exact_depth.py`, `offline/diagnose_setup_ranking.py`.
 - Wins: KO term 52.5% [0.501,0.550]; myopic weight 0 53.5% (M-C train) / 53.7% (pool160) / 51.6% holdout (underpowered).
 - Nulls: field leaf (4 runs, 48.8-50.2%); continuation N=1/N=2 greedy (49.4%, 47.8%).
-- Running: N=1 with fast-search continuation and N=1 myopic, both with myopic weight 0 (runs/eval/mc_m0_depth1_*.json).
+- N=1 with myopic weight 0: fast-search continuation 49.9%, greedy 47.4% (nulls). Shipped exact-only `exact_search_myopic_weight=0.0`.
 - Disk was 99% full; freed ~8 GB (old worktree .venvs, Codex installer leftovers, Spotify cache).

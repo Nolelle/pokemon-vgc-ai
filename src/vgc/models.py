@@ -477,6 +477,15 @@ class PolicyConfig:
     # single-turn damage"). Same value as the fast search's search_faint_weight so the two
     # judges price a KO alike. 0.0 is the legacy no-KO-term control for A/Bs.
     exact_search_alive_weight: float = 90.0
+    # Weight on the myopic heuristic score inside the EXACT search's final blend (the fast
+    # search keeps search_myopic_weight). The myopic score credits predicted damage
+    # uncapped at remaining HP plus KO/speed bonuses, then the exact branch value credits
+    # the same damage again, so attacks were counted twice and setup could not compete.
+    # Exact-vs-exact A/Bs, 2026-10-05, narrow width, 0 vs 1: M-C train (226 teams) 53.5%
+    # [0.501, 0.569]; archetype 160 pool 53.7% [0.508, 0.567]; M-C holdout (88 teams)
+    # 51.6% [0.467, 0.566]. The live vgc.exact_judge already ranks by pure exchange_value.
+    # 1.0 is the legacy control.
+    exact_search_myopic_weight: float = 0.0
     # --- Speed / weather / terrain leaf value (vgc.field_control, 2026-10-05) ---
     # Exact-branch value for who moves first and whose attacks the weather/terrain helps,
     # over the turns AFTER the scored board (turns inside a simulated continuation are

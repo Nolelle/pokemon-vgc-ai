@@ -230,7 +230,7 @@ def search_joint_orders_exact(
             + (1.0 - config.search_worst_case_weight) * expectation
         )
         final = (
-            config.search_myopic_weight * entry.score
+            config.exact_search_myopic_weight * entry.score
             + config.search_position_weight * exact_delta
         )
         breakdown = dict(entry.breakdown)
