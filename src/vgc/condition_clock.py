@@ -88,14 +88,18 @@ def _setter(split: list[str], clock: dict) -> str | None:
     return clock.get(("last_move_user",))
 
 
-def _start(clock: dict, key: tuple[str, ...], setter: str | None) -> None:
+def _start(battle: Any, clock: dict, key: tuple[str, ...], setter: str | None) -> None:
     clock[key] = 0
     clock[("setter", *key)] = setter
+    # Showdown fixes the duration when the condition starts; losing the rock later
+    # (Knock Off, Trick) does not shorten it, so record what the setter held THEN.
+    clock[("extended", *key)] = _setter_holds_extender(battle, key[-1], setter)
 
 
 def _end(clock: dict, key: tuple[str, ...]) -> None:
     clock.pop(key, None)
     clock.pop(("setter", *key), None)
+    clock.pop(("extended", *key), None)
 
 
 def observe_condition_line(battle: Any, split: list[str]) -> None:
@@ -121,7 +125,7 @@ def observe_condition_line(battle: Any, split: list[str]) -> None:
             for key in [key for key in clock if key[0] == "weather"]:
                 _end(clock, key)
         if starting:
-            _start(clock, ("weather", to_id(split[2])), _setter(split, clock))
+            _start(battle, clock, ("weather", to_id(split[2])), _setter(split, clock))
     elif tag in ("-fieldstart", "-fieldend") and len(split) > 2:
         effect_id = _condition_id(split[2])
         if tag == "-fieldend":
@@ -130,13 +134,13 @@ def observe_condition_line(battle: Any, split: list[str]) -> None:
         if effect_id in _TERRAINS:
             for key in [key for key in clock if key[0] == "field" and key[1] in _TERRAINS]:
                 _end(clock, key)
-        _start(clock, ("field", effect_id), _setter(split, clock))
+        _start(battle, clock, ("field", effect_id), _setter(split, clock))
     elif tag in ("-sidestart", "-sideend") and len(split) > 3:
         key = ("side", split[2][:2], _condition_id(split[3]))
         if tag == "-sideend":
             _end(clock, key)
         else:
-            _start(clock, key, _setter(split, clock))
+            _start(battle, clock, key, _setter(split, clock))
 
 
 # Item that extends each condition 5 -> 8 turns when its SETTER holds it.
@@ -177,7 +181,10 @@ def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = Non
     if ticks is None:
         return None
     base = _BASE_DURATION.get(effect_id)
-    extended = _setter_holds_extender(battle, effect_id, clock.get(("setter", *key)))
+    extended = bool(clock.get(("extended", *key)))
+    if not extended and _setter_holds_extender(battle, effect_id, clock.get(("setter", *key))):
+        # Revealed after the start (e.g. an opponent's rock shown later): it was there then.
+        extended = clock[("extended", *key)] = True
     if extended or (base is not None and ticks >= base):
         ticks -= _EXTENSION.get(effect_id, 0)
     # May be negative for a known-extended condition: base - elapsed must reach 8 - ticks.

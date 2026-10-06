@@ -60,3 +60,11 @@ def test_a_visible_extender_on_the_setter_counts_from_the_start() -> None:
     _feed(battle, "|-weather|SunnyDay|[from] ability: Drought|[of] p1a: Torkoal", "|upkeep")
     # 8-turn sun after one tick has 7 turns left: elapsed reads -2, so base 5 - (-2) = 7.
     assert elapsed_ticks(battle, "weather", "sunnyday") == -2
+
+
+def test_losing_the_rock_after_the_start_does_not_shorten_the_weather() -> None:
+    torkoal = SimpleNamespace(item="heatrock")
+    battle = SimpleNamespace(player_role="p1", team={"p1: Torkoal": torkoal}, opponent_team={})
+    _feed(battle, "|-weather|SunnyDay|[from] ability: Drought|[of] p1a: Torkoal", "|upkeep")
+    torkoal.item = ""  # knocked off
+    assert elapsed_ticks(battle, "weather", "sunnyday") == -2  # still 7 of 8 turns left
