@@ -107,6 +107,14 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
     return score
 
 
+def _board_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
+    """Material on the board (HP, survivors, status, effects), ignoring the game result."""
+
+    return _side_position(state.our_side, config) - _side_position(
+        state.opponent_side, config, bring_size=state.team_size
+    )
+
+
 def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     if state.won:
         return 10_000.0
@@ -207,8 +215,18 @@ def search_joint_orders_exact(
     for branch_index, branch in enumerate(branches):
         choice_index = branch_index // per_choice
         owner = choice_owner[choice_index]
-        final = _position_value(branch.state_for(side), config)
         turn1 = getattr(branch, "turn1_public_states", None)
+        final_state = branch.state_for(side)
+        if (
+            turn1 is not None
+            and config.exact_search_continuation_board_terminals
+            and (final_state.won or final_state.lost)
+        ):
+            # The game ended during the continuation, i.e. under the fixed continuation
+            # policy, not because of the searched move: score the board, not +-10,000.
+            final = _board_value(final_state, config)
+        else:
+            final = _position_value(final_state, config)
         if turn1 is not None and config.exact_search_continuation_weight != 1.0:
             mid = _position_value(dict(turn1)[side], config)
             values[owner].append(

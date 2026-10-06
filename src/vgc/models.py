@@ -521,6 +521,11 @@ class PolicyConfig:
     # 1.0 = score the final board only (the original continuation); lower values keep the
     # searched turn's own evidence from being drowned by turns played on a fixed policy.
     exact_search_continuation_weight: float = 1.0
+    # Score a game that ENDS during the continuation turns by its board (HP, survivors)
+    # instead of +-10,000. Those endings happen under the fixed continuation policy, not
+    # because of the searched move; on 2026-10-06 they decided 20/56 of the picks N=1
+    # changed. A game ending on the searched turn itself still scores +-10,000.
+    exact_search_continuation_board_terminals: bool = False
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat
