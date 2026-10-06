@@ -189,3 +189,27 @@ def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = Non
         ticks -= _EXTENSION.get(effect_id, 0)
     # May be negative for a known-extended condition: base - elapsed must reach 8 - ticks.
     return ticks
+
+
+def remaining_turns(
+    battle: Any, kind: str, effect_id: str, side: str | None = None
+) -> int | None:
+    """Turns ``effect_id`` still lasts INCLUDING the one being decided, or None if unknown.
+
+    ``base_duration - elapsed_ticks`` (net of any item extension, see `elapsed_ticks`).
+    None means the tracker has no entry or the effect has no timer (Desolate Land and
+    friends) -- callers should treat that as "lasts through the horizon". Never below 1,
+    since a condition still on the board is active for the turn being decided.
+    """
+
+    ticks = elapsed_ticks(battle, kind, effect_id, side)
+    base = _BASE_DURATION.get(effect_id)
+    if ticks is None or base is None:
+        return None
+    return max(1, base - ticks)
+
+
+def base_duration(effect_id: str) -> int | None:
+    """Showdown's base duration in turns for a timed condition (None if untimed)."""
+
+    return _BASE_DURATION.get(effect_id)

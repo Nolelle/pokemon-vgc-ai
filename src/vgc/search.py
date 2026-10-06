@@ -105,6 +105,7 @@ from functools import cmp_to_key, partial
 from itertools import product
 
 from poke_env.battle.double_battle import DoubleBattle
+from poke_env.battle.field import Field
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
 from poke_env.battle.side_condition import SideCondition
@@ -118,6 +119,7 @@ from vgc.bc.policy import (
     position_values_batch,
 )
 from vgc.belief_scoring import belief_ordered_candidates
+from vgc.condition_clock import base_duration, remaining_turns
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
@@ -128,6 +130,7 @@ from vgc.evaluator import (
     _SINGLE_TARGETS,
     _SPREAD_TARGETS_FOES_ONLY,
     _SPREAD_TARGETS_HITTING_ALLY,
+    _TERRAIN_TO_STR,
     _Context,
     _best_attacking_move,
     _our_pokemon_state,
@@ -676,6 +679,18 @@ class ExchangeResult:
     trick_room: bool = False
     our_screens: frozenset[str] = frozenset()
     opp_screens: frozenset[str] = frozenset()
+    # Condition expiry (`PolicyConfig.search_condition_expiry`; all inert while
+    # `condition_expiry` is False). The exchange is projected turn 1 and the forecast
+    # turns are 2, 3, ...; each ``*_last`` is the LAST projected turn that condition
+    # still applies on (None = lasts through the horizon). `terrain` is the terrain on
+    # the board after the exchange, read by the forecast instead of `ctx.terrain`.
+    condition_expiry: bool = False
+    terrain: str | None = None
+    weather_last: int | None = None
+    terrain_last: int | None = None
+    trick_room_last: int | None = None
+    our_tailwind_last: int | None = None
+    opp_tailwind_last: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1038,6 +1053,68 @@ def _apply_setup_boost(
             )
 
 
+_TAILWIND_TURNS = base_duration("tailwind") or 4
+_TRICK_ROOM_TURNS = base_duration("trickroom") or 5
+_WEATHER_ABILITY_TURNS = base_duration("sunnyday") or 5
+
+
+def _ctx_condition_turns(ctx: _Context) -> dict[str, int | None]:
+    """Remaining turns (including the one being decided) of every timed condition now on
+    the board, from `vgc.condition_clock`; cached on ``ctx`` (one per decision).
+
+    A key is None when the condition is absent, has no timer, or the tracker has no entry
+    for it -- every consumer then treats it as lasting through the horizon, which is the
+    pre-expiry behaviour.
+    """
+
+    cached = ctx.__dict__.get("_condition_turns")
+    if cached is not None:
+        return cached
+    battle = ctx.battle
+    turns: dict[str, int | None] = dict.fromkeys(
+        ("weather", "terrain", "trick_room", "our_tailwind", "opp_tailwind")
+    )
+    for weather in getattr(battle, "weather", None) or ():
+        turns["weather"] = remaining_turns(battle, "weather", to_id(weather.name))
+        if turns["weather"] is not None:
+            break
+    fields_on_board = getattr(battle, "fields", None) or ()
+    for field_ in fields_on_board:
+        if field_ in _TERRAIN_TO_STR:
+            turns["terrain"] = remaining_turns(battle, "field", to_id(field_.name))
+            break
+    if Field.TRICK_ROOM in fields_on_board:
+        turns["trick_room"] = remaining_turns(battle, "field", "trickroom")
+    role = getattr(battle, "player_role", None)
+    if role in ("p1", "p2"):
+        foe_role = "p2" if role == "p1" else "p1"
+        turns["our_tailwind"] = remaining_turns(battle, "side", "tailwind", role)
+        turns["opp_tailwind"] = remaining_turns(battle, "side", "tailwind", foe_role)
+    ctx.__dict__["_condition_turns"] = turns
+    return turns
+
+
+def _exchange_on_turn(exchange: ExchangeResult, turn: int) -> ExchangeResult:
+    """The post-exchange board as it stands on projected ``turn`` (exchange = turn 1):
+    conditions whose last active turn has passed are dropped. Identity when expiry is off.
+    """
+
+    if not exchange.condition_expiry:
+        return exchange
+
+    def active(last: int | None) -> bool:
+        return last is None or turn <= last
+
+    return replace(
+        exchange,
+        weather=exchange.weather if active(exchange.weather_last) else None,
+        terrain=exchange.terrain if active(exchange.terrain_last) else None,
+        trick_room=exchange.trick_room and active(exchange.trick_room_last),
+        our_tailwind=exchange.our_tailwind and active(exchange.our_tailwind_last),
+        opp_tailwind=exchange.opp_tailwind and active(exchange.opp_tailwind_last),
+    )
+
+
 def _action_order_cmp(a: _Action, b: _Action, trick_room: bool) -> int:
     """`functools.cmp_to_key` comparator building the exchange's total action order from
     `resolves_before`'s pairwise "does A act before B" semantics.
@@ -1177,12 +1254,20 @@ def _apply_action(
         # faithfully use on following turns. This is mechanical state, separate from
         # the flat immediate utility proxy above.
         if action.move_id == "tailwind" and actor_probability >= 0.5:
+            # A Tailwind used while that side's is already up fails, so only a NEW one
+            # gets a fresh duration (it ticks once at the end of the turn it was set).
             if action.side == "our":
+                if result.condition_expiry and not result.our_tailwind:
+                    result.our_tailwind_last = _TAILWIND_TURNS
                 result.our_tailwind = True
             else:
+                if result.condition_expiry and not result.opp_tailwind:
+                    result.opp_tailwind_last = _TAILWIND_TURNS
                 result.opp_tailwind = True
         elif action.move_id == "trickroom" and actor_probability >= 0.5:
             result.trick_room = not result.trick_room
+            if result.condition_expiry and result.trick_room:
+                result.trick_room_last = _TRICK_ROOM_TURNS
         elif (
             action.move_id in {"reflect", "lightscreen", "auroraveil"}
             and actor_probability >= 0.5
@@ -1319,6 +1404,21 @@ def resolve_exchange(
         our_screens=ctx.our_side_screens,
         opp_screens=ctx.opp_side_screens,
     )
+    if config.search_condition_expiry:
+        remaining = _ctx_condition_turns(ctx)
+        result.condition_expiry = True
+        result.terrain = ctx.terrain
+        # A weather a Mega ability just overrode is a fresh 5-turn weather; otherwise the
+        # current one keeps whatever it had left.
+        result.weather_last = (
+            _WEATHER_ABILITY_TURNS
+            if weather_for_exchange != ctx.weather
+            else remaining["weather"]
+        )
+        result.terrain_last = remaining["terrain"]
+        result.trick_room_last = remaining["trick_room"]
+        result.our_tailwind_last = remaining["our_tailwind"]
+        result.opp_tailwind_last = remaining["opp_tailwind"]
     our_protected = [0.0, 0.0]
     opp_protected = [0.0, 0.0]
     our_pre_protect_hp: list[float | None] = [None, None]
@@ -1499,7 +1599,7 @@ def _forecast_field(
 ) -> FieldState:
     return FieldState(
         weather=exchange.weather,
-        terrain=ctx.terrain,
+        terrain=exchange.terrain if exchange.condition_expiry else ctx.terrain,
         screens=(exchange.our_screens if defender_side == "our" else exchange.opp_screens),
         trick_room=exchange.trick_room,
         is_doubles=True,
@@ -1683,32 +1783,36 @@ def forecast_position(
 
     our_states = [_copy_state(state) for state in exchange.our_states]
     opp_states = [_copy_state(state) for state in exchange.opp_states]
+    # Projected turn 1 was the exchange itself; the board the next turns see (and the
+    # safe-pivot check, which asks about the NEXT turn) has expired conditions removed.
+    first_forecast_view = _exchange_on_turn(exchange, 2)
     our_safe = _safe_switch_count(
         "our",
         _forecast_bench_states(
             "our", ctx, usage_spreads_for(config), config.mega_state_uses_evolved_form
         ),
-        opp_states, exchange, ctx, config
+        opp_states, first_forecast_view, ctx, config
     )
     opp_safe = _safe_switch_count(
         "opp",
         _forecast_bench_states(
             "opp", ctx, usage_spreads_for(config), config.mega_state_uses_evolved_form
         ),
-        our_states, exchange, ctx, config
+        our_states, first_forecast_view, ctx, config
     )
     our_loss = opp_loss = 0.0
     our_faints = opp_faints = 0
-    for _turn in range(max(0, config.rolling_horizon_turns)):
+    for turn_index in range(max(0, config.rolling_horizon_turns)):
+        turn_board = _exchange_on_turn(exchange, turn_index + 2)
         our_attacks = _best_joint_forecast_attacks(
-            "our", our_states, opp_states, exchange, ctx, config
+            "our", our_states, opp_states, turn_board, ctx, config
         )
         opp_attacks = _best_joint_forecast_attacks(
-            "opp", opp_states, our_states, exchange, ctx, config
+            "opp", opp_states, our_states, turn_board, ctx, config
         )
         all_attacks = sorted(
             our_attacks + opp_attacks,
-            key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=exchange.trick_room)),
+            key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=turn_board.trick_room)),
         )
         for attack in all_attacks:
             actors = our_states if attack.side == "our" else opp_states
@@ -1727,7 +1831,7 @@ def forecast_position(
                 actor,
                 defender,
                 attack.move_id,
-                _forecast_field(exchange, ctx, defender_side),
+                _forecast_field(turn_board, ctx, defender_side),
             )
             before = defender.hp_or_max()
             dealt = min(before, damage.expected_damage)

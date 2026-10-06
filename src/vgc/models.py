@@ -637,6 +637,20 @@ class PolicyConfig:
     # simulated payoff (the double-counting variant, kept as an A/B arm). Unused when the
     # master switch is off.
     setup_boost_flat_utility_scale: float = 0.0
+    # Make weather, terrain, Trick Room and Tailwind EXPIRE inside the fast search's
+    # projection. Off (legacy): whatever is on the board now is carried unchanged through
+    # the searched exchange and both rolling-horizon turns, and Tailwind/Trick Room set in
+    # the exchange last forever. On: the exchange is projected turn 1 and the forecast
+    # turns are 2 and 3; each active condition applies only for the turns it has left
+    # (`vgc.condition_clock.remaining_turns`: base duration minus the real `|upkeep|`
+    # ticks, item extensions included). A Tailwind (4) or Trick Room (5) set during the
+    # exchange applies to forecast turns 2..duration, a Trick Room used while one is up
+    # still toggles it off, and a Drought/Drizzle Mega set during the exchange lasts 5
+    # turns. A condition the tracker has no entry for is treated as lasting through the
+    # horizon (the legacy behaviour). Weather/terrain MOVES and switch-in setters are not
+    # modelled by the fast search at all, so they are not affected. Changes shipped
+    # ladder decisions, so A/B before enabling.
+    search_condition_expiry: bool = False
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
