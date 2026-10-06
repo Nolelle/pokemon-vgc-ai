@@ -52,3 +52,11 @@ def test_side_conditions_are_tracked_per_side_and_extensions_net_out() -> None:
         _feed(battle, "|upkeep")
     # Net of the 3-turn extension: base 5 - 3 = 2 turns left, as with 8 - 6.
     assert elapsed_ticks(battle, "weather", "raindance") == 3
+
+
+def test_a_visible_extender_on_the_setter_counts_from_the_start() -> None:
+    torkoal = SimpleNamespace(item="heatrock")
+    battle = SimpleNamespace(player_role="p1", team={"p1: Torkoal": torkoal}, opponent_team={})
+    _feed(battle, "|-weather|SunnyDay|[from] ability: Drought|[of] p1a: Torkoal", "|upkeep")
+    # 8-turn sun after one tick has 7 turns left: elapsed reads -2, so base 5 - (-2) = 7.
+    assert elapsed_ticks(battle, "weather", "sunnyday") == -2
