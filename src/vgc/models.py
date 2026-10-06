@@ -516,6 +516,11 @@ class PolicyConfig:
     # vgc.search.search_joint_orders order (the shipped fast search). Each side decides
     # from its own fogged view of the clone.
     exact_search_continuation_policy: str = "myopic"
+    # Weight on what the continuation turns add: a branch scores
+    # (V(after searched turn) - V(root)) + this * (V(final) - V(after searched turn)).
+    # 1.0 = score the final board only (the original continuation); lower values keep the
+    # searched turn's own evidence from being drowned by turns played on a fixed policy.
+    exact_search_continuation_weight: float = 1.0
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat

@@ -207,7 +207,15 @@ def search_joint_orders_exact(
     for branch_index, branch in enumerate(branches):
         choice_index = branch_index // per_choice
         owner = choice_owner[choice_index]
-        values[owner].append(_position_value(branch.state_for(side), config) - before)
+        final = _position_value(branch.state_for(side), config)
+        turn1 = getattr(branch, "turn1_public_states", None)
+        if turn1 is not None and config.exact_search_continuation_weight != 1.0:
+            mid = _position_value(dict(turn1)[side], config)
+            values[owner].append(
+                (mid - before) + config.exact_search_continuation_weight * (final - mid)
+            )
+        else:
+            values[owner].append(final - before)
         if config.exact_search_field_control:
             field_deltas[owner[0]].append(
                 field_control_value(branch.state_for(side), config) - root_field

@@ -34,6 +34,8 @@ class ExactMechanicsBranch:
     continuation_steps: int = 0
     continuation_ended_early: bool = False  # the battle ended before all turns were played
     continuation_truncated: bool = False  # step budget ran out / no side could move
+    # Board right after the searched turn, before any continuation (None without one).
+    turn1_public_states: tuple[tuple[str, BattleMechanicsState], ...] | None = None
 
     def state_for(self, side: str) -> BattleMechanicsState:
         return dict(self.public_states)[side]
@@ -187,6 +189,9 @@ def evaluate_exact_branches(
                         "public_lines": tuple((side, tuple(result.lines[side])) for side in SIDES),
                     }
                     if turns > 0 and not clone.ended:
+                        kwargs["turn1_public_states"] = tuple(
+                            (side, snapshot_battle(clone.battles[side])) for side in SIDES
+                        )
                         live.append((kwargs, clone))
                         keep = True
                     else:
