@@ -276,3 +276,9 @@
 - Priority: re-run exact-judge holdout A/B after the repeat-Protect mirror fix (all earlier judge numbers carry that bug); then a 50+ game ladder session on an idle machine; fix offline/review_lost_decisions.py process pool.
 - Disk 2.3 GB -> 64 GB free: removed 20 merged, unused worktrees (gitignored runs/ + data/selfplay copied to runs/_worktree_archive/<branch>/); gzipped runs/eval/*.jsonl > 5 MB (read with zcat); deleted 16 old Codex releases; emptied Apple aerial wallpaper videos.
 - Left: 7 worktrees with open Claude sessions, wasted-actions (locked), coaching-assistant-webapp (1 unmerged commit), team-preview-tagging (dirty), pokemon-vgc-ai-mc-hybrid (unmerged + dirty).
+
+## 2026-10-05 — Replay coaching assistant: plan v1 (branch claude/coaching-assistant-webapp-fb3319)
+- Owner vision: web app reviews a player's Showdown replay (+ team paste); engine grades decisions, LLM explains from first principles + turns ahead; later many games -> personal habits. Pitch = bot reached ladder top.
+- Plan: docs/coaching_assistant_plan.md (Opus + Codex/Sol reviewed). Parts: reference games -> intake -> player-view rebuild (synthetic |request| from spectator log + paste) -> choice recovery -> grading (grade_positions.grade_position, forced candidates) -> judge checks (continuation test, Protect-delay trap) -> evidence report -> grounded LLM coach -> CLI/web -> habit profile.
+- Key facts: no code builds a player view from a public replay; 46 bot M-C state-replay bundles + record_positions.py give answer keys; deep grading ~30 s/decision; exact judge still no KO term on main (PR #29 unmerged); best M-C ladder ~1150.
+- Next: Part 1 (reference games, both seats, spectator view saved).
