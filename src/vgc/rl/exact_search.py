@@ -194,6 +194,8 @@ def search_joint_orders_exact(
         future_seeds=future_seeds,
         branch_prefix=f"exact-{side}-{getattr(battle, 'turn', 0)}",
         config=config,
+        our_side=side,
+        score_state=lambda state: _position_value(state, config),
     )
     values: dict[tuple[int, int], list[float]] = defaultdict(list)
     field_deltas: dict[int, list[float]] = defaultdict(list)
@@ -209,7 +211,14 @@ def search_joint_orders_exact(
         owner = choice_owner[choice_index]
         final = _position_value(branch.state_for(side), config)
         turn1 = getattr(branch, "turn1_public_states", None)
-        if turn1 is not None and config.exact_search_continuation_weight != 1.0:
+        cont_value = branch.continuation_value
+        if turn1 is not None and cont_value is not None:
+            # "search" continuation mode: the continuation-turn search is the later board.
+            mid = _position_value(dict(turn1)[side], config)
+            values[owner].append(
+                (mid - before) + config.exact_search_continuation_weight * (cont_value - mid)
+            )
+        elif turn1 is not None and config.exact_search_continuation_weight != 1.0:
             mid = _position_value(dict(turn1)[side], config)
             values[owner].append(
                 (mid - before) + config.exact_search_continuation_weight * (final - mid)

@@ -103,3 +103,35 @@ def test_zero_continuation_ranking_matches_no_config_path() -> None:
         replace(b, public_lines=()) for b in new
     ]
     assert ranked[0].breakdown["search_metrics"]["continuation_turns"] == 0
+
+
+def test_search_continuation_mode_values_and_root_untouched() -> None:
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    cfg0 = PolicyConfig()
+    cfgp = replace(cfg0, exact_search_continuation_turns=1)
+    cfgs = replace(cfgp, exact_search_continuation_mode="search")
+
+    def score(state):
+        return _position_value(state, cfg0)
+
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
+        root = _root(worker, "cont-search")
+        before = worker.request({"cmd": "inspect", "id": root.battle_id})["stateHash"]
+        choices = _choices(root)
+        pol = evaluate_exact_branches(root, choices, future_seeds=SEEDS, config=cfgp)
+        sea = evaluate_exact_branches(
+            root, choices, future_seeds=SEEDS, config=cfgs, our_side="p1", score_state=score
+        )
+        after = worker.request({"cmd": "inspect", "id": root.battle_id})["stateHash"]
+        root.close()
+    assert before == after
+    assert [b.branch_id for b in pol] == [b.branch_id for b in sea]
+    live = [b for b in sea if not b.ended]
+    assert live and all(b.continuation_value is not None for b in live)
+    assert all(b.continuation_value is None for b in pol)
+    assert any(
+        s.continuation_value != _position_value(p.state_for("p1"), cfg0)
+        for p, s in zip(pol, sea, strict=True)
+        if s.continuation_value is not None
+    )
