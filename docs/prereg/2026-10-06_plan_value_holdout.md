@@ -13,3 +13,8 @@ Written before the run. Do not edit after the run starts.
 - **Secondary**: all six owner teams pooled, 8 games per pair (4224 games). Reported, not a
   ship gate.
 - Shipping requires the primary PASS; a fail means the train signal was noise.
+
+## Result (appended after the run)
+
+- Primary, terrain_pulse_blastoise vs 88 holdout teams: **1114/2112 = 52.7%, cluster-robust
+  [0.503, 0.552] -- PASS** (`runs/eval/prereg_blastoise.json`).
