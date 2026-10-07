@@ -28,3 +28,10 @@ Written before the run. Do not edit after the run starts.
   contaminated code. The same pre-registered test (same teams, games, criterion) will be
   re-run once the remaining review fixes land; that rerun decides shipping.
 - The secondary all-six-teams run was stopped before finishing for the same reason.
+
+## Rerun on fixed code (appended, 2026-10-07; commit 278943f, same teams/games/seed/criterion)
+
+- Primary, terrain_pulse_blastoise vs 88 holdout teams: **1107/2112 = 52.4%, cluster-robust
+  [0.499, 0.549] -- FAIL** (lower bound 0.499 is not > 0.50). Not shipped.
+- The point estimate is stable across runs (train 54.6%, contaminated holdout 52.7%, clean
+  holdout 52.4%): a consistent ~+2.5-point lean the 88-team holdout cannot certify.

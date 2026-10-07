@@ -660,6 +660,16 @@ its frozen value; this is not a calibration change and no new weight was added.
   fast-search `search_condition_expiry` 50.4% (correctness, off). The fast search never
   models weather/terrain-setting moves or switch-in setters as actions, so the live judge
   can only consider them if the fast search ranks them top-6 anyway.
+- **Review fixes and clean reruns (2026-10-07).** Codex found the plan/speed registries were
+  process-wide (both A/B arms in one process read each other's sets); fixed by
+  `vgc.team_scope` (per-team tables, bound per decision), plus seven smaller fixes (Mega vs
+  switch-in weather order, overlapping speed controls, Trick Room double count, accuracy/
+  multi-hit branching in the speed probe, separate base/Mega measurements, setter execution
+  order, errored cache cells). Clean results: pre-registered holdout confirmation
+  (terrain_pulse_blastoise) **52.4% [0.499, 0.549] = FAIL** (docs/prereg/); measured
+  Tailwind/Trick Room payoff on top of plan value, owner teams vs train: 49.9% [0.489, 0.510]
+  (psyspam_sand 46.9% [0.446, 0.492]); live judge with fast-search setter modelling: 50.5%
+  [0.494, 0.516]. All stay off.
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
