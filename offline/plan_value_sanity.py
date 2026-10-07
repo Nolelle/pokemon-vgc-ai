@@ -81,19 +81,24 @@ def main() -> None:
             if entry is None:
                 print(f"  {pset.species_id:<18} (not in cache)")
                 continue
-            base = entry["per_turn"][0]
-            print(f"  {pset.species_id:<18} bare field {base[0]:5.1f} / {base[1]:5.1f}")
-            for label, weather, terrain in plan:
-                print(f"      {label:<16} {_cell(entry, weather, terrain)}")
-            ranked = sorted(
-                range(1, len(pv.CONDITIONS)), key=lambda c: -entry["gain"][c][1]
-            )[:3]
-            top = ", ".join(
-                f"{'+'.join(x for x in pv.CONDITIONS[c] if x != 'none')} "
-                f"{entry['gain'][c][1]:+.1f}"
-                for c in ranked
-            )
-            print(f"      best overall: {top}")
+            # A stone holder is measured twice: base form, then (its own rows) the Mega form.
+            forms = [(pset.species_id, entry)]
+            if entry.get("mega_form"):
+                forms.append((f"{entry['mega']}", {**entry, **entry["mega_form"]}))
+            for name, form in forms:
+                base = form["per_turn"][0]
+                print(f"  {name:<18} bare field {base[0]:5.1f} / {base[1]:5.1f}")
+                for label, weather, terrain in plan:
+                    print(f"      {label:<16} {_cell(form, weather, terrain)}")
+                ranked = sorted(
+                    range(1, len(pv.CONDITIONS)), key=lambda c: -form["gain"][c][1]
+                )[:3]
+                top = ", ".join(
+                    f"{'+'.join(x for x in pv.CONDITIONS[c] if x != 'none')} "
+                    f"{form['gain'][c][1]:+.1f}"
+                    for c in ranked
+                )
+                print(f"      best overall: {top}")
 
 
 if __name__ == "__main__":
