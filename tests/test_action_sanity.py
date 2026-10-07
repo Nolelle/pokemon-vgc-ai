@@ -123,7 +123,8 @@ def test_costs_are_strategic_and_far_below_a_game_result() -> None:
         _order(_move("protect"), _move("direclaw", 1)),
         config,
     )
-    assert choice_cost == config.choice_lock_status_penalty < config.wasted_action_penalty
+    # Scarf Protect is the Protect-family case: about one lost turn, still far below a win.
+    assert choice_cost == config.choice_lock_protect_penalty < config.wasted_action_penalty
 
 
 def test_trick_onto_itemless_unburden_ally_is_costed() -> None:

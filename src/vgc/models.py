@@ -296,6 +296,11 @@ class PolicyConfig:
     # A status move by an unlocked Choice-item holder locks it into that move. Not always
     # wrong (Scarf Protect / Tailwind / Trick Room can be worth it), so a moderate cost.
     choice_lock_status_penalty: float = 40.0
+    # The Protect-family case of the rule above, priced as roughly one lost turn: locked
+    # into Protect, the next Protect likely fails, so the Pokemon must switch or waste the
+    # turn (setup positions 2026-10-07, position 7: Scarf Indeedee Protect). Still far below
+    # a game result, so a Protect that secures a win is kept.
+    choice_lock_protect_penalty: float = 150.0
     # Trick/Switcheroo onto our OWN ally holding no item or with Unburden active: it loses
     # Unburden's 2x Speed (and Acrobatics' doubling) and becomes Choice-locked.
     trick_to_ally_penalty: float = 40.0

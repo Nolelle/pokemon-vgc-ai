@@ -294,6 +294,21 @@ def _trick_to_ally(battle: Any, slot: int, single: Any) -> str | None:
     return f"trick_to_ally:{_id(single.order.id)}:ally_has_no_item:{_id(ally.species)}"
 
 
+def choice_locked_status_slots(battle: Any, order: Any) -> frozenset[int]:
+    """Our slots that lock themselves into a status move with a Choice item this turn.
+
+    The fast search's rolling forecast uses this so a Scarf holder that Protects (or uses
+    any status move) is not credited with free attacks on the projected turns that
+    follow -- in the real game it is stuck on that move.
+    """
+
+    slots = set()
+    for slot, single in _singles(order):
+        if isinstance(single.order, Move) and _choice_lock_status(battle, slot, single):
+            slots.add(slot)
+    return frozenset(slots)
+
+
 def wasted_action_findings(battle: Any, order: Any) -> list[tuple[str, str, float]]:
     """(reason, kind, probability) per flagged action; ``kind`` picks the config weight."""
 
@@ -313,7 +328,12 @@ def wasted_action_findings(battle: Any, order: Any) -> list[tuple[str, str, floa
                 findings.append((reason, "wasted", 1.0))
         reason = _choice_lock_status(battle, slot, single)
         if reason:
-            findings.append((reason, "choice", 1.0))
+            from vgc.evaluator import _SELF_PROTECT_MOVES  # local: evaluator imports us
+
+            # Locked into Protect, the next Protect is likely to fail: the Pokemon must
+            # switch or waste a turn, unlike a useful lock (Tailwind, Trick Room).
+            kind = "choice_protect" if _id(single.order.id) in _SELF_PROTECT_MOVES else "choice"
+            findings.append((reason, kind, 1.0))
         reason = _trick_to_ally(battle, slot, single)
         if reason:
             findings.append((reason, "trick_ally", 1.0))
@@ -332,6 +352,7 @@ def wasted_action_cost(battle: Any, order: Any, config: Any) -> tuple[float, lis
     weights = {
         "wasted": config.wasted_action_penalty,
         "choice": config.choice_lock_status_penalty,
+        "choice_protect": config.choice_lock_protect_penalty,
         "trick_ally": config.trick_to_ally_penalty,
     }
     findings = wasted_action_findings(battle, order)

@@ -154,6 +154,7 @@ from vgc.sets import (
     usage_spreads_for,
 )
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
+from vgc.action_sanity import choice_locked_status_slots
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -694,6 +695,9 @@ class ExchangeResult:
     our_utility_value: float = 0.0
     opp_utility_value: float = 0.0
     our_tailwind: bool = False
+    # Our slots that Choice-locked themselves into a status move in this exchange; the
+    # forecast gives them no attacks on later projected turns (vgc.action_sanity).
+    our_choice_locked_slots: frozenset[int] = frozenset()
     opp_tailwind: bool = False
     trick_room: bool = False
     our_screens: frozenset[str] = frozenset()
@@ -1780,6 +1784,13 @@ def _forecast_options(
         if state is None or state.hp_or_max() <= 0 or state.status == "slp":
             options_by_slot.append([None])
             continue
+        if (
+            side == "our"
+            and config.penalize_wasted_actions
+            and slot in exchange.our_choice_locked_slots
+        ):
+            options_by_slot.append([None])  # stuck on the status move it locked into
+            continue
         best_by_target: dict[int, tuple[float, str, int]] = {}
         for move_id in _move_ids_for_state(state, side, ctx, config):
             normalized = to_id(move_id)
@@ -2340,6 +2351,13 @@ def search_joint_orders(
         [resolve_exchange(entry.order, response, ctx, config) for response in responses]
         for entry in searched
     ]
+    battle_for_locks = getattr(ctx, "battle", None)
+    if config.penalize_wasted_actions and battle_for_locks is not None:
+        for entry, exchanges in zip(searched, exchanges_by_entry, strict=True):
+            locked = choice_locked_status_slots(battle_for_locks, entry.order)
+            if locked:
+                for exchange in exchanges:
+                    exchange.our_choice_locked_slots = locked
     v_after_by_entry: list[list[float | None]]
     if v_before is not None:
         flat_records = [
