@@ -93,7 +93,10 @@ def main() -> None:
         for done, (key, pset) in enumerate(todo, 1):
             entry = worker.measure(pset, panel)
             if "errors" in entry:
+                # Never cache a measurement with failed duels; the next build retries it.
                 errors += 1
+                print(f"  ERROR {pset.species_id} {entry['errors'][0]}")
+                continue
             cache["entries"][key] = entry
             if done % args.save_every == 0:
                 sp.write_cache(cache, args.cache)
@@ -103,7 +106,8 @@ def main() -> None:
     sp.write_cache(cache, args.cache)
     size = Path(args.cache).stat().st_size
     print(
-        f"done: {len(todo)} measured ({errors} with probe errors), {len(cache['entries'])} total "
+        f"done: {len(todo)} measured ({errors} with probe errors, NOT cached), "
+        f"{len(cache['entries'])} total "
         f"entries, {size / 1e6:.2f} MB, wall time {time.time() - started:.0f}s"
     )
 

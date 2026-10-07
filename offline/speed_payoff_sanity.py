@@ -50,12 +50,17 @@ def main() -> None:
             if entry is None:
                 print(f"  {pset.species_id:<18} (not in cache)")
                 continue
-            outspeeds = sum(1 for ours, foe in entry["speeds"] if ours > foe)
-            moves = sorted(set(entry["ours_move"]))
-            print(
-                f"  {pset.species_id:<18}{outspeeds:>5}{entry['tw']:>+8.1f}"
-                f"{entry['tw_against']:>+8.1f}{entry['tr']:>+8.1f}   {','.join(moves)[:40]}"
-            )
+            # A stone holder is measured twice: base form, then (its own row) the Mega form.
+            forms = [(pset.species_id, entry)]
+            if entry.get("mega_form"):
+                forms.append((f"{entry['mega']}", {**entry, **entry["mega_form"]}))
+            for name, form in forms:
+                outspeeds = sum(1 for ours, foe in form["speeds"] if ours > foe)
+                moves = sorted(set(form["ours_move"]))
+                print(
+                    f"  {name:<18}{outspeeds:>5}{form['tw']:>+8.1f}"
+                    f"{form['tw_against']:>+8.1f}{form['tr']:>+8.1f}   {','.join(moves)[:40]}"
+                )
 
 
 if __name__ == "__main__":

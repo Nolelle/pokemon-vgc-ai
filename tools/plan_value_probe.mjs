@@ -9,7 +9,7 @@
 // into a committed cache that `vgc.field_control` reads.
 //
 // Protocol (long-lived, JSON lines on stdin/stdout, one request per line):
-//   -> {"rid":1,"packed":"<ONE packed set>","moves":["archaludon move ids..."],
+//   -> {"rid":1,"packed":"<ONE packed set>","mega":true,"moves":["archaludon move ids..."],
 //       "conditions":[["none","none"],["raindance","psychicterrain"],...],
 //       "seeds":[1,2,3,4]}
 //   <- {"rid":1,"results":{"<moveid>":[[[turn1,turn2] per profile] per condition]},...}
@@ -43,7 +43,7 @@
 //  * Foe HP is restored between the two turns so a big first hit cannot KO the reference.
 //  * The foes use Tackle each turn so conditional moves (Sucker Punch) are not unfairly
 //    zeroed; our side is the single Pokemon under test, and it Mega Evolves on turn 1 if
-//    it holds its stone.
+//    it holds its stone and the request says `"mega":true` (default; `false` = base form).
 //
 // Usage: node tools/plan_value_probe.mjs <path-to-pokemon-showdown-repo>
 import { pathToFileURL } from "node:url";
@@ -74,6 +74,7 @@ const TURNS = 2;
 // damage is still reported as % of the REAL max HP. The few moves whose damage is a fraction
 // of the foe's current HP (or compares HP) keep the real HP so their % stays honest.
 const HP_SCALE = 10;
+const ALLY_TARGETS = new Set(["adjacentAlly", "adjacentAllyOrSelf"]);
 const REAL_HP_MOVES = new Set([
 	"superfang", "naturesmadness", "ruination", "guardianofalola", "endeavor", "finalgambit",
 ]);
@@ -231,7 +232,7 @@ function applyCondition(battle, ours, weather, terrain) {
 	}
 }
 
-function measure(setPacked, moveIndex, condition, profile, seed) {
+function measure(setPacked, moveIndex, condition, profile, seed, mega) {
 	const [weather, terrain] = condition;
 	// The real format forces level 50 (Adjust Level); a packed set with no level would be 100.
 	const ourTeam = [...Teams.unpack(setPacked).map((set) => ({ ...set, level: 50 })), { ...DUMMY_SET }];
@@ -271,7 +272,7 @@ function measure(setPacked, moveIndex, condition, profile, seed) {
 	battle.sides[0].faintedLastTurn = null;
 	// Mega Evolve BEFORE the condition is applied: a Mega whose new ability sets weather
 	// (Charizard-Y's Drought) must not leak that weather into the "bare field" baseline.
-	if (ours.canMegaEvo) battle.actions.runMegaEvo(ours);
+	if (mega && ours.canMegaEvo) battle.actions.runMegaEvo(ours);
 	applyCondition(battle, ours, weather, terrain);
 
 	const foeState = {};
@@ -292,13 +293,19 @@ function measure(setPacked, moveIndex, condition, profile, seed) {
 		// A move the engine will not let us repeat (e.g. Blood Moon) deals nothing that turn.
 		const unavailable = !locked && requested[moveIndex]?.disabled;
 		let slot = moveIndex;
-		if (unavailable) slot = Math.max(0, requested.findIndex((entry) => !entry.disabled));
+		if (unavailable) {
+			// A disabled move (Fake Out after turn 1) deals nothing, but the choice must still be
+			// legal: with the ally slot fainted an ally-targeting move (Helping Hand) has no legal
+			// target, so prefer a move aimed at a foe or at nobody.
+			slot = requested.findIndex((entry) => !entry.disabled && !ALLY_TARGETS.has(entry.target));
+			if (slot < 0) slot = Math.max(0, requested.findIndex((entry) => !entry.disabled));
+		}
 		const targetText = battle.actions.targetTypeChoices(requested[slot]?.target) ? " 1" : "";
 		const ourChoice = locked ? "move 1" : `move ${slot + 1}${targetText}`;
 		try {
 			battle.makeChoices(ourChoice, foeChoice);
 		} catch (err) {
-			return { error: `turn ${turn} ${condition} move ${moveIndex}: ${err.message}` };
+			return { error: `turn ${turn} ${condition} move ${moveIndex}: ${err.message} (${ourChoice})` };
 		}
 		const raw = parseLog(battle.log, logStart, foeState, recorder);
 		if (process.env.PLAN_VALUE_DEBUG) {
@@ -318,10 +325,10 @@ function measure(setPacked, moveIndex, condition, profile, seed) {
 	return { total: turns[0] + turns[1] };
 }
 
-function measureAverage(packed, index, condition, profile, seeds) {
+function measureAverage(packed, index, condition, profile, seeds, mega) {
 	let sum = 0;
 	for (const seed of seeds) {
-		const outcome = measure(packed, index, condition, profile, seed);
+		const outcome = measure(packed, index, condition, profile, seed, mega);
 		if (outcome.error) return outcome;
 		sum += outcome.total;
 	}
@@ -330,6 +337,9 @@ function measureAverage(packed, index, condition, profile, seeds) {
 
 function handleRequest(msg) {
 	const packed = msg.packed;
+	// `mega: true` Mega Evolves a stone holder on turn 1; false measures the base form (the
+	// Python side asks for both and registers each under its own species id).
+	const mega = msg.mega !== false;
 	const team = Teams.unpack(packed);
 	const moveNames = team[0].moves.map((name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, ""));
 	const results = {};
@@ -345,15 +355,15 @@ function handleRequest(msg) {
 		if (seeds.length > 1) {
 			const bare = msg.conditions[0];
 			const same = PROFILES.every((profile) => {
-				const a = measure(packed, index, bare, profile, seeds[0]);
-				const b = measure(packed, index, bare, profile, seeds[1]);
+				const a = measure(packed, index, bare, profile, seeds[0], mega);
+				const b = measure(packed, index, bare, profile, seeds[1], mega);
 				return a.error || b.error || Math.abs(a.total - b.total) < 1e-9;
 			});
 			if (!same) moveSeeds = seeds;
 		}
 		results[moveId] = msg.conditions.map((condition) =>
 			PROFILES.map((profile) => {
-				const outcome = measureAverage(packed, index, condition, profile, moveSeeds);
+				const outcome = measureAverage(packed, index, condition, profile, moveSeeds, mega);
 				if (outcome.error) {
 					errors.push(`${moveId}: ${outcome.error}`);
 					return null;

@@ -206,3 +206,63 @@ def Pokemon_stub(_pokemon):  # noqa: N802 - a real poke-env Pokemon instance is 
     from poke_env.battle.pokemon import Pokemon
 
     return Pokemon(gen=9, species="torkoal")
+
+
+def _setter_info(condition, value, speed, trick_room=False, priority=0):
+    return {
+        "move_id": "x",
+        "field_condition": condition,
+        "field_setter_value": value,
+        "setter_priority": priority,
+        "setter_speed": speed,
+        "setter_trick_room": trick_room,
+    }
+
+
+def test_two_weather_setters_keep_the_one_that_resolves_last() -> None:
+    from vgc.evaluator import _cross_slot_adjustments
+
+    rain = _setter_info("weather:rain", 30.0, speed=150.0)  # fast: goes first
+    sun = _setter_info("weather:sun", -10.0, speed=50.0)  # slow: resolves last, wins
+    # Net of the pair (sum of both scores + this adjustment) is the LAST setter's value.
+    assert 30.0 - 10.0 + _cross_slot_adjustments(rain, sun, ON) == pytest.approx(-10.0)
+    assert 30.0 - 10.0 + _cross_slot_adjustments(sun, rain, ON) == pytest.approx(-10.0)
+    # Under Trick Room the slower one goes first, so the fast Rain Dance is the survivor.
+    rain_tr = _setter_info("weather:rain", 30.0, speed=150.0, trick_room=True)
+    sun_tr = _setter_info("weather:sun", -10.0, speed=50.0, trick_room=True)
+    assert 30.0 - 10.0 + _cross_slot_adjustments(rain_tr, sun_tr, ON) == pytest.approx(30.0)
+    # A weather and a terrain do not interact.
+    terrain = _setter_info("terrain:grassy", 5.0, speed=10.0)
+    assert _cross_slot_adjustments(rain, terrain, ON) == 0.0
+
+
+def test_switch_in_setter_resolves_before_mega_weather() -> None:
+    # Showdown runs every switch before any Mega Evolution, so a Charizard-Y Mega Evolving
+    # beside an opposing Pelipper switch-in must leave SUN standing, in either speed order.
+    from vgc.search import _pre_move_field_events
+
+    order = _fake_order(_fake_single("heatwave", mega=True), None)
+    for pelipper_points in (0, 32):
+        charizard = PokemonState("charizardmegay", ability="drought", sp_spread={"spe": 32})
+        pelipper = PokemonState("pelipper", ability="drizzle", sp_spread={"spe": pelipper_points})
+        response = OppResponse(
+            slot0=_OppSlotAction(kind="switch", switch_state=pelipper),
+            slot1=_OppSlotAction(kind="none"),
+        )
+        events = _pre_move_field_events(order, [charizard, None], response, [pelipper, None])
+        assert [cond for _s, _r, cond in events] == [("weather", "rain"), ("weather", "sun")]
+
+    ctx = _build_ctx(
+        our_states=[PokemonState("charizard", item="charizarditey"), None],
+        opp_states=[PokemonState("garchomp"), None],
+        our_pokemon=[_mon(moves={"heatwave": None}, species="charizard"), None],
+        opp_pokemon=[_mon(moves={"earthquake": None}, species="garchomp"), None],
+    )
+    response = OppResponse(
+        slot0=_OppSlotAction(
+            kind="switch", switch_state=PokemonState("pelipper", ability="drizzle")
+        ),
+        slot1=_OppSlotAction(kind="none"),
+    )
+    result = resolve_exchange(order, response, ctx, PolicyConfig(search_model_field_setters=True))
+    assert result.weather == "sun"

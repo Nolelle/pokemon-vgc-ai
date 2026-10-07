@@ -1352,7 +1352,7 @@ def _score_status_move(
     if move_id in _PROTECT_MOVES:
         return _score_protect(actor_slot, ctx, config)
     if config.search_model_field_setters and move_condition(move_id) is not None:
-        return _score_field_setter_move(move_id, ctx, config)
+        return _score_field_setter_move(move_id, move_data, actor_slot, ctx, config)
     targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
     if move_data.get("target") in _SINGLE_TARGETS and single.move_target in (-1, -2) and not targets:
         # Aimed at an empty/fainted ally slot: Showdown does not retarget it, the move
@@ -1444,7 +1444,7 @@ def _field_setter_payoff(
 
 
 def _score_field_setter_move(
-    move_id: str, ctx: _Context, config: PolicyConfig
+    move_id: str, move_data: dict, actor_slot: int, ctx: _Context, config: PolicyConfig
 ) -> tuple[float, dict]:
     """Sunny Day / Rain Dance / Sandstorm / Snowscape / terrains: the team-plan payoff of the
     condition (ours minus theirs, over its 5 turns), 0 when that condition is already up
@@ -1457,6 +1457,10 @@ def _score_field_setter_move(
         "utility_kind": "field_setter",
         "field_condition": f"{condition[0]}:{condition[1]}",
         "field_setter_value": value,
+        # Where this setter falls in the turn's order (see `_cross_slot_adjustments`).
+        "setter_priority": int(move_data.get("priority", 0)),
+        "setter_speed": float(ctx.our_speed[actor_slot]),
+        "setter_trick_room": bool(ctx.trick_room),
     }
 
 
@@ -1873,16 +1877,24 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
     if second_info.get("move_id") == "helpinghand" and first_info.get("raw_damage_score"):
         bonus += float(first_info["raw_damage_score"]) * config.helping_hand_weight
 
-    # Two setters of the same kind in one turn: the later one fails or just overwrites the
-    # first, so only the better of the two earns its payoff.
+    # Two setters of the same kind in one turn: the later one fails (same condition) or
+    # overwrites the first (different one), so the condition the turn ENDS on is the one that
+    # resolves LAST -- by priority, then speed (reversed under Trick Room). Only that setter
+    # earns its payoff; the earlier one is erased. (Not "the better of the two": a bad
+    # replacement that resolves last really is what the board is left with.)
     first_setter, second_setter = first_info.get("field_condition"), second_info.get(
         "field_condition"
     )
     if first_setter and second_setter and first_setter.split(":")[0] == second_setter.split(":")[0]:
-        bonus -= min(
-            float(first_info.get("field_setter_value", 0.0)),
-            float(second_info.get("field_setter_value", 0.0)),
+        first_acts_first = resolves_before(
+            int(first_info.get("setter_priority", 0)),
+            float(first_info.get("setter_speed", 0.0)),
+            int(second_info.get("setter_priority", 0)),
+            float(second_info.get("setter_speed", 0.0)),
+            bool(first_info.get("setter_trick_room", False)),
         )
+        overwritten = first_info if first_acts_first else second_info
+        bonus -= float(overwritten.get("field_setter_value", 0.0))
 
     # Spread damage beside Protect is a deliberate pressure pairing: the ally does not
     # take the spread hit in the real turn, so refund the evaluator's ally-damage penalty.

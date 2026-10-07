@@ -701,9 +701,16 @@ in two turns scores 0). Cache `data/usage/speed_payoff_cache.json` (owner teams 
 `tools/build_speed_payoff_cache.py`; eyeball with `offline/speed_payoff_sanity.py`.
 `PolicyConfig.exact_search_field_measured_speed` (OFF) removes Tailwind/Trick Room from S_t
 when every Pokemon it needs is cached and adds the payoff to the fit term (so fit weight ~0.5
-applies): our Tailwind = our two best Pokemon's `tw`, their Tailwind = minus theirs, Trick
-Room = ours `tr` minus theirs. Not yet A/B'd. Tests: `tests/test_speed_payoff.py`
-(integration), `tests/test_field_control.py`.
+applies). Every payoff is a NET duel number, so ours and the foe's are two views of one
+exchange and are AVERAGED, never summed: Trick Room = (ours.tr - theirs.tr) / 2, our Tailwind =
+(ours.tw - theirs.tw_against) / 2, their Tailwind = (ours.tw_against - theirs.tw) / 2. The
+probe measured ONE control on a bare field, so the measured value is used only on turns where
+exactly one of {our Tailwind, their Tailwind, Trick Room} is up; overlaps (two Tailwinds cancel,
+Tailwind inside Trick Room slows the Tailwind side) are left to the generic S_t, which orders
+every combination exactly. Probe luck is branched, not forced (a miss can leave the foe
+standing), and a stone holder is measured as base form and Mega form, registered under each
+species id. Entries with probe errors are never cached. Not yet A/B'd. Tests:
+`tests/test_speed_payoff.py` (integration), `tests/test_field_control.py`.
 
 ## Neural shortlist distillation (Phase 4): M-B-era guided gate, current models unapproved
 

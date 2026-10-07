@@ -7,7 +7,8 @@ move's per-turn damage and its gain over the bare field. See `vgc/plan_value.py`
 design and `tools/plan_value_probe.mjs` for how conditions are held and luck removed.
 
 Incremental: a set already in the cache (same canonical set, probe version, Showdown pin)
-is skipped, so rerunning after adding teams only measures the new sets.
+is skipped, so rerunning after adding teams only measures the new sets. A set whose probe
+reported any error is NOT stored (a failed cell would read as zero), so it is retried next run.
 
 Usage:
     .venv/bin/python tools/build_plan_value_cache.py \
@@ -66,7 +67,11 @@ def main() -> None:
         for done, (key, pset) in enumerate(todo, 1):
             entry = worker.measure(pset, seeds)
             if "errors" in entry:
+                # Never cache a measurement with failed cells (they read as zero): the next
+                # build retries this set, and the player falls back to its estimate meanwhile.
                 errors += 1
+                print(f"  ERROR {pset.species_id} {entry['errors'][0]}")
+                continue
             cache["entries"][key] = entry
             if done % args.save_every == 0:
                 pv.write_cache(cache, args.cache)
@@ -76,7 +81,8 @@ def main() -> None:
     pv.write_cache(cache, args.cache)
     size = Path(args.cache).stat().st_size
     print(
-        f"done: {len(todo)} measured ({errors} with probe errors), {len(cache['entries'])} total "
+        f"done: {len(todo)} measured ({errors} with probe errors, NOT cached), "
+        f"{len(cache['entries'])} total "
         f"entries, {size / 1e6:.2f} MB, wall time {time.time() - started:.0f}s"
     )
 

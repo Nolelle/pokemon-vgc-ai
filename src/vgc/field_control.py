@@ -45,14 +45,25 @@ no cache entry falls back to the estimate and is counted in `plan_value.FALLBACK
 Measured speed payoff (`PolicyConfig.exact_search_field_measured_speed`)
 ------------------------------------------------------------------------
 `S_t` treats Tailwind / Trick Room as "who moves first, averaged over pairings", blind to what
-moving first is worth for a given set. With the flag on, each of those conditions (when every
-Pokemon it needs is cached, else the generic term stays) is taken OUT of `S_t` and valued by the
-engine-measured payoff of `vgc.speed_payoff` -- %HP per Pokemon per turn dealt minus taken
-against a panel of real M-C sets -- added to the fit term (so `exact_search_field_fit_weight`
-applies): our Tailwind adds our actives' `tw` (signed) plus the bench average at the
-reserve weight, their Tailwind subtracts theirs likewise, and
-Trick Room adds ours minus theirs `tr`. Active Pokemon count fully, brought bench at
-`exact_search_field_reserve_weight`. Weather-speed abilities stay in `S_t`.
+moving first is worth for a given set. With the flag on, such a condition is taken OUT of
+`S_t` and valued by the engine-measured payoff of `vgc.speed_payoff` -- %HP per Pokemon per turn
+dealt minus taken against a panel of real M-C sets -- added to the fit term (so
+`exact_search_field_fit_weight` applies). Active Pokemon count fully, brought bench at
+`exact_search_field_reserve_weight`; weather-speed abilities stay in `S_t`. The rules:
+
+* **Each payoff is already a NET duel number** (damage dealt minus damage taken), so the same
+  exchange shows up once in our side's numbers and once, negated, in the opponent's. The two
+  views are AVERAGED, never summed: Trick Room = (ours.tr - theirs.tr) / 2; our Tailwind =
+  (ours.tw - theirs.tw_against) / 2; their Tailwind = (ours.tw_against - theirs.tw) / 2 (a cost).
+  Worked example: Trick Room with our two slow sets at +20 each and their two fast ones at -10
+  each is (40 - (-20)) / 2 = +30 %HP per turn, not 60. If only one side's Pokemon are cached
+  (ours = every surviving Pokemon of ours; theirs = every ACTIVE foe), that single view is used
+  as is; with neither cached the condition keeps the generic term.
+* **The probe measured ONE control on an otherwise bare field**, so the measured value is used
+  only on a projected turn on which exactly one of {our Tailwind, their Tailwind, Trick Room} is
+  up. When two or more overlap, that turn is valued by the generic `S_t`, which orders every
+  combination exactly: two Tailwinds double both sides' Speed and cancel (no credit to either
+  side), and Tailwind inside Trick Room makes the Tailwind side slower, never a benefit.
 
 Not modeled (known gaps)
 ------------------------
@@ -456,15 +467,21 @@ def _p_before(ours: list[tuple[float, float]], theirs: list[tuple[float, float]]
 
 
 class _Measured:
-    """Which speed-control conditions are valued by measurement instead of the generic term."""
+    """Per projected turn t: which speed controls are valued by measurement, not the generic term.
 
-    __slots__ = ("our_tailwind", "their_tailwind", "trick_room")
+    At most one of the three is True on any turn (the probe measured one control alone; see
+    the module docstring). `ours` / `theirs` say which sides' payoffs are available.
+    """
 
-    def __init__(self, our_tailwind: bool = False, their_tailwind: bool = False,
-                 trick_room: bool = False) -> None:
-        self.our_tailwind = our_tailwind
-        self.their_tailwind = their_tailwind
-        self.trick_room = trick_room
+    __slots__ = ("our_tailwind", "their_tailwind", "trick_room", "ours", "theirs", "cancel")
+
+    def __init__(self, horizon: int = 0, ours: bool = False, theirs: bool = False) -> None:
+        self.our_tailwind = [False] * horizon
+        self.their_tailwind = [False] * horizon
+        self.trick_room = [False] * horizon
+        self.cancel = [False] * horizon  # both Tailwinds up: the generic term cancels them
+        self.ours = ours
+        self.theirs = theirs
 
 
 def _speed_order(
@@ -474,15 +491,20 @@ def _speed_order(
     horizon: int,
     measured: _Measured | None = None,
 ) -> list[float]:
-    measured = measured or _Measured()
     result = []
     for t in range(horizon):
         weather = conditions.weather[t]
-        # A condition valued by `_measured_speed_fit` is removed from the generic term so it
-        # is not counted twice.
-        tr = conditions.trick_room[t] and not measured.trick_room
-        our_tw = conditions.our_tailwind[t] and not measured.our_tailwind
-        their_tw = conditions.their_tailwind[t] and not measured.their_tailwind
+        tr = conditions.trick_room[t]
+        our_tw = conditions.our_tailwind[t]
+        their_tw = conditions.their_tailwind[t]
+        if measured is not None:
+            # A condition valued by `_measured_speed_fit` is removed from the generic term so it
+            # is not counted twice. Two Tailwinds double both sides and cancel exactly.
+            if measured.cancel[t]:
+                our_tw = their_tw = False
+            tr = tr and not measured.trick_room[t]
+            our_tw = our_tw and not measured.our_tailwind[t]
+            their_tw = their_tw and not measured.their_tailwind[t]
         our_speeds = [_speed_at(m, weather, our_tw) for m in ours]
         their_speeds = [_speed_at(m, weather, their_tw) for m in theirs]
         weighted = 0.0
@@ -571,22 +593,34 @@ def _speed_side_value(mons: list[_Mon], field: str, reserve_weight: float) -> fl
 
 
 def _measured_speed_flags(
-    ours: list[_Mon], theirs: list[_Mon], conditions: _Conditions
+    ours: list[_Mon], theirs: list[_Mon], conditions: _Conditions, horizon: int
 ) -> _Measured:
-    """Which active speed conditions can be valued by measurement.
+    """Which turns' speed control can be valued by measurement (see the module docstring).
 
     Ours need every surviving Pokemon of ours cached; the opponent needs every ACTIVE foe
-    cached (its bench is mostly unrevealed). Otherwise that condition keeps the generic term.
+    cached (its bench is mostly unrevealed). A turn is measured only when exactly one control
+    is up and at least one side's payoffs are available; two Tailwinds cancel; any other overlap
+    keeps the generic term.
     """
     ours_ok = bool(ours) and all(mon.speed is not None for mon in ours)
     theirs_ok = all(mon.speed is not None for mon in theirs if mon.active) and any(
         mon.active for mon in theirs
     )
-    return _Measured(
-        our_tailwind=ours_ok and any(conditions.our_tailwind),
-        their_tailwind=theirs_ok and any(conditions.their_tailwind),
-        trick_room=ours_ok and theirs_ok and any(conditions.trick_room),
-    )
+    measured = _Measured(horizon, ours_ok, theirs_ok)
+    for t in range(horizon):
+        our_tw, their_tw = conditions.our_tailwind[t], conditions.their_tailwind[t]
+        room = conditions.trick_room[t]
+        measured.cancel[t] = our_tw and their_tw
+        if not (ours_ok or theirs_ok) or (our_tw + their_tw + room) != 1:
+            continue
+        measured.our_tailwind[t] = our_tw
+        measured.their_tailwind[t] = their_tw
+        measured.trick_room[t] = room
+    return measured
+
+
+def _mean_views(views: list[float]) -> float:
+    return sum(views) / len(views) if views else 0.0
 
 
 def _measured_speed_fit(
@@ -599,25 +633,36 @@ def _measured_speed_fit(
 ) -> list[float]:
     """%HP per turn the measured Tailwind / Trick Room payoff adds for us (see vgc.speed_payoff).
 
-    Our Tailwind: our two best Pokemon's `tw`. Their Tailwind: minus their two best Pokemon's
-    `tw` (each from its own side's perspective). Trick Room: ours `tr` minus theirs `tr`, so
-    it is worth what it does for our slow sets net of what it does for theirs.
+    Every payoff is a net duel number, so the same exchange appears in our sets' numbers and
+    (negated) in theirs: the views are averaged, not summed (see the module docstring).
     """
     reserve = config.exact_search_field_reserve_weight
     scale = config.exact_search_speed_payoff_scale
-    our_tw = _speed_side_value(ours, "tw", reserve) if measured.our_tailwind else 0.0
-    their_tw = _speed_side_value(theirs, "tw", reserve) if measured.their_tailwind else 0.0
-    our_tr = _speed_side_value(ours, "tr", reserve) if measured.trick_room else 0.0
-    their_tr = _speed_side_value(theirs, "tr", reserve) if measured.trick_room else 0.0
+
+    def side(mons: list[_Mon], field: str) -> float:
+        return _speed_side_value(mons, field, reserve)
+
+    our_tailwind_value = _mean_views(
+        ([side(ours, "tw")] if measured.ours else [])
+        + ([-side(theirs, "tw_against")] if measured.theirs else [])
+    )
+    their_tailwind_value = _mean_views(
+        ([side(ours, "tw_against")] if measured.ours else [])
+        + ([-side(theirs, "tw")] if measured.theirs else [])
+    )
+    trick_room_value = _mean_views(
+        ([side(ours, "tr")] if measured.ours else [])
+        + ([-side(theirs, "tr")] if measured.theirs else [])
+    )
     result = []
     for t in range(horizon):
         total = 0.0
-        if measured.our_tailwind and conditions.our_tailwind[t]:
-            total += our_tw
-        if measured.their_tailwind and conditions.their_tailwind[t]:
-            total -= their_tw
-        if measured.trick_room and conditions.trick_room[t]:
-            total += our_tr - their_tr
+        if measured.our_tailwind[t]:
+            total = our_tailwind_value
+        elif measured.their_tailwind[t]:
+            total = their_tailwind_value
+        elif measured.trick_room[t]:
+            total = trick_room_value
         result.append(scale * total)
     return result
 
@@ -664,7 +709,7 @@ def field_control_value(state: Any, config: PolicyConfig) -> float:
     theirs = _alive_mons(state.opponent_side, ours=False, config=config)
     measured = None
     if config.exact_search_field_measured_speed:
-        measured = _measured_speed_flags(ours, theirs, conditions)
+        measured = _measured_speed_flags(ours, theirs, conditions, horizon)
     speed = _speed_order(ours, theirs, conditions, horizon, measured)
     fit = _field_fit(ours, theirs, conditions, horizon, config)
     if measured is not None:

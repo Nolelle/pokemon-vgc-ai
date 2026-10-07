@@ -8,9 +8,9 @@
 // `tools/build_speed_payoff_cache.py` turn it into a cache that `vgc.field_control` reads.
 //
 // Protocol (long-lived, JSON lines on stdin/stdout, like tools/plan_value_probe.mjs):
-//   -> {"rid":1,"subject":"<ONE packed set>","foes":["<packed set>", ...],"seeds":[1]}
+//   -> {"rid":1,"subject":"<ONE packed set>","mega":true,"foes":["<packed set>", ...],"seeds":[1]}
 //   <- {"rid":1,"results":[{"ourMove":"hyper voice","foeMove":"...","ourSpeed":..,"foeSpeed":..,
-//        "base":[dealt,taken],"ourtw":[..],"foetw":[..],"tr":[..],"koFoe":{..},"koUs":{..}}, ...],
+//        "base":[dealt,taken],"ourtw":[..],"foetw":[..],"tr":[..],"koFoe":..,"koUs":..}, ...],
 //       "errors":[...]}
 //   dealt / taken are the 2-turn TOTAL expected %HP the subject deals to / takes from the foe,
 //   each as a % of the damaged Pokemon's own REAL max HP (a KO caps it at what was left).
@@ -34,12 +34,15 @@
 //    KO'd on turn 1 deals nothing on turn 2 and a foe KO'd before it moves never hits back.
 //    Expected damage is NOT clipped by anything but the foe's remaining HP.
 //  * LUCK REMOVED like plan_value_probe: mean damage roll, no crits (Lucky Chant), secondary
-//    effects/paralysis/flinch never fire, accuracy forced to pass but each hit weighted by the
-//    accuracy the engine computed, 2-5-hit moves run at 5 hits weighted by the engine's own hit
-//    distribution. Known approximation: a forced hit also decides who is KO'd; the accuracy
-//    weight is applied to the damage only, not to the KO branch.
-//  * Recoil, Life Orb, Rocky Helmet and weather chip (`[from]` damage) are real HP lost and count
-//    unweighted for whoever lost it (so Double-Edge's recoil is a cost, a foe's recoil a gain).
+//    effects/paralysis/flinch never fire. Accuracy and 2-5-hit counts are NOT forced: the duel
+//    is replayed down every hit/miss and hit-count branch (`duelExpected`) and the outcomes are
+//    averaged by the engine's own probabilities, so a miss can leave the foe standing and a
+//    KO is only credited on the branches where it happens. (Move SELECTION still uses the
+//    cheaper forced-hit, damage-weighted-by-accuracy estimate: it only has to rank moves.)
+//  * MEGA: the request's `"mega"` (default true) says whether the subject Mega Evolves on turn 1;
+//    the cache builder measures a stone holder as base form and as Mega form, separately.
+//  * Recoil, Life Orb, Rocky Helmet and weather chip (`[from]` damage) are real HP lost on the
+//    branch where they happen (so Double-Edge's recoil is a cost, a foe's recoil a gain).
 //
 // Usage: node tools/speed_payoff_probe.mjs <path-to-pokemon-showdown-repo>
 import { pathToFileURL } from "node:url";
@@ -66,6 +69,8 @@ const FORMAT = "gen9championsdoublescustomgame";
 const SPREAD_ROLL = 92.5; // mean of Showdown's 85..100 damage roll
 const FIVE_HIT_SURVIVAL = [1, 1, 13 / 20, 6 / 20, 3 / 20];
 const TURNS = 2;
+const MAX_BRANCHES = 256; // hit/miss x hit-count outcomes explored per duel
+const MIN_BRANCH_PROBABILITY = 1e-4; // a rarer branch is dropped (the mass is renormalised)
 const HP_SCALE = 10; // selection only: both sides carry 10x HP
 const SCENARIOS = ["base", "ourtw", "foetw", "tr"];
 // Moves whose damage is a fraction of current HP or compares HP keep real HP in selection.
@@ -90,7 +95,7 @@ const toId = (name) => String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // --- luck removal (same mechanics as plan_value_probe.mjs; kept self-contained) -------------
 
-function instrument(battle, record) {
+function instrument(battle, record, script = null) {
 	const originalRunEvent = battle.runEvent.bind(battle);
 	let pending = null;
 	battle.runEvent = (eventid, target, source, effect, relayVar, ...rest) => {
@@ -110,7 +115,11 @@ function instrument(battle, record) {
 		if (pending && denominator === 100 && numerator === pending.value) {
 			const { slot, value } = pending;
 			pending = null;
-			record.accuracy(slot, Math.max(0, Math.min(1, value / 100)));
+			const chance = Math.max(0, Math.min(1, value / 100));
+			// Scripted (duel) runs BRANCH on the hit/miss; selection runs force the hit and
+			// weight the damage by the accuracy instead.
+			if (script) return branch(record, script, [chance, 1 - chance]) === 0;
+			record.accuracy(slot, chance);
 			return true;
 		}
 		pending = null;
@@ -122,6 +131,11 @@ function instrument(battle, record) {
 	const originalSample = battle.sample.bind(battle);
 	battle.sample = (items) => {
 		if (Array.isArray(items) && items.length === 20 && items.every((n) => n >= 2 && n <= 5)) {
+			if (script) {
+				const hits = [2, 3, 4, 5];
+				const odds = hits.map((n) => items.filter((item) => item === n).length / items.length);
+				return hits[branch(record, script, odds)];
+			}
 			record.fiveHit = true;
 			return 5;
 		}
@@ -129,8 +143,19 @@ function instrument(battle, record) {
 	};
 }
 
+// One random event of a scripted run: `probs[i]` is the chance of outcome i. The run takes the
+// outcome `script[k]` for its k-th event (default 0) and logs it, so `duelExpected` can walk the
+// whole outcome tree by replaying the battle with a different script.
+function branch(record, script, probs) {
+	const index = record.events.length;
+	const choice = index < script.length ? script[index] : 0;
+	record.events.push({ probs, choice });
+	return choice;
+}
+
 function newRecorder() {
 	return {
+		events: [],
 		fiveHit: false,
 		accuracyBySlot: {},
 		accuracy(slot, p) {
@@ -202,7 +227,7 @@ function damagingMoveIds(set) {
 }
 
 // A 1v1 duel: slot 'a' of each side holds the real Pokemon, slot 'b' is a fainted dummy.
-function makeBattle(oursSet, foeSet, seed, scale) {
+function makeBattle(oursSet, foeSet, seed, scale, megas = [true, true], script = null) {
 	const battle = new Battle({
 		formatid: FORMAT,
 		seed: [seed, seed + 1, seed + 2, seed + 3],
@@ -210,7 +235,7 @@ function makeBattle(oursSet, foeSet, seed, scale) {
 		p2: { name: "p2", team: Teams.pack([foeSet, { ...DUMMY_SET }]) },
 	});
 	const recorder = newRecorder();
-	instrument(battle, recorder);
+	instrument(battle, recorder, script);
 	battle.makeChoices("team 12", "team 12");
 	for (const side of battle.sides) side.pokemon[1].faint();
 	battle.faintMessages();
@@ -233,8 +258,8 @@ function makeBattle(oursSet, foeSet, seed, scale) {
 		side.faintedLastTurn = null;
 	}
 	// Mega Evolve BEFORE any condition (a Mega's new ability can set weather / change speed).
-	if (ours.canMegaEvo) battle.actions.runMegaEvo(ours);
-	if (foe.canMegaEvo) battle.actions.runMegaEvo(foe);
+	if (megas[0] && ours.canMegaEvo) battle.actions.runMegaEvo(ours);
+	if (megas[1] && foe.canMegaEvo) battle.actions.runMegaEvo(foe);
 	return { battle, recorder, ours, foe, realMax };
 }
 
@@ -259,13 +284,14 @@ function choiceFor(battle, pokemon, wantedId) {
 
 // Expected %HP of the DEFENDER's real max HP that `moveId` deals over TURNS turns, with both
 // sides at 10x HP and the defender using Tackle; HP is refilled between turns.
-function selectionDamage(attackerSet, moveId, defenderSet, seed) {
+function selectionDamage(attackerSet, moveId, defenderSet, seed, megas) {
 	const hpScale = REAL_HP_MOVES.has(moveId) ? 1 : HP_SCALE;
 	const { battle, recorder, ours, foe, realMax } = makeBattle(
 		restrictedSet(attackerSet, [moveId]),
 		restrictedSet(defenderSet, ["tackle"]),
 		seed,
 		hpScale,
+		megas,
 	);
 	const state = { p1a: ours.maxhp, p2a: foe.maxhp };
 	let total = 0;
@@ -288,10 +314,10 @@ function selectionDamage(attackerSet, moveId, defenderSet, seed) {
 	return { total };
 }
 
-function bestMove(attackerSet, defenderSet, seed, errors) {
+function bestMove(attackerSet, defenderSet, seed, errors, megas) {
 	let best = { id: "splash", total: -1 };
 	for (const id of damagingMoveIds(attackerSet)) {
-		const outcome = selectionDamage(attackerSet, id, defenderSet, seed);
+		const outcome = selectionDamage(attackerSet, id, defenderSet, seed, megas);
 		if (outcome.error) {
 			errors.push(outcome.error);
 			continue;
@@ -301,12 +327,16 @@ function bestMove(attackerSet, defenderSet, seed, errors) {
 	return best.id;
 }
 
-function duel(oursSet, ourMove, foeSet, foeMove, scenario, seed) {
+// One scripted run of the duel (see `branch`): concrete hits and misses, so a KO is decided by
+// what actually happened on that branch. Returns the run's events for `duelExpected`.
+function duel(oursSet, ourMove, foeSet, foeMove, scenario, seed, megas, script) {
 	const { battle, recorder, ours, foe, realMax } = makeBattle(
 		restrictedSet(oursSet, [ourMove]),
 		restrictedSet(foeSet, [foeMove]),
 		seed,
 		1,
+		megas,
+		script,
 	);
 	applyScenario(battle, ours, scenario);
 	const state = { p1a: ours.maxhp, p2a: foe.maxhp };
@@ -328,21 +358,63 @@ function duel(oursSet, ourMove, foeSet, foeMove, scenario, seed) {
 		if (foe.hp <= 0) koFoe = 1;
 		if (ours.hp <= 0) koUs = 1;
 	}
-	return { dealt, taken, koFoe, koUs, ourSpeed: ours.getStat("spe"), foeSpeed: foe.getStat("spe") };
+	return {
+		dealt, taken, koFoe, koUs, events: recorder.events,
+		ourSpeed: ours.getStat("spe"), foeSpeed: foe.getStat("spe"),
+	};
+}
+
+// The duel's EXPECTED outcome with luck removed from everything but accuracy and hit counts:
+// every hit/miss of an inaccurate move and every 2-5-hit count is a branch, the duel is replayed
+// down each branch (the engine is deterministic given the seed and the choices), and the
+// outcomes are averaged by the engine's own probabilities. Unlike weighting only the damage,
+// a miss here can leave the foe standing and so changes who gets KO'd and who still acts.
+function duelExpected(oursSet, ourMove, foeSet, foeMove, scenario, seed, megas) {
+	const sum = { dealt: 0, taken: 0, koFoe: 0, koUs: 0 };
+	let mass = 0;
+	let first = null;
+	let leaves = 0;
+	const stack = [[]];
+	while (stack.length) {
+		const script = stack.pop();
+		const out = duel(oursSet, ourMove, foeSet, foeMove, scenario, seed, megas, script);
+		if (out.error) return out;
+		first ||= out;
+		let probability = 1;
+		for (const event of out.events) probability *= event.probs[event.choice];
+		mass += probability;
+		for (const key of Object.keys(sum)) sum[key] += probability * out[key];
+		if (++leaves >= MAX_BRANCHES) break;
+		// Children: for each event this run decided by default, every other outcome.
+		let prefix = 1;
+		out.events.forEach((event, index) => {
+			if (index >= script.length) {
+				event.probs.forEach((chance, option) => {
+					if (option === 0 || chance <= 0 || prefix * chance < MIN_BRANCH_PROBABILITY) return;
+					stack.push(out.events.slice(0, index).map((e) => e.choice).concat([option]));
+				});
+			}
+			prefix *= event.probs[event.choice];
+		});
+	}
+	for (const key of Object.keys(sum)) sum[key] /= mass || 1;
+	return { ...sum, ourSpeed: first.ourSpeed, foeSpeed: first.foeSpeed, branches: leaves };
 }
 
 function handleRequest(msg) {
 	const subject = Teams.unpack(msg.subject)[0];
+	// `mega: false` plays a stone holder as its base form; the Python side asks for both forms.
+	const subjectMega = msg.mega !== false;
 	const seed = (msg.seeds && msg.seeds[0]) || 1;
 	const errors = [];
 	const results = [];
 	for (const foePacked of msg.foes) {
 		const foe = Teams.unpack(foePacked)[0];
-		const ourMove = bestMove(subject, foe, seed, errors);
-		const foeMove = bestMove(foe, subject, seed, errors);
+		const ourMove = bestMove(subject, foe, seed, errors, [subjectMega, true]);
+		const foeMove = bestMove(foe, subject, seed, errors, [true, subjectMega]);
 		const row = { ourMove, foeMove };
 		for (const scenario of SCENARIOS) {
-			const outcome = duel(subject, ourMove, foe, foeMove, scenario, seed);
+			const outcome = duelExpected(subject, ourMove, foe, foeMove, scenario, seed, [subjectMega, true]);
 			if (outcome.error) {
 				errors.push(outcome.error);
 				row[scenario] = null;
