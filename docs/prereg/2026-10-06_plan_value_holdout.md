@@ -18,3 +18,13 @@ Written before the run. Do not edit after the run starts.
 
 - Primary, terrain_pulse_blastoise vs 88 holdout teams: **1114/2112 = 52.7%, cluster-robust
   [0.503, 0.552] -- PASS** (`runs/eval/prereg_blastoise.json`).
+
+## Caveat found after the run (appended)
+
+- A Codex review then found that `vgc.plan_value`'s registry was process-wide and keyed by
+  species+moves, so in these runs (both arms in one process) a player could read the other
+  team's measured entry for a same-species, same-moves Pokemon (160 colliding identities over
+  320 test teams). Fixed in 609a9a0 (`vgc.team_scope`). The PASS above ran on the
+  contaminated code. The same pre-registered test (same teams, games, criterion) will be
+  re-run once the remaining review fixes land; that rerun decides shipping.
+- The secondary all-six-teams run was stopped before finishing for the same reason.
