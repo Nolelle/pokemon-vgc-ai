@@ -282,15 +282,23 @@ class PolicyConfig:
     helping_hand_weight: float = 0.5
 
     # -- Wasted-action guard (vgc.action_sanity) ----------------------------------------------
-    # A joint order that voids an action (priority move into Armor Tail/Queenly Majesty/
-    # Dazzling or Psychic Terrain, Helping Hand onto a partner that is not attacking, a
-    # status move from an unlocked Choice-item holder) is pushed far below every sound order
-    # by `wasted_action_penalty` -- in the myopic score AND in the exact search's exchange
-    # value (so the live exact judge sees it). False = legacy behavior for A/B controls.
+    # Joint orders that void or hobble an action are charged a STRATEGIC cost (points on the
+    # scale of the myopic score / exact exchange value), in the myopic score AND in the exact
+    # search's exchange_value so the live judge sees it. Every cost is far below a game result
+    # (+-10,000), so a confirmed win is never outranked by a flagged order.
+    # False = legacy behavior for A/B controls.
     penalize_wasted_actions: bool = True
-    # Larger than any real exchange value (+-10,000 is a finished game), so a flagged order
-    # ranks below every unflagged one; if every order is flagged the ranking is unchanged.
-    wasted_action_penalty: float = 100_000.0
+    # A void action: priority move into Armor Tail/Queenly Majesty/Dazzling or Psychic
+    # Terrain (scaled by the probability the blocker is present when its ability is hidden),
+    # or Helping Hand onto a partner that is not attacking. Larger than a normal exchange
+    # swing (~100-200), smaller than a game result.
+    wasted_action_penalty: float = 300.0
+    # A status move by an unlocked Choice-item holder locks it into that move. Not always
+    # wrong (Scarf Protect / Tailwind / Trick Room can be worth it), so a moderate cost.
+    choice_lock_status_penalty: float = 40.0
+    # Trick/Switcheroo onto our OWN ally holding no item or with Unburden active: it loses
+    # Unburden's 2x Speed (and Acrobatics' doubling) and becomes Choice-locked.
+    trick_to_ally_penalty: float = 40.0
 
     # -- Screens / generic field utility (Reflect/Light Screen/Aurora Veil/Tailwind) --------
     # Flat value for putting up a not-yet-active screen/Tailwind side condition; deliberately

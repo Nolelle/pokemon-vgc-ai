@@ -92,3 +92,44 @@ def test_choice_scarf_status_move_flagged_but_attacks_and_locked_are_not() -> No
     plain = [_mon("indeedee", item="lifeorb"), _mon("sneasler")]
     battle = _battle(plain, [_mon("incineroar"), _mon("rillaboom")])
     assert not wasted_action_reasons(battle, _order(_move("protect"), _move("direclaw", 1)))
+
+
+def test_own_surge_switch_in_changes_terrain_before_moves() -> None:
+    ours = [_mon("indeedeef"), _mon("sneasler")]
+    theirs = [_mon("incineroar"), _mon("rillaboom")]
+    psychic = _battle(ours, theirs, [Field.PSYCHIC_TERRAIN])
+    grassy_in = SingleBattleOrder(_mon("rillaboom", ability="grassysurge"))
+    # Grassy Surge replaces Psychic Terrain before Fake Out: legal.
+    assert not wasted_action_reasons(psychic, _order(grassy_in, _move("fakeout", 1)))
+    assert wasted_action_reasons(psychic, _order(_move("protect"), _move("fakeout", 1)))
+    # And Psychic Surge arriving on a clear field makes it illegal.
+    clear = _battle(ours, theirs)
+    psy_in = SingleBattleOrder(_mon("indeedee", ability="psychicsurge"))
+    assert wasted_action_reasons(clear, _order(psy_in, _move("fakeout", 1)))
+
+
+def test_costs_are_strategic_and_far_below_a_game_result() -> None:
+    from vgc.action_sanity import wasted_action_cost
+    from vgc.models import PolicyConfig
+
+    config = PolicyConfig()
+    ours = [_mon("sneasler"), _mon("salamence")]
+    battle = _battle(ours, [_mon("farigiraf", ability="armortail"), _mon("incineroar")])
+    cost, reasons = wasted_action_cost(battle, _order(_move("fakeout", 1), _move("hypervoice")), config)
+    assert reasons and 0 < cost == config.wasted_action_penalty < 1_000  # win is +10,000
+    scarf = [_mon("indeedee", item="choicescarf"), _mon("sneasler")]
+    choice_cost, _ = wasted_action_cost(
+        _battle(scarf, [_mon("incineroar"), _mon("rillaboom")]),
+        _order(_move("protect"), _move("direclaw", 1)),
+        config,
+    )
+    assert choice_cost == config.choice_lock_status_penalty < config.wasted_action_penalty
+
+
+def test_trick_onto_itemless_unburden_ally_is_costed() -> None:
+    ours = [_mon("indeedee", item="choicescarf"), _mon("sneasler", ability="unburden")]
+    battle = _battle(ours, [_mon("incineroar"), _mon("rillaboom")])
+    reasons = wasted_action_reasons(battle, _order(_move("trick", -2), _move("direclaw", 1)))
+    assert reasons and reasons[0].startswith("trick_to_ally")
+    ours[1]._item = "lifeorb"
+    assert not wasted_action_reasons(battle, _order(_move("trick", -2), _move("direclaw", 1)))
