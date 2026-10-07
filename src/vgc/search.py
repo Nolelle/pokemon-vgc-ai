@@ -123,6 +123,7 @@ from vgc.condition_clock import base_duration, remaining_turns
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
+from vgc.field_setters import ability_condition, move_condition
 from vgc.evaluator import (
     _ABILITY_WEATHER,
     _PROTECT_MOVES,
@@ -520,6 +521,24 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     utility_actions: list[_OppSlotAction] = []
     for move_id in move_ids:
         kind = utility_kind(move_id)
+        setter = move_condition(move_id) if config.search_model_field_setters else None
+        if setter is not None and kind is None:
+            # Revealed or prior-listed weather/terrain setter (`opponent_move_ids` is the
+            # only source here, so this is public information). A condition already up
+            # would just fail. The payoff comes from the simulated field, not a flat credit.
+            already_up = (
+                ctx.weather == setter[1] if setter[0] == "weather" else ctx.terrain == setter[1]
+            )
+            if not already_up:
+                utility_actions.append(
+                    _OppSlotAction(
+                        kind="utility",
+                        move_id=move_id,
+                        value=config.search_opp_utility_weight,
+                        utility_value=0.0,
+                    )
+                )
+            continue
         if kind is None or kind == "protect":
             continue
         kind_scale = {
@@ -691,6 +710,10 @@ class ExchangeResult:
     trick_room_last: int | None = None
     our_tailwind_last: int | None = None
     opp_tailwind_last: int | None = None
+    # `PolicyConfig.search_model_field_setters`: `weather`/`terrain` are then the LIVE field
+    # while the exchange resolves (a setter move or switch-in changes them for the actions
+    # after it) and `terrain` is read by the forecast even without condition expiry.
+    field_setters: bool = False
 
 
 @dataclass(frozen=True)
@@ -853,7 +876,26 @@ def _build_our_actions(
                 kind = utility_kind(move_id)
                 if kind is None and config.search_apply_setup_boosts and move_id in SETUP_BOOSTS:
                     kind = "setup"  # e.g. Coaching/Aromatic Mist: no flat proxy exists today
-                if kind is not None:
+                if (
+                    kind is None
+                    and config.search_model_field_setters
+                    and move_condition(move_id) is not None
+                ):
+                    # Weather/terrain setter: no flat credit. Its payoff is the simulated
+                    # change to the field (later actions, forecast), see `_apply_action`.
+                    actions.append(
+                        _Action(
+                            side="our",
+                            slot=slot,
+                            kind="utility",
+                            move_id=move_id,
+                            targets=[],
+                            priority=int(move_data.get("priority", 0)),
+                            utility_value=0.0,
+                            spread=True,
+                        )
+                    )
+                elif kind is not None:
                     utility_scale = {
                         "speed_control": 1.0,
                         "action_denial": 1.0,
@@ -1133,6 +1175,64 @@ def _action_order_cmp(a: _Action, b: _Action, trick_room: bool) -> int:
     return 0
 
 
+def _set_field_condition(result: ExchangeResult, kind: str, value: str) -> bool:
+    """Start ``value`` weather/terrain on ``result``'s live field (a no-op if it is already
+    up: the move or ability fails and the old duration is untouched). Under condition expiry
+    the new one lasts through projected turn 5 (set on turn 1, base duration 5)."""
+    if kind == "weather":
+        if result.weather == value:
+            return False
+        result.weather = value
+        if result.condition_expiry:
+            result.weather_last = _WEATHER_ABILITY_TURNS
+        return True
+    if result.terrain == value:
+        return False
+    result.terrain = value
+    if result.condition_expiry:
+        result.terrain_last = _WEATHER_ABILITY_TURNS
+    return True
+
+
+def _pre_move_field_events(
+    our_order: DoubleBattleOrder,
+    our_states: list[PokemonState | None],
+    opp_response: OppResponse,
+    opp_states: list[PokemonState | None],
+) -> list[tuple[float, int, tuple[str, str]]]:
+    """Weather/terrain started before any move: switch-in setter abilities (both sides) and
+    Mega Evolutions into one (Drought/Drizzle Megas are handled by the older override).
+    Returned as ``(speed, side_rank, condition)``, fastest first, ours before theirs on a tie,
+    so applying them in order leaves the SLOWEST setter's condition standing, as in the
+    engine."""
+    events: list[tuple[float, int, tuple[str, str]]] = []
+    for slot, single in enumerate((our_order.first_order, our_order.second_order)):
+        state = our_states[slot]
+        if single is None or state is None:
+            continue
+        target = single.order
+        is_switch = isinstance(target, Pokemon)
+        is_mega = isinstance(target, Move) and getattr(single, "mega", False)
+        if not (is_switch or is_mega) or (is_mega and state.ability in _ABILITY_WEATHER):
+            continue
+        condition = ability_condition(state.ability)
+        if condition is not None:
+            events.append((field_effective_speed(state), 0, condition))
+    for slot, slot_action in enumerate((opp_response.slot0, opp_response.slot1)):
+        state = opp_states[slot]
+        if state is None:
+            continue
+        is_switch = slot_action.kind == "switch" and slot_action.switch_state is not None
+        is_mega = slot_action.mega_state is not None and not is_switch
+        if not (is_switch or is_mega) or (is_mega and state.ability in _ABILITY_WEATHER):
+            continue
+        condition = ability_condition(state.ability)
+        if condition is not None:
+            events.append((field_effective_speed(state), 1, condition))
+    events.sort(key=lambda event: (-event[0], event[1]))
+    return events
+
+
 def _apply_action(
     action: _Action,
     our_states: list[PokemonState | None],
@@ -1153,6 +1253,10 @@ def _apply_action(
     actor_state = actor_states[action.slot]
     if actor_state is None or actor_state.hp_or_max() <= 0:
         return  # a fainted actor (from an earlier action this exchange) does not act
+    if result.field_setters:
+        # A setter earlier this turn already changed the field for everything after it.
+        weather_for_exchange = result.weather
+    terrain_now = result.terrain if result.field_setters else ctx.terrain
     can_act = our_can_act if action.side == "our" else opp_can_act
     actor_probability = action.action_probability * can_act[action.slot]
     if actor_probability <= 0.0:
@@ -1169,6 +1273,11 @@ def _apply_action(
         pre_protect_hp[action.slot] = actor_state.hp_or_max()
         return
     if action.kind == "utility":
+        setter = move_condition(action.move_id) if result.field_setters else None
+        if setter is not None:
+            if actor_probability >= 0.5:  # modal-branch convention, as for Tailwind below
+                _set_field_condition(result, *setter)
+            return
         # The flat utility proxy is signed by WHO it finally lands on: a foe-directed
         # effect (sleep, Taunt, Thunder Wave, ...) on the actor's own ally is a cost, not
         # the benefit it would be against a foe. Before this, a Sleep Powder on our own
@@ -1209,7 +1318,7 @@ def _apply_action(
                     target_states,
                     opp_states if side == "our" else our_states,
                     move_id=action.move_id,
-                    terrain=ctx.terrain,
+                    terrain=terrain_now,
                     weather=weather_for_exchange,
                     safeguard=(
                         SideCondition.SAFEGUARD
@@ -1281,7 +1390,7 @@ def _apply_action(
     num_targets = len(action.targets)
     field_vs_us = FieldState(
         weather=weather_for_exchange,
-        terrain=ctx.terrain,
+        terrain=terrain_now,
         screens=ctx.our_side_screens,
         trick_room=ctx.trick_room,
         is_doubles=True,
@@ -1289,7 +1398,7 @@ def _apply_action(
     )
     field_vs_opp = FieldState(
         weather=weather_for_exchange,
-        terrain=ctx.terrain,
+        terrain=terrain_now,
         screens=ctx.opp_side_screens,
         trick_room=ctx.trick_room,
         is_doubles=True,
@@ -1363,6 +1472,15 @@ def resolve_exchange(
             mega_weather = _ABILITY_WEATHER.get(slot_action.mega_state.ability)
             if mega_weather is not None and weather_override is None:
                 weather_for_exchange = mega_weather
+    terrain_for_exchange = ctx.terrain
+    if config.search_model_field_setters:
+        for _speed, _rank, (kind, value) in _pre_move_field_events(
+            our_order, our_states, opp_response, opp_states
+        ):
+            if kind == "weather":
+                weather_for_exchange = value
+            else:
+                terrain_for_exchange = value
     opp_actions = _build_opp_actions(opp_response, ctx)
     if config.search_apply_setup_boosts:
         _attach_setup_boosts(our_actions + opp_actions, config)
@@ -1415,10 +1533,18 @@ def resolve_exchange(
             if weather_for_exchange != ctx.weather
             else remaining["weather"]
         )
-        result.terrain_last = remaining["terrain"]
+        result.terrain_last = (
+            _WEATHER_ABILITY_TURNS
+            if terrain_for_exchange != ctx.terrain
+            else remaining["terrain"]
+        )
         result.trick_room_last = remaining["trick_room"]
         result.our_tailwind_last = remaining["our_tailwind"]
         result.opp_tailwind_last = remaining["opp_tailwind"]
+    if config.search_model_field_setters:
+        result.field_setters = True
+        result.weather = weather_for_exchange
+        result.terrain = terrain_for_exchange
     our_protected = [0.0, 0.0]
     opp_protected = [0.0, 0.0]
     our_pre_protect_hp: list[float | None] = [None, None]
@@ -1429,7 +1555,10 @@ def resolve_exchange(
     # Existing sleep is carried on each action's own ``action_probability`` above.
     our_can_act = [1.0, 1.0]
     opp_can_act = [1.0, 1.0]
-    for action in all_actions:
+    pending = list(all_actions)
+    while pending:
+        action = pending.pop(0)
+        field_before = (result.weather, result.terrain)
         _apply_action(
             action,
             our_states,
@@ -1446,6 +1575,21 @@ def resolve_exchange(
             ctx,
             result,
         )
+        if result.field_setters and pending and (result.weather, result.terrain) != field_before:
+            # Showdown (gen 8+) re-reads every queued action's Speed after each action, so a
+            # Rain Dance that turns on Swift Swim reorders the rest of the turn.
+            for queued in pending:
+                queued_state = (our_states if queued.side == "our" else opp_states)[queued.slot]
+                queued.speed = (
+                    field_effective_speed(
+                        queued_state,
+                        weather=result.weather,
+                        tailwind=our_tailwind if queued.side == "our" else opp_tailwind,
+                    )
+                    if queued_state is not None
+                    else 0.0
+                )
+            pending.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
 
     # `_apply_action` keeps each partially protected slot in the Protect-failure branch
     # so multiple incoming hits remain correlated. Convert that branch to expected HP
@@ -1463,7 +1607,8 @@ def resolve_exchange(
             state.current_hp = success_prob * base_hp + (1.0 - success_prob) * failure_hp
     result.our_states = our_states
     result.opp_states = opp_states
-    result.weather = weather_for_exchange
+    if not result.field_setters:  # with setters on, `result.weather` is the live field
+        result.weather = weather_for_exchange
     return result
 
 
@@ -1599,7 +1744,11 @@ def _forecast_field(
 ) -> FieldState:
     return FieldState(
         weather=exchange.weather,
-        terrain=exchange.terrain if exchange.condition_expiry else ctx.terrain,
+        terrain=(
+            exchange.terrain
+            if exchange.condition_expiry or exchange.field_setters
+            else ctx.terrain
+        ),
         screens=(exchange.our_screens if defender_side == "our" else exchange.opp_screens),
         trick_room=exchange.trick_room,
         is_doubles=True,
@@ -1911,7 +2060,9 @@ def _value_head_delta(v_after: float | None, v_before: float | None, config: Pol
     return config.value_head_weight * 100.0 * (v_after - v_before)
 
 
-def _order_tags(order: DoubleBattleOrder, setup_boosts: bool = False) -> frozenset[str]:
+def _order_tags(
+    order: DoubleBattleOrder, setup_boosts: bool = False, field_setters: bool = False
+) -> frozenset[str]:
     """Strategic-coverage tags for the diverse shortlist. ``setup_boosts`` (the
     `search_apply_setup_boosts` knob) additionally tags boost-modelled moves with no
     `utility_kind` of their own (Coaching, Aromatic Mist, Tidy Up) as ``"setup"``."""
@@ -1933,6 +2084,8 @@ def _order_tags(order: DoubleBattleOrder, setup_boosts: bool = False) -> frozens
                 tags.add(kind)
             elif setup_boosts and move_id in SETUP_BOOSTS:
                 tags.add("setup")
+            elif field_setters and move_condition(move_id) is not None:
+                tags.add("field_setter")
     if moves and not any(move_id in _PROTECT_MOVES for move_id in moves):
         tags.add("non_protect")
     if len(moves) == 2 and all(load_moves().get(move_id, {}).get("category") != "Status" for move_id in moves):
@@ -1954,6 +2107,7 @@ def _select_search_candidates(
     # non-Protect line when those exist anywhere in the legal list.
     selected = list(myopic[: max(1, cutoff // 2)])
     tag_setup = config.search_apply_setup_boosts
+    tag_setters = config.search_model_field_setters
     desired = (
         "switch",
         "speed_control",
@@ -1962,17 +2116,17 @@ def _select_search_candidates(
         "action_denial",
         "double_attack",
         "non_protect",
-    )
+    ) + (("field_setter",) if tag_setters else ())
     for tag in desired:
         if len(selected) >= cutoff:
             break
-        if any(tag in _order_tags(entry.order, tag_setup) for entry in selected):
+        if any(tag in _order_tags(entry.order, tag_setup, tag_setters) for entry in selected):
             continue
         candidate = next(
             (
                 entry
                 for entry in myopic
-                if entry not in selected and tag in _order_tags(entry.order, tag_setup)
+                if entry not in selected and tag in _order_tags(entry.order, tag_setup, tag_setters)
             ),
             None,
         )

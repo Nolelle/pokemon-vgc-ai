@@ -665,6 +665,32 @@ class PolicyConfig:
     # modelled by the fast search at all, so they are not affected. Changes shipped
     # ladder decisions, so A/B before enabling.
     search_condition_expiry: bool = False
+    # Model weather/terrain SETTERS as actions in the shipped fast search and its myopic
+    # evaluator (vgc.field_setters, 2026-10-06). Off (legacy): Sunny Day / Rain Dance /
+    # Sandstorm / Snowscape / the four terrains score like an empty status move (value 0) and
+    # do nothing in the exchange or forecast, and switch-in setters (Drought, Drizzle, Sand
+    # Stream, Snow Warning, the Surges, Hadron Engine, Orichalcum Pulse) earn only the flat
+    # `switch_activation_bonus` for the four weather abilities. On: (1) the evaluator scores a
+    # setter move, or the setter ability of a Pokemon we switch in, as the TEAM-PLAN payoff of
+    # the condition (`vgc.field_control.field_control_value` on the board with the condition
+    # started this turn minus the board without it, same Showdown-measured plan gains when
+    # `exact_search_field_measured_plan` is on); a condition already up is not credited (the
+    # move fails) and a different one is replaced, so replacing our own helpful one is
+    # negative; (2) `resolve_exchange` applies the new weather/terrain to LATER actions in the
+    # same turn (re-sorting by the new speeds), and to the rolling-horizon forecast (5 turns
+    # under `search_condition_expiry`); switch-in/Mega setters of either side take effect
+    # before the moves; (3) the opponent may use a setter move as a response only when it is
+    # revealed or in the set priors (`opponent_move_ids`). Changes ladder decisions: A/B first.
+    search_model_field_setters: bool = False
+    # Multiplier on the setter's field-control delta, converting exact-judge points (one
+    # full-HP Pokemon = 100) into the evaluator's %HP-of-damage points. Both are ~1 point per
+    # 1% of max HP, so 1.0 is the unit-consistent value. The strategic size of the credit is
+    # set by `exact_search_field_fit_weight` / `exact_search_speed_order_weight` (as in the
+    # exact judge), not here.
+    search_field_setter_weight: float = 1.0
+    # Projected turns the setter's payoff is summed over. A condition set this turn covers
+    # this turn and the next four (base duration 5), so 5 captures all of it.
+    search_field_setter_horizon: int = 5
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json
