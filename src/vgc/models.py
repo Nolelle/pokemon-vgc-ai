@@ -506,6 +506,20 @@ class PolicyConfig:
     # weather/terrain adds to a side's attacks (ours minus theirs), plus weather chip and
     # Grassy healing in the same %HP currency. Uncalibrated starting value.
     exact_search_field_fit_weight: float = 0.25
+    # Replace the old fit estimate for OUR side (base power x generic weather/terrain
+    # modifiers) with damage MEASURED by the real Showdown engine for each of our sets under
+    # each of the 25 weather x terrain conditions (vgc.plan_value; cache
+    # data/usage/plan_value_cache.json, built by tools/build_plan_value_cache.py). The old
+    # estimate cannot see what a condition ENABLES -- rain firing Archaludon's Electro Shot in
+    # one turn, Psychic Terrain making Expanding Force hit both foes, Thunder never missing in
+    # rain -- because that lives in Showdown callbacks, not move data. The OPPONENT keeps the
+    # estimate (their sets are hidden; asymmetric on purpose, phase 1). A set missing from the
+    # cache falls back to the estimate and is counted in plan_value.FALLBACKS. Off by default;
+    # the A/B sets exact_search_field_fit_weight (Codex suggests 0.5 for this measured term).
+    exact_search_field_measured_plan: bool = False
+    # Weight on a brought BENCH Pokemon's measured gain (an active one counts fully): it can
+    # still come in, but not this turn. Only the two largest contributions per side count.
+    exact_search_field_reserve_weight: float = 0.5
     # --- Multi-turn exact continuation (2026-10-05) ---
     # After the searched turn, keep each exact branch running this many more COMPLETED
     # battle turns in the same Showdown clone, both sides playing the continuation policy

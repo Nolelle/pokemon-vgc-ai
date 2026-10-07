@@ -650,6 +650,24 @@ its frozen value; this is not a calibration change and no new weight was added.
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
   +7.6 pts), myopic blend double-counts damage.
 
+## Measured plan value (2026-10-06): what weather/terrain ENABLE, measured by the engine
+
+Weather/terrain are worth what they enable for a set (rain: Electro Shot fires in one turn;
+sun: Solar Beam; rain/snow: Thunder/Blizzard never miss; Psychic Terrain: Expanding Force
+hits both foes at 1.5x; Terrain Pulse/Weather Ball change type). None of that is in
+`moves.json`, so `vgc.field_control`'s old fit term valued it at ~0. `vgc.plan_value` +
+`tools/plan_value_probe.mjs` measure it: one set vs type-neutral reference foes (one, two,
+airborne), 25 weather x terrain conditions, two turns repeating each damaging move, luck
+removed (mean roll, no crits/secondaries, accuracy forced but weighted by the engine's own
+value), foe HP scaled x10 so big hits are not clipped, Mega Evolve before the condition is
+applied. Cache: `data/usage/plan_value_cache.json` (key = canonical set + probe version +
+Showdown pin), built by `tools/build_plan_value_cache.py` (owner teams + `mc_sheet_pool_v2`);
+eyeball with `offline/plan_value_sanity.py`. `PolicyConfig.exact_search_field_measured_plan`
+(OFF) uses it for OUR side only in `field_control` (opponent keeps the estimate); sets
+missing from the cache fall back and are counted in `plan_value.FALLBACKS`. Not yet A/B'd:
+set `exact_search_field_fit_weight` ~0.5 for the experiment. Checklist test:
+`tests/test_plan_value.py` (integration).
+
 ## Neural shortlist distillation (Phase 4): M-B-era guided gate, current models unapproved
 
 The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is trained

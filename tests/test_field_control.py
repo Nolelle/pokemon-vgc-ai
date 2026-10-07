@@ -126,3 +126,44 @@ def test_speed_modifiers_round_like_showdown_so_ties_stay_ties() -> None:
     assert _showdown_modify(101, 1.5) == 151  # Scarfed 101 ties an unboosted 151
     assert _showdown_modify(151, 0.5) == 75  # paralysis rounds half down
     assert _showdown_modify(100, 2.0 * 1.5) == 300
+
+
+# --- measured plan value (PolicyConfig.exact_search_field_measured_plan) ---------------------
+
+
+def _plan_cache(packed: str, rain_gain: float) -> dict:
+    from vgc import plan_value as pv
+
+    gain = [[0.0] * 3 for _ in pv.CONDITIONS]
+    gain[pv.CONDITIONS.index(("raindance", "none"))] = [rain_gain] * 3
+    key = pv.set_key(pv.parse_packed_set(packed))
+    return {"entries": {key: {"species": "archaludon", "mega": None, "gain": gain}}}
+
+
+def test_measured_plan_credits_what_the_estimate_misses_and_falls_back_when_missing():
+    from dataclasses import replace
+
+    from vgc import plan_value as pv
+
+    packed = "Archaludon||Leftovers|Stamina|ElectroShot,Protect|Modest|2,,,32,,32||||50|"
+    pv.clear_registry()
+    pv.register_own_team(packed, _plan_cache(packed, 40.0))
+    on_config = replace(CONFIG, exact_search_field_measured_plan=True)
+    theirs = [_mon("dragapult", ours=False), _mon("greninja", ours=False)]
+    rain = (_effect("raindance", TURN - 1),)
+
+    def value(config, ours):
+        return field_control_value(_state(ours, theirs, weather=rain), config)
+
+    ours = [_mon("archaludon", ("electroshot", "protect")), _mon("torkoal")]
+    # 40 %HP/turn x fit weight 0.25 x (1 + .8 + .64) = ~24 points the estimate cannot see.
+    assert value(on_config, ours) - value(CONFIG, ours) > 20
+    # A bench Pokemon counts at the reserve weight, an unregistered one falls back and is counted.
+    benched = [_mon("archaludon", ("electroshot", "protect"), active=False), _mon("torkoal")]
+    half = value(on_config, benched) - value(CONFIG, benched)
+    assert 8 < half < 16
+    pv.FALLBACKS.clear()
+    unknown = [_mon("kingdra", ("hydropump",)), _mon("milotic", ("muddywater",))]
+    assert value(on_config, unknown) == value(CONFIG, unknown)
+    assert pv.FALLBACKS["kingdra"] > 0
+    pv.clear_registry()
