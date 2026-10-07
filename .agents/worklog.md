@@ -260,3 +260,4 @@
 - With correct timers: field leaf 50.1%/49.7% (null); N=1 continuation 46.3% (worse); 4 samples 47.3% (noise rejected).
 - Flip diagnostic: N=1 flips 43% of picks, setup ~2x, 20/56 flips decided by mid-continuation game ends.
 - Fixes (all off): continuation weight (0.25: 47.8%, 0.5: 50.4%), board-scored continuation terminals (47.8%), 2x2 continuation search built by a Sonnet agent in a worktree (47.8%), 2x2 + board terminals 50.1% [0.469,0.533]. Harm removed, no gain.
+- 2026-10-06 later: engine-measured team-plan value (`vgc.plan_value`, Sonnet agent) + fast-search condition expiry (Sonnet agent) + condition-clock extension lock. Owner teams vs M-C train: plan-value field control 51.0% [0.498,0.522], terrain_pulse_blastoise 54.6% [0.517,0.576]; live judge KO 52.7% [0.498,0.557]; fast expiry 50.4%. Next: pre-registered holdout confirmation; model weather/terrain-setting moves in the fast search.

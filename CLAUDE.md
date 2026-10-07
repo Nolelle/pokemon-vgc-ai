@@ -645,6 +645,21 @@ its frozen value; this is not a calibration change and no new weight was added.
   edge. All knobs ship off. Do not keep tuning continuation at narrow width; the next
   hypothesis needs a different lever (wider first-turn search, or deeper search used only
   offline for teacher labels where the 12 s cap does not apply).
+- **Team-plan value, engine-measured (2026-10-06, owner's insight).** Setters are worth what
+  they enable (rain -> one-turn Electro Shot; Psychic Terrain -> Expanding Force). Those
+  effects live in Showdown callbacks, not move data, so `vgc.plan_value` measures each set's
+  per-turn damage gain under all 25 weather x terrain states with the engine
+  (`tools/plan_value_probe.mjs`, cache `data/usage/plan_value_cache.json`, owner + 314 pool
+  teams). Examples: Archaludon rain +41%HP/turn, Expanding Force users in Psychic Terrain
+  +30..49 (one foe) / +53..78 (two foes). Wired into `field_control` behind
+  `exact_search_field_measured_plan` (off). Owner teams vs M-C train (asymmetric, 5424
+  games, field control + measured plan + fit 0.5 vs off): **51.0% [0.498, 0.522]**;
+  terrain_pulse_blastoise 54.6% [0.517, 0.576] (post hoc, survives a 6-way Holm), others
+  47.7-51.3%. Needs a pre-registered confirmation (holdout opponents) before shipping.
+  Also: live exact judge (fast top-6 + exact re-rank) with the KO term 52.7% [0.498, 0.557];
+  fast-search `search_condition_expiry` 50.4% (correctness, off). The fast search never
+  models weather/terrain-setting moves or switch-in setters as actions, so the live judge
+  can only consider them if the fast search ranks them top-6 anyway.
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
