@@ -34,7 +34,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from vgc import plan_value
+from vgc import plan_value, speed_payoff
 from vgc.actions import describe_order
 from vgc.clock import cancelled, time_left
 from vgc.decision_trace import record_note
@@ -231,6 +231,8 @@ class ExactJudge:
         self.own_packed_team = own_packed_team
         if config.exact_search_field_measured_plan:
             plan_value.register_own_team(own_packed_team)
+        if config.exact_search_field_measured_speed:
+            speed_payoff.register_own_team(own_packed_team)
         self._ranker = ranker
         self._inflight: threading.Thread | None = None
         self.log: list[dict[str, Any]] = []

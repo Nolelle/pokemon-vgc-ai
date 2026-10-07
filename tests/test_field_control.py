@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from vgc.field_control import field_control_value
 from vgc.models import PolicyConfig
 from vgc.stats import calculate_stats
@@ -167,3 +169,33 @@ def test_measured_plan_credits_what_the_estimate_misses_and_falls_back_when_miss
     assert value(on_config, unknown) == value(CONFIG, unknown)
     assert pv.FALLBACKS["kingdra"] > 0
     pv.clear_registry()
+
+
+# --- measured speed payoff (PolicyConfig.exact_search_field_measured_speed) -------------------
+
+
+def test_measured_speed_payoff_replaces_generic_trick_room_term_and_falls_back_when_uncached():
+    from dataclasses import replace
+
+    from vgc import speed_payoff as sp
+
+    sp.clear_registry()
+    on_config = replace(CONFIG, exact_search_field_measured_speed=True)
+    slow, fast, _ = _slow_vs_fast()
+    room = (_effect("trickroom", TURN - 1),)
+    state = _state(slow, fast, fields=room)
+    # Nothing cached: every condition keeps the generic term, so the flag changes nothing.
+    assert field_control_value(state, on_config) == field_control_value(state, CONFIG)
+    # Cache all four Pokemon: Trick Room is now worth ours.tr - theirs.tr instead.
+    for species, tr in (("torkoal", 20.0), ("ursaluna", 20.0), ("dragapult", -10.0),
+                        ("greninja", -10.0)):
+        entry = sp.SpeedEntry(species, 0.0, 0.0, tr)
+        sp._OWN[(species, frozenset(("protect",)))] = entry
+        sp._USAGE[species] = entry
+    bare = _state(slow, fast)
+    # The room's measured swing: 60 %HP/turn x fit weight 0.25 x (1 + .8 + .64 turns) = 36.6,
+    # on top of the bare board (the generic term is removed while the room is measured).
+    swing = field_control_value(state, on_config) - field_control_value(bare, on_config)
+    assert swing == pytest.approx(0.25 * 60 * (1 + 0.8 + 0.64), abs=0.1)
+    assert field_control_value(bare, on_config) == field_control_value(bare, CONFIG)
+    sp.clear_registry()
