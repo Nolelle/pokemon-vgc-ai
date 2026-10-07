@@ -526,9 +526,10 @@ class PolicyConfig:
     # being under OUR Tailwind / Trick Room is worth to that set against a panel of real M-C
     # sets (damage dealt minus taken over two turns, %HP per Pokemon per turn). Our side reads
     # our own sets; the opponent's Tailwind/Trick Room reads the species' most common set
-    # (negated). Added in the fit term's units, so exact_search_field_fit_weight (~0.5)
-    # applies; the generic S_t keeps weather-speed abilities and any condition whose Pokemon
-    # are not all cached. Off by default; reserve weight above applies to brought bench mons.
+    # (negated; the two sides' views of one exchange are averaged, and the measured value is
+    # used only while exactly one speed control is up). Added in the fit term's units, so
+    # exact_search_field_fit_weight (~0.5) applies; the generic S_t keeps weather-speed
+    # abilities and any condition whose Pokemon are not all cached. Off by default; reserve weight above applies to brought bench mons.
     exact_search_field_measured_speed: bool = False
     # Extra multiplier on the measured speed payoff (1.0 = the fit weight alone decides).
     exact_search_speed_payoff_scale: float = 1.0

@@ -24,6 +24,15 @@ scenario (the same moves, so only the move order changes). Over two turns, with 
 averaged over the panel by usage weight. Units are %-of-max-HP per turn per Pokemon -- the same
 currency as `vgc.field_control`'s weather/terrain fit term (F_t), so the same weight applies.
 
+Every number is NET (dealt minus taken), i.e. already a two-sided duel result: one subject's
+`tr` and the foe set's `tr` describe the same exchange from opposite seats. `vgc.field_control`
+therefore averages the two views, it never adds them (see its docstring).
+
+Luck: hits and misses of inaccurate moves, and 2-5-hit counts, are branched and averaged by the
+engine's own probabilities (a miss can leave the foe alive, changing the KO), not forced.
+A stone holder is measured as its base form and, separately, as its Mega form (`mega_form`);
+`register_own_team` files each under its own species id.
+
 Cache: `data/usage/speed_payoff_cache.json`, built by `tools/build_speed_payoff_cache.py` for the
 owner's teams, the M-C real-team pool, and the most-used usage sets (so the OPPONENT's Pokemon,
 known only by species, can be read from `usage`). Key = sha1 of (canonical set, probe version,
@@ -49,6 +58,7 @@ from vgc.config import DATA_DIR
 from vgc.data import load_moves
 from vgc.plan_value import (
     PackedSet,
+    can_mega_evolve,
     mega_species_id,
     parse_packed_set,
     parse_packed_team,
@@ -58,7 +68,7 @@ from vgc.plan_value import (
 from vgc.team_scope import resolve_table, team_key
 
 # Bump when the probe's measurement changes in any way that moves numbers.
-PROBE_VERSION = 1
+PROBE_VERSION = 2  # 2: outcome-branched accuracy, base/Mega forms split, no errored entries
 
 TURNS = 2  # horizon of one duel; payoffs are divided by this
 SCENARIOS = ("base", "ourtw", "foetw", "tr")
@@ -218,14 +228,34 @@ class ProbeWorker:
 
         self._worker = SimWorker(showdown_repo or SHOWDOWN_REPO, script=PROBE_SCRIPT)
 
+    def _run(
+        self, pset: PackedSet, panel: list[dict[str, Any]], seeds: Iterable[int], mega: bool
+    ) -> tuple[dict[str, Any], list[str]]:
+        response = self._worker.request(
+            {
+                "subject": pset.packed,
+                "mega": mega,
+                "foes": [foe["packed"] for foe in panel],
+                "seeds": list(seeds),
+            }
+        )
+        entry = entry_from_probe(pset, panel, response.get("results") or [])
+        return entry, list(response.get("errors") or [])
+
     def measure(
         self, pset: PackedSet, panel: list[dict[str, Any]], seeds: Iterable[int] = DEFAULT_SEEDS
     ) -> dict[str, Any]:
-        response = self._worker.request(
-            {"subject": pset.packed, "foes": [foe["packed"] for foe in panel], "seeds": list(seeds)}
-        )
-        entry = entry_from_probe(pset, panel, response.get("results") or [])
-        errors = response.get("errors") or []
+        """The set's entry: base-form numbers, plus `mega_form` for a stone holder.
+
+        Any probe error is recorded under `errors`; callers must not cache such an entry."""
+        entry, errors = self._run(pset, panel, seeds, mega=False)
+        if can_mega_evolve(pset):
+            form, mega_errors = self._run(pset, panel, seeds, mega=True)
+            entry["mega_form"] = {
+                key: form[key]
+                for key in ("tw", "tw_against", "tr", "base", "per_foe", "ours_move", "foe_move", "speeds")
+            }
+            errors += mega_errors
         if errors:
             entry["errors"] = errors[:3]
         return entry
@@ -276,15 +306,16 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
     _own, _own_by_species = _TEAMS.setdefault(team_key(packed_team), ({}, {}))
     for pset in parse_packed_team(packed_team):
         raw = entries.get(set_key(pset, panel_id))
-        if raw is None:
+        if raw is None or raw.get("errors"):  # an errored entry is never trusted
             MISSING[pset.species_id] += 1
             continue
         found += 1
-        names = {pset.species_id}
-        if raw.get("mega"):
-            names.add(raw["mega"])
-        for species_id in names:
-            entry = _entry(raw, species_id)
+        # Each form is registered under its own species id with its own measured numbers.
+        forms = {pset.species_id: raw}
+        if raw.get("mega") and raw["mega"] != pset.species_id:
+            forms[raw["mega"]] = {**raw, **(raw.get("mega_form") or {})}
+        for species_id, source in forms.items():
+            entry = _entry(source, species_id)
             _own[(species_id, frozenset(pset.moves))] = entry
             bucket = _own_by_species.setdefault(species_id, [])
             if entry not in bucket:

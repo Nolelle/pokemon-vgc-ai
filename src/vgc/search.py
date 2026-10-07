@@ -1200,12 +1200,15 @@ def _pre_move_field_events(
     opp_response: OppResponse,
     opp_states: list[PokemonState | None],
 ) -> list[tuple[float, int, tuple[str, str]]]:
-    """Weather/terrain started before any move: switch-in setter abilities (both sides) and
-    Mega Evolutions into one (Drought/Drizzle Megas are handled by the older override).
-    Returned as ``(speed, side_rank, condition)``, fastest first, ours before theirs on a tie,
-    so applying them in order leaves the SLOWEST setter's condition standing, as in the
-    engine."""
-    events: list[tuple[float, int, tuple[str, str]]] = []
+    """Weather/terrain started before any move: switch-in setter abilities (both sides), then
+    Mega Evolutions into a setter (Drought/Drizzle Megas included).
+
+    Showdown resolves ALL switches (queue order 103) before ANY Mega Evolution (104), and
+    each group by speed, so applying the events in the returned order leaves the last
+    resolver's condition standing: a Charizard-Y Mega Evolving beside an opposing Pelipper's
+    switch-in ends in sun, not rain. Returned as ``(speed, side_rank, condition)``: switches
+    first, then Megas, each fastest first with ours before theirs on a tie."""
+    events: list[tuple[int, float, int, tuple[str, str]]] = []  # (phase, speed, rank, cond)
     for slot, single in enumerate((our_order.first_order, our_order.second_order)):
         state = our_states[slot]
         if single is None or state is None:
@@ -1213,24 +1216,24 @@ def _pre_move_field_events(
         target = single.order
         is_switch = isinstance(target, Pokemon)
         is_mega = isinstance(target, Move) and getattr(single, "mega", False)
-        if not (is_switch or is_mega) or (is_mega and state.ability in _ABILITY_WEATHER):
+        if not (is_switch or is_mega):
             continue
         condition = ability_condition(state.ability)
         if condition is not None:
-            events.append((field_effective_speed(state), 0, condition))
+            events.append((0 if is_switch else 1, field_effective_speed(state), 0, condition))
     for slot, slot_action in enumerate((opp_response.slot0, opp_response.slot1)):
         state = opp_states[slot]
         if state is None:
             continue
         is_switch = slot_action.kind == "switch" and slot_action.switch_state is not None
         is_mega = slot_action.mega_state is not None and not is_switch
-        if not (is_switch or is_mega) or (is_mega and state.ability in _ABILITY_WEATHER):
+        if not (is_switch or is_mega):
             continue
         condition = ability_condition(state.ability)
         if condition is not None:
-            events.append((field_effective_speed(state), 1, condition))
-    events.sort(key=lambda event: (-event[0], event[1]))
-    return events
+            events.append((0 if is_switch else 1, field_effective_speed(state), 1, condition))
+    events.sort(key=lambda event: (event[0], -event[1], event[2]))
+    return [(speed, rank, condition) for _phase, speed, rank, condition in events]
 
 
 def _apply_action(

@@ -186,18 +186,63 @@ def test_measured_speed_payoff_replaces_generic_trick_room_term_and_falls_back_w
     state = _state(slow, fast, fields=room)
     # Nothing cached: every condition keeps the generic term, so the flag changes nothing.
     assert field_control_value(state, on_config) == field_control_value(state, CONFIG)
-    # Cache all four Pokemon: Trick Room is now worth ours.tr - theirs.tr instead.
-    for species, tr in (("torkoal", 20.0), ("ursaluna", 20.0), ("dragapult", -10.0),
-                        ("greninja", -10.0)):
-        entry = sp.SpeedEntry(species, 0.0, 0.0, tr)
+    # Cache all four Pokemon: Trick Room is now worth the AVERAGE of the two views instead.
+    _cache_speed(
+        {"torkoal": 20.0, "ursaluna": 20.0, "dragapult": -10.0, "greninja": -10.0}, field="tr"
+    )
+    bare = _state(slow, fast)
+    # Each payoff is a net duel number, so ours (+20 +20) and theirs (-(-10 -10)) are two views
+    # of one exchange: (40 + 20) / 2 = 30 %HP/turn, NOT 60. Swing = 30 x fit weight 0.25 x
+    # (1 + .8 + .64 turns) = 18.3 on top of the bare board (the generic term is removed while
+    # the room is measured).
+    swing = field_control_value(state, on_config) - field_control_value(bare, on_config)
+    assert swing == pytest.approx(0.25 * 30 * (1 + 0.8 + 0.64), abs=0.1)
+    assert field_control_value(bare, on_config) == field_control_value(bare, CONFIG)
+    sp.clear_registry()
+
+
+def _cache_speed(values: dict[str, float], *, field: str) -> None:
+    """Register measured entries for the test Pokemon, one payoff field set per species."""
+    from vgc import speed_payoff as sp
+
+    for species, value in values.items():
+        args = {"tw": 0.0, "tw_against": 0.0, "tr": 0.0}
+        args[field] = value
+        entry = sp.SpeedEntry(species, **args)
         sp._TEAMS.setdefault("test-team", ({}, {}))[0][(species, frozenset(("protect",)))] = entry
         sp._USAGE[species] = entry
+
+
+def test_overlapping_speed_controls_are_never_credited_as_a_measured_benefit():
+    """Tailwind payoffs were measured on a bare field: two Tailwinds cancel, and Tailwind
+    inside Trick Room is not a benefit (Codex review 2026-10-06)."""
+    from dataclasses import replace
+
+    from vgc import speed_payoff as sp
+
+    sp.clear_registry()
+    on_config = replace(CONFIG, exact_search_field_measured_speed=True)
+    slow, fast, _ = _slow_vs_fast()
+    tailwind = (_effect("tailwind", TURN - 1),)
+    room = (_effect("trickroom", TURN - 1),)
     bare = _state(slow, fast)
-    # The room's measured swing: 60 %HP/turn x fit weight 0.25 x (1 + .8 + .64 turns) = 36.6,
-    # on top of the bare board (the generic term is removed while the room is measured).
-    swing = field_control_value(state, on_config) - field_control_value(bare, on_config)
-    assert swing == pytest.approx(0.25 * 60 * (1 + 0.8 + 0.64), abs=0.1)
-    assert field_control_value(bare, on_config) == field_control_value(bare, CONFIG)
+    _cache_speed({"torkoal": 30.0, "ursaluna": 30.0, "dragapult": 30.0, "greninja": 30.0}, field="tw")
+
+    def value(state, config=on_config):
+        return field_control_value(state, config)
+
+    # Our Tailwind alone is credited: both sets gain 30, the foes' own tw says nothing about
+    # being hit by it (tw_against = 0), so the averaged value is (60 + 0) / 2 = 30.
+    ours_only = _state(slow, fast, our_cond=tailwind)
+    assert value(ours_only) - value(bare) == pytest.approx(0.25 * 30 * (1 + 0.8 + 0.64), abs=0.1)
+    # Both sides under Tailwind: every Speed doubles, nothing changes, nothing is credited.
+    both = _state(slow, fast, our_cond=tailwind, their_cond=tailwind)
+    assert value(both) == pytest.approx(value(bare))
+    assert value(both, CONFIG) == pytest.approx(value(bare, CONFIG), abs=1e-6)
+    # Tailwind inside Trick Room: the generic term orders it (Tailwind makes us SLOWER under the
+    # room), identically with the measured flag on or off, and no measured Tailwind credit.
+    both_controls = _state(slow, fast, fields=room, our_cond=tailwind)
+    assert value(both_controls) == pytest.approx(value(both_controls, CONFIG))
     sp.clear_registry()
 
 

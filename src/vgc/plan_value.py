@@ -31,6 +31,11 @@ Gains are in %-of-max-HP per turn of the reference foe, the same currency as
 `vgc.field_control`'s F_t. They are a property of OUR set against a reference foe -- not of
 the actual opponent -- which is the right grain for "how much is this condition worth to us".
 
+A set holding its Mega stone is measured twice, as its base form (no Mega Evolution) and as its
+Mega form, and each is registered under its own species id: the two differ in stats, ability
+and what the same move is worth. A probe error means a cell would read as zero, so an entry
+with errors is never cached (the builder retries it; players fall back to the estimate).
+
 Cache key: sha1 of (canonical set, probe version, Showdown pinned commit), so a change to the
 probe or to the engine invalidates entries instead of silently serving old numbers.
 """
@@ -51,7 +56,7 @@ from vgc.data import load_mechanics_catalog, load_moves, load_species
 from vgc.team_scope import resolve_table, team_key
 
 # Bump when the probe's measurement changes in any way that moves numbers.
-PROBE_VERSION = 1
+PROBE_VERSION = 2  # 2: base and Mega forms measured separately; errored entries never cached
 
 WEATHERS = ("none", "sunnyday", "raindance", "sandstorm", "snowscape")
 TERRAINS = ("none", "electricterrain", "grassyterrain", "psychicterrain", "mistyterrain")
@@ -167,6 +172,19 @@ def mega_species_id(species_id: str, item_id: str) -> str | None:
     return fallback
 
 
+def can_mega_evolve(pset: PackedSet) -> bool:
+    """True when this set is a base form holding its Mega stone (it will Mega Evolve in play).
+
+    A set already written as the Mega species (`Salamence-Mega`) is just that form: nothing to
+    split. The probes measure a stone holder twice, base form and Mega form, because the two
+    differ in stats, ability and often moves' value, and a Pokemon spends turns as each.
+    """
+    mega = mega_species_id(pset.species_id, pset.item_id)
+    if not mega or mega == pset.species_id:
+        return False
+    return not (load_species().get(pset.species_id) or {}).get("isMega")
+
+
 def damaging_moves(pset: PackedSet) -> list[str]:
     moves = load_moves()
     return [
@@ -209,7 +227,10 @@ def write_cache(cache: dict[str, Any], path: Path | str = CACHE_PATH) -> None:
 
 
 def entry_from_probe(pset: PackedSet, tested: list[str], results: dict[str, Any]) -> dict[str, Any]:
-    """Collapse the probe's per-move two-turn totals into the stored per-set entry."""
+    """Collapse the probe's per-move two-turn totals into the stored per-set entry.
+
+    The returned numbers describe ONE form of the set (the base form for a stone holder; its
+    Mega form is attached as `mega_form` by `ProbeWorker.measure`)."""
     per_turn = [[0.0] * len(PROFILES) for _ in CONDITIONS]
     best = [[-1] * len(PROFILES) for _ in CONDITIONS]
     for move_index, move_id in enumerate(tested):
@@ -245,22 +266,35 @@ class ProbeWorker:
 
         self._worker = SimWorker(showdown_repo or SHOWDOWN_REPO, script=PROBE_SCRIPT)
 
+    def _run(
+        self, pset: PackedSet, tested: list[str], seeds: Iterable[int], mega: bool
+    ) -> tuple[dict[str, Any], list[str]]:
+        if not tested:
+            return {}, []
+        response = self._worker.request(
+            {
+                "packed": pset.packed,
+                "mega": mega,
+                "moves": tested,
+                "conditions": [list(condition) for condition in CONDITIONS],
+                "seeds": list(seeds),
+            }
+        )
+        return response.get("results") or {}, list(response.get("errors") or [])
+
     def measure(self, pset: PackedSet, seeds: Iterable[int] = DEFAULT_SEEDS) -> dict[str, Any]:
+        """The set's entry: base-form numbers, plus `mega_form` for a stone holder.
+
+        Any probe error is recorded under `errors`; callers must not cache such an entry (a
+        failed cell reads as zero damage, which is a wrong number, not a measurement)."""
         tested = damaging_moves(pset)
-        results: dict[str, Any] = {}
-        errors: list[str] = []
-        if tested:
-            response = self._worker.request(
-                {
-                    "packed": pset.packed,
-                    "moves": tested,
-                    "conditions": [list(condition) for condition in CONDITIONS],
-                    "seeds": list(seeds),
-                }
-            )
-            results = response.get("results") or {}
-            errors = response.get("errors") or []
+        results, errors = self._run(pset, tested, seeds, mega=False)
         entry = entry_from_probe(pset, tested, results)
+        if can_mega_evolve(pset):
+            mega_results, mega_errors = self._run(pset, tested, seeds, mega=True)
+            form = entry_from_probe(pset, tested, mega_results)
+            entry["mega_form"] = {key: form[key] for key in ("per_turn", "gain", "best")}
+            errors += mega_errors
         if errors:
             entry["errors"] = errors[:3]
         return entry
@@ -317,18 +351,19 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
     _registry, _by_species = _TEAMS.setdefault(team_key(packed_team), ({}, {}))
     for pset in parse_packed_team(packed_team):
         raw = entries.get(set_key(pset))
-        if raw is None:
+        if raw is None or raw.get("errors"):  # an errored entry is never trusted
             MISSING[pset.species_id] += 1
             REGISTERED["missing"] += 1
             continue
         found += 1
         REGISTERED["found"] += 1
-        names = {pset.species_id}
+        # Each form is registered under its own species id with its own measured numbers.
+        forms = {pset.species_id: raw}
         mega = raw.get("mega")
-        if mega:
-            names.add(mega)
-        for species_id in names:
-            entry = _entry_from_cache(raw, species_id)
+        if mega and mega != pset.species_id:
+            forms[mega] = {**raw, **(raw.get("mega_form") or {})}
+        for species_id, source in forms.items():
+            entry = _entry_from_cache(source, species_id)
             _registry[(species_id, frozenset(pset.moves))] = entry
             bucket = _by_species.setdefault(species_id, [])
             if entry not in bucket:
