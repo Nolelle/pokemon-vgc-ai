@@ -190,7 +190,7 @@ def test_measured_speed_payoff_replaces_generic_trick_room_term_and_falls_back_w
     for species, tr in (("torkoal", 20.0), ("ursaluna", 20.0), ("dragapult", -10.0),
                         ("greninja", -10.0)):
         entry = sp.SpeedEntry(species, 0.0, 0.0, tr)
-        sp._OWN[(species, frozenset(("protect",)))] = entry
+        sp._TEAMS.setdefault("test-team", ({}, {}))[0][(species, frozenset(("protect",)))] = entry
         sp._USAGE[species] = entry
     bare = _state(slow, fast)
     # The room's measured swing: 60 %HP/turn x fit weight 0.25 x (1 + .8 + .64 turns) = 36.6,
@@ -198,4 +198,33 @@ def test_measured_speed_payoff_replaces_generic_trick_room_term_and_falls_back_w
     swing = field_control_value(state, on_config) - field_control_value(bare, on_config)
     assert swing == pytest.approx(0.25 * 60 * (1 + 0.8 + 0.64), abs=0.1)
     assert field_control_value(bare, on_config) == field_control_value(bare, CONFIG)
+    sp.clear_registry()
+
+
+def test_measured_caches_never_read_another_teams_set() -> None:
+    """Both arms of an A/B share a process: a lookup must read only the bound team.
+
+    Species+moves alone collided across 160 of 320 test teams (Codex review 2026-10-06).
+    """
+    from vgc import speed_payoff as sp
+    from vgc.team_scope import bind_own_team, team_key
+    import contextvars
+
+    sp.clear_registry()
+    mine = sp.SpeedEntry("incineroar", 0.0, 0.0, 5.0)
+    theirs = sp.SpeedEntry("incineroar", 0.0, 0.0, 50.0)
+    key = ("incineroar", frozenset(("fakeout",)))
+    sp._TEAMS.setdefault(team_key("TEAM A"), ({}, {}))[0][key] = mine
+    sp._TEAMS.setdefault(team_key("TEAM B"), ({}, {}))[0][key] = theirs
+
+    def read(team: str | None):
+        def inner():
+            bind_own_team(team)
+            return sp.lookup_own("incineroar", ("fakeout",))
+
+        return contextvars.copy_context().run(inner)
+
+    assert read("TEAM A") is mine
+    assert read("TEAM B") is theirs
+    assert read(None) is None  # two teams registered, none bound: no guessing
     sp.clear_registry()

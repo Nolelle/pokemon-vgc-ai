@@ -55,6 +55,7 @@ from vgc.plan_value import (
     showdown_commit,
     to_id,
 )
+from vgc.team_scope import resolve_table, team_key
 
 # Bump when the probe's measurement changes in any way that moves numbers.
 PROBE_VERSION = 1
@@ -250,8 +251,8 @@ class SpeedEntry:
     tr: float  # %HP/turn it gains under Trick Room (negative for a fast set)
 
 
-_OWN: dict[tuple[str, frozenset[str]], SpeedEntry] = {}
-_OWN_BY_SPECIES: dict[str, list[SpeedEntry]] = {}
+# Per team (vgc.team_scope): team key -> ((species, moves) -> entry, species -> entries).
+_TEAMS: dict[str, tuple[dict[tuple[str, frozenset[str]], SpeedEntry], dict[str, list[SpeedEntry]]]] = {}
 _USAGE: dict[str, SpeedEntry] = {}
 
 # Diagnostics: our Pokemon / opponent species with no entry (field_control then falls back to
@@ -272,6 +273,7 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
     entries = cache.get("entries", {})
     panel_id = cache.get("panel_hash", "")
     found = 0
+    _own, _own_by_species = _TEAMS.setdefault(team_key(packed_team), ({}, {}))
     for pset in parse_packed_team(packed_team):
         raw = entries.get(set_key(pset, panel_id))
         if raw is None:
@@ -283,8 +285,8 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
             names.add(raw["mega"])
         for species_id in names:
             entry = _entry(raw, species_id)
-            _OWN[(species_id, frozenset(pset.moves))] = entry
-            bucket = _OWN_BY_SPECIES.setdefault(species_id, [])
+            _own[(species_id, frozenset(pset.moves))] = entry
+            bucket = _own_by_species.setdefault(species_id, [])
             if entry not in bucket:
                 bucket.append(entry)
     return found
@@ -309,8 +311,7 @@ def _cached_default() -> dict[str, Any]:
 
 
 def clear_registry() -> None:
-    _OWN.clear()
-    _OWN_BY_SPECIES.clear()
+    _TEAMS.clear()
     _USAGE.clear()
     MISSING.clear()
     FALLBACKS.clear()
@@ -319,10 +320,14 @@ def clear_registry() -> None:
 
 def lookup_own(species_id: str, moves: Iterable[str]) -> SpeedEntry | None:
     """The measured entry for one of OUR in-battle Pokemon, or None when it was not cached."""
-    found = _OWN.get((species_id, frozenset(moves)))
+    tables = resolve_table(_TEAMS)
+    if tables is None:
+        return None  # no team bound and several registered: never guess another team's set
+    registry, by_species = tables
+    found = registry.get((species_id, frozenset(moves)))
     if found is not None:
         return found
-    candidates = _OWN_BY_SPECIES.get(species_id) or ()
+    candidates = by_species.get(species_id) or ()
     return candidates[0] if len(candidates) == 1 else None
 
 

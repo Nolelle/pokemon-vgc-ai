@@ -48,6 +48,7 @@ from typing import Any, Iterable
 
 from vgc.config import DATA_DIR
 from vgc.data import load_mechanics_catalog, load_moves, load_species
+from vgc.team_scope import resolve_table, team_key
 
 # Bump when the probe's measurement changes in any way that moves numbers.
 PROBE_VERSION = 1
@@ -286,8 +287,8 @@ class PlanEntry:
         return self.gain[condition_index(weather, terrain)][profile]
 
 
-_REGISTRY: dict[tuple[str, frozenset[str]], PlanEntry] = {}
-_BY_SPECIES: dict[str, list[PlanEntry]] = {}
+# Per team (vgc.team_scope): team key -> ((species, moves) -> entry, species -> entries).
+_TEAMS: dict[str, tuple[dict[tuple[str, frozenset[str]], PlanEntry], dict[str, list[PlanEntry]]]] = {}
 
 # Diagnostic: our Pokemon the registry had no cache entry for (so field_control fell back to
 # its estimate). Keyed by species id; read it after a run to see whether a cache covers a pool.
@@ -313,6 +314,7 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
     cache = cache if cache is not None else _cached_default()
     entries = cache.get("entries", {})
     found = 0
+    _registry, _by_species = _TEAMS.setdefault(team_key(packed_team), ({}, {}))
     for pset in parse_packed_team(packed_team):
         raw = entries.get(set_key(pset))
         if raw is None:
@@ -327,8 +329,8 @@ def register_own_team(packed_team: str | None, cache: dict[str, Any] | None = No
             names.add(mega)
         for species_id in names:
             entry = _entry_from_cache(raw, species_id)
-            _REGISTRY[(species_id, frozenset(pset.moves))] = entry
-            bucket = _BY_SPECIES.setdefault(species_id, [])
+            _registry[(species_id, frozenset(pset.moves))] = entry
+            bucket = _by_species.setdefault(species_id, [])
             if entry not in bucket:
                 bucket.append(entry)
     return found
@@ -340,8 +342,7 @@ def _cached_default() -> dict[str, Any]:
 
 
 def clear_registry() -> None:
-    _REGISTRY.clear()
-    _BY_SPECIES.clear()
+    _TEAMS.clear()
     MISSING.clear()
     REGISTERED.clear()
     FALLBACKS.clear()
@@ -356,8 +357,12 @@ def lookup(species_id: str, moves: Iterable[str]) -> PlanEntry | None:
     list can drift (a copied/transformed move) while the Species Clause keeps the match
     unambiguous within a team.
     """
-    found = _REGISTRY.get((species_id, frozenset(moves)))
+    tables = resolve_table(_TEAMS)
+    if tables is None:
+        return None  # no team bound and several registered: never guess another team's set
+    registry, by_species = tables
+    found = registry.get((species_id, frozenset(moves)))
     if found is not None:
         return found
-    candidates = _BY_SPECIES.get(species_id) or ()
+    candidates = by_species.get(species_id) or ()
     return candidates[0] if len(candidates) == 1 else None

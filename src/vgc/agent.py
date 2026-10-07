@@ -48,6 +48,7 @@ from vgc.decision_trace import (
 )
 from vgc.evaluator import score_joint_orders
 from vgc.condition_clock import observe_condition_line
+from vgc.team_scope import bind_own_team
 from vgc.poke_env_compat import normalize_for_poke_env
 from vgc.config import REPO_ROOT, SHOWDOWN_REPO
 from vgc.models import PolicyConfig
@@ -494,6 +495,13 @@ class VgcPlayer(Player):
         and a ``clock`` trace note either way.
         """
 
+        own_team = getattr(self, "_own_packed_team", None)
+
+        def scoped_decide() -> object:
+            # Per-team measured caches read only this player's own team (vgc.team_scope).
+            bind_own_team(own_team)
+            return decide()
+
         tracker = self._clock_for_tag(battle.battle_tag)
         idx, state = tracker.begin_decision()
         budget = budget_seconds(state, kind, self.config) if state else Budget(None, kind=kind)
@@ -504,12 +512,12 @@ class VgcPlayer(Player):
         try:
             slot = self._worker_slot()
             if budget.seconds is None and not slot.busy():
-                value = decide()
+                value = contextvars.copy_context().run(scoped_decide)
                 reason = "none"
             else:
                 deadline = None if budget.seconds is None else start + budget.seconds
                 result = run_with_deadline(
-                    lambda: self._run_isolated(decide, cancel, deadline),
+                    lambda: self._run_isolated(scoped_decide, cancel, deadline),
                     lambda: self._run_isolated(fallback, None)[0],
                     budget,
                     slot=self._worker_slot(),
