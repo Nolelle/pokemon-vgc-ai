@@ -42,6 +42,17 @@ counted. Sand chip and Grassy healing stay as separate additive terms. The oppon
 estimate (its sets are hidden), so the term is deliberately asymmetric in phase 1. A set with
 no cache entry falls back to the estimate and is counted in `plan_value.FALLBACKS`.
 
+Measured speed payoff (`PolicyConfig.exact_search_field_measured_speed`)
+------------------------------------------------------------------------
+`S_t` treats Tailwind / Trick Room as "who moves first, averaged over pairings", blind to what
+moving first is worth for a given set. With the flag on, each of those conditions (when every
+Pokemon it needs is cached, else the generic term stays) is taken OUT of `S_t` and valued by the
+engine-measured payoff of `vgc.speed_payoff` -- %HP per Pokemon per turn dealt minus taken
+against a panel of real M-C sets -- added to the fit term (so `exact_search_field_fit_weight`
+applies): our Tailwind adds our two best Pokemon's `tw`, their Tailwind subtracts theirs, and
+Trick Room adds ours minus theirs `tr`. Active Pokemon count fully, brought bench at
+`exact_search_field_reserve_weight`. Weather-speed abilities stay in `S_t`.
+
 Not modeled (known gaps)
 ------------------------
 Duration extenders (Heat/Damp/Smooth/Icy Rock, Terrain Extender: 8 turns) until the
@@ -59,7 +70,7 @@ from functools import lru_cache
 from types import SimpleNamespace
 from typing import Any
 
-from vgc import plan_value
+from vgc import plan_value, speed_payoff
 from vgc.damage import (
     FieldState,
     PokemonState,
@@ -333,7 +344,7 @@ class _Mon:
 
     __slots__ = (
         "active", "speeds", "multiplier", "speed_ability", "species_id", "ability", "moves",
-        "plan", "types",
+        "plan", "types", "speed",
     )
 
     def __init__(self, mon: Any, *, ours: bool, config: PolicyConfig) -> None:
@@ -389,6 +400,16 @@ class _Mon:
                 plan_value.FALLBACKS[mon.species_id] += 1
         self.types = None
 
+        # Measured Tailwind / Trick Room payoff (vgc.speed_payoff): our own set, or the
+        # opponent species' most common set. None when not requested or not cached.
+        self.speed = None
+        if config.exact_search_field_measured_speed:
+            self.speed = (
+                speed_payoff.lookup_own(mon.species_id, move_ids)
+                if ours
+                else speed_payoff.lookup_opponent(mon.species_id)
+            )
+
 
 def _alive_mons(side: Any, *, ours: bool, config: PolicyConfig) -> list[_Mon]:
     result = []
@@ -433,15 +454,36 @@ def _p_before(ours: list[tuple[float, float]], theirs: list[tuple[float, float]]
     return total
 
 
+class _Measured:
+    """Which speed-control conditions are valued by measurement instead of the generic term."""
+
+    __slots__ = ("our_tailwind", "their_tailwind", "trick_room")
+
+    def __init__(self, our_tailwind: bool = False, their_tailwind: bool = False,
+                 trick_room: bool = False) -> None:
+        self.our_tailwind = our_tailwind
+        self.their_tailwind = their_tailwind
+        self.trick_room = trick_room
+
+
 def _speed_order(
-    ours: list[_Mon], theirs: list[_Mon], conditions: _Conditions, horizon: int
+    ours: list[_Mon],
+    theirs: list[_Mon],
+    conditions: _Conditions,
+    horizon: int,
+    measured: _Measured | None = None,
 ) -> list[float]:
+    measured = measured or _Measured()
     result = []
     for t in range(horizon):
         weather = conditions.weather[t]
-        tr = conditions.trick_room[t]
-        our_speeds = [_speed_at(m, weather, conditions.our_tailwind[t]) for m in ours]
-        their_speeds = [_speed_at(m, weather, conditions.their_tailwind[t]) for m in theirs]
+        # A condition valued by `_measured_speed_fit` is removed from the generic term so it
+        # is not counted twice.
+        tr = conditions.trick_room[t] and not measured.trick_room
+        our_tw = conditions.our_tailwind[t] and not measured.our_tailwind
+        their_tw = conditions.their_tailwind[t] and not measured.their_tailwind
+        our_speeds = [_speed_at(m, weather, our_tw) for m in ours]
+        their_speeds = [_speed_at(m, weather, their_tw) for m in theirs]
         weighted = 0.0
         weight_sum = 0.0
         for a, a_speeds in zip(ours, our_speeds):
@@ -511,6 +553,71 @@ def _measured_side_fit(
     return sum(contributions[:2])
 
 
+def _speed_side_value(mons: list[_Mon], field: str, reserve_weight: float) -> float:
+    """A side's measured speed payoff: its two best Pokemon (active full, bench reserve)."""
+    contributions = sorted(
+        (
+            (1.0 if mon.active else reserve_weight) * getattr(mon.speed, field)
+            for mon in mons
+            if mon.speed is not None
+        ),
+        reverse=True,
+    )
+    return sum(contributions[:2])
+
+
+def _measured_speed_flags(
+    ours: list[_Mon], theirs: list[_Mon], conditions: _Conditions
+) -> _Measured:
+    """Which active speed conditions can be valued by measurement.
+
+    Ours need every surviving Pokemon of ours cached; the opponent needs every ACTIVE foe
+    cached (its bench is mostly unrevealed). Otherwise that condition keeps the generic term.
+    """
+    ours_ok = bool(ours) and all(mon.speed is not None for mon in ours)
+    theirs_ok = all(mon.speed is not None for mon in theirs if mon.active) and any(
+        mon.active for mon in theirs
+    )
+    return _Measured(
+        our_tailwind=ours_ok and any(conditions.our_tailwind),
+        their_tailwind=theirs_ok and any(conditions.their_tailwind),
+        trick_room=ours_ok and theirs_ok and any(conditions.trick_room),
+    )
+
+
+def _measured_speed_fit(
+    ours: list[_Mon],
+    theirs: list[_Mon],
+    conditions: _Conditions,
+    horizon: int,
+    measured: _Measured,
+    config: PolicyConfig,
+) -> list[float]:
+    """%HP per turn the measured Tailwind / Trick Room payoff adds for us (see vgc.speed_payoff).
+
+    Our Tailwind: our two best Pokemon's `tw`. Their Tailwind: minus their two best Pokemon's
+    `tw` (each from its own side's perspective). Trick Room: ours `tr` minus theirs `tr`, so
+    it is worth what it does for our slow sets net of what it does for theirs.
+    """
+    reserve = config.exact_search_field_reserve_weight
+    scale = config.exact_search_speed_payoff_scale
+    our_tw = _speed_side_value(ours, "tw", reserve) if measured.our_tailwind else 0.0
+    their_tw = _speed_side_value(theirs, "tw", reserve) if measured.their_tailwind else 0.0
+    our_tr = _speed_side_value(ours, "tr", reserve) if measured.trick_room else 0.0
+    their_tr = _speed_side_value(theirs, "tr", reserve) if measured.trick_room else 0.0
+    result = []
+    for t in range(horizon):
+        total = 0.0
+        if measured.our_tailwind and conditions.our_tailwind[t]:
+            total += our_tw
+        if measured.their_tailwind and conditions.their_tailwind[t]:
+            total -= their_tw
+        if measured.trick_room and conditions.trick_room[t]:
+            total += our_tr - their_tr
+        result.append(scale * total)
+    return result
+
+
 def _field_fit(
     ours: list[_Mon],
     theirs: list[_Mon],
@@ -551,8 +658,14 @@ def field_control_value(state: Any, config: PolicyConfig) -> float:
     conditions = _Conditions(state, horizon)
     ours = _alive_mons(state.our_side, ours=True, config=config)
     theirs = _alive_mons(state.opponent_side, ours=False, config=config)
-    speed = _speed_order(ours, theirs, conditions, horizon)
+    measured = None
+    if config.exact_search_field_measured_speed:
+        measured = _measured_speed_flags(ours, theirs, conditions)
+    speed = _speed_order(ours, theirs, conditions, horizon, measured)
     fit = _field_fit(ours, theirs, conditions, horizon, config)
+    if measured is not None:
+        extra = _measured_speed_fit(ours, theirs, conditions, horizon, measured, config)
+        fit = [a + b for a, b in zip(fit, extra)]
     value = 0.0
     scale = 1.0
     for t in range(horizon):

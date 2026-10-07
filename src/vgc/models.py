@@ -520,6 +520,18 @@ class PolicyConfig:
     # Weight on a brought BENCH Pokemon's measured gain (an active one counts fully): it can
     # still come in, but not this turn. Only the two largest contributions per side count.
     exact_search_field_reserve_weight: float = 0.5
+    # Replace field_control's generic "who is faster" term (S_t) for Tailwind and Trick Room
+    # with the payoff MEASURED by the real engine for each Pokemon (vgc.speed_payoff; cache
+    # data/usage/speed_payoff_cache.json, built by tools/build_speed_payoff_cache.py): what
+    # being under OUR Tailwind / Trick Room is worth to that set against a panel of real M-C
+    # sets (damage dealt minus taken over two turns, %HP per Pokemon per turn). Our side reads
+    # our own sets; the opponent's Tailwind/Trick Room reads the species' most common set
+    # (negated). Added in the fit term's units, so exact_search_field_fit_weight (~0.5)
+    # applies; the generic S_t keeps weather-speed abilities and any condition whose Pokemon
+    # are not all cached. Off by default; reserve weight above applies to brought bench mons.
+    exact_search_field_measured_speed: bool = False
+    # Extra multiplier on the measured speed payoff (1.0 = the fit weight alone decides).
+    exact_search_speed_payoff_scale: float = 1.0
     # --- Multi-turn exact continuation (2026-10-05) ---
     # After the searched turn, keep each exact branch running this many more COMPLETED
     # battle turns in the same Showdown clone, both sides playing the continuation policy

@@ -683,6 +683,28 @@ missing from the cache fall back and are counted in `plan_value.FALLBACKS`. Not 
 set `exact_search_field_fit_weight` ~0.5 for the experiment. Checklist test:
 `tests/test_plan_value.py` (integration).
 
+## Measured speed payoff (2026-10-06): what Tailwind / Trick Room are worth to a SET
+
+`field_control`'s generic S_t ("fraction of pairings we move first") cannot tell that Tailwind
+is worth a lot to a mid-speed hard hitter and nothing to a Pokemon that already outspeeds the
+field, or that Trick Room is the plan for a slow bulky attacker and a cost for a fast one.
+`vgc.speed_payoff` + `tools/speed_payoff_probe.mjs` measure it with the engine: one subject
+set vs each of 12 real M-C reference sets (the most-used species' top item/ability/spread/moves
+from the Smogon chaos file, real HP), 1v1 duels (second slot fainted), 2 turns, each side
+using its single strongest damaging move into the other in every scenario (bare, our
+Tailwind, foe Tailwind, Trick Room), luck removed like plan_value (mean roll, no crits,
+accuracy-weighted; recoil/Life Orb count as HP lost). Payoff = (net %HP dealt minus taken
+under the condition - bare) / 2, usage-weighted over the panel. It is NONZERO only where
+who-moves-first changes a KO or an attack that lands (the metric's point; a pairing with no KO
+in two turns scores 0). Cache `data/usage/speed_payoff_cache.json` (owner teams + the 314
+`mc_sheet_pool_v2` teams + the 70 most-used usage sets for OPPONENT species), built by
+`tools/build_speed_payoff_cache.py`; eyeball with `offline/speed_payoff_sanity.py`.
+`PolicyConfig.exact_search_field_measured_speed` (OFF) removes Tailwind/Trick Room from S_t
+when every Pokemon it needs is cached and adds the payoff to the fit term (so fit weight ~0.5
+applies): our Tailwind = our two best Pokemon's `tw`, their Tailwind = minus theirs, Trick
+Room = ours `tr` minus theirs. Not yet A/B'd. Tests: `tests/test_speed_payoff.py`
+(integration), `tests/test_field_control.py`.
+
 ## Neural shortlist distillation (Phase 4): M-B-era guided gate, current models unapproved
 
 The student policy that ranks legal joint orders for `vgc.rl.search_guidance` is trained
