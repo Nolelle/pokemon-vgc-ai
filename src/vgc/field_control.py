@@ -49,7 +49,8 @@ moving first is worth for a given set. With the flag on, each of those condition
 Pokemon it needs is cached, else the generic term stays) is taken OUT of `S_t` and valued by the
 engine-measured payoff of `vgc.speed_payoff` -- %HP per Pokemon per turn dealt minus taken
 against a panel of real M-C sets -- added to the fit term (so `exact_search_field_fit_weight`
-applies): our Tailwind adds our two best Pokemon's `tw`, their Tailwind subtracts theirs, and
+applies): our Tailwind adds our actives' `tw` (signed) plus the bench average at the
+reserve weight, their Tailwind subtracts theirs likewise, and
 Trick Room adds ours minus theirs `tr`. Active Pokemon count fully, brought bench at
 `exact_search_field_reserve_weight`. Weather-speed abilities stay in `S_t`.
 
@@ -554,16 +555,19 @@ def _measured_side_fit(
 
 
 def _speed_side_value(mons: list[_Mon], field: str, reserve_weight: float) -> float:
-    """A side's measured speed payoff: its two best Pokemon (active full, bench reserve)."""
-    contributions = sorted(
-        (
-            (1.0 if mon.active else reserve_weight) * getattr(mon.speed, field)
-            for mon in mons
-            if mon.speed is not None
-        ),
-        reverse=True,
-    )
-    return sum(contributions[:2])
+    """A side's measured speed payoff: every ACTIVE Pokemon counts fully and with its sign,
+    plus the average bench payoff at the reserve weight.
+
+    Not "the two best": Trick Room on our side hurts a fast active Pokemon right now even if
+    a slow teammate on the bench would love it, and taking the two largest values hid that.
+    """
+
+    active = [getattr(mon.speed, field) for mon in mons if mon.speed is not None and mon.active]
+    bench = [getattr(mon.speed, field) for mon in mons if mon.speed is not None and not mon.active]
+    value = sum(active)
+    if bench:
+        value += reserve_weight * sum(bench) / len(bench)
+    return value
 
 
 def _measured_speed_flags(
