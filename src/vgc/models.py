@@ -281,6 +281,17 @@ class PolicyConfig:
     # the full damage calc through a modeled volatile).
     helping_hand_weight: float = 0.5
 
+    # -- Wasted-action guard (vgc.action_sanity) ----------------------------------------------
+    # A joint order that voids an action (priority move into Armor Tail/Queenly Majesty/
+    # Dazzling or Psychic Terrain, Helping Hand onto a partner that is not attacking, a
+    # status move from an unlocked Choice-item holder) is pushed far below every sound order
+    # by `wasted_action_penalty` -- in the myopic score AND in the exact search's exchange
+    # value (so the live exact judge sees it). False = legacy behavior for A/B controls.
+    penalize_wasted_actions: bool = True
+    # Larger than any real exchange value (+-10,000 is a finished game), so a flagged order
+    # ranks below every unflagged one; if every order is flagged the ranking is unchanged.
+    wasted_action_penalty: float = 100_000.0
+
     # -- Screens / generic field utility (Reflect/Light Screen/Aurora Veil/Tailwind) --------
     # Flat value for putting up a not-yet-active screen/Tailwind side condition; deliberately
     # simple (no lookahead into how many hits it blocks) for a myopic v1 evaluator.

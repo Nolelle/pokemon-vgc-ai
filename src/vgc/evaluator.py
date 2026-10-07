@@ -88,6 +88,7 @@ from poke_env.battle.side_condition import SideCondition
 from poke_env.battle.weather import Weather
 from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
+from vgc.action_sanity import wasted_action_reasons
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
@@ -425,13 +426,17 @@ def score_joint_orders_in_context(
         second_info = _score_single(order.second_order, 1, ctx, config)
         cross = _cross_slot_adjustments(first_info, second_info, config)
         total = first_info["score"] + second_info["score"] + cross
-        scored.append(
-            ScoredOrder(
-                order=order,
-                score=total,
-                breakdown={"slot0": first_info, "slot1": second_info, "cross_slot": cross},
-            )
-        )
+        breakdown: dict[str, object] = {
+            "slot0": first_info,
+            "slot1": second_info,
+            "cross_slot": cross,
+        }
+        if config.penalize_wasted_actions:
+            reasons = wasted_action_reasons(ctx.battle, order)
+            if reasons:
+                total -= config.wasted_action_penalty
+                breakdown["wasted_actions"] = reasons
+        scored.append(ScoredOrder(order=order, score=total, breakdown=breakdown))
     scored.sort(key=lambda scored_order: scored_order.score, reverse=True)
     return scored
 

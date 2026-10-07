@@ -269,6 +269,11 @@ def search_joint_orders_exact(
             config.search_worst_case_weight * worst
             + (1.0 - config.search_worst_case_weight) * expectation
         )
+        wasted = entry.breakdown.get("wasted_actions")
+        if wasted:
+            # The exact transition may not model why the action is void (e.g. a Choice
+            # lock), and exchange_value is what the live judge ranks by: charge it here.
+            exact_delta -= config.wasted_action_penalty
         final = (
             config.exact_search_myopic_weight * entry.score
             + config.search_position_weight * exact_delta
@@ -300,7 +305,12 @@ def search_joint_orders_exact(
         results.append(ScoredOrder(entry.order, final, breakdown))
         searched_finals.append(final)
 
-    floor = min(searched_finals)
+    sound_finals = [
+        final
+        for entry, final in zip(searched, searched_finals, strict=True)
+        if not entry.breakdown.get("wasted_actions")
+    ]
+    floor = min(sound_finals or searched_finals)
     for tail_index, entry in enumerate(unsearched):
         breakdown = dict(entry.breakdown)
         breakdown.update(
@@ -311,7 +321,10 @@ def search_joint_orders_exact(
                 "approximate_transition": None,
             }
         )
-        results.append(ScoredOrder(entry.order, floor - 1.0 - tail_index, breakdown))
+        tail_score = floor - 1.0 - tail_index
+        if entry.breakdown.get("wasted_actions"):
+            tail_score -= config.wasted_action_penalty
+        results.append(ScoredOrder(entry.order, tail_score, breakdown))
     ranked = sorted(results, key=lambda entry: entry.score, reverse=True)
     metrics = {
         "searched_actions": len(searched),
