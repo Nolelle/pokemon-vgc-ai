@@ -573,12 +573,14 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 }
 
 // Showdown's addVolatile records who caused each volatile (`source`/`sourceSlot`), and
-// several conditions dereference it: Imprison reads the holder's moves through it (a
-// missing source threw "reading 'hasMove'" and killed the branch), Leech Seed heals into
-// `sourceSlot` (missing -> the drain silently never happened), Attract/Octolock/Syrup
-// Bomb end when it leaves. The public snapshot does not say who applied a foe-inflicted
-// volatile, so those take the first active foe -- the right side, possibly the wrong
-// slot (it only changes which foe Leech Seed heals). Self-applied ones are exact.
+// some conditions dereference it. Imprison reads the holder's moves through it (a missing
+// source threw "reading 'hasMove'" and killed the branch); Leech Seed heals into
+// `sourceSlot` (missing -> the drain silently never happened). Self-applied volatiles get
+// their holder, which is exact. The public snapshot does not say WHICH foe inflicted a
+// volatile, so foe-inflicted ones stay sourceless (Showdown guards those reads), except
+// Leech Seed, which gets the first active foe's slot: the drain is right, only which foe
+// it heals may be wrong. Guessing a source for Attract/Octolock/Syrup Bomb/Lock-On would
+// make them end (or aim) on the guessed foe's switch instead of the real one's.
 const FOE_TARGETS = new Set([
 	'normal', 'any', 'adjacentFoe', 'allAdjacentFoes', 'allAdjacent', 'randomNormal',
 ]);
@@ -591,11 +593,12 @@ function fillVolatileSources(battle) {
 			for (const [id, state] of Object.entries(pokemon.volatiles)) {
 				if (state.source) continue;
 				const move = battle.dex.moves.get(id);
-				const fromFoe = move.exists && FOE_TARGETS.has(move.target);
-				const source = fromFoe ? foe : pokemon;
-				if (!source) continue;
-				state.source = source;
-				if (source.isActive) state.sourceSlot = source.getSlot();
+				if (!(move.exists && FOE_TARGETS.has(move.target))) {
+					state.source = pokemon;
+					if (pokemon.isActive) state.sourceSlot = pokemon.getSlot();
+				} else if (id === 'leechseed' && foe) {
+					state.sourceSlot = foe.getSlot();
+				}
 			}
 		}
 	}
