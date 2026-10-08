@@ -247,3 +247,17 @@
 - Built: `exact_search_consistent_accounting` (default True) fixes; `vgc_exact` player + pool harness `--player/--both` + per-arm fallback counts.
 - Found via exact A/A (62.9% p1): mirror always seated us p1 -> p2 decisions searched stale boards (30% wrong actives, 24% wrong weather). Fixed with `mirror_side`; A/A now p1 48.8 / p2 48.6. Also mirror usernames (won branch read as lost on named accounts; Codex review). p2-seat teacher labels in runs/mcv2 are suspect.
 - Tests 1203 unit + new integration seat/name tests pass; ruff clean. Accounting A/B (narrow width, 160 teams) running: runs/eval/exact_judge_accounting_ab.json.
+
+## 2026-10-05 (cont.) — field control + continuation (branch claude/exact-judge-field-horizon)
+- Built (Sonnet agents in parallel, Codex-reviewed): KO/alive term (ships 90), `vgc.field_control` speed/weather/terrain leaf (off), multi-turn exact continuation `exact_search_continuation_turns/policy` (off), `offline/measure_exact_depth.py`, `offline/diagnose_setup_ranking.py`.
+- Wins: KO term 52.5% [0.501,0.550]; myopic weight 0 53.5% (M-C train) / 53.7% (pool160) / 51.6% holdout (underpowered).
+- Nulls: field leaf (4 runs, 48.8-50.2%); continuation N=1/N=2 greedy (49.4%, 47.8%).
+- N=1 with myopic weight 0: fast-search continuation 49.9%, greedy 47.4% (nulls). Shipped exact-only `exact_search_myopic_weight=0.0`.
+- Disk was 99% full; freed ~8 GB (old worktree .venvs, Codex installer leftovers, Spotify cache).
+
+## 2026-10-06 — condition clock + continuation fixes (branch claude/exact-judge-field-horizon)
+- Owner's hunch confirmed (and by Codex): weather/terrain durations wrong in every exact branch (poke-env restamps weather each upkeep; switch-in setters charged an extra turn). `vgc.condition_clock` fixes it: 266/266 match live sim; known extenders count 8 from the start.
+- With correct timers: field leaf 50.1%/49.7% (null); N=1 continuation 46.3% (worse); 4 samples 47.3% (noise rejected).
+- Flip diagnostic: N=1 flips 43% of picks, setup ~2x, 20/56 flips decided by mid-continuation game ends.
+- Fixes (all off): continuation weight (0.25: 47.8%, 0.5: 50.4%), board-scored continuation terminals (47.8%), 2x2 continuation search built by a Sonnet agent in a worktree (47.8%), 2x2 + board terminals 50.1% [0.469,0.533]. Harm removed, no gain.
+- 2026-10-06 later: engine-measured team-plan value (`vgc.plan_value`, Sonnet agent) + fast-search condition expiry (Sonnet agent) + condition-clock extension lock. Owner teams vs M-C train: plan-value field control 51.0% [0.498,0.522], terrain_pulse_blastoise 54.6% [0.517,0.576]; live judge KO 52.7% [0.498,0.557]; fast expiry 50.4%. Next: pre-registered holdout confirmation; model weather/terrain-setting moves in the fast search.

@@ -499,7 +499,7 @@ def test_hidden_trap_rejection_retries_live_and_fails_closed_in_search(worker, t
     assert battle.battles["p2"].trapped == [True, False]
     assert battle.battles["p2"].maybe_trapped == [False, True]
 
-    with pytest.raises(InvalidChoice, match="hidden trap"):
+    with pytest.raises(InvalidChoice, match="hidden (trap|information)"):
         evaluate_exact_branches(
             battle,
             [{"p1": "move 2 1, move 4", "p2": "move 2 1, switch 3"}],

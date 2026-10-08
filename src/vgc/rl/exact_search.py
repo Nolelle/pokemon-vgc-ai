@@ -15,8 +15,10 @@ import time
 from collections import defaultdict
 from typing import Callable, Sequence
 
+from vgc.actions import describe_order
 from vgc.belief_scoring import belief_ordered_candidates
 from vgc.evaluator import ScoredOrder, score_joint_orders
+from vgc.field_control import field_control_value
 from vgc.mechanics_state import BattleMechanicsState, PokemonMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.position_effects import effect_polarity, side_condition_polarity
@@ -57,13 +59,20 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
     hard_control = {"slp", "frz"}
     signed = config.exact_search_signed_effects
     consistent = config.exact_search_consistent_accounting
+    # With the field-control leaf on, Speed stages and Tailwind are valued there (by who
+    # actually moves first, for as long as it lasts); counting them here too would pay
+    # twice for the same thing.
+    field = config.exact_search_field_control
     if consistent and bring_size:
         # Unseen opponent reserves are publicly known to exist (bring size) and to be
         # untouched. Counting them up front keeps a first reveal from moving the score.
-        score += 100.0 * max(0, bring_size - len(side.pokemon))
+        unseen = max(0, bring_size - len(side.pokemon))
+        score += (100.0 + config.exact_search_alive_weight) * unseen
     for mon in side.pokemon:
         if consistent and mon.fainted:
             continue  # poke-env keeps a fainted Pokemon's boosts and volatiles
+        if not mon.fainted:
+            score += config.exact_search_alive_weight
         score += 100.0 * _hp_fraction(mon)
         if mon.status:
             weight = (
@@ -72,7 +81,9 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
                 else config.exact_search_status_weight
             )
             score -= weight
-        score += config.exact_search_boost_weight * sum(stage for _name, stage in mon.boosts)
+        score += config.exact_search_boost_weight * sum(
+            stage for name, stage in mon.boosts if not (field and name == "spe")
+        )
         if signed:
             # Sign, not size: `exact_search_effect_weight` keeps its frozen value and
             # `vgc.position_effects` only says which way it points. Effects it cannot
@@ -85,11 +96,31 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
             score += config.exact_search_effect_weight * len(mon.effects)
     if signed:
         score += config.exact_search_effect_weight * sum(
-            side_condition_polarity(effect) for effect in side.side_conditions
+            side_condition_polarity(effect)
+            for effect in side.side_conditions
+            if not (field and effect.id == "tailwind")
         )
     else:
-        score += config.exact_search_effect_weight * len(side.side_conditions)
+        score += config.exact_search_effect_weight * sum(
+            1 for effect in side.side_conditions if not (field and effect.id == "tailwind")
+        )
     return score
+
+
+def _board_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
+    """Material on the board (HP, survivors, status, effects), ignoring the game result."""
+
+    return _side_position(state.our_side, config) - _side_position(
+        state.opponent_side, config, bring_size=state.team_size
+    )
+
+
+def _continuation_score(state: BattleMechanicsState, config: PolicyConfig) -> float:
+    """Score a board reached during continuation turns (see continuation_board_terminals)."""
+
+    if config.exact_search_continuation_board_terminals and (state.won or state.lost):
+        return _board_value(state, config)
+    return _position_value(state, config)
 
 
 def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
@@ -99,9 +130,12 @@ def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
         return -10_000.0
     if state.finished and config.exact_search_consistent_accounting:
         return 0.0  # a draw: neither side's leftover board is worth anything
-    return _side_position(state.our_side, config) - _side_position(
+    value = _side_position(state.our_side, config) - _side_position(
         state.opponent_side, config, bring_size=state.team_size
     )
+    if config.exact_search_field_control:
+        value += field_control_value(state, config)
+    return value
 
 
 def _softmax_weights(scored: list[ScoredOrder], temperature: float) -> list[float]:
@@ -175,13 +209,49 @@ def search_joint_orders_exact(
         joint_choices,
         future_seeds=future_seeds,
         branch_prefix=f"exact-{side}-{getattr(battle, 'turn', 0)}",
+        config=config,
+        our_side=side,
+        score_state=lambda state: _continuation_score(state, config),
     )
     values: dict[tuple[int, int], list[float]] = defaultdict(list)
+    field_deltas: dict[int, list[float]] = defaultdict(list)
+    root_field = (
+        field_control_value(snapshot_battle(battle), config)
+        if config.exact_search_field_control
+        else 0.0
+    )
     per_choice = len(future_seeds)
+    continuation_done = [branch.continuation_turns_completed for branch in branches]
     for branch_index, branch in enumerate(branches):
         choice_index = branch_index // per_choice
         owner = choice_owner[choice_index]
-        values[owner].append(_position_value(branch.state_for(side), config) - before)
+        turn1 = getattr(branch, "turn1_public_states", None)
+        final_state = branch.state_for(side)
+        # A game that ended during the continuation ended under the continuation policy,
+        # not because of the searched move (see continuation_board_terminals).
+        final = (
+            _continuation_score(final_state, config)
+            if turn1 is not None
+            else _position_value(final_state, config)
+        )
+        cont_value = branch.continuation_value
+        if turn1 is not None and cont_value is not None:
+            # "search" continuation mode: the continuation-turn search is the later board.
+            mid = _position_value(dict(turn1)[side], config)
+            values[owner].append(
+                (mid - before) + config.exact_search_continuation_weight * (cont_value - mid)
+            )
+        elif turn1 is not None and config.exact_search_continuation_weight != 1.0:
+            mid = _position_value(dict(turn1)[side], config)
+            values[owner].append(
+                (mid - before) + config.exact_search_continuation_weight * (final - mid)
+            )
+        else:
+            values[owner].append(final - before)
+        if config.exact_search_field_control:
+            field_deltas[owner[0]].append(
+                field_control_value(branch.state_for(side), config) - root_field
+            )
 
     results: list[ScoredOrder] = []
     searched_finals: list[float] = []
@@ -199,8 +269,14 @@ def search_joint_orders_exact(
             config.search_worst_case_weight * worst
             + (1.0 - config.search_worst_case_weight) * expectation
         )
+        wasted_cost = float(entry.breakdown.get("wasted_action_cost", 0.0))
+        if wasted_cost:
+            # The exact transition may not model why the action is void (e.g. a Choice
+            # lock), and exchange_value is what the live judge ranks by: charge it here.
+            # Strategic size (<< a game result), so a confirmed win still ranks first.
+            exact_delta -= wasted_cost
         final = (
-            config.search_myopic_weight * entry.score
+            config.exact_search_myopic_weight * entry.score
             + config.search_position_weight * exact_delta
         )
         breakdown = dict(entry.breakdown)
@@ -214,12 +290,23 @@ def search_joint_orders_exact(
                 "exact_opponent_responses": len(opponent_orders),
                 "n_responses": len(opponent_orders),
                 "approximate_transition": False,
+                "continuation_turns": config.exact_search_continuation_turns,
+                # Diagnostics (no effect on ranking).
+                "response_values": list(response_means),
+                "response_weights": list(opponent_weights),
+                "response_orders": [
+                    describe_order(o) if o is not None else None for o in opponent_orders
+                ],
             }
         )
+        if config.exact_search_field_control and field_deltas.get(our_index):
+            breakdown["field_delta"] = sum(field_deltas[our_index]) / len(
+                field_deltas[our_index]
+            )
         results.append(ScoredOrder(entry.order, final, breakdown))
         searched_finals.append(final)
 
-    floor = min(searched_finals)
+    floor = min(searched_finals)  # every unsearched order ranks below every searched one
     for tail_index, entry in enumerate(unsearched):
         breakdown = dict(entry.breakdown)
         breakdown.update(
@@ -230,7 +317,8 @@ def search_joint_orders_exact(
                 "approximate_transition": None,
             }
         )
-        results.append(ScoredOrder(entry.order, floor - 1.0 - tail_index, breakdown))
+        tail_score = floor - 1.0 - tail_index
+        results.append(ScoredOrder(entry.order, tail_score, breakdown))
     ranked = sorted(results, key=lambda entry: entry.score, reverse=True)
     metrics = {
         "searched_actions": len(searched),
@@ -239,6 +327,18 @@ def search_joint_orders_exact(
         "forecast_count": 0,
         "elapsed_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
         "mechanics_source": "official_showdown_clone",
+        "continuation_turns": config.exact_search_continuation_turns,
+        "continuation_policy": config.exact_search_continuation_policy,
+        "continuation_turns_completed_mean": (
+            sum(continuation_done) / len(continuation_done) if continuation_done else 0.0
+        ),
+        "continuation_ended_early": sum(branch.continuation_ended_early for branch in branches),
+        "continuation_truncated": sum(branch.continuation_truncated for branch in branches),
+        "continuation_steps_mean": (
+            sum(branch.continuation_steps for branch in branches) / len(branches)
+            if branches
+            else 0.0
+        ),
     }
     for entry in ranked:
         entry.breakdown["search_metrics"] = metrics
