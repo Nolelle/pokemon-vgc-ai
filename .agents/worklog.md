@@ -275,7 +275,8 @@
 - Ladder to date: M-B 202–236 (46%), M-C 26–30 incl. today's 3–7 check-up (in the ladder-checkup worktree's runs/ladder.jsonl, not yet in main's). Ladder ~1000–1180; no session big enough to read an offline +4.
 - Priority: re-run exact-judge holdout A/B after the repeat-Protect mirror fix (all earlier judge numbers carry that bug); then a 50+ game ladder session on an idle machine; fix offline/review_lost_decisions.py process pool.
 - Disk 2.3 GB -> 64 GB free: removed 20 merged, unused worktrees (gitignored runs/ + data/selfplay copied to runs/_worktree_archive/<branch>/); gzipped runs/eval/*.jsonl > 5 MB (read with zcat); deleted 16 old Codex releases; emptied Apple aerial wallpaper videos.
-- Left: 7 worktrees with open Claude sessions, wasted-actions (locked), coaching-assistant-webapp (1 unmerged commit), team-preview-tagging (dirty), pokemon-vgc-ai-mc-hybrid (unmerged + dirty).
+- Uncommitted-work sweep: team-preview-tagging held the finished 2026-09-30 hidden-opponent-sets fix (pool160 55-56%), never committed -> rebased onto main, tests pass, PR #33 (re-measure on the new base). Coaching plan doc (1 unmerged commit) carried into this PR. mc-hybrid worktree and the 2026-09-29 stash were fully superseded by main; saved as patches in runs/_worktree_archive/ and removed.
+- Left: 7 worktrees with open Claude sessions (all clean, merged), wasted-actions (locked, merged).
 
 ## 2026-10-05 — Replay coaching assistant: plan v1 (branch claude/coaching-assistant-webapp-fb3319)
 - Owner vision: web app reviews a player's Showdown replay (+ team paste); engine grades decisions, LLM explains from first principles + turns ahead; later many games -> personal habits. Pitch = bot reached ladder top.
