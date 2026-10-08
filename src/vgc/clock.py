@@ -103,6 +103,13 @@ class ClockState:
             now = time.monotonic()
         return max(0.0, self.bank_s - max(0.0, now - self.updated_at))
 
+    def grace_now(self, now: float | None = None) -> float:
+        """Grace minus wall time since the announcement: the server spends it before the bank."""
+
+        if now is None:
+            now = time.monotonic()
+        return max(0.0, self.grace_s - max(0.0, now - self.updated_at))
+
     def turn_cap_now(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
@@ -228,14 +235,17 @@ class ClockTracker:
         if anchor is None:
             return idx, None
         debit = 0.0
+        spent_since_anchor = 0.0
         for g, spent in self._debits.items():
             if self._anchor_idx <= g < group:
                 debit += max(0.0, spent - anchor.grace_s) if g == self._anchor_idx else spent
+                spent_since_anchor += spent
+        grace = max(0.0, anchor.grace_s - spent_since_anchor)
         if self._anchor_idx == group:
             cap = anchor.turn_cap_s
         else:
             cap = MAX_FIRST_TURN_S if group == 0 else MAX_TURN_S
-        return idx, ClockState(max(0.0, anchor.bank_s - debit), cap, 0.0, self._group_arrival)
+        return idx, ClockState(max(0.0, anchor.bank_s - debit), cap, grace, self._group_arrival)
 
     def end_decision(self, idx: int, elapsed_s: float, now: float | None = None) -> None:
         """Record what this request has cost so far, rounded UP to whole ticks."""
@@ -298,6 +308,10 @@ def budget_seconds(
     margin = config.clock_safety_margin_s
     derived = (bank - config.clock_reserve_per_decision_s * remaining - margin) / remaining
     derived = _floor_to_tick(derived)
+    if kind == "preview":
+        # Showdown spends the 90 s starting grace before the bank, so team preview may
+        # use what grace is left without costing any later decision a second.
+        derived = max(derived, _floor_to_tick(clock.grace_now(now) - margin))
     turn_room = clock.turn_cap_now(now) - margin
     if derived <= TICK_S or turn_room <= 0:
         return Budget(seconds=0.0, fallback_only=True, bank_left_s=bank, kind=kind)

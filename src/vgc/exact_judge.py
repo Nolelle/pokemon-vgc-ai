@@ -28,6 +28,7 @@ import contextvars
 import json
 import threading
 import time
+import traceback
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -347,6 +348,7 @@ class ExactJudge:
             err = box["error"]
             report["status"] = "error"
             report["error"] = f"{type(err).__name__}: {err}"
+            report["traceback"] = "".join(traceback.format_exception(err))[-4000:]
             return None
         values = box["values"]
         if not values:

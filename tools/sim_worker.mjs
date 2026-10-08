@@ -109,7 +109,7 @@ function attachDrain(entry, side) {
 		// Stream torn down by `close` is normal. A throw inside `go()` used to vanish
 		// here, so a patched battle's next choose returned no lines and no request.
 		if (!entry.lastError && err) {
-			entry.lastError = err.message || String(err);
+			entry.lastError = err.stack || err.message || String(err);
 		}
 	});
 }
@@ -135,7 +135,7 @@ function attachOmniscient(entry) {
 		}
 	})().catch((err) => {
 		if (!entry.lastError && err) {
-			entry.lastError = err.message || String(err);
+			entry.lastError = err.stack || err.message || String(err);
 		}
 	});
 }
@@ -387,12 +387,23 @@ function findPokemon(side, snapshot, used) {
 	return null;
 }
 
+// The snapshot ids types with `to_id`, which turns poke-env's typeless `???` (left after
+// Burn Up / Double Shock) into "threequestionmarks". The dex has no entry for that, so it
+// used to come back as a fake type named "threequestionmarks" that Showdown then echoed in
+// `-start|typechange` lines poke-env cannot parse. Unknown types fail loudly instead.
+function showdownTypeName(battle, type) {
+	if (type === "threequestionmarks" || type === "???") return "???";
+	const info = battle.dex.types.get(type);
+	if (!info.exists) throw new Error(`patchPublic: unknown type ${JSON.stringify(type)}`);
+	return info.name;
+}
+
 function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 	const species = battle.dex.species.get(snapshot.species_id);
 	if (species.exists) {
 		pokemon.species = species;
 		pokemon.types = snapshot.types.length ? snapshot.types.map(
-			(type) => battle.dex.types.get(type).name
+			(type) => showdownTypeName(battle, type)
 		) : species.types.slice();
 	}
 	pokemon.hp = snapshot.current_hp === null ? pokemon.hp : snapshot.current_hp;
@@ -439,8 +450,12 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 		};
 	}
 	if (snapshot.protect_counter > 0) {
+		// poke-env counts consecutive successful Protects; Showdown's stall condition stores
+		// the odds denominator instead (3 after one Protect, x3 per repeat, capped at 729).
+		const stall = battle.dex.conditions.get('stall');
 		pokemon.volatiles.stall = {
-			id: 'stall', target: pokemon, counter: snapshot.protect_counter,
+			id: 'stall', target: pokemon, duration: 2,
+			counter: Math.min(stall.counterMax || 729, 3 ** snapshot.protect_counter),
 		};
 	}
 	pokemon.trapped = false;
@@ -561,6 +576,38 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 	side.terastallizeUsed = Boolean(snapshot.used_tera);
 }
 
+// Showdown's addVolatile records who caused each volatile (`source`/`sourceSlot`), and
+// some conditions dereference it. Imprison reads the holder's moves through it (a missing
+// source threw "reading 'hasMove'" and killed the branch); Leech Seed heals into
+// `sourceSlot` (missing -> the drain silently never happened). Self-applied volatiles get
+// their holder, which is exact. The public snapshot does not say WHICH foe inflicted a
+// volatile, so foe-inflicted ones stay sourceless (Showdown guards those reads), except
+// Leech Seed, which gets the first active foe's slot: the drain is right, only which foe
+// it heals may be wrong. Guessing a source for Attract/Octolock/Syrup Bomb/Lock-On would
+// make them end (or aim) on the guessed foe's switch instead of the real one's.
+const FOE_TARGETS = new Set([
+	'normal', 'any', 'adjacentFoe', 'allAdjacentFoes', 'allAdjacent', 'randomNormal',
+]);
+
+function fillVolatileSources(battle) {
+	for (const side of battle.sides) {
+		const foes = side.foe.active.filter(Boolean);
+		const foe = foes.find((pokemon) => !pokemon.fainted) || foes[0] || null;
+		for (const pokemon of side.pokemon) {
+			for (const [id, state] of Object.entries(pokemon.volatiles)) {
+				if (state.source) continue;
+				const move = battle.dex.moves.get(id);
+				if (!(move.exists && FOE_TARGETS.has(move.target))) {
+					state.source = pokemon;
+					if (pokemon.isActive) state.sourceSlot = pokemon.getSlot();
+				} else if (id === 'leechseed' && foe) {
+					state.sourceSlot = foe.getSlot();
+				}
+			}
+		}
+	}
+}
+
 async function handlePatchPublic(msg) {
 	const entry = battles.get(msg.id);
 	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
@@ -576,6 +623,7 @@ async function handlePatchPublic(msg) {
 	const hidden = msg.hidden || {};
 	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {});
 	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {});
+	fillVolatileSources(battle);
 	battle.field.weather = state.weather.length ? state.weather[0].id : '';
 	battle.field.weatherState = effectState(
 		battle.field.weather,

@@ -107,6 +107,18 @@ def _known_opponent_by_species(battle) -> dict[str, object]:
     return known
 
 
+def _revealed_nickname(mon) -> str | None:
+    """The in-battle name of a revealed opponent Pokemon, if it is a usable set name."""
+
+    try:
+        name = str(getattr(mon, "name", "") or "").strip()
+    except Exception:  # noqa: BLE001 - poke-env derives a default name from the dex
+        return None
+    if not name or "|" in name or "," in name or "]" in name or len(name) > 18:
+        return None
+    return name
+
+
 def _fallback_moves(species_id: str) -> list[str]:
     learnset = list((load_learnsets().get(species_id) or {}).keys())
     moves = load_moves()
@@ -199,9 +211,13 @@ def _opponent_sets(
         believed = (spreads or {}).get(species_id)
         spread = (believed[0] if believed else state.sp_spread) or dict.fromkeys(STAT_IDS, 0)
         nature = (believed[1] if believed else state.nature) or "serious"
+        # A revealed Pokemon keeps the opponent's nickname: branch parsers start from the
+        # observation, whose team is keyed by it ("p1: Vinny"), so a species-named mirror
+        # mon read as a fifth Pokemon and crashed the judge for the whole game.
+        nickname = _revealed_nickname(mon) if species_id in known else None
         result.append(
             {
-                "name": species_id,
+                "name": nickname or species_id,
                 "species": species_id,
                 "item": item or "",
                 "ability": ability,

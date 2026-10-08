@@ -242,3 +242,16 @@ def test_busy_worker_blocks_new_worker_and_late_record_choice_is_ignored():
     assert memory.our_orders == []
     # Once the old worker has finished, decisions run again.
     assert player._guarded(battle, "normal", second, lambda: "fb2") == "second"
+
+
+def test_preview_budget_spends_starting_grace_not_bank():
+    tracker = ClockTracker(assume_full_bank=True)
+    _, state = tracker.begin_decision(now=0.0)
+    assert state.grace_s == 90.0
+    preview = budget_seconds(state, "preview", CFG, now=0.0)
+    normal = budget_seconds(state, "normal", CFG, now=0.0)
+    # Grace (90 s) lets preview think up to its own cap; a normal turn keeps the bank split.
+    assert preview.seconds == CFG.clock_cap_preview_s > normal.seconds
+    # Grace already spent (e.g. a delayed preview) is not offered again.
+    late = budget_seconds(state, "preview", CFG, now=80.0)
+    assert late.fallback_only or late.seconds <= 10.0
