@@ -270,3 +270,13 @@
 - Bugs found and fixed: (1) mirror stall counter = poke-env protect count (1) instead of Showdown's odds denominator (3, 9…): repeat Protect always succeeded in every exact branch since the mirror existed -> judge chose back-to-back Protects that failed live (test: tests/test_live_mirror_protect_streak.py). ALL exact-judge A/B numbers so far were measured with this bug. (2) nicknamed opponents crashed the judge for the whole game (mirror named sets by species). (3) cherry-picked judge-error-fixes ('???' type, sourceless volatiles). Re-check of 3 lost games: 0 judge errors.
 - offline/review_lost_decisions.py fails every game via its process pool ("I/O operation on closed file"); in-process `_review_one` works. Not fixed yet.
 - Under machine load the judge times out and then sits `skipped_busy`; don't run ladder alongside pool A/Bs.
+
+## 2026-09-30 — Jev re-review (stays parked); preview now reads hidden opponent sets
+
+(Left uncommitted in its worktree until 2026-10-08; rebased onto main then. The A/B numbers below predate the M-C set-priors/spreads refresh and the exact judge — re-measure before relying on them.)
+
+- Jev verdict: team-preview tagging, loss labelling, replay labelling all stay parked (Opus + Sol agree). Checkable tags are plain code; uncheckable ones have no answer key.
+- Found: `opponent_engines` empty in 46/46 M-C ladder games; preview opponent moves empty so `them_onto_us` = 0 and no gameplan threats. Cause: raw previewed mons (no OTS on ladder).
+- Fix: `vgc.sets.opponent_signal_team` + `PolicyConfig.infer_hidden_opponent_sets` (True). Used in `team_preview.build_team_order` and `evaluator.build_context` (with `_with_revealed_sets`, since poke-env never updates preview mons in battle).
+- Evidence: pool160 A/B 56.1% [0.516, 0.607] seed 20260930; 55.1% [0.508, 0.594] seed 20261001 (final code). Replay backtest M-C 60.4% engine recall vs 0%. Unit suite 1111 passed, 2 pre-existing counterfactual_q data failures.
+- Codex review: fainted mons counted in-battle; Mega ability guessed despite a revealed non-stone item. Both fixed. Open: weather engines need an abuser; top-4 fill misses 5th-ranked plan moves; Taunt/Will-O-Wisp/Wide Guard scoring still reads revealed-only opponent moves (evaluator ~1607/1649/1404).

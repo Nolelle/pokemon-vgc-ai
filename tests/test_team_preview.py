@@ -251,3 +251,19 @@ def test_use_preview_prediction_off_leaves_predicted_opponent_leads_none() -> No
     build_team_order(battle, PolicyConfig(use_preview_prediction=False))
     plan = battle._vgc_preview_plan
     assert plan.predicted_opponent_leads is None
+
+
+def test_hidden_sheet_preview_still_reads_the_opponents_plan() -> None:
+    """Ladder preview shows species only. Reading those mons raw found no plan on any
+    team (46/46 M-C ladder games); the prior fill must see this team's sun engine."""
+    species_only = [
+        _FakeMon(species=species)
+        for species in ("charizard", "venusaur", "incineroar", "garchomp", "farigiraf", "sneasler")
+    ]
+    battle = _FakeBattle(_our_team(), species_only)
+    build_team_order(battle, PolicyConfig())
+    assert "sun" in battle._vgc_preview_plan.opponent_engines
+
+    legacy = _FakeBattle(_our_team(), list(species_only))
+    build_team_order(legacy, PolicyConfig(infer_hidden_opponent_sets=False))
+    assert legacy._vgc_preview_plan.opponent_engines == ()

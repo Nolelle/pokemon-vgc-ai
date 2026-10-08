@@ -89,6 +89,11 @@ that needs no judgement: `tools/loss_patterns.py` (checkable facts, losses vs wi
 the engine re-check of lost decisions (`offline/review_lost_decisions.py`). Reopen Jev only with a real answer key or a new,
 concrete fuzzy-judgement need.
 
+Re-reviewed 2026-09-30 (Opus and Codex/Sol independently): team-preview archetype
+tagging, loss labelling and replay labelling all stay parked. A tag that can be checked
+is cheaper and exact as plain code; one that cannot has no answer key. That review found
+the real preview gap was code, not judgement -- see "Hidden opponent sets at preview".
+
 Project rules for this bot (reviewed 2026-09-29; see the closed PR #8 for why):
 
 - **Never call Jev inside the per-turn move-choice loop** (`score_joint_orders`,
