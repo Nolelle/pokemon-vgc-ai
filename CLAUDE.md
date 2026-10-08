@@ -493,6 +493,19 @@ users, which exposed two `DirectBattle` crashes (hidden trap, above; Round chain
 for an opponent that has not shown Round (33/14,445 M-C replays);
 `normalize_for_poke_env` drops the tag in `DirectBattle` and `VgcPlayer`.
 
+## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
+
+- **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public
+  exact search re-ranks the fast search's top candidates. After the repeat-Protect mirror
+  fix (the mirror's stall counter had made back-to-back Protect always succeed in every
+  exact branch), owner teams vs the 88-team `mc_sheet_pool_v2` HOLDOUT measured
+  **821/1408 = 58.3%, cluster-robust [0.550, 0.617]** vs fast search (seed 20261008).
+  Every judge number recorded before 2026-10-08 carries the Protect bug; this one does not.
+- **Hidden opponent sets at preview** (`infer_hidden_opponent_sets`, ships True): on the
+  current M-C priors the pool160 mirror A/B is **52.4% [0.484, 0.564]**, not significant,
+  and strongly bimodal (team-effect SD 0.248; 38 teams >= 70%, 30 <= 30%). The earlier
+  55-56% predates the M-C set-priors/spreads refresh. Treat it as unproven, not as a win.
+
 ## Rung 2 (belief-aware shortlist): built, gated, not enabled
 
 `vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the
