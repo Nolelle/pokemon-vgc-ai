@@ -262,6 +262,12 @@
 - Fixes (all off): continuation weight (0.25: 47.8%, 0.5: 50.4%), board-scored continuation terminals (47.8%), 2x2 continuation search built by a Sonnet agent in a worktree (47.8%), 2x2 + board terminals 50.1% [0.469,0.533]. Harm removed, no gain.
 - 2026-10-06 later: engine-measured team-plan value (`vgc.plan_value`, Sonnet agent) + fast-search condition expiry (Sonnet agent) + condition-clock extension lock. Owner teams vs M-C train: plan-value field control 51.0% [0.498,0.522], terrain_pulse_blastoise 54.6% [0.517,0.576]; live judge KO 52.7% [0.498,0.557]; fast expiry 50.4%. Next: pre-registered holdout confirmation; model weather/terrain-setting moves in the fast search.
 
+## 2026-10-07 — Live judge width: top-10 is a null (branch claude/exact-judge-wider, off PR #29)
+- Setup positions (offline/setup_positions.py, new D0k10/D0k12 variants): judge time ~0.53 s -> ~0.70 s idle. Pos 7 fixed (Scarf Indeedee switches to Excadrill instead of Protect); pos 1 regressed (Helping Hand over Trick Room: one-turn horizon). Rest unchanged.
+- A/B exact_judge_top_k 10 vs 6 (both arms exact_judge_live; psyspam_sand, salamence_tw, hatterene_tr vs 226 train teams, 2,712 games, seed 20261007): 1348/2712 = 49.7%, cluster-robust [0.482, 0.512]. Rules out an edge above ~+1.2 pts. Keep top_k=6.
+- Under 10 parallel workers: judge p50 1.57 s / p95 2.16 s (k10) vs 1.16 / 1.68 (k6); 3/3037 timeouts. ~0.4% judge errors in both arms (KeyError 'THREEQUESTIONMARKS' = '???' type, and a sim 'Cannot read properties of undefined' branch error); both fall back to the fast pick.
+- Earlier Oct-4 top10 run had crashed on a hidden Disable (fixed in b6f930d); extra_myopic=3 measured 50.0% then.
+
 ## 2026-10-08 — First M-C ladder check-up (branch claude/ladder-checkup)
 - PR #29 had merged into PR #27's branch, not main -> PR #30 opened to carry it to main.
 - Showdown synced to 51ad80fa5; gates PASS. Worktree needed its own `uv sync`.
