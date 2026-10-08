@@ -170,6 +170,33 @@ Phase 2a's damage engine. Read `vgc/evaluator.py`'s module docstring for the ful
   Natural Gift, Present, etc.) still isn't computable from `PokemonState`/`FieldState`
   alone and still short-circuits with `breakdown["move_supported"] = False`.
 
+## Hidden opponent sets at preview (2026-09-30)
+
+On the ladder a previewed opponent mon has `moves == {}`, usually `ability is None`, and
+`item == "unknown_item"` (poke-env fills `ability` only for single-ability species). Until
+2026-09-30 `build_team_order` read those raw mons, so every opponent looked moveless (zero
+damage onto us in the matchup matrix, no threats in the gameplan) and planless
+(`opponent_engines` empty in **46/46** M-C ladder games). Offline OTS gates never showed
+it; the direct env and the pool harness are fogged, like the ladder.
+
+- `vgc.sets.opponent_signal_team` is the fix: moves from `opponent_move_ids` (revealed,
+  then set priors), ability revealed, else the only legal one, else a weather setter's
+  weather ability (including the Mega form of the revealed stone, or of the corpus's
+  usual stone when none is revealed), else a speed abuser when a teammate sets that
+  weather. The guess feeds plan/role detection only, never a damage `PokemonState`.
+- `vgc.evaluator.build_context` uses it in battle too, through
+  `_with_revealed_sets`: poke-env writes reveals and faints only onto
+  `battle.opponent_team`, never onto `teampreview_opponent_team`.
+- `PolicyConfig.infer_hidden_opponent_sets` ships True; False is the legacy control.
+- Evidence: 160-team pool A/B, new vs legacy, two seeds: 3234/5760 = 56.1%
+  [0.516, 0.607] (pre-review code) and 3176/5760 = 55.1% [0.508, 0.594] (final code),
+  cluster-robust. Replay backtest, 936 M-C sides: 399/661 observed engines predicted
+  at preview (60.4%) vs 0 before; Trick Room 86%, Tailwind 76%.
+- Known gaps: weather engines need a guessed speed abuser, so setter-only weather teams
+  (Torkoal, Pelipper, snow) are missed even though the setter is guessed 96-100% of the
+  time; the top-4 prior fill drops a 5th-ranked plan move (Sinistcha's Trick Room). Both
+  are definition/threshold changes that need their own A/B.
+
 ## OTS reliability, final Phase 2b gates, and ladder runner
 
 - `VgcPlayer._handle_battle_message` contains a narrow poke-env 0.15 compatibility shim
@@ -992,6 +1019,11 @@ only measure AI-to-AI agreement. Until such a reviewer exists, study losses with
 that needs no judgement: `tools/loss_patterns.py` (checkable facts, losses vs wins) and
 the engine re-check of lost decisions (`offline/review_lost_decisions.py`). Reopen Jev only with a real answer key or a new,
 concrete fuzzy-judgement need.
+
+Re-reviewed 2026-09-30 (Opus and Codex/Sol independently): team-preview archetype
+tagging, loss labelling and replay labelling all stay parked. A tag that can be checked
+is cheaper and exact as plain code; one that cannot has no answer key. That review found
+the real preview gap was code, not judgement -- see "Hidden opponent sets at preview".
 
 Project rules for this bot (reviewed 2026-09-29; see the closed PR #8 for why):
 

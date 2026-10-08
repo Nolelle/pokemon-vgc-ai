@@ -12,6 +12,7 @@ otherwise.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from vgc.config import DATA_DIR
 from vgc.damage import PokemonState, to_id
 from vgc.data import load_learnsets, load_moves, load_species
 from vgc.models import PolicyConfig
+from vgc.principles import WEATHER_SETTER_ABILITIES, WEATHER_SPEED_ABILITIES
 from vgc.stats import SPSpread, default_opponent_nature, default_opponent_spread
 
 # Not committed yet (see CLAUDE.md's data/champions/ note -- this directory is a Phase
@@ -312,6 +314,107 @@ def learnset_fallback_move_ids(species_id: str) -> tuple[str, ...]:
             best_by_type[move["type"]] = (score, move_id)
     ranked = sorted(best_by_type.values(), key=lambda row: (-row[0], row[1]))
     return tuple(move_id for _score, move_id in ranked)
+
+
+@dataclass(frozen=True)
+class HiddenSetGuess:
+    """What `vgc.principles.detect_team_signals`/`classify_mon` read (species, ability,
+    moves), with the opponent's hidden parts filled in. Only for plan/role detection --
+    never a `PokemonState`, so a guessed ability never reaches the damage calculator.
+    """
+
+    species: str
+    ability: str | None
+    moves: dict[str, None]
+
+
+def opponent_signal_team(
+    pokemon: list[ObservedPokemon],
+    priors: dict[str, Any] | None = None,
+    config: PolicyConfig | None = None,
+) -> list[HiddenSetGuess]:
+    """The opponent's team as `detect_team_signals` should see it when sheets are hidden.
+
+    On the ladder a previewed Pokemon has no moves and usually no ability, so reading it
+    raw finds no Trick Room, Tailwind or weather plan on any team. Moves come from
+    `opponent_move_ids` (revealed first, then set priors). The ability is the revealed
+    one, else `_likely_ability` -- a team-level guess, because a weather abuser's
+    ability is only worth assuming when a teammate sets that weather.
+    """
+    config = config or PolicyConfig()
+    if priors is None:
+        priors = set_priors_for(config)
+    species_ids = [to_id(mon.species) for mon in pokemon]
+    revealed = [to_id(getattr(mon, "ability", None)) or None for mon in pokemon]
+    candidates = [
+        _ability_candidates(species_id, normalize_item(getattr(mon, "item", None)), priors, config)
+        for species_id, mon in zip(species_ids, pokemon)
+    ]
+
+    abilities = list(revealed)
+    for idx, ability in enumerate(abilities):
+        if ability is None:
+            abilities[idx] = _only_or_setter(candidates[idx])
+    set_weathers = {
+        WEATHER_SETTER_ABILITIES[ability]
+        for ability in abilities
+        if ability in WEATHER_SETTER_ABILITIES
+    }
+    for idx, ability in enumerate(abilities):
+        if ability is not None:
+            continue
+        abusers = sorted(
+            candidate
+            for candidate in candidates[idx]
+            if WEATHER_SPEED_ABILITIES.get(candidate) in set_weathers
+        )
+        if abusers:
+            abilities[idx] = abusers[0]
+
+    return [
+        HiddenSetGuess(
+            species=species_id,
+            ability=ability,
+            moves=dict.fromkeys(opponent_move_ids(mon, priors=priors, config=config)),
+        )
+        for species_id, ability, mon in zip(species_ids, abilities, pokemon)
+    ]
+
+
+def _ability_candidates(
+    species_id: str, item: str | None, priors: dict[str, Any], config: PolicyConfig
+) -> frozenset[str]:
+    """Legal abilities of the species, plus its Mega form's when it holds that Mega stone:
+    the revealed item if there is one, else the corpus's usual item for the species
+    (Charizard -> Charizardite Y -> Charizard-Mega-Y's Drought).
+    """
+    species = load_species()
+    data = species.get(species_id) or {}
+    abilities = {to_id(name) for name in (data.get("abilities") or {}).values()}
+
+    stone = to_id(item) if item else None
+    if stone is None:
+        entry = (priors.get("species") or {}).get(species_id) if priors else None
+        items = (entry or {}).get("items") or {}
+        if items and (entry or {}).get("appearances", 0) >= config.set_prior_min_games:
+            top_item, top_count = max(items.items(), key=lambda item: (item[1], item[0]))
+            if top_count >= config.set_prior_min_games:
+                stone = top_item
+    for forme_name in data.get("otherFormes") or ():
+        forme = species.get(to_id(forme_name)) or {}
+        if stone and forme.get("isMega") and to_id(forme.get("requiredItem")) == stone:
+            abilities |= {to_id(name) for name in (forme.get("abilities") or {}).values()}
+    return frozenset(filter(None, abilities))
+
+
+def _only_or_setter(candidates: frozenset[str]) -> str | None:
+    """The ability when only one is possible; else a weather setter's weather ability,
+    because a team brings a setter for its weather. Anything else stays unknown.
+    """
+    if len(candidates) == 1:
+        return next(iter(candidates))
+    setters = sorted(candidates & WEATHER_SETTER_ABILITIES.keys())
+    return setters[0] if setters else None
 
 
 def normalize_item(item: str | None) -> str | None:

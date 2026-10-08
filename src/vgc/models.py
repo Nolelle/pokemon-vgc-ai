@@ -781,6 +781,14 @@ class PolicyConfig:
     # carry Encore/Will-O-Wisp/Wide Guard (none Taunt); those read 51.6% [0.494, 0.538]
     # post hoc, which is inside the noise the other 103 (unaffected) teams show (48.6%).
     status_utility_uses_set_priors: bool = False
+    # Read the opponent's hidden sets through `vgc.sets.opponent_move_ids`/
+    # `opponent_signal_team` (set-prior moves, likely weather ability) at team preview and
+    # for in-battle plan detection. Before this, preview read the raw previewed mons, which
+    # on the ladder have no moves: every opponent looked moveless (zero damage onto us in
+    # the matchup matrix, no threats in the gameplan) and planless (`opponent_engines`
+    # empty in 46/46 M-C ladder games). False is that legacy behavior, kept only as the
+    # control for same-session A/Bs.
+    infer_hidden_opponent_sets: bool = True
 
     # --- Team preview (vgc.team_preview.build_team_order) -------------------------------
     # Weight on the pairwise expected-damage-exchange ratio term (our estimated output
