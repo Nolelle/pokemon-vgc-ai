@@ -625,3 +625,64 @@ def test_mirror_activates_custom_mega_forme_by_base_species() -> None:
             assert scored, "labeling a mega-evolved custom forme returned no orders"
         finally:
             source.close()
+
+
+def test_mirror_branches_keep_typeless_and_sourced_volatiles() -> None:
+    """Regression for two live exact-judge errors (2026-10-07, ~0.4% of decisions).
+
+    Burn Up leaves a pure Fire type `???`; the snapshot ids that "threequestionmarks",
+    which the patch turned into a fake Showdown type that poke-env then could not parse
+    (KeyError). Patched volatiles also lacked Showdown's `source`: Imprison then threw
+    "reading 'hasMove'" on any foe move, and Leech Seed silently never drained.
+    """
+    dev = (REPO_ROOT / "teams" / "dev.packed.txt").read_text().strip()
+    if not DEFAULT_SHOWDOWN_REPO.exists() or not dev:
+        pytest.skip("local Pokemon Showdown checkout or dev team is unavailable")
+    ours = (
+        "Torkoal||Charcoal|Drought|BurnUp,Protect,HeatWave,Yawn|Quiet|32,,,32,2,||||50|]"
+        "Whimsicott||FocusSash|Prankster|LeechSeed,Imprison,Protect,Moonblast|Bold"
+        "|32,,32,,2,||||50|]"
+        "Garchomp||Garchompite|RoughSkin|Protect,Earthquake,DragonClaw,RockSlide|Jolly"
+        "|30,4,,,,32||||50|]"
+        "Clefable||Leftovers|MagicGuard|Moonblast,Protect,FollowMe,HelpingHand|Bold"
+        "|32,,32,,2,||||50|"
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as source_worker:
+        source = DirectBattle.start(
+            source_worker, "live-mirror-volatile-source", ours, dev, seed=[61, 62, 63, 64]
+        )
+        mirror: LiveExactMirror | None = None
+        root: DirectBattle | None = None
+        try:
+            source.step({"p1": "team 1234", "p2": "team 2134"})  # p2 leads Clefable
+            source.step(
+                {
+                    "p1": "move burnup 1, move leechseed 2",
+                    "p2": "move moonblast 1, move dragonclaw 2",
+                }
+            )
+            source.step(
+                {"p1": "move protect, move imprison", "p2": "move moonblast 1, move dragonclaw 2"}
+            )
+            ours_now = source.battles["p1"]
+            assert set(source.sides_to_move()) == {"p1", "p2"}
+            assert [t.name for t in ours_now.active_pokemon[0].types] == [
+                "THREE_QUESTION_MARKS"
+            ]
+            assert ours_now.opponent_active_pokemon[0].species == "clefable"
+
+            mirror = LiveExactMirror(ours, COMPACT_CONFIG)
+            root = mirror.build(ours_now)
+            result = root.clone("live-mirror-volatile-source-branch").step(
+                {"p1": "move protect, move protect", "p2": "move moonblast 1, move protect"}
+            )
+            lines = "\n".join(result.lines["p1"])
+            assert "|turn|" in lines, "the branch must reach the next turn's type refresh"
+            assert "threequestionmarks" not in lines.lower()
+            assert "[from] Leech Seed" in lines, "patched Leech Seed must still drain"
+        finally:
+            if root is not None:
+                root.close()
+            if mirror is not None:
+                mirror.close()
+            source.close()
