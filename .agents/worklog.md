@@ -270,3 +270,9 @@
 - Bugs found and fixed: (1) mirror stall counter = poke-env protect count (1) instead of Showdown's odds denominator (3, 9…): repeat Protect always succeeded in every exact branch since the mirror existed -> judge chose back-to-back Protects that failed live (test: tests/test_live_mirror_protect_streak.py). ALL exact-judge A/B numbers so far were measured with this bug. (2) nicknamed opponents crashed the judge for the whole game (mirror named sets by species). (3) cherry-picked judge-error-fixes ('???' type, sourceless volatiles). Re-check of 3 lost games: 0 judge errors.
 - offline/review_lost_decisions.py fails every game via its process pool ("I/O operation on closed file"); in-process `_review_one` works. Not fixed yet.
 - Under machine load the judge times out and then sits `skipped_busy`; don't run ladder alongside pool A/Bs.
+
+## 2026-10-08 — Results review + disk cleanup (main, after merging #30–#32)
+- Ladder to date: M-B 202–236 (46%), M-C 26–30 incl. today's 3–7 check-up (in the ladder-checkup worktree's runs/ladder.jsonl, not yet in main's). Ladder ~1000–1180; no session big enough to read an offline +4.
+- Priority: re-run exact-judge holdout A/B after the repeat-Protect mirror fix (all earlier judge numbers carry that bug); then a 50+ game ladder session on an idle machine; fix offline/review_lost_decisions.py process pool.
+- Disk 2.3 GB -> 64 GB free: removed 20 merged, unused worktrees (gitignored runs/ + data/selfplay copied to runs/_worktree_archive/<branch>/); gzipped runs/eval/*.jsonl > 5 MB (read with zcat); deleted 16 old Codex releases; emptied Apple aerial wallpaper videos.
+- Left: 7 worktrees with open Claude sessions, wasted-actions (locked), coaching-assistant-webapp (1 unmerged commit), team-preview-tagging (dirty), pokemon-vgc-ai-mc-hybrid (unmerged + dirty).
