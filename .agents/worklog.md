@@ -280,3 +280,16 @@
 - Fix: `vgc.sets.opponent_signal_team` + `PolicyConfig.infer_hidden_opponent_sets` (True). Used in `team_preview.build_team_order` and `evaluator.build_context` (with `_with_revealed_sets`, since poke-env never updates preview mons in battle).
 - Evidence: pool160 A/B 56.1% [0.516, 0.607] seed 20260930; 55.1% [0.508, 0.594] seed 20261001 (final code). Replay backtest M-C 60.4% engine recall vs 0%. Unit suite 1111 passed, 2 pre-existing counterfactual_q data failures.
 - Codex review: fainted mons counted in-battle; Mega ability guessed despite a revealed non-stone item. Both fixed. Open: weather engines need an abuser; top-4 fill misses 5th-ranked plan moves; Taunt/Will-O-Wisp/Wide Guard scoring still reads revealed-only opponent moves (evaluator ~1607/1649/1404).
+
+## 2026-10-05 — Replay coaching assistant: plan v1 (branch claude/coaching-assistant-webapp-fb3319)
+- Owner vision: web app reviews a player's Showdown replay (+ team paste); engine grades decisions, LLM explains from first principles + turns ahead; later many games -> personal habits. Pitch = bot reached ladder top.
+- Plan: docs/coaching_assistant_plan.md (Opus + Codex/Sol reviewed). Parts: reference games -> intake -> player-view rebuild (synthetic |request| from spectator log + paste) -> choice recovery -> grading (grade_positions.grade_position, forced candidates) -> judge checks (continuation test, Protect-delay trap) -> evidence report -> grounded LLM coach -> CLI/web -> habit profile.
+- Key facts: no code builds a player view from a public replay; 46 bot M-C state-replay bundles + record_positions.py give answer keys; deep grading ~30 s/decision; exact judge still no KO term on main (PR #29 unmerged); best M-C ladder ~1150.
+- Next: Part 1 (reference games, both seats, spectator view saved).
+
+## 2026-10-08 — Results review + disk cleanup (main, after merging #30–#32)
+- Ladder to date: M-B 202–236 (46%), M-C 26–30 incl. today's 3–7 check-up (in the ladder-checkup worktree's runs/ladder.jsonl, not yet in main's). Ladder ~1000–1180; no session big enough to read an offline +4.
+- Priority: re-run exact-judge holdout A/B after the repeat-Protect mirror fix (all earlier judge numbers carry that bug); then a 50+ game ladder session on an idle machine; fix offline/review_lost_decisions.py process pool.
+- Disk 2.3 GB -> 64 GB free: removed 20 merged, unused worktrees (gitignored runs/ + data/selfplay copied to runs/_worktree_archive/<branch>/); gzipped runs/eval/*.jsonl > 5 MB (read with zcat); deleted 16 old Codex releases; emptied Apple aerial wallpaper videos.
+- Uncommitted-work sweep: team-preview-tagging held the finished 2026-09-30 hidden-opponent-sets fix (pool160 55-56%), never committed -> rebased onto main, tests pass, PR #33, merged (re-measure on the new base). Coaching plan doc (1 unmerged commit) carried into this PR. mc-hybrid worktree and the 2026-09-29 stash were fully superseded by main; saved as patches in runs/_worktree_archive/ and removed.
+- Left: 7 worktrees with open Claude sessions (all clean, merged), wasted-actions (locked, merged).
