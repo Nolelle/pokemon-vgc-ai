@@ -261,3 +261,12 @@
 - Flip diagnostic: N=1 flips 43% of picks, setup ~2x, 20/56 flips decided by mid-continuation game ends.
 - Fixes (all off): continuation weight (0.25: 47.8%, 0.5: 50.4%), board-scored continuation terminals (47.8%), 2x2 continuation search built by a Sonnet agent in a worktree (47.8%), 2x2 + board terminals 50.1% [0.469,0.533]. Harm removed, no gain.
 - 2026-10-06 later: engine-measured team-plan value (`vgc.plan_value`, Sonnet agent) + fast-search condition expiry (Sonnet agent) + condition-clock extension lock. Owner teams vs M-C train: plan-value field control 51.0% [0.498,0.522], terrain_pulse_blastoise 54.6% [0.517,0.576]; live judge KO 52.7% [0.498,0.557]; fast expiry 50.4%. Next: pre-registered holdout confirmation; model weather/terrain-setting moves in the fast search.
+
+## 2026-10-08 — First M-C ladder check-up (branch claude/ladder-checkup)
+- PR #29 had merged into PR #27's branch, not main -> PR #30 opened to carry it to main.
+- Showdown synced to 51ad80fa5; gates PASS. Worktree needed its own `uv sync`.
+- Clock guard: preview budget now spends Showdown's 90 s starting grace (was a ~10 s bank share, so the LLM preview — tested offline with no clock — always fell back on the ladder). Preview now gets ~28 s; LLM pick used in 10/10 ladder games (2.7–14.6 s).
+- Public ladder, 10 games, psyspam_sand, --exact-judge --llm-preview low: 3-7 (1121 -> 1032, opponents ~1000-1130). Judge ran 64 times (p50 0.49 s), overturned the fast pick 45/64.
+- Bugs found and fixed: (1) mirror stall counter = poke-env protect count (1) instead of Showdown's odds denominator (3, 9…): repeat Protect always succeeded in every exact branch since the mirror existed -> judge chose back-to-back Protects that failed live (test: tests/test_live_mirror_protect_streak.py). ALL exact-judge A/B numbers so far were measured with this bug. (2) nicknamed opponents crashed the judge for the whole game (mirror named sets by species). (3) cherry-picked judge-error-fixes ('???' type, sourceless volatiles). Re-check of 3 lost games: 0 judge errors.
+- offline/review_lost_decisions.py fails every game via its process pool ("I/O operation on closed file"); in-process `_review_one` works. Not fixed yet.
+- Under machine load the judge times out and then sits `skipped_busy`; don't run ladder alongside pool A/Bs.
