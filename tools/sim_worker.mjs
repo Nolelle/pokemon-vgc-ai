@@ -439,8 +439,12 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 		};
 	}
 	if (snapshot.protect_counter > 0) {
+		// poke-env counts consecutive successful Protects; Showdown's stall condition stores
+		// the odds denominator instead (3 after one Protect, x3 per repeat, capped at 729).
+		const stall = battle.dex.conditions.get('stall');
 		pokemon.volatiles.stall = {
-			id: 'stall', target: pokemon, counter: snapshot.protect_counter,
+			id: 'stall', target: pokemon, duration: 2,
+			counter: Math.min(stall.counterMax || 729, 3 ** snapshot.protect_counter),
 		};
 	}
 	pokemon.trapped = false;
