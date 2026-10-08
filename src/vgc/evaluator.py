@@ -121,6 +121,7 @@ from vgc.sets import (
     normalize_item,
     normalize_status,
     opponent_move_ids,
+    opponent_signal_team,
     opponent_state,
 )
 from vgc.stats import STAT_IDS
@@ -620,6 +621,25 @@ def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonSt
     return state
 
 
+def _with_revealed_sets(preview_mons: Sequence, battle) -> list:
+    """Each previewed opponent mon, swapped for its live `battle.opponent_team` entry
+    when it has one (matched by base species, so a Mega still finds its preview mon).
+    poke-env writes in-battle reveals -- moves, ability, Mega form -- only onto those.
+    """
+    species_data = load_species()
+
+    def base_id(mon) -> str:
+        species_id = to_id(getattr(mon, "species", None))
+        return to_id((species_data.get(species_id) or {}).get("baseSpecies")) or species_id
+
+    live = {
+        base_id(mon): mon
+        for mon in (getattr(battle, "opponent_team", None) or {}).values()
+        if mon is not None
+    }
+    return [live.get(base_id(mon), mon) for mon in preview_mons]
+
+
 def _best_attacking_move(
     attacker: PokemonState, move_ids: list[str], defender: PokemonState, field_state: FieldState
 ) -> tuple[float, str | None, int]:
@@ -846,11 +866,23 @@ def build_context(
             battle_memory.update_strategy(gameplan)
             record_note("battle_memory", battle_memory.summary())
 
-    opp_signals = detect_team_signals(opp_team_full)
+    if config.infer_hidden_opponent_sets:
+        # poke-env never writes in-battle reveals onto the previewed mons, so read each
+        # one through its live `opponent_team` entry when it has one, then fill the rest.
+        # Faint status also lives only on the live entries, so filter after the swap.
+        alive_revealed = [
+            mon
+            for mon in _with_revealed_sets(opp_team_full, battle)
+            if not getattr(mon, "fainted", False)
+        ]
+        signal_team = opponent_signal_team(alive_revealed, priors=priors, config=config)
+    else:
+        signal_team = opp_team_full
+    opp_signals = detect_team_signals(signal_team)
     enabler_species = {
-        to_id(opp_team_full[idx].species)
+        to_id(signal_team[idx].species)
         for idx in opp_signals.engine_enabler_indices
-        if idx < len(opp_team_full)
+        if idx < len(signal_team)
     }
     opp_engine_enabler_slots = frozenset(
         idx

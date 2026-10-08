@@ -51,7 +51,7 @@ from vgc.gameplan import build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.models import PolicyConfig
 from vgc.principles import TeamSignals, detect_team_signals
-from vgc.sets import opponent_state, usage_spreads_for
+from vgc.sets import opponent_signal_team, opponent_state, set_priors_for, usage_spreads_for
 
 _LEADS_COUNT = 2
 _PICK_COUNT = 4
@@ -148,11 +148,19 @@ def build_team_order(battle: AbstractBattle, config: PolicyConfig | None = None)
     our_move_id_lists = [
         [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else [] for mon in our_team
     ]
-    opp_move_id_lists = [
-        [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else [] for mon in opp_team
-    ]
     our_signals = detect_team_signals(our_team)
-    opp_signals = detect_team_signals(opp_team)
+    if config.infer_hidden_opponent_sets:
+        # Without Open Team Sheets a previewed mon has no moves: fill them (and a likely
+        # weather ability) from set priors so their damage and plans are not read as zero.
+        opp_guesses = opponent_signal_team(opp_team, priors=set_priors_for(config), config=config)
+        opp_move_id_lists = [list(guess.moves) for guess in opp_guesses]
+        opp_signals = detect_team_signals(opp_guesses)
+    else:
+        opp_move_id_lists = [
+            [to_id(move_id) for move_id in mon.moves.keys()] if mon.moves else []
+            for mon in opp_team
+        ]
+        opp_signals = detect_team_signals(opp_team)
     gameplan = build_gameplan(our_states, opp_states, our_move_id_lists, opp_move_id_lists, config)
     closer_idx = gameplan.primary_win_con_idx
     opponent_closer_idx = gameplan.primary_threat_idx
