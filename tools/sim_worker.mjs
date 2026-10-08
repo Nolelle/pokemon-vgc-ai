@@ -323,7 +323,9 @@ function handleDump(msg) {
 function effectElapsed(snapshot, battle) {
 	if (!snapshot || !Number.isInteger(snapshot.turns)) return null;
 	if (snapshot.counter_kind === 'start_turn' || snapshot.counter_kind === 'side_start_turn') {
-		return Math.max(0, Number(battle.turn || 0) - snapshot.turns);
+		// May be negative: vgc.condition_clock reports a known item-extended condition
+		// (8 turns) net of its extension, so base duration - elapsed is still right.
+		return Number(battle.turn || 0) - snapshot.turns;
 	}
 	if (snapshot.counter_kind === 'elapsed_actions') return Math.max(0, snapshot.turns);
 	return null;

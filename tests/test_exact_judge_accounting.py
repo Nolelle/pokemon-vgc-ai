@@ -17,7 +17,7 @@ from vgc.models import PolicyConfig
 from vgc.rl.exact_search import _position_value, combine_belief_rankings
 
 FIXED = PolicyConfig()
-LEGACY = replace(FIXED, exact_search_consistent_accounting=False)
+LEGACY = replace(FIXED, exact_search_consistent_accounting=False, exact_search_alive_weight=0.0)
 
 
 def _mon(hp: float = 1.0, *, fainted: bool = False, atk: int = 0):
@@ -73,3 +73,12 @@ def test_combined_beliefs_report_averaged_parts_not_the_modal_beliefs() -> None:
     assert combined[0].score == pytest.approx(30.0)
     assert combined[0].breakdown["exchange_value"] == pytest.approx(20.0)
     assert combined[0].breakdown["myopic_score"] == pytest.approx(10.0)
+
+
+def test_finishing_a_weakened_foe_outscores_chipping_a_healthy_one() -> None:
+    ours = [_mon()]
+    ko = _state(ours, [_mon(fainted=True), _mon()], team_size=None)
+    chip = _state(ours, [_mon(0.1), _mon(0.7)], team_size=None)
+    assert _position_value(ko, FIXED) > _position_value(chip, FIXED)
+    no_ko_term = replace(FIXED, exact_search_alive_weight=0.0)
+    assert _position_value(ko, no_ko_term) < _position_value(chip, no_ko_term)

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from poke_env.teambuilder.teambuilder import Teambuilder
 
+from vgc import plan_value, speed_payoff
 from vgc.battle_memory import BattleMemory
 from vgc.damage import to_id
 from vgc.data import load_items, load_learnsets, load_moves, load_species
@@ -549,6 +550,10 @@ class LiveExactMirror:
     showdown_repo: object = DEFAULT_SHOWDOWN_REPO
 
     def __post_init__(self) -> None:
+        if self.config.exact_search_field_measured_plan:
+            plan_value.register_own_team(self.own_packed_team)
+        if self.config.exact_search_field_measured_speed:
+            speed_payoff.register_own_team(self.own_packed_team)
         self.worker = SimWorker(self.showdown_repo)
         self._counter = itertools.count()
         self._root_spread_key: tuple | None = None

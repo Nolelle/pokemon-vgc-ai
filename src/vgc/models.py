@@ -281,6 +281,30 @@ class PolicyConfig:
     # the full damage calc through a modeled volatile).
     helping_hand_weight: float = 0.5
 
+    # -- Wasted-action guard (vgc.action_sanity) ----------------------------------------------
+    # Joint orders that void or hobble an action are charged a STRATEGIC cost (points on the
+    # scale of the myopic score / exact exchange value), in the myopic score AND in the exact
+    # search's exchange_value so the live judge sees it. Every cost is far below a game result
+    # (+-10,000), so a confirmed win is never outranked by a flagged order.
+    # False = legacy behavior for A/B controls.
+    penalize_wasted_actions: bool = True
+    # A void action: priority move into Armor Tail/Queenly Majesty/Dazzling or Psychic
+    # Terrain (scaled by the probability the blocker is present when its ability is hidden),
+    # or Helping Hand onto a partner that is not attacking. Larger than a normal exchange
+    # swing (~100-200), smaller than a game result.
+    wasted_action_penalty: float = 300.0
+    # A status move by an unlocked Choice-item holder locks it into that move. Not always
+    # wrong (Scarf Protect / Tailwind / Trick Room can be worth it), so a moderate cost.
+    choice_lock_status_penalty: float = 40.0
+    # The Protect-family case of the rule above, priced as roughly one lost turn: locked
+    # into Protect, the next Protect likely fails, so the Pokemon must switch or waste the
+    # turn (setup positions 2026-10-07, position 7: Scarf Indeedee Protect). Still far below
+    # a game result, so a Protect that secures a win is kept.
+    choice_lock_protect_penalty: float = 150.0
+    # Trick/Switcheroo onto our OWN ally holding no item or with Unburden active: it loses
+    # Unburden's 2x Speed (and Acrobatics' doubling) and becomes Choice-locked.
+    trick_to_ally_penalty: float = 40.0
+
     # -- Screens / generic field utility (Reflect/Light Screen/Aurora Veil/Tailwind) --------
     # Flat value for putting up a not-yet-active screen/Tailwind side condition; deliberately
     # simple (no lookahead into how many hits it blocks) for a myopic v1 evaluator.
@@ -470,6 +494,101 @@ class PolicyConfig:
     # finished game with no winner scores 0. Each was verified on a real direct battle.
     # False is the exact legacy scorecard, kept only for same-session A/Bs.
     exact_search_consistent_accounting: bool = True
+    # Points per Pokemon still standing (brought and not fainted, unseen opponent
+    # reserves included), on top of its HP. Without it a KO was worth only the target's
+    # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,
+    # contradicting docs/search_contract.md section 4 ("faint differentials weighted above
+    # single-turn damage"). Same value as the fast search's search_faint_weight so the two
+    # judges price a KO alike. 0.0 is the legacy no-KO-term control for A/Bs.
+    exact_search_alive_weight: float = 90.0
+    # Weight on the myopic heuristic score inside the EXACT search's final blend (the fast
+    # search keeps search_myopic_weight). The myopic score credits predicted damage
+    # uncapped at remaining HP plus KO/speed bonuses, then the exact branch value credits
+    # the same damage again, so attacks were counted twice and setup could not compete.
+    # Exact-vs-exact A/Bs, 2026-10-05, narrow width, 0 vs 1: M-C train (226 teams) 53.5%
+    # [0.501, 0.569]; archetype 160 pool 53.7% [0.508, 0.567]; M-C holdout (88 teams)
+    # 51.6% [0.467, 0.566]. The live vgc.exact_judge already ranks by pure exchange_value.
+    # 1.0 is the legacy control.
+    exact_search_myopic_weight: float = 0.0
+    # --- Speed / weather / terrain leaf value (vgc.field_control, 2026-10-05) ---
+    # Exact-branch value for who moves first and whose attacks the weather/terrain helps,
+    # over the turns AFTER the scored board (turns inside a simulated continuation are
+    # already paid for in HP). Off by default until a same-session A/B; False leaves
+    # _position_value byte-identical to the scorecard without it.
+    exact_search_field_control: bool = False
+    # How many future turns the leaf projects remaining Tailwind/Trick Room/weather/
+    # terrain over (each condition also stops at its own remaining duration).
+    exact_search_field_horizon: int = 3
+    # Per-turn multiplier for later projected turns (turn t weighs decay**(t-1)).
+    exact_search_field_decay: float = 0.8
+    # Points per projected turn for a complete move-order advantage (S_t = +1: every
+    # relevant matchup moves first for us). Starting value from the 2026-10-05 Codex
+    # design review; a full Trick Room flip for 3 turns is then worth ~2*8*2.44 = 39 pts,
+    # i.e. well under one Pokemon (100 HP + 90 alive). Uncalibrated.
+    exact_search_speed_order_weight: float = 8.0
+    # Points per projected turn per 1% of max HP of expected extra damage the current
+    # weather/terrain adds to a side's attacks (ours minus theirs), plus weather chip and
+    # Grassy healing in the same %HP currency. Uncalibrated starting value.
+    exact_search_field_fit_weight: float = 0.25
+    # Replace the old fit estimate for OUR side (base power x generic weather/terrain
+    # modifiers) with damage MEASURED by the real Showdown engine for each of our sets under
+    # each of the 25 weather x terrain conditions (vgc.plan_value; cache
+    # data/usage/plan_value_cache.json, built by tools/build_plan_value_cache.py). The old
+    # estimate cannot see what a condition ENABLES -- rain firing Archaludon's Electro Shot in
+    # one turn, Psychic Terrain making Expanding Force hit both foes, Thunder never missing in
+    # rain -- because that lives in Showdown callbacks, not move data. The OPPONENT keeps the
+    # estimate (their sets are hidden; asymmetric on purpose, phase 1). A set missing from the
+    # cache falls back to the estimate and is counted in plan_value.FALLBACKS. Off by default;
+    # the A/B sets exact_search_field_fit_weight (Codex suggests 0.5 for this measured term).
+    exact_search_field_measured_plan: bool = False
+    # Weight on a brought BENCH Pokemon's measured gain (an active one counts fully): it can
+    # still come in, but not this turn. Only the two largest contributions per side count.
+    exact_search_field_reserve_weight: float = 0.5
+    # Replace field_control's generic "who is faster" term (S_t) for Tailwind and Trick Room
+    # with the payoff MEASURED by the real engine for each Pokemon (vgc.speed_payoff; cache
+    # data/usage/speed_payoff_cache.json, built by tools/build_speed_payoff_cache.py): what
+    # being under OUR Tailwind / Trick Room is worth to that set against a panel of real M-C
+    # sets (damage dealt minus taken over two turns, %HP per Pokemon per turn). Our side reads
+    # our own sets; the opponent's Tailwind/Trick Room reads the species' most common set
+    # (negated; the two sides' views of one exchange are averaged, and the measured value is
+    # used only while exactly one speed control is up). Added in the fit term's units, so
+    # exact_search_field_fit_weight (~0.5) applies; the generic S_t keeps weather-speed
+    # abilities and any condition whose Pokemon are not all cached. Off by default; reserve weight above applies to brought bench mons.
+    exact_search_field_measured_speed: bool = False
+    # Extra multiplier on the measured speed payoff (1.0 = the fit weight alone decides).
+    exact_search_speed_payoff_scale: float = 1.0
+    # --- Multi-turn exact continuation (2026-10-05) ---
+    # After the searched turn, keep each exact branch running this many more COMPLETED
+    # battle turns in the same Showdown clone, both sides playing the continuation policy
+    # below, then score the final board. 0 = the one-turn judge exactly as before.
+    exact_search_continuation_turns: int = 0
+    # Who picks moves inside a continuation: "myopic" = each side's top
+    # vgc.evaluator.score_joint_orders order; "search" = each side's top
+    # vgc.search.search_joint_orders order (the shipped fast search). Each side decides
+    # from its own fogged view of the clone.
+    exact_search_continuation_policy: str = "myopic"
+    # Weight on what the continuation turns add: a branch scores
+    # (V(after searched turn) - V(root)) + this * (V(final) - V(after searched turn)).
+    # 1.0 = score the final board only (the original continuation); lower values keep the
+    # searched turn's own evidence from being drowned by turns played on a fixed policy.
+    exact_search_continuation_weight: float = 1.0
+    # Score a game that ENDS during the continuation turns by its board (HP, survivors)
+    # instead of +-10,000. Those endings happen under the fixed continuation policy, not
+    # because of the searched move; on 2026-10-06 they decided 20/56 of the picks N=1
+    # changed. A game ending on the searched turn itself still scores +-10,000.
+    exact_search_continuation_board_terminals: bool = False
+    # How the continuation turn is played. "policy" = both sides play one fixed order (the
+    # continuation policy above), the behavior measured as a loss (46-49% exact-vs-exact).
+    # "search" = a small real search on the continuation turn (N=1 only): our top-K orders
+    # x the opponent's top-M orders, each pair stepped in its own clone of the post-turn
+    # board; the branch's continuation value is the max over our options of the same
+    # worst-case/expectation blend the first turn uses (search_worst_case_weight).
+    exact_search_continuation_mode: str = "policy"
+    # Our options on the continuation turn: top-K of our own fogged view's myopic scores.
+    exact_search_continuation_our_options: int = 2
+    # Opponent options on the continuation turn: top-M of THEIR fogged view's myopic
+    # scores, weighted by a softmax at search_response_temperature.
+    exact_search_continuation_opp_options: int = 2
     # Make exchange search use the real geometric success odds for OUR repeated
     # Protect-family moves, matching `_score_protect`. Before campaign iteration 8 the
     # myopic score decayed correctly but `resolve_exchange` still treated every repeat
@@ -569,6 +688,46 @@ class PolicyConfig:
     # simulated payoff (the double-counting variant, kept as an A/B arm). Unused when the
     # master switch is off.
     setup_boost_flat_utility_scale: float = 0.0
+    # Make weather, terrain, Trick Room and Tailwind EXPIRE inside the fast search's
+    # projection. Off (legacy): whatever is on the board now is carried unchanged through
+    # the searched exchange and both rolling-horizon turns, and Tailwind/Trick Room set in
+    # the exchange last forever. On: the exchange is projected turn 1 and the forecast
+    # turns are 2 and 3; each active condition applies only for the turns it has left
+    # (`vgc.condition_clock.remaining_turns`: base duration minus the real `|upkeep|`
+    # ticks, item extensions included). A Tailwind (4) or Trick Room (5) set during the
+    # exchange applies to forecast turns 2..duration, a Trick Room used while one is up
+    # still toggles it off, and a Drought/Drizzle Mega set during the exchange lasts 5
+    # turns. A condition the tracker has no entry for is treated as lasting through the
+    # horizon (the legacy behaviour). Weather/terrain MOVES and switch-in setters are not
+    # modelled by the fast search at all, so they are not affected. Changes shipped
+    # ladder decisions, so A/B before enabling.
+    search_condition_expiry: bool = False
+    # Model weather/terrain SETTERS as actions in the shipped fast search and its myopic
+    # evaluator (vgc.field_setters, 2026-10-06). Off (legacy): Sunny Day / Rain Dance /
+    # Sandstorm / Snowscape / the four terrains score like an empty status move (value 0) and
+    # do nothing in the exchange or forecast, and switch-in setters (Drought, Drizzle, Sand
+    # Stream, Snow Warning, the Surges, Hadron Engine, Orichalcum Pulse) earn only the flat
+    # `switch_activation_bonus` for the four weather abilities. On: (1) the evaluator scores a
+    # setter move, or the setter ability of a Pokemon we switch in, as the TEAM-PLAN payoff of
+    # the condition (`vgc.field_control.field_control_value` on the board with the condition
+    # started this turn minus the board without it, same Showdown-measured plan gains when
+    # `exact_search_field_measured_plan` is on); a condition already up is not credited (the
+    # move fails) and a different one is replaced, so replacing our own helpful one is
+    # negative; (2) `resolve_exchange` applies the new weather/terrain to LATER actions in the
+    # same turn (re-sorting by the new speeds), and to the rolling-horizon forecast (5 turns
+    # under `search_condition_expiry`); switch-in/Mega setters of either side take effect
+    # before the moves; (3) the opponent may use a setter move as a response only when it is
+    # revealed or in the set priors (`opponent_move_ids`). Changes ladder decisions: A/B first.
+    search_model_field_setters: bool = False
+    # Multiplier on the setter's field-control delta, converting exact-judge points (one
+    # full-HP Pokemon = 100) into the evaluator's %HP-of-damage points. Both are ~1 point per
+    # 1% of max HP, so 1.0 is the unit-consistent value. The strategic size of the credit is
+    # set by `exact_search_field_fit_weight` / `exact_search_speed_order_weight` (as in the
+    # exact judge), not here.
+    search_field_setter_weight: float = 1.0
+    # Projected turns the setter's payoff is summed over. A condition set this turn covers
+    # this turn and the next four (base duration 5), so 5 captures all of it.
+    search_field_setter_horizon: int = 5
 
     # --- Phase 3: replay-corpus set priors (vgc.sets.opponent_move_ids) -----------------
     # Master switch for filling UNREVEALED opponent moves from data/usage/set_priors.json

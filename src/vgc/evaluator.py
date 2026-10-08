@@ -88,10 +88,12 @@ from poke_env.battle.side_condition import SideCondition
 from poke_env.battle.weather import Weather
 from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
+from vgc.action_sanity import wasted_action_cost
 from vgc.actions import describe_order, enumerate_joint_orders
 from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
+from vgc.field_setters import ability_condition, move_condition, setter_value
 from vgc.gameplan import GamePlan, build_gameplan
 from vgc.meta import known_nature, recognize_meta_team
 from vgc.mechanics_state import BattleMechanicsState, snapshot_battle
@@ -424,13 +426,18 @@ def score_joint_orders_in_context(
         second_info = _score_single(order.second_order, 1, ctx, config)
         cross = _cross_slot_adjustments(first_info, second_info, config)
         total = first_info["score"] + second_info["score"] + cross
-        scored.append(
-            ScoredOrder(
-                order=order,
-                score=total,
-                breakdown={"slot0": first_info, "slot1": second_info, "cross_slot": cross},
-            )
-        )
+        breakdown: dict[str, object] = {
+            "slot0": first_info,
+            "slot1": second_info,
+            "cross_slot": cross,
+        }
+        if config.penalize_wasted_actions:
+            cost, reasons = wasted_action_cost(ctx.battle, order, config)
+            if reasons:
+                total -= cost
+                breakdown["wasted_actions"] = reasons
+                breakdown["wasted_action_cost"] = cost
+        scored.append(ScoredOrder(order=order, score=total, breakdown=breakdown))
     scored.sort(key=lambda scored_order: scored_order.score, reverse=True)
     return scored
 
@@ -1350,6 +1357,8 @@ def _score_status_move(
 ) -> tuple[float, dict]:
     if move_id in _PROTECT_MOVES:
         return _score_protect(actor_slot, ctx, config)
+    if config.search_model_field_setters and move_condition(move_id) is not None:
+        return _score_field_setter_move(move_id, move_data, actor_slot, ctx, config)
     targets = _resolve_targets(move_data, actor_slot, single.move_target, ctx)
     if move_data.get("target") in _SINGLE_TARGETS and single.move_target in (-1, -2) and not targets:
         # Aimed at an empty/fainted ally slot: Showdown does not retarget it, the move
@@ -1421,6 +1430,44 @@ def _score_status_move(
             "missing_hp_percent": missing,
         }
     return 0.0, {"reason": "unmodeled_status_move"}
+
+
+def _field_setter_payoff(
+    ctx: _Context,
+    condition: tuple[str, str],
+    config: PolicyConfig,
+    switch_in: tuple[int, str] | None = None,
+) -> float:
+    """`vgc.field_setters.setter_value` for this decision, cached on the context (two slots
+    and many joint orders ask for the same few conditions)."""
+    cache = ctx.__dict__.setdefault("_field_setter_cache", {})
+    key = (condition, switch_in)
+    if key not in cache:
+        cache[key] = setter_value(
+            ctx.mechanics_state, condition[0], condition[1], config, switch_in=switch_in
+        )
+    return cache[key]
+
+
+def _score_field_setter_move(
+    move_id: str, move_data: dict, actor_slot: int, ctx: _Context, config: PolicyConfig
+) -> tuple[float, dict]:
+    """Sunny Day / Rain Dance / Sandstorm / Snowscape / terrains: the team-plan payoff of the
+    condition (ours minus theirs, over its 5 turns), 0 when that condition is already up
+    (the move fails), negative when it replaces a condition that was helping us. Same
+    %HP-point currency as the damage score, so it competes with attacks directly."""
+    condition = move_condition(move_id)
+    assert condition is not None
+    value = _field_setter_payoff(ctx, condition, config)
+    return value, {
+        "utility_kind": "field_setter",
+        "field_condition": f"{condition[0]}:{condition[1]}",
+        "field_setter_value": value,
+        # Where this setter falls in the turn's order (see `_cross_slot_adjustments`).
+        "setter_priority": int(move_data.get("priority", 0)),
+        "setter_speed": float(ctx.our_speed[actor_slot]),
+        "setter_trick_room": bool(ctx.trick_room),
+    }
 
 
 def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
@@ -1753,7 +1800,16 @@ def _score_switch(
         eligible = [idx for idx in opp_alive if not _intimidate_immune(ctx.opp_pokemon[idx])]
         score += len(eligible) * config.intimidate_switch_bonus
     incoming_ability = to_id(getattr(incoming, "ability", None))
-    if incoming_ability in {"drizzle", "drought", "sandstream", "snowwarning", "hospitality"}:
+    field_setter_value = 0.0
+    setter_condition = ability_condition(incoming_ability)
+    if config.search_model_field_setters and setter_condition is not None:
+        # Modelled: the payoff of the weather/terrain this Pokemon starts on arrival, for the
+        # team that would then be on the field (0 if that condition is already up).
+        field_setter_value = _field_setter_payoff(
+            ctx, setter_condition, config, switch_in=(actor_slot, to_id(incoming.species))
+        )
+        score += field_setter_value
+    elif incoming_ability in {"drizzle", "drought", "sandstream", "snowwarning", "hospitality"}:
         score += config.switch_activation_bonus
     safe_from_both = bool(incoming_by_opponent) and all(
         pct < config.opp_switch_output_ceiling for pct in incoming_by_opponent
@@ -1814,6 +1870,7 @@ def _score_switch(
         "incoming_percent_by_opponent": incoming_by_opponent,
         "safe_from_both": safe_from_both,
         "activation_ability": incoming_ability,
+        "field_setter_value": field_setter_value,
         "collapsed_matchup_bonus": collapsed_bonus,
         "endgame_bonus": endgame_bonus,
     }
@@ -1825,6 +1882,25 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
         bonus += float(second_info["raw_damage_score"]) * config.helping_hand_weight
     if second_info.get("move_id") == "helpinghand" and first_info.get("raw_damage_score"):
         bonus += float(first_info["raw_damage_score"]) * config.helping_hand_weight
+
+    # Two setters of the same kind in one turn: the later one fails (same condition) or
+    # overwrites the first (different one), so the condition the turn ENDS on is the one that
+    # resolves LAST -- by priority, then speed (reversed under Trick Room). Only that setter
+    # earns its payoff; the earlier one is erased. (Not "the better of the two": a bad
+    # replacement that resolves last really is what the board is left with.)
+    first_setter, second_setter = first_info.get("field_condition"), second_info.get(
+        "field_condition"
+    )
+    if first_setter and second_setter and first_setter.split(":")[0] == second_setter.split(":")[0]:
+        first_acts_first = resolves_before(
+            int(first_info.get("setter_priority", 0)),
+            float(first_info.get("setter_speed", 0.0)),
+            int(second_info.get("setter_priority", 0)),
+            float(second_info.get("setter_speed", 0.0)),
+            bool(first_info.get("setter_trick_room", False)),
+        )
+        overwritten = first_info if first_acts_first else second_info
+        bonus -= float(overwritten.get("field_setter_value", 0.0))
 
     # Spread damage beside Protect is a deliberate pressure pairing: the ally does not
     # take the spread hit in the real turn, so refund the evaluator's ally-damage penalty.

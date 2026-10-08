@@ -70,6 +70,7 @@ from vgc.actions import index_locked_choice
 from vgc.config import FORMAT_ID, SHOWDOWN_REPO
 from vgc.node import find_node
 from vgc.own_team import apply_own_spreads, index_from_packed
+from vgc.condition_clock import CLOCK_ATTRIBUTE, observe_condition_line
 from vgc.poke_env_compat import normalize_for_poke_env
 
 DEFAULT_FORMAT = FORMAT_ID
@@ -109,6 +110,11 @@ def _mirror_public_board(target: DoubleBattle, observation: DoubleBattle) -> Non
     target._weather = dict(observation.weather)
     target._side_conditions = dict(observation.opponent_side_conditions)
     target._opponent_side_conditions = dict(observation.side_conditions)
+    # Real remaining durations (vgc.condition_clock). Keys name absolute sides, so the
+    # same clock is right from either seat.
+    clock = vars(observation).get(CLOCK_ATTRIBUTE)
+    if clock is not None:
+        setattr(target, CLOCK_ATTRIBUTE, copy.deepcopy(clock))
     for source_mon, dest_mon in zip(
         list(observation.opponent_active_pokemon or ()),
         list(target.active_pokemon or ()),
@@ -620,6 +626,7 @@ class DirectBattle:
             split = line.split("|")
             if len(split) < 2:
                 continue
+            observe_condition_line(battle, split)
             tag = split[1]
             if tag == "request":
                 # Rejoin rather than take split[2]: the request payload is JSON and may

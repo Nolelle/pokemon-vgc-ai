@@ -1363,3 +1363,137 @@ def test_no_prior_species_still_gets_attack_candidates() -> None:
     filled = opponent_move_ids(rillaboom, priors={"species": {}}, config=enabled)
     assert filled == ["woodhammer"]  # its best STAB attack; no invented coverage
     assert opponent_move_ids(rillaboom, priors={"species": {}}, config=PolicyConfig()) == []
+
+
+# --- search_condition_expiry: conditions end inside the exchange + forecast turns ------
+
+
+def _expiry_ctx(*, tailwind_ticks=None, trick_room_ticks=None, trick_room=False, tailwind_up=None):
+    """Garchomp (ours, p1) vs Klefki with hand-set condition-clock ticks on the battle."""
+
+    from poke_env.battle.field import Field
+    from poke_env.battle.side_condition import SideCondition
+
+    clock: dict = {}
+    if tailwind_ticks is not None:
+        clock[("side", "p1", "tailwind")] = tailwind_ticks
+    if trick_room_ticks is not None:
+        clock[("field", "trickroom")] = trick_room_ticks
+    if tailwind_up is None:
+        tailwind_up = tailwind_ticks is not None
+    battle = SimpleNamespace(
+        player_role="p1",
+        side_conditions=[SideCondition.TAILWIND] if tailwind_up else [],
+        opponent_side_conditions=[],
+        fields={Field.TRICK_ROOM: 1} if trick_room_ticks is not None else {},
+        weather={},
+        _vgc_condition_clock=clock,
+    )
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[_klefki(), None],
+        our_pokemon=[_mon(moves={"bodyslam": None}, species="garchomp"), None],
+        opp_pokemon=[_mon(moves={"psychic": None}, species="klefki"), None],
+        trick_room=trick_room,
+    )
+    ctx.battle = battle
+    return ctx
+
+
+_NO_OPP = OppResponse(slot0=_OppSlotAction(kind="none"), slot1=_OppSlotAction(kind="none"))
+_ATTACK = _fake_order(_fake_single("bodyslam", move_target=1), None)
+
+
+def _our_forecast_speed(exchange, turn, ctx) -> float:
+    view = search_module._exchange_on_turn(exchange, turn)
+    options = search_module._forecast_options(
+        "our", exchange.our_states, exchange.opp_states, view, ctx, PolicyConfig()
+    )
+    return options[0][0].speed
+
+
+def test_expiring_tailwind_helps_projected_turn_one_but_not_turn_two() -> None:
+    # Tailwind lasts 4 turns; 3 ticks already charged -> one turn (this one) left.
+    ctx = _expiry_ctx(tailwind_ticks=3)
+    config = PolicyConfig(search_condition_expiry=True)
+    result = resolve_exchange(_ATTACK, _NO_OPP, ctx, config)
+
+    assert result.our_tailwind is True
+    assert result.our_tailwind_last == 1
+    assert _our_forecast_speed(result, 1, ctx) == 2 * _our_forecast_speed(result, 2, ctx)
+    assert search_module._exchange_on_turn(result, 2).our_tailwind is False
+
+    # Legacy: the same Tailwind is carried unchanged through every forecast turn.
+    legacy = resolve_exchange(_ATTACK, _NO_OPP, ctx, PolicyConfig())
+    assert legacy.condition_expiry is False
+    assert search_module._exchange_on_turn(legacy, 3) is legacy
+    assert legacy.our_tailwind is True
+
+
+def test_expiring_trick_room_reverses_order_on_turn_one_only() -> None:
+    ctx = _expiry_ctx(trick_room_ticks=4, trick_room=True)  # base 5 -> 1 turn left
+    config = PolicyConfig(search_condition_expiry=True)
+    result = resolve_exchange(_ATTACK, _NO_OPP, ctx, config)
+    assert result.trick_room is True and result.trick_room_last == 1
+
+    def first_actor(turn: int) -> str:
+        view = search_module._exchange_on_turn(result, turn)
+        attacks = search_module._best_joint_forecast_attacks(
+            "our", result.our_states, result.opp_states, view, ctx, config
+        ) + search_module._best_joint_forecast_attacks(
+            "opp", result.opp_states, result.our_states, view, ctx, config
+        )
+        attacks.sort(
+            key=search_module.cmp_to_key(
+                search_module.partial(
+                    search_module._forecast_attack_cmp, trick_room=view.trick_room
+                )
+            )
+        )
+        return attacks[0].side
+
+    assert first_actor(1) == "opp"  # slow Klefki moves first under Trick Room
+    assert first_actor(2) == "our"  # Trick Room is over: fast Garchomp moves first
+
+
+def test_condition_set_in_exchange_lasts_its_full_duration_and_toggles_off() -> None:
+    config = PolicyConfig(search_condition_expiry=True)
+    tailwind = resolve_exchange(
+        _fake_order(_fake_single("tailwind"), None), _NO_OPP, _expiry_ctx(), config
+    )
+    assert tailwind.our_tailwind_last == 4  # set turn 1, still up on turns 2-4
+    assert search_module._exchange_on_turn(tailwind, 3).our_tailwind is True
+    assert search_module._exchange_on_turn(tailwind, 5).our_tailwind is False
+
+    trick_room = resolve_exchange(
+        _fake_order(_fake_single("trickroom"), None), _NO_OPP, _expiry_ctx(), config
+    )
+    assert trick_room.trick_room is True and trick_room.trick_room_last == 5
+
+    # Using Trick Room while it is up ends it, whatever it had left.
+    toggled = resolve_exchange(
+        _fake_order(_fake_single("trickroom"), None),
+        _NO_OPP,
+        _expiry_ctx(trick_room_ticks=1, trick_room=True),
+        config,
+    )
+    assert toggled.trick_room is False
+
+
+def test_untracked_condition_keeps_legacy_lasting_through_the_horizon() -> None:
+    # Tailwind is on the board but the clock has no entry for it.
+    ctx = _expiry_ctx(tailwind_up=True)
+    result = resolve_exchange(_ATTACK, _NO_OPP, ctx, PolicyConfig(search_condition_expiry=True))
+    assert result.our_tailwind is True
+    assert result.our_tailwind_last is None
+    assert search_module._exchange_on_turn(result, 3).our_tailwind is True
+
+
+def test_expiry_flag_is_a_no_op_without_timed_conditions() -> None:
+    summaries = []
+    for flag in (False, True):
+        ctx = _expiry_ctx()
+        config = PolicyConfig(search_condition_expiry=flag)
+        result = resolve_exchange(_ATTACK, _NO_OPP, ctx, config)
+        summaries.append(search_module.forecast_position(result, ctx, config).summary())
+    assert summaries[0] == summaries[1]
