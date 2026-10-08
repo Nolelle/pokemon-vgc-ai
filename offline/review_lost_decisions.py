@@ -153,6 +153,11 @@ async def review_game(row: dict, args: argparse.Namespace, cfg: PolicyConfig) ->
     bundle = json.loads(path.read_text())
     decisions_meta = bundle["decisions"]
     player, tag = _replay_player(bundle)
+    # The bundle's config ships the live clock guard, and a replayed request carries the
+    # recorded timer, so each ~30 s deep review ran on a guard worker thread that missed
+    # its budget. The replay then moved on and closed the mirror under it (every game
+    # failed with "I/O operation on closed file"). Reviews are offline: decide inline.
+    player.config = replace(player.config, clock_guard_enabled=False)
     mirror = LiveExactMirror(bundle["own_packed_team"], cfg)
     records: list[dict] = []
     skips: list[dict] = []
