@@ -601,10 +601,126 @@ its frozen value; this is not a calibration change and no new weight was added.
   search and warns above 5%. Narrow width (`search_our_candidates=4`,
   `exact_search_future_samples=1`, `search_opp_candidates=4`) plays 2880 games in ~25 min
   on 10 workers (~0.3 s/decision). Results at narrow width are not production-width claims.
+- **Follow-up results (2026-10-05, branch claude/exact-judge-field-horizon; narrow width,
+  `--player vgc_exact`, cluster-robust CIs).**
+  - KO term (`exact_search_alive_weight` 90 vs 0), 160-team pool: 52.5% [0.501, 0.550]. Ships at 90.
+  - **Drop the myopic blend** (`search_myopic_weight` 0 vs 1): M-C train 226 teams 53.5%
+    [0.501, 0.569]; archetype 160 pool 53.7% [0.508, 0.567]; M-C holdout 88 teams 51.6%
+    [0.467, 0.566] (underpowered, floor +4.1). The myopic score double-counts damage
+    (uncapped at remaining HP) on top of the exact value. Shipped as the exact-only knob
+    `exact_search_myopic_weight = 0.0` (1.0 = legacy); the fast search keeps
+    `search_myopic_weight`. The live `vgc.exact_judge` already ranks by pure
+    `exchange_value`.
+  - Field-control leaf (`vgc.field_control`, off): 50.2% (pool160), 49.3% x3 weights,
+    48.8% x3 on M-C train, 50.2% x3 with myopic 0. No effect. Diagnostic
+    (`offline/diagnose_setup_ranking.py`): setup moves are searched when legal (51/54) but
+    lose by a median ~200 pts (myopic ~86, one-turn exchange ~74); the field term's median
+    contribution is 0. Weather start turns are overwritten by poke-env every upkeep, so
+    weather duration is a guess.
+  - Multi-turn continuation: N=1 greedy 49.4% (pool160), N=2 greedy 47.8% (M-C train);
+    with myopic weight 0 on both arms, N=1 greedy 47.4%, N=1 fast-search continuation
+    49.9% [0.468, 0.530]. Four nulls: a fixed continuation policy does not help; do not
+    raise N without a smarter continuation (e.g. a small search per continuation turn). Latency (narrow): N=1 p99 ~4 s, N=2 ~7 s, N=3 ~8 s myopic; production width
+    N=1 p99 ~42 s (does not fit the 12 s clock cap).
+- **Condition durations were wrong in every exact branch** (fixed 2026-10-05, owner's
+  hunch, confirmed independently by Codex). poke-env restamps weather on every
+  `[upkeep]` line, and switch-in setters (Drought, Surge abilities) were charged a turn
+  Showdown never charges, so the mirror rebuilt weather wrong 56/72 and terrain 108/134
+  times (Trick Room/Tailwind were right). `vgc.condition_clock` counts Showdown's
+  `|upkeep|` ticks since each start line (both ingest paths, copied into mirror views);
+  known extenders on the setter (always for our side) count 8 turns from the start.
+  Re-verified 266/266 vs the live simulator; hidden opponent extenders still read 5 until
+  outlived (Smogon M-C: Pelipper Damp Rock 7%, other setters ~0%). Re-run with correct
+  timers on M-C train: field leaf x1 50.1%, x3 49.7% (still null); N=1 fast-search
+  continuation **46.3% [0.431, 0.495] -- worse**. Suspect: one random sample per branch
+  makes an extra simulated turn mostly dice noise -- REJECTED: N=1 with 4 samples on both
+  arms 47.3% [0.438, 0.508]. The fixed continuation policy is the prime suspect.
+- **Why the extra turn hurts, and the fixes tried (2026-10-06, M-C train, N=1, narrow).**
+  Flip diagnostic (10 games, 130 decisions): N=1 changed the pick in 56 (43%), chose
+  setup ~2x as often, and 20/56 flips were decided by a +-10,000 game end inside the
+  continuation. Fixes, each vs N=0: continuation weight 0.25 47.8%, 0.5 50.4%;
+  `exact_search_continuation_board_terminals` 47.8%; `exact_search_continuation_mode=search`
+  (2 of our x 2 opponent options, worst/expectation blend, ~1.6x slower, p99 ~5 s narrow)
+  47.8%; search + board terminals **50.1% [0.469, 0.533]** -- removes the harm, adds no
+  edge. All knobs ship off. Do not keep tuning continuation at narrow width; the next
+  hypothesis needs a different lever (wider first-turn search, or deeper search used only
+  offline for teacher labels where the 12 s cap does not apply).
+- **Team-plan value, engine-measured (2026-10-06, owner's insight).** Setters are worth what
+  they enable (rain -> one-turn Electro Shot; Psychic Terrain -> Expanding Force). Those
+  effects live in Showdown callbacks, not move data, so `vgc.plan_value` measures each set's
+  per-turn damage gain under all 25 weather x terrain states with the engine
+  (`tools/plan_value_probe.mjs`, cache `data/usage/plan_value_cache.json`, owner + 314 pool
+  teams). Examples: Archaludon rain +41%HP/turn, Expanding Force users in Psychic Terrain
+  +30..49 (one foe) / +53..78 (two foes). Wired into `field_control` behind
+  `exact_search_field_measured_plan` (off). Owner teams vs M-C train (asymmetric, 5424
+  games, field control + measured plan + fit 0.5 vs off): **51.0% [0.498, 0.522]**;
+  terrain_pulse_blastoise 54.6% [0.517, 0.576] (post hoc, survives a 6-way Holm), others
+  47.7-51.3%. Needs a pre-registered confirmation (holdout opponents) before shipping.
+  Also: live exact judge (fast top-6 + exact re-rank) with the KO term 52.7% [0.498, 0.557];
+  fast-search `search_condition_expiry` 50.4% (correctness, off). The fast search never
+  models weather/terrain-setting moves or switch-in setters as actions, so the live judge
+  can only consider them if the fast search ranks them top-6 anyway.
+- **Review fixes and clean reruns (2026-10-07).** Codex found the plan/speed registries were
+  process-wide (both A/B arms in one process read each other's sets); fixed by
+  `vgc.team_scope` (per-team tables, bound per decision), plus seven smaller fixes (Mega vs
+  switch-in weather order, overlapping speed controls, Trick Room double count, accuracy/
+  multi-hit branching in the speed probe, separate base/Mega measurements, setter execution
+  order, errored cache cells). Clean results: pre-registered holdout confirmation
+  (terrain_pulse_blastoise) **52.4% [0.499, 0.549] = FAIL** (docs/prereg/); measured
+  Tailwind/Trick Room payoff on top of plan value, owner teams vs train: 49.9% [0.489, 0.510]
+  (psyspam_sand 46.9% [0.446, 0.492]); live judge with fast-search setter modelling: 50.5%
+  [0.494, 0.516]. All stay off.
 - **Still open** (see the 2026-10-05 review): no KO/faint term in `_position_value`
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
   +7.6 pts), myopic blend double-counts damage.
+
+## Measured plan value (2026-10-06): what weather/terrain ENABLE, measured by the engine
+
+Weather/terrain are worth what they enable for a set (rain: Electro Shot fires in one turn;
+sun: Solar Beam; rain/snow: Thunder/Blizzard never miss; Psychic Terrain: Expanding Force
+hits both foes at 1.5x; Terrain Pulse/Weather Ball change type). None of that is in
+`moves.json`, so `vgc.field_control`'s old fit term valued it at ~0. `vgc.plan_value` +
+`tools/plan_value_probe.mjs` measure it: one set vs type-neutral reference foes (one, two,
+airborne), 25 weather x terrain conditions, two turns repeating each damaging move, luck
+removed (mean roll, no crits/secondaries, accuracy forced but weighted by the engine's own
+value), foe HP scaled x10 so big hits are not clipped, Mega Evolve before the condition is
+applied. Cache: `data/usage/plan_value_cache.json` (key = canonical set + probe version +
+Showdown pin), built by `tools/build_plan_value_cache.py` (owner teams + `mc_sheet_pool_v2`);
+eyeball with `offline/plan_value_sanity.py`. `PolicyConfig.exact_search_field_measured_plan`
+(OFF) uses it for OUR side only in `field_control` (opponent keeps the estimate); sets
+missing from the cache fall back and are counted in `plan_value.FALLBACKS`. Not yet A/B'd:
+set `exact_search_field_fit_weight` ~0.5 for the experiment. Checklist test:
+`tests/test_plan_value.py` (integration).
+
+## Measured speed payoff (2026-10-06): what Tailwind / Trick Room are worth to a SET
+
+`field_control`'s generic S_t ("fraction of pairings we move first") cannot tell that Tailwind
+is worth a lot to a mid-speed hard hitter and nothing to a Pokemon that already outspeeds the
+field, or that Trick Room is the plan for a slow bulky attacker and a cost for a fast one.
+`vgc.speed_payoff` + `tools/speed_payoff_probe.mjs` measure it with the engine: one subject
+set vs each of 12 real M-C reference sets (the most-used species' top item/ability/spread/moves
+from the Smogon chaos file, real HP), 1v1 duels (second slot fainted), 2 turns, each side
+using its single strongest damaging move into the other in every scenario (bare, our
+Tailwind, foe Tailwind, Trick Room), luck removed like plan_value (mean roll, no crits,
+accuracy-weighted; recoil/Life Orb count as HP lost). Payoff = (net %HP dealt minus taken
+under the condition - bare) / 2, usage-weighted over the panel. It is NONZERO only where
+who-moves-first changes a KO or an attack that lands (the metric's point; a pairing with no KO
+in two turns scores 0). Cache `data/usage/speed_payoff_cache.json` (owner teams + the 314
+`mc_sheet_pool_v2` teams + the 70 most-used usage sets for OPPONENT species), built by
+`tools/build_speed_payoff_cache.py`; eyeball with `offline/speed_payoff_sanity.py`.
+`PolicyConfig.exact_search_field_measured_speed` (OFF) removes Tailwind/Trick Room from S_t
+when every Pokemon it needs is cached and adds the payoff to the fit term (so fit weight ~0.5
+applies). Every payoff is a NET duel number, so ours and the foe's are two views of one
+exchange and are AVERAGED, never summed: Trick Room = (ours.tr - theirs.tr) / 2, our Tailwind =
+(ours.tw - theirs.tw_against) / 2, their Tailwind = (ours.tw_against - theirs.tw) / 2. The
+probe measured ONE control on a bare field, so the measured value is used only on turns where
+exactly one of {our Tailwind, their Tailwind, Trick Room} is up; overlaps (two Tailwinds cancel,
+Tailwind inside Trick Room slows the Tailwind side) are left to the generic S_t, which orders
+every combination exactly. Probe luck is branched, not forced (a miss can leave the foe
+standing), and a stone holder is measured as base form and Mega form, registered under each
+species id. Entries with probe errors are never cached. Not yet A/B'd. Tests:
+`tests/test_speed_payoff.py` (integration), `tests/test_field_control.py`.
 
 ## Neural shortlist distillation (Phase 4): M-B-era guided gate, current models unapproved
 
