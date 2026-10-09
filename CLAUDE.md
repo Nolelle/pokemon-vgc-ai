@@ -493,6 +493,36 @@ users, which exposed two `DirectBattle` crashes (hidden trap, above; Round chain
 for an opponent that has not shown Round (33/14,445 M-C replays);
 `normalize_for_poke_env` drops the tag in `DirectBattle` and `VgcPlayer`.
 
+## Mechanics correctness pass (2026-10-09): what the bot simulates now matches the game
+
+The 50-game ladder review and a Codex audit found that the bot's internal model of the battle
+was wrong in ways no tuning could fix. All fixed on `claude/mechanics-correctness`, each
+behaviour change behind a `PolicyConfig` knob (default True, False = legacy control):
+
+- **Live exact mirror** (`tools/sim_worker.mjs`, `vgc.mechanics_state`, `vgc.rl.live_mirror`):
+  opponents could never Mega Evolve (`exact_mirror_opponent_mega`); opponent HP was copied
+  from the public PERCENT as absolute HP, so every foe was simulated at ~half its real bulk
+  (`exact_mirror_hp_scale`); hidden item guesses were blanked (`exact_mirror_keep_hidden_items`);
+  post-Mega stats stayed base-forme (`exact_mirror_mega_stats`); Fake Out reuse, Choice lock,
+  toxic stage, Disable move and per-stint Unburden (`exact_mirror_restore_state`); sleep and
+  confusion timers enumerated and weighted (`exact_judge_exact_timers`); Mega/non-Mega reply
+  twins collapsed (`exact_search_dedupe_mega_replies`). Still open: Substitute HP is reset to
+  1/4 max HP on every rebuild.
+- **Repeat Protect** is exact: both forced stall outcomes, weighted by the true odds
+  (`exact_search_exact_stall_odds`); the fast evaluator scales Protect's bonuses by those odds
+  too (`protect_bonuses_scale_with_odds`).
+- **Fast search/evaluator**: one canonical weather table `vgc.weather_abilities`
+  (`weather_abilities_complete`; sand/snow Megas were invisible), weather accuracy, signed
+  Mega weather, single-stone Mega timing, Psychic Terrain vs priority attacks and status,
+  Unburden speed, spread recount, move accuracy with alive-probability KO accounting
+  (`model_move_accuracy`; no fractional-HP double counting), first-turn-only moves.
+- **`vgc.damage`** (ground-truth tested, no knob): sand/snow defence boosts, Body Press /
+  Foul Play / Psyshock stats, -ate abilities, Liquid Voice.
+- **Evidence** (all 18 knobs on vs off, both arms exact judge, owner teams):
+  train 226 teams **1945/3616 = 53.8% [0.521, 0.554]**; holdout 88 teams **760/1408 =
+  54.0% [0.520, 0.559]**. Both PASS, every archetype >= 52%. Damage fixes are in both arms.
+  Judge measurements before this branch simulated half-bulk, itemless, never-Mega opponents.
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public

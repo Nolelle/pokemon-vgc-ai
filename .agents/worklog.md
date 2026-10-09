@@ -312,3 +312,19 @@
 - Exact search: `exact_search_exact_stall_odds` (True; False = sampled). Repeat Protect-family rolls (stall volatile present, counter 3/9/..) run BOTH forced outcomes per (choice, seed) sample, weighted 1/counter vs rest; all combinations when several Pokemon repeat. Worker: `clone` takes `stallForce`, `stallInfo` lists stallers; the pin is consulted by a per-battle `randomChance` wrapper (dex/conditions are frozen) and still takes the stock PRNG draw. Tests: tests/test_exact_stall_odds.py.
 - Cost (judge width, 38 decisions): median unchanged (0.249 s); only 2/38 had a repeat roll, +0.03 s median / +0.10 s max on those.
 - Not A/B'd for strength. Full readiness gates currently BLOCKED only by Showdown parity drift (upstream 7332b60e2); `--static-only` passes for all three.
+
+## 2026-10-09 — Mechanics correctness pass (branch claude/mechanics-correctness)
+- Owner direction: mechanics and game understanding must be right first, so only game plans need tuning.
+- Review of the 50-game ladder session (27-23): games are decided early (first KO in 85% of wins vs 35% of losses); Protect overused (2.6/game in losses vs 1.5 in wins; 25 repeat Protects); opponents Mega'd in 39/46 games.
+- Found the opponent-Mega blind spot, then a Codex (Sol) audit found the rest. Fixed (Sonnet agents in worktrees, merged here, Codex-reviewed; 4 review findings fixed):
+  - Exact mirror: opponent Mega availability; opponent HP was copied from the public percent as absolute HP (foes simulated at ~half bulk); hidden item guesses were blanked; post-Mega stats; Fake Out/First Impression reuse (activeMoveActions + DisableMove pass); Choice lock; exact sleep/confusion timer branches; toxic stage; Disable move id; Unburden per stint; Mega-twin reply dedupe.
+  - Exact search: repeat Protect evaluated as both forced outcomes weighted by the true odds.
+  - Fast search/evaluator: canonical weather table (sand/snow Megas were invisible); signed Mega weather; single-stone Mega timing; Protect bonuses scaled by odds; Psychic Terrain blocks priority attacks and priority status moves; Unburden speed; spread recount; move accuracy with alive-probability KO accounting; first-turn-only moves.
+  - damage.py (ground-truth verified, no knob): sand Rock SpD / snow Ice Def x1.5; Body Press/Foul Play/Psyshock stats; -ate abilities and Liquid Voice.
+  - Deferred: Substitute HP across rebuilds (needs a per-hit damage estimate).
+- 18 PolicyConfig knobs, default True; False = legacy. A/B: all 18 on vs all off, both arms exact_judge_live, owner psyspam_sand + salamence_tw:
+  - Train (226 teams, seed 20261009): **1945/3616 = 53.8% [0.521, 0.554] PASS**; every archetype 52-62% (snow 61.7%).
+  - Holdout (88 teams, seed 20261010): **760/1408 = 54.0% [0.520, 0.559] PASS**; both teams, both seats, every archetype >= 52%.
+  - Note: the ground-truth damage fixes are in both arms, so their effect is not in these numbers.
+- Showdown synced to 2796de703 (two upstream syncs on this branch). Tests: 1356 unit, 232 integration (0 skipped); all gates PASS.
+- Codex exec gotcha: background `codex exec` hangs on stdin; always add `< /dev/null` and an alarm.
