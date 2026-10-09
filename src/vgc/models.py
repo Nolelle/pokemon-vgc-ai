@@ -187,6 +187,16 @@ class PolicyConfig:
     # -- that one stays a flat multiplier rather than switching to this exact formula
     # since it only ever applies once, not compounding across a whole streak).
     protect_success_decay: float = 1.0 / 3.0
+    # A Protect that FAILS (probability 1 - `protect_success_decay ** protect_counter`)
+    # buys none of the scouting, stalling or repositioning value `_score_protect` adds on
+    # top of the threat term, yet those three used to be added at full value even on a
+    # 1/3 or 1/9 repeat. True scales information, field-stall and reposition bonuses by the
+    # same success probability as the threat term; the low-threat penalty stays unscaled
+    # (it is the cost of spending the turn, whether or not Protect works). False = the
+    # legacy full-value bonuses, kept as the control for same-session A/Bs. Ladder
+    # evidence (46 games): 25 back-to-back Protects, ~2/3 failed; losses averaged 2.6
+    # Protects per game vs 1.5 in wins.
+    protect_bonuses_scale_with_odds: bool = True
     # Flat penalty for choosing Protect when the estimated incoming threat on this slot is
     # below this many HP percent -- keeps the evaluator from reflexively protecting both
     # slots when neither is actually in danger this turn.
@@ -512,6 +522,17 @@ class PolicyConfig:
     # effects, and Speed ties are averaged across four real simulator branches instead
     # of being replaced by hand-written expected-value shortcuts.
     exact_search_future_samples: int = 4
+    # Protect-family moves (Protect, Detect, Spiky Shield, King's Shield, Baneful Bunker,
+    # Burning Bulwark, Silk Trap, Obstruct, Endure) succeed with probability 1/counter once
+    # the user's stall counter is above 1 (1/3 after one use, 1/9 after two). That roll is
+    # one draw from the sampled random stream, so with only a few future samples a 1/3
+    # Protect shows up as 0, 1 or 2 successes out of 2. True: for every branch where an
+    # active Pokemon (either side) repeats such a move, run BOTH forced outcomes (and every
+    # combination when several Pokemon repeat) for each future sample and weight them by
+    # the true odds. The forced roll still consumes its PRNG draw, so both outcomes share
+    # the rest of the random stream (common random numbers). Costs one extra clone per
+    # repeat-staller combination. False = legacy sampling.
+    exact_search_exact_stall_odds: bool = True
     # Number of current-state belief branches used for hidden timers such as the
     # Champions 2-or-3-action sleep duration. These are facts no player is told; each
     # branch is a legal Showdown state rather than a made-up deterministic duration.

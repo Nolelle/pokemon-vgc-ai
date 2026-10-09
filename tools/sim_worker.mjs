@@ -239,6 +239,89 @@ async function handleStart(msg) {
 	return respond(msg, entry);
 }
 
+// ## Forced Protect-family rolls (exact stall odds)
+//
+// Showdown's `stall` condition (data/conditions.ts) rolls `randomChance(1, counter)` in
+// `onStallMove` every time a Pokemon that still holds the `stall` volatile uses a
+// protect-family move (Protect, Detect, Spiky Shield, King's Shield, Baneful Bunker,
+// Burning Bulwark, Silk Trap, Obstruct, Endure, Max Guard). Wide Guard / Quick Guard
+// add the volatile but never roll. A clone may therefore pin that one roll:
+// `{"cmd":"clone",...,"stallForce":{"p1a":true,"p2b":false}}`.
+//
+// The dex (and so the `stall` condition) is frozen and shared by every battle, so the
+// pin is applied per battle: it is stored on the holder's `stall` volatile state
+// (stamped with the battle turn, so a pin that was never consumed cannot leak into a
+// later turn) and consulted by a wrapper installed on THIS battle's `randomChance`. The
+// wrapper only acts on the call made while the stall condition's `StallMove` handler is
+// running for the pinned volatile; it always makes the stock draw first, so a forced
+// success and a forced failure consume the same PRNG value and share the rest of the
+// random stream. Every other `randomChance` call, and any stall roll without a pin,
+// behaves exactly as stock (the stock handler still deletes the volatile on failure).
+//
+// Moves whose `onPrepareHit` runs `runEvent('StallMove')` in data/moves.ts are the only
+// ones that roll the stall odds; Wide Guard, Quick Guard and Mat Block add the volatile
+// without rolling. tests/test_exact_stall_odds.py checks this list against moves.ts.
+const STALL_ROLL_MOVES = new Set([
+	'protect', 'detect', 'spikyshield', 'kingsshield', 'banefulbunker', 'burningbulwark',
+	'silktrap', 'obstruct', 'endure', 'maxguard',
+]);
+
+function patchStallForce(battle) {
+	if (Object.prototype.hasOwnProperty.call(battle, 'randomChance')) return;
+	const stock = battle.randomChance;
+	battle.randomChance = function (numerator, denominator) {
+		const drawn = stock.call(this, numerator, denominator);
+		const state = this.effectState;
+		if (this.effect && this.effect.id === 'stall' && this.event && this.event.id === 'StallMove' &&
+			state && state.vgcForce) {
+			const force = state.vgcForce;
+			delete state.vgcForce;
+			if (force.turn === this.turn) return force.success;
+		}
+		return drawn;
+	};
+}
+
+function applyStallForce(battle, stallForce) {
+	for (const [key, success] of Object.entries(stallForce || {})) {
+		const match = /^(p[12])([a-c])$/.exec(key);
+		if (!match) throw new Error(`bad stallForce key ${JSON.stringify(key)}`);
+		const side = battle.sides[Number(match[1][1]) - 1];
+		const pokemon = side && side.active[match[2].charCodeAt(0) - 97];
+		const stall = pokemon && pokemon.volatiles && pokemon.volatiles.stall;
+		if (!stall) throw new Error(`stallForce ${key}: no stall volatile to force`);
+		stall.vgcForce = { success: Boolean(success), turn: battle.turn };
+	}
+}
+
+// Active Pokemon that currently hold a stall volatile (so their next protect-family use
+// is a roll), with the odds denominator and each legal move id in request order, so the
+// caller can tell from a choice string whether the roll will happen.
+function handleStallInfo(msg) {
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	const battle = entry.stream.battle;
+	if (!battle) throw new Error(`battle ${msg.id} has not started`);
+	const stallers = [];
+	for (const side of battle.sides) {
+		side.active.forEach((pokemon, position) => {
+			const stall = pokemon && !pokemon.fainted && pokemon.volatiles.stall;
+			if (!stall) return;
+			const request = pokemon.getMoveRequestData();
+			stallers.push({
+				side: side.id,
+				position: String.fromCharCode(97 + position),
+				species: pokemon.species.id,
+				counter: stall.counter || 1,
+				moves: request.moves.map((move) => move.id),
+				disabled: request.moves.map((move) => Boolean(move.disabled)),
+				rolls: request.moves.map((move) => STALL_ROLL_MOVES.has(move.id)),
+			});
+		});
+	}
+	return { id: msg.id, stallers };
+}
+
 async function handleClone(msg) {
 	if (battles.has(msg.id)) throw new Error(`battle id ${msg.id} already exists`);
 	const source = battles.get(msg.source);
@@ -278,6 +361,8 @@ async function handleClone(msg) {
 		// user-visible "RNG was reset" protocol line to an otherwise exact clone.
 		stream.battle.prng = new PRNG(msg.seed);
 	}
+	patchStallForce(stream.battle);
+	if (msg.stallForce) applyStallForce(stream.battle, msg.stallForce);
 	entry.ended = Boolean(stream.battle.ended);
 	entry.winner = entry.ended ? source.winner : null;
 	battles.set(msg.id, entry);
@@ -753,6 +838,8 @@ async function dispatch(msg) {
 			return handleInspect(msg);
 		case "dump":
 			return handleDump(msg);
+		case "stallInfo":
+			return handleStallInfo(msg);
 		case "patchPublic":
 			return handlePatchPublic(msg);
 		case "close":

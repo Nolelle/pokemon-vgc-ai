@@ -61,7 +61,7 @@ import copy
 from dataclasses import asdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import DoubleBattleOrder
@@ -419,6 +419,7 @@ class DirectBattle:
         battle_id: str,
         *,
         seed: Sequence[int] | None = None,
+        stall_force: Mapping[str, bool] | None = None,
     ) -> DirectBattle:
         """Return an exact simulator clone with an independent future.
 
@@ -430,6 +431,11 @@ class DirectBattle:
 
         Each player's poke-env view is rebuilt from that side's fogged protocol
         transcript. Omniscient simulator state is never fed into either observation.
+
+        ``stall_force`` maps an active slot (``"p1a"``, ``"p2b"``) that currently holds
+        Showdown's ``stall`` volatile to the forced result of its next protect-family
+        roll (True = the move works). The roll still draws from the PRNG, so a forced
+        success and a forced failure share the rest of the random stream.
         """
 
         clone = DirectBattle(
@@ -455,12 +461,22 @@ class DirectBattle:
             payload["omitTranscript"] = True
         if seed is not None:
             payload["seed"] = list(seed)
+        if stall_force:
+            payload["stallForce"] = {key: bool(value) for key, value in stall_force.items()}
         clone._apply(self.worker.request(payload))
         # The source knows which sides the simulator is waiting on. A transcript rebuild
         # cannot: after a hidden-trap rejection only the rejected side got a new request,
         # but replaying the transcript leaves the other side's last request open too.
         clone._waiting = dict(self._waiting)
         return clone
+
+    def stall_info(self) -> list[dict[str, Any]]:
+        """Active Pokemon holding a ``stall`` volatile: side, position, odds denominator
+        (``counter``; a protect-family move succeeds with probability 1/counter), and the
+        move ids of their current move request. Omniscient: for exact-search bookkeeping
+        only, never an observation."""
+
+        return list(self.worker.request({"cmd": "stallInfo", "id": self.battle_id})["stallers"])
 
     def patch_public_state(
         self,

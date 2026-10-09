@@ -1726,12 +1726,14 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     available_switches = getattr(ctx.battle, "available_switches", None) or [[], []]
     has_reposition = actor_slot < len(available_switches) and bool(available_switches[actor_slot])
     reposition_value = config.protect_reposition_bonus if has_reposition else 0.0
-    score += information_value + stall_value + reposition_value
+    bonus_scale = success_prob if config.protect_bonuses_scale_with_odds else 1.0
+    score += (information_value + stall_value + reposition_value) * bonus_scale
     return score, {
         "threat_percent": threat.percent,
         "combined_threat_percent": combined_threat,
         "protect_counter": protect_counter,
         "success_prob": success_prob,
+        "bonus_scale": bonus_scale,
         "information_value": information_value,
         "stall_value": stall_value,
         "reposition_value": reposition_value,
