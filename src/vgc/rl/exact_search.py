@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import time
 from collections import defaultdict
 from typing import Callable, Sequence
@@ -138,6 +139,35 @@ def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     return value
 
 
+_MEGA_TOKEN = re.compile(r"\s+mega\b")
+
+
+def _opponent_replies(
+    scored: list[ScoredOrder], config: PolicyConfig
+) -> list[ScoredOrder]:
+    """The opponent's top-N replies, with Mega/non-Mega twins of one plan collapsed.
+
+    The evaluator scores "Heat Wave + Mega" and "Heat Wave" as two orders. With the foe's
+    Mega live in the mirror, the top N could be the same few plans twice over, spending
+    the reply budget on near-duplicates. The higher-scored twin stands for the plan.
+    """
+
+    cap = config.search_opp_candidates
+    if not config.exact_search_dedupe_mega_replies:
+        return scored[:cap]
+    kept: list[ScoredOrder] = []
+    seen: set[str] = set()
+    for entry in scored:
+        plan = _MEGA_TOKEN.sub("", entry.order.message)
+        if plan in seen:
+            continue
+        seen.add(plan)
+        kept.append(entry)
+        if len(kept) >= cap:
+            break
+    return kept
+
+
 def _softmax_weights(scored: list[ScoredOrder], temperature: float) -> list[float]:
     if not scored:
         return [1.0]
@@ -178,7 +208,7 @@ def search_joint_orders_exact(
     if side not in expected:
         raise ValueError(f"Showdown is not waiting for {side}")
     opponent_scored = (
-        score_joint_orders(root.battles[other], config)[: config.search_opp_candidates]
+        _opponent_replies(score_joint_orders(root.battles[other], config), config)
         if other in expected
         else []
     )

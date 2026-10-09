@@ -202,7 +202,7 @@ def test_combined_hidden_configurations_are_capped_and_renormalized(monkeypatch)
     mirror = object.__new__(LiveExactMirror)
     mirror.config = config
     mirror.last_hypothesis_audit = {}
-    monkeypatch.setattr("vgc.rl.live_mirror.snapshot_battle", lambda _battle: object())
+    monkeypatch.setattr("vgc.rl.live_mirror.snapshot_battle", lambda _battle, **_kw: object())
     monkeypatch.setattr(
         "vgc.rl.live_mirror.enumerate_hidden_state_hypotheses",
         lambda _state, _config: [
