@@ -422,10 +422,10 @@ def test_belief_ordered_candidates_hypotheses_1_returns_the_same_list() -> None:
 
 def test_belief_mixture_crosses_the_shortlist_boundary() -> None:
     battle = _crossing_battle()
-    myopic = score_joint_orders(battle, PolicyConfig(usage_spreads_file=_MB_SPREADS))
+    myopic = score_joint_orders(battle, PolicyConfig(model_move_accuracy=False, usage_spreads_file=_MB_SPREADS))
     scores_before = [entry.score for entry in myopic]
     ranked = belief_ordered_candidates(
-        battle, myopic, PolicyConfig(usage_spreads_file=_MB_SPREADS, shortlist_belief_hypotheses=3)
+        battle, myopic, PolicyConfig(model_move_accuracy=False, usage_spreads_file=_MB_SPREADS, shortlist_belief_hypotheses=3)
     )
     assert len(ranked) == len(myopic)
     assert {id(entry) for entry in ranked} == {id(entry) for entry in myopic}
@@ -451,7 +451,7 @@ def test_belief_ordered_candidates_does_not_rescore_the_mode_hypothesis(
     monkeypatch,
 ) -> None:
     battle = _straddle_battle()
-    myopic = score_joint_orders(battle)
+    myopic = score_joint_orders(battle, PolicyConfig(model_move_accuracy=False))
     calls = {"n": 0}
     real = score_joint_orders_in_context
 
@@ -461,7 +461,7 @@ def test_belief_ordered_candidates_does_not_rescore_the_mode_hypothesis(
 
     monkeypatch.setattr("vgc.belief_scoring.score_joint_orders_in_context", wrapped)
     belief_ordered_candidates(
-        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+        battle, myopic, PolicyConfig(model_move_accuracy=False, shortlist_belief_hypotheses=3)
     )
     # Three Charizard spreads; the timid mode matches opponent_state and is skipped.
     assert calls["n"] == 2
@@ -484,7 +484,7 @@ def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
         search_module, "resolve_exchange", lambda *_args, **_kwargs: ExchangeResult()
     )
 
-    config_one = PolicyConfig(
+    config_one = PolicyConfig(model_move_accuracy=False, 
         usage_spreads_file=_MB_SPREADS,
         shortlist_belief_hypotheses=1,
         search_our_candidates=_CROSSING_K,
@@ -492,7 +492,7 @@ def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
         use_rolling_horizon=False,
         search_opp_candidates=4,
     )
-    config_three = PolicyConfig(
+    config_three = PolicyConfig(model_move_accuracy=False, 
         usage_spreads_file=_MB_SPREADS,
         shortlist_belief_hypotheses=3,
         search_our_candidates=_CROSSING_K,
@@ -523,10 +523,10 @@ def test_search_shortlist_follows_belief_rank_and_keeps_opponent_responses(
 def test_belief_shortlist_trace_note_appears_once_per_decision(monkeypatch) -> None:
     monkeypatch.setenv("VGC_TRACE", "1")
     battle = _crossing_battle()
-    myopic = score_joint_orders(battle)
+    myopic = score_joint_orders(battle, PolicyConfig(model_move_accuracy=False))
     token = start_trace()
     belief_ordered_candidates(
-        battle, myopic, PolicyConfig(shortlist_belief_hypotheses=3)
+        battle, myopic, PolicyConfig(model_move_accuracy=False, shortlist_belief_hypotheses=3)
     )
     trace = finish_trace(token)
     assert trace is not None
@@ -541,7 +541,7 @@ def test_belief_shortlist_trace_note_appears_once_per_decision(monkeypatch) -> N
     )
     search_module.search_joint_orders(
         battle,
-        PolicyConfig(
+        PolicyConfig(model_move_accuracy=False, 
             shortlist_belief_hypotheses=3,
             search_our_candidates=_CROSSING_K,
             search_diverse_candidates=False,

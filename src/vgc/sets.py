@@ -637,7 +637,7 @@ def opponent_state(
     boosts = {
         stat: value
         for stat, value in (pokemon.boosts or {}).items()
-        if stat in ("atk", "def", "spa", "spd", "spe") and value
+        if stat in ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion") and value
     }
 
     species_id, ability, item = pokemon.species, pokemon.ability or None, _normalize_item(

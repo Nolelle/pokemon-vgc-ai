@@ -390,6 +390,22 @@ class PolicyConfig:
     # the same turn no longer counts. False is the legacy control (target count fixed when the
     # turn's actions are built).
     spread_recount_targets: bool = True
+    # Damaging-move accuracy (data/champions/moves.json; `accuracy: true` never misses) in the
+    # quick scorer and the fast search, including the weather rules (Thunder/Hurricane/Blizzard),
+    # accuracy/evasion stages, Compound Eyes, Hustle, No Guard, Sand Veil/Snow Cloak, Wide Lens,
+    # Zoom Lens and Bright Powder (`vgc.accuracy.hit_probability`). Treated as an EXPECTATION,
+    # never as a separate branch: damage, KO credit, flinch and speed-drop value are scaled by
+    # the hit chance per target (spread moves roll per target), and the search weights HP lost and
+    # faints by it. So a miss is neither impossible nor certain inside the search's per-reply
+    # worst-case (min over opponent replies) term. False is the legacy control: every damaging
+    # move hits (only `weather_accuracy_modifiers` then discounts Thunder/Hurricane/Blizzard).
+    model_move_accuracy: bool = True
+    # Fake Out and First Impression only work on the user's first move after switching in (the
+    # Champions mod disables them once `activeMoveActions` is non-zero). The fast search offered
+    # them to the opponent on every turn and counted them in pressure/threat estimates and
+    # projected turns. True drops them unless poke-env's `first_turn` says the Pokemon is on its
+    # first turn out. False is the legacy control.
+    first_turn_moves_restricted: bool = True
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when

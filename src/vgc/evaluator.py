@@ -125,7 +125,8 @@ from vgc.sets import (
     opponent_signal_team,
     opponent_state,
 )
-from vgc.priority_rules import psychic_terrain_blocks
+from vgc.accuracy import hit_probability
+from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
 from vgc.stats import STAT_IDS
 from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
@@ -669,7 +670,7 @@ def _our_pokemon_state(
     boosts = {
         stat: value
         for stat, value in (pokemon.boosts or {}).items()
-        if stat in ("atk", "def", "spa", "spd", "spe") and value
+        if stat in ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion") and value
     }
     state = PokemonState(
         species_id=species_id,
@@ -719,12 +720,15 @@ def _best_attacking_move(
     defender: PokemonState,
     field_state: FieldState,
     block_psychic_priority: bool = False,
+    model_accuracy: bool = False,
 ) -> tuple[float, str | None, int]:
     """The attacker's single best (highest expected %) supported, non-immune attacking
     move against `defender` from `move_ids`. Returns (0.0, None, 0) if none qualify.
 
     ``block_psychic_priority`` (``PolicyConfig.psychic_terrain_blocks_priority``) drops
     priority moves Psychic Terrain would stop from hitting a grounded `defender`.
+    ``model_accuracy`` (``PolicyConfig.model_move_accuracy``) ranks and reports moves by
+    expected damage including the hit chance.
     """
     moves_data = load_moves()
     best_pct, best_move_id, best_priority = 0.0, None, 0
@@ -740,8 +744,11 @@ def _best_attacking_move(
         result = damage_range(attacker, defender, move_id, field_state)
         if not result.breakdown["move_supported"] or result.breakdown["immune"]:
             continue
-        if result.expected_percent > best_pct:
-            best_pct = result.expected_percent
+        expected = result.expected_percent
+        if model_accuracy:
+            expected *= hit_probability(data, attacker, defender, field_state.weather)
+        if expected > best_pct:
+            best_pct = expected
             best_move_id = move_id
             best_priority = int(data.get("priority", 0))
     return best_pct, best_move_id, best_priority
@@ -846,13 +853,18 @@ def build_context(
             opp_mon = opp_pokemon[opp_idx]
             if opp_state is None or opp_mon is None:
                 continue
-            move_ids = opponent_move_ids(opp_mon, priors=priors, config=config)
+            move_ids = usable_move_ids(
+                opponent_move_ids(opp_mon, priors=priors, config=config),
+                opp_mon,
+                config.first_turn_moves_restricted,
+            )
             pct, move_id, priority = _best_attacking_move(
                 opp_state,
                 move_ids,
                 our_state,
                 field_vs_us,
                 config.psychic_terrain_blocks_priority,
+                config.model_move_accuracy,
             )
             threats_from_each_opp.append(pct)
             if pct > threat_on_us[our_idx].percent:
@@ -874,8 +886,19 @@ def build_context(
             our_mon = our_pokemon[our_idx]
             if our_state is None or our_mon is None:
                 continue
-            our_move_ids = list(our_mon.moves.keys()) if our_mon.moves else []
-            pct, _, _ = _best_attacking_move(our_state, our_move_ids, opp_state, field_vs_opp)
+            our_move_ids = usable_move_ids(
+                list(our_mon.moves.keys()) if our_mon.moves else [],
+                our_mon,
+                config.first_turn_moves_restricted,
+            )
+            pct, _, _ = _best_attacking_move(
+                our_state,
+                our_move_ids,
+                opp_state,
+                field_vs_opp,
+                config.psychic_terrain_blocks_priority,
+                config.model_move_accuracy,
+            )
             pressure_on_opp[opp_idx] = max(pressure_on_opp[opp_idx], pct)
 
     opp_protect_prob = [0.0, 0.0]
@@ -1094,6 +1117,21 @@ def _score_single(
     return info
 
 
+def _hit_probability(
+    move_data: dict,
+    attacker: PokemonState,
+    defender: PokemonState,
+    weather: str | None,
+    config: PolicyConfig,
+) -> float:
+    """Chance ``attacker``'s damaging move connects (1.0 with ``model_move_accuracy`` off).
+    Zoom Lens is not modelled here: it needs the move order, which scoring settles later."""
+
+    if not config.model_move_accuracy:
+        return 1.0
+    return hit_probability(move_data, attacker, defender, weather)
+
+
 def _score_status_mega(
     actor_slot: int, ctx: _Context, config: PolicyConfig
 ) -> tuple[float, dict[str, object]]:
@@ -1229,6 +1267,7 @@ def _score_attack_order(
     resolves_threat_before_it_lands = False
     speed_drop_targets: list[int] = []
     flinch_targets: list[int] = []
+    hit_probability_by_target: dict[int, float] = {}
     field_vs_opp = ctx.field_state(
         defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
     )
@@ -1237,11 +1276,16 @@ def _score_attack_order(
         if defender_state is None:
             continue
         result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        # Hit chance for THIS target (spread moves roll accuracy per target). Damage, KO
+        # credit, flinch and speed-drop value below are scaled by it; the *_by_target maps
+        # keep the damage-if-it-lands numbers the cross-slot focus-fire logic compares to HP.
+        hit_p = _hit_probability(move_data, attacker_state, defender_state, weather_for_this_order, config)
+        hit_probability_by_target[idx] = hit_p
         expected_percent_by_target[idx] = result.expected_percent
         current_hp_percent_by_target[idx] = (
             100.0 * defender_state.hp_or_max() / defender_state.max_hp()
         )
-        base_damage = result.expected_percent * config.damage_percent_weight
+        base_damage = result.expected_percent * config.damage_percent_weight * hit_p
         raw_damage_score += base_damage
 
         target_hp = defender_state.hp_or_max()
@@ -1255,6 +1299,8 @@ def _score_attack_order(
         elif is_likely:
             ko_slots.append(idx)
             ko_bonus += config.likely_ko_bonus
+        # A "guaranteed" KO with a 90% move is a 90% KO: credit it in expectation.
+        ko_bonus *= hit_p
 
         damage_term = base_damage
         threat = ctx.threat_on_us[actor_slot]
@@ -1278,8 +1324,10 @@ def _score_attack_order(
                 ctx.trick_room,
             )
         if we_move_first and (is_guaranteed or is_likely):
-            ko_bonus += config.outspeed_ko_bonus
-            resolves_threat_before_it_lands = True
+            ko_bonus += config.outspeed_ko_bonus * hit_p
+            # Boolean flag: "the KO more likely than not lands before the threat" (the same
+            # modal-branch convention the search uses for probabilistic effects).
+            resolves_threat_before_it_lands = resolves_threat_before_it_lands or hit_p > 0.5
 
         # An opponent pivoting out under heavy pressure with weak own output still eats
         # our damage on the replacement, but any KO-dependent bonus evaporates -- only the
@@ -1319,7 +1367,7 @@ def _score_attack_order(
             speed_value = config.speed_drop_target_value * (1.0 + ctx.opp_threat_score[idx] / 100.0)
             if flips_order:
                 speed_value += config.speed_control_immediate_ko_bonus * 0.5
-            contribution += speed_value
+            contribution += speed_value * hit_p
             speed_drop_targets.append(idx)
 
         secondary = move_data.get("secondary") or {}
@@ -1332,6 +1380,7 @@ def _score_attack_order(
             flinch_chance = float(secondary.get("chance", 0.0)) / 100.0
             contribution += (
                 flinch_chance
+                * hit_p
                 * config.generic_flinch_weight
                 * (1.0 + ctx.opp_threat_score[idx] / 100.0)
             )
@@ -1365,8 +1414,12 @@ def _score_attack_order(
             continue
         result = damage_range(attacker_state, ally_state, move_id, field_vs_us)
         ally_expected_percent_by_target[idx] = result.expected_percent
+        ally_hit_p = _hit_probability(
+            move_data, attacker_state, ally_state, weather_for_this_order, config
+        )
         score -= (
             result.expected_percent
+            * ally_hit_p
             * config.damage_percent_weight
             * config.ally_damage_penalty_weight
         )
@@ -1381,9 +1434,12 @@ def _score_attack_order(
             for idx in opp_targets:
                 defender_state = ctx.opp_states[idx]
                 if defender_state is not None:
-                    base_expected += damage_range(
-                        base_state, defender_state, move_id, base_field
-                    ).expected_percent
+                    base_expected += (
+                        damage_range(base_state, defender_state, move_id, base_field).expected_percent
+                        * _hit_probability(
+                            move_data, base_state, defender_state, ctx.weather, config
+                        )
+                    )
             mega_gain = raw_damage_score - base_expected * config.damage_percent_weight
             speed_flip = any(
                 effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(attacker_state)
@@ -1482,6 +1538,7 @@ def _score_attack_order(
         {
             "single_target_slot": single_target_slot,
             "expected_percent_by_target": expected_percent_by_target,
+            "hit_probability_by_target": hit_probability_by_target,
             "current_hp_percent_by_target": current_hp_percent_by_target,
             "guaranteed_ko_slots": guaranteed_ko_slots,
             "ko_slots": ko_slots,

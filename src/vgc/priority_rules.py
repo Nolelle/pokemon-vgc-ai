@@ -30,6 +30,25 @@ def effective_priority(move_data: dict, ability: str | None, at_full_hp: bool) -
     return priority
 
 
+# Moves that fail once the user has made a move action since switching in (data/moves.ts
+# onTry; the Champions mod turns them into onDisableMove). Mat Block is `Past` in this mod.
+FIRST_TURN_ONLY_MOVES = frozenset({"fakeout", "firstimpression"})
+
+
+def usable_move_ids(move_ids, mon, restrict: bool) -> list[str]:
+    """``move_ids`` minus the first-turn-only moves unless ``mon`` is on its first turn out.
+
+    ``mon`` is a poke-env ``Pokemon`` (``first_turn``: exactly one turn boundary since it came
+    in); objects without the attribute are treated as being on their first turn so stubs and
+    unknown Pokemon keep their moves.
+    """
+
+    moves = list(move_ids)
+    if not restrict or mon is None or getattr(mon, "first_turn", True):
+        return moves
+    return [m for m in moves if to_id(m) not in FIRST_TURN_ONLY_MOVES]
+
+
 def psychic_terrain_blocks(
     move_data: dict, attacker: PokemonState, defender: PokemonState, terrain: str | None
 ) -> bool:

@@ -51,19 +51,26 @@ def _loss(move_id: str, weather: str | None, config: PolicyConfig, mega: bool = 
         ("blizzard", None, 0.7),
     ],
 )
+@pytest.mark.parametrize("general_model", [True, False])
 def test_weather_dependent_accuracy_scales_expected_damage(
-    move_id: str, weather: str | None, expected_accuracy: float
+    move_id: str, weather: str | None, expected_accuracy: float, general_model: bool
 ) -> None:
-    on = _loss(move_id, weather, PolicyConfig())
-    off = _loss(move_id, weather, PolicyConfig(weather_accuracy_modifiers=False))
+    # Both the general hit-chance model and the narrower legacy weather-only discount agree on
+    # these moves; the fully legacy control (both off) always connects.
+    on = _loss(move_id, weather, PolicyConfig(model_move_accuracy=general_model))
+    off = _loss(
+        move_id,
+        weather,
+        PolicyConfig(model_move_accuracy=False, weather_accuracy_modifiers=False),
+    )
     assert off > 0.0
     assert on == pytest.approx(off * expected_accuracy)
 
 
-def test_other_moves_ignore_weather_accuracy() -> None:
-    assert _loss("dragonpulse", "rain", PolicyConfig()) == _loss(
-        "dragonpulse", "rain", PolicyConfig(weather_accuracy_modifiers=False)
-    )
+def test_other_moves_ignore_weather_accuracy_in_the_legacy_discount() -> None:
+    legacy_on = PolicyConfig(model_move_accuracy=False)
+    legacy_off = PolicyConfig(model_move_accuracy=False, weather_accuracy_modifiers=False)
+    assert _loss("dragonpulse", "rain", legacy_on) == _loss("dragonpulse", "rain", legacy_off)
 
 
 # --- Mega weather abilities in the fast search ------------------------------------------------
