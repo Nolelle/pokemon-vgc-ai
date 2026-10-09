@@ -508,6 +508,7 @@ def _side_snapshot(
     *,
     opponent: bool,
     available_move_ids: tuple[tuple[str, ...], ...] = (),
+    opponent_mega_unknown: bool = False,
 ) -> SideMechanicsState:
     prefix = "opponent_" if opponent else ""
     team = getattr(battle, f"{prefix}team", None) or {}
@@ -516,21 +517,33 @@ def _side_snapshot(
     while len(active) < 2:
         active.append(None)
     revealed_items = _revealed_items_for(battle) if opponent else None
-    return SideMechanicsState(
-        pokemon=tuple(
-            snapshot_pokemon(
-                mon,
+    pokemon_snapshots = tuple(
+        snapshot_pokemon(
+            mon,
+            opponent=opponent,
+            revealed_items=revealed_items,
+            available_move_ids=_slot_available_move_ids(
                 opponent=opponent,
-                revealed_items=revealed_items,
-                available_move_ids=_slot_available_move_ids(
-                    opponent=opponent,
-                    active=active,
-                    pokemon=mon,
-                    available_move_ids=available_move_ids,
-                ),
-            )
-            for mon in pokemon_values
-        ),
+                active=active,
+                pokemon=mon,
+                available_move_ids=available_move_ids,
+            ),
+        )
+        for mon in pokemon_values
+    )
+    used_mega_evolution = bool(getattr(battle, f"{prefix}used_mega_evolve", False))
+    can_mega_evolve = _bool_tuple(getattr(battle, f"{prefix}can_mega_evolve", False))
+    if opponent and opponent_mega_unknown:
+        # poke-env has no `opponent_can_mega_evolve`: the foe's request is private, so
+        # "cannot Mega" would be a guess dressed as a fact. Until the foe has used its one
+        # Mega (the -mega line, or a Pokemon already shown in Mega forme) the answer is
+        # unknown; afterwards it is a definite no.
+        used_mega_evolution = used_mega_evolution or any(
+            mon.mega_evolved for mon in pokemon_snapshots
+        )
+        can_mega_evolve = _bool_tuple(False if used_mega_evolution else None)
+    return SideMechanicsState(
+        pokemon=pokemon_snapshots,
         active_species=tuple(
             to_id(getattr(mon, "species", None)) if mon is not None else None for mon in active
         ),
@@ -544,8 +557,8 @@ def _side_snapshot(
         force_switch=_bool_tuple(getattr(battle, f"{prefix}force_switch", False)),
         trapped=_bool_tuple(getattr(battle, f"{prefix}trapped", False)),
         maybe_trapped=_bool_tuple(getattr(battle, f"{prefix}maybe_trapped", False)),
-        can_mega_evolve=_bool_tuple(getattr(battle, f"{prefix}can_mega_evolve", False)),
-        used_mega_evolution=bool(getattr(battle, f"{prefix}used_mega_evolve", False)),
+        can_mega_evolve=can_mega_evolve,
+        used_mega_evolution=used_mega_evolution,
         can_dynamax=_bool_tuple(getattr(battle, f"{prefix}can_dynamax", False)),
         used_dynamax=bool(getattr(battle, f"{prefix}used_dynamax", False)),
         can_tera=_bool_tuple(getattr(battle, f"{prefix}can_tera", False)),
@@ -584,8 +597,13 @@ class BattleMechanicsState:
     opponent_side: SideMechanicsState
 
 
-def snapshot_battle(battle: Any) -> BattleMechanicsState:
-    """Copy every observable mechanics field from a poke-env battle object."""
+def snapshot_battle(battle: Any, *, opponent_mega_unknown: bool = False) -> BattleMechanicsState:
+    """Copy every observable mechanics field from a poke-env battle object.
+
+    ``opponent_mega_unknown`` reports the opponent's ``can_mega_evolve`` as ``None`` (not
+    observable) until it has used its Mega, instead of the poke-env default of False. Only
+    the live mirror asks for it; the default keeps every stored/encoded snapshot unchanged.
+    """
 
     try:
         raw_available_moves = getattr(battle, "available_moves", None) or ()
@@ -656,5 +674,7 @@ def snapshot_battle(battle: Any) -> BattleMechanicsState:
         our_side=_side_snapshot(
             battle, opponent=False, available_move_ids=available_moves
         ),
-        opponent_side=_side_snapshot(battle, opponent=True),
+        opponent_side=_side_snapshot(
+            battle, opponent=True, opponent_mega_unknown=opponent_mega_unknown
+        ),
     )

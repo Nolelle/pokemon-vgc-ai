@@ -469,8 +469,13 @@ class DirectBattle:
         perspective: str = "p1",
         observation_battle: DoubleBattle | None = None,
         hidden_hypothesis: dict[str, object] | None = None,
+        opponent_mega: bool = False,
     ) -> StepResult:
         """Rebase a fresh simulator template onto one public live observation.
+
+        ``opponent_mega`` lets the patch keep an unrevealed Mega stone on the foe and
+        recompute its Mega ability from its current item when the snapshot reports that
+        ability as unknown (``can_mega_evolve`` None); see ``exact_mirror_opponent_mega``.
 
         The Node worker mutates only mechanics fields in its private Showdown battle.
         When ``observation_battle`` is supplied, exact branches begin their player-side
@@ -487,6 +492,7 @@ class DirectBattle:
                 "perspective": perspective,
                 "state": asdict(state),
                 "hidden": hidden_hypothesis or {},
+                "opponentMega": bool(opponent_mega),
             }
         )
         result = self._apply(response)

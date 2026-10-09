@@ -398,7 +398,16 @@ function showdownTypeName(battle, type) {
 	return info.name;
 }
 
-function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
+// True when `itemId` is a Mega stone THIS Pokemon's base species can use. The snapshot has
+// no item for a foe whose item is hidden, so patchPokemon would blank the stone the mirror
+// was built around (the belief or prior item), and a foe without its stone can never Mega.
+function isMegaStoneFor(battle, pokemon, itemId) {
+	if (!itemId) return false;
+	const item = battle.dex.items.get(itemId);
+	return Boolean(item.exists && item.megaStone && item.megaStone[pokemon.baseSpecies.name]);
+}
+
+function patchPokemon(battle, pokemon, snapshot, hidden = {}, keepHiddenMegaStone = false) {
 	const species = battle.dex.species.get(snapshot.species_id);
 	if (species.exists) {
 		pokemon.species = species;
@@ -427,7 +436,10 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 		pokemon.statusState.time = remaining;
 	}
 	pokemon.boosts = Object.fromEntries(snapshot.boosts);
-	pokemon.item = snapshot.item_id || '';
+	if (!(keepHiddenMegaStone && snapshot.item_state === 'unknown' &&
+		isMegaStoneFor(battle, pokemon, pokemon.item))) {
+		pokemon.item = snapshot.item_id || '';
+	}
 	pokemon.itemState = { id: pokemon.item, target: pokemon };
 	pokemon.baseAbility = snapshot.base_ability_id || pokemon.baseAbility;
 	pokemon.ability = snapshot.temporary_ability_id || snapshot.ability_id || pokemon.ability;
@@ -492,7 +504,7 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 	}
 }
 
-function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
+function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opponentMega = false) {
 	const used = new Set();
 	const bySpecies = new Map();
 	for (const pokemonSnapshot of snapshot.pokemon) {
@@ -506,6 +518,7 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 			pokemon,
 			pokemonSnapshot,
 			hiddenBySpecies[pokemonSnapshot.species_id] || {},
+			opponentMega,
 		);
 		bySpecies.set(pokemonSnapshot.species_id, pokemon);
 		if (pokemonSnapshot.base_species_id) {
@@ -552,6 +565,17 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 		side.pokemon[index].position = index;
 	}
 	side.slotConditions = side.active.map(() => ({}));
+	// A null `can_mega_evolve` slot means the Mega ability is not observable (the foe's
+	// request is private). Showdown's constructor computed it from the item the Pokemon
+	// was BUILT with, and the patches above may have changed item or species since, so ask
+	// the engine again for every Pokemon on this side. A side that has spent its Mega gets
+	// null everywhere below.
+	if (opponentMega && !snapshot.used_mega_evolution &&
+		snapshot.can_mega_evolve.some((value) => value === null || value === undefined)) {
+		for (const pokemon of side.pokemon) {
+			pokemon.canMegaEvo = battle.actions.canMegaEvo(pokemon);
+		}
+	}
 	for (let index = 0; index < side.active.length; index++) {
 		if (!side.active[index]) continue;
 		side.active[index].switchFlag = snapshot.force_switch[index] ? true : false;
@@ -622,7 +646,13 @@ async function handlePatchPublic(msg) {
 	const ownIndex = perspective === 'p1' ? 0 : 1;
 	const hidden = msg.hidden || {};
 	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {});
-	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {});
+	patchSide(
+		battle,
+		battle.sides[1 - ownIndex],
+		state.opponent_side,
+		hidden.opponent || {},
+		Boolean(msg.opponentMega),
+	);
 	fillVolatileSources(battle);
 	battle.field.weather = state.weather.length ? state.weather[0].id : '';
 	battle.field.weatherState = effectState(

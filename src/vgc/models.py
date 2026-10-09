@@ -494,6 +494,16 @@ class PolicyConfig:
     # finished game with no winner scores 0. Each was verified on a real direct battle.
     # False is the exact legacy scorecard, kept only for same-session A/Bs.
     exact_search_consistent_accounting: bool = True
+    # Let the OPPONENT Mega Evolve inside live-mirror branches (2026-10-09). poke-env has no
+    # `opponent_can_mega_evolve`, so the public snapshot said "cannot Mega" for the foe's
+    # whole side, the worker nulled `canMegaEvo` on its active slots, and Showdown never
+    # offered an opponent Mega in any simulated turn -- the judge searched every foe as a
+    # non-Megaing Pokemon. True: the snapshot reports the foe's Mega ability as UNKNOWN until
+    # the foe has used its one Mega (then none), the worker recomputes `canMegaEvo` from each
+    # foe's current item (the belief/prior stone) and species, an unrevealed stone belief
+    # survives the public patch, and an already-Mega'd foe holds the stone its forme
+    # requires. False is the exact legacy control (the foe never Megas in the mirror).
+    exact_mirror_opponent_mega: bool = True
     # Points per Pokemon still standing (brought and not fainted, unseen opponent
     # reserves included), on top of its HP. Without it a KO was worth only the target's
     # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,

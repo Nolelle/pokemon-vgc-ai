@@ -20,7 +20,7 @@ from vgc import plan_value, speed_payoff
 from vgc.battle_memory import BattleMemory
 from vgc.damage import to_id
 from vgc.data import load_items, load_learnsets, load_moves, load_species
-from vgc.mechanics_state import snapshot_battle
+from vgc.mechanics_state import _mega_forme_id, snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.opponent_belief import build_opponent_beliefs
 from vgc.rl.env import DEFAULT_SHOWDOWN_REPO, DirectBattle, SimWorker
@@ -119,6 +119,24 @@ def _revealed_nickname(mon) -> str | None:
     return name
 
 
+def _evolved_mega_stone(mon) -> str | None:
+    """The stone a revealed foe's CURRENT Mega forme requires, or None if not Mega-evolved.
+
+    poke-env keeps the base species name through a Mega and never stores the stone (the
+    `-mega` line's item is dropped), so a prior item guess could hand a Charizard that
+    already became Mega-Y the X stone. The forme is the public fact; the stone follows
+    from it (`requiredItem` in the exported species data).
+    """
+
+    forme_id = _mega_forme_id(
+        to_id(getattr(mon, "species", None)),
+        to_id(getattr(mon, "forme_change_ability", None)) or None,
+    )
+    if not forme_id:
+        return None
+    return to_id((load_species().get(forme_id) or {}).get("requiredItem")) or None
+
+
 def _fallback_moves(species_id: str) -> list[str]:
     learnset = list((load_learnsets().get(species_id) or {}).keys())
     moves = load_moves()
@@ -166,6 +184,14 @@ def _opponent_sets(
     species_data = load_species()
     legal_items = load_items()
     used_items: set[str] = set()
+    evolved_stones: dict[str, str] = {}
+    if config.exact_mirror_opponent_mega:
+        for species_id in ordered_ids:
+            stone = _evolved_mega_stone(known.get(species_id))
+            if stone:
+                evolved_stones[species_id] = stone
+        # Reserved up front so another foe's prior guess cannot take an evolved foe's stone.
+        used_items.update(evolved_stones.values())
     result: list[dict[str, object]] = []
     for species_id in ordered_ids:
         mon = known.get(species_id) or preview_by_id[species_id]
@@ -198,7 +224,9 @@ def _opponent_sets(
                 ),
                 None,
             )
-        if item in used_items:
+        if species_id in evolved_stones:
+            item = evolved_stones[species_id]
+        elif item in used_items:
             item = None
         if item:
             used_items.add(item)
@@ -577,6 +605,11 @@ class LiveExactMirror:
         self.last_excluded_hypotheses: list[MirrorHypothesis] = []
         self._last_representatives: list[MirrorHypothesis] = []
 
+    def _snapshot(self, battle):
+        return snapshot_battle(
+            battle, opponent_mega_unknown=self.config.exact_mirror_opponent_mega
+        )
+
     def hypotheses(self, battle, memory=None) -> list[MirrorHypothesis]:
         """Every hidden-information belief for this observation, most likely first.
 
@@ -594,7 +627,7 @@ class LiveExactMirror:
         pays one team-preview start per spread rather than one per branch.
         """
 
-        timers = enumerate_hidden_state_hypotheses(snapshot_battle(battle), self.config)
+        timers = enumerate_hidden_state_hypotheses(self._snapshot(battle), self.config)
         spreads = _spread_beliefs(battle, self.config, memory)
         sets = _set_beliefs(battle, self.config, memory)
         brought = _bring_beliefs(battle, self.config)
@@ -712,10 +745,11 @@ class LiveExactMirror:
                 }
             )
             root.patch_public_state(
-                snapshot_battle(battle),
+                self._snapshot(battle),
                 perspective=side,
                 observation_battle=battle,
                 hidden_hypothesis=hypothesis.payload if hypothesis is not None else None,
+                opponent_mega=self.config.exact_mirror_opponent_mega,
             )
             return root
         except Exception:
@@ -742,10 +776,11 @@ class LiveExactMirror:
             root.close()
             return self.build(battle, hypothesis)
         root.patch_public_state(
-            snapshot_battle(battle),
+            self._snapshot(battle),
             perspective=self.side_for(battle),
             observation_battle=battle,
             hidden_hypothesis=hypothesis.payload,
+            opponent_mega=self.config.exact_mirror_opponent_mega,
         )
         return root
 
