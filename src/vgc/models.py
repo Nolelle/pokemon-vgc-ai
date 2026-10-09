@@ -372,6 +372,24 @@ class PolicyConfig:
     # nothing weather-wise now, and holding keeps the evolution available to re-summon it after
     # an opposing setter replaces it, so the penalty stays. False is the legacy control.
     mega_single_stone_no_hold: bool = True
+    # Psychic Terrain stops moves of effective priority above 0 (Fake Out, Sucker Punch,
+    # Extreme Speed, Aqua Jet, Prankster/Gale Wings/Triage-boosted moves, ...) from hitting a
+    # grounded foe, for both sides (data/conditions.ts psychicterrain onTryHit; allies and
+    # self-targeting moves are unaffected). The evaluator and the fast search scored such
+    # moves at full damage. False is the legacy control.
+    psychic_terrain_blocks_priority: bool = True
+    # Unburden: Speed doubles once the holder's item is consumed or lost, until it switches
+    # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
+    # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's
+    # Psychic Seed) when the terrain is up, so the Speed doubling shows up in the same turn's
+    # move order. Known gap: poke-env keeps the empty item across a switch-out, so an Unburden
+    # Pokemon that returns without its item is still read as boosted. False is the legacy control.
+    model_unburden: bool = True
+    # Spread-move damage modifier (x0.75) is decided by the targets the move actually has when
+    # it executes (data: sim/battle-actions.ts trySpreadMoveHit), so a target KO'd earlier in
+    # the same turn no longer counts. False is the legacy control (target count fixed when the
+    # turn's actions are built).
+    spread_recount_targets: bool = True
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when

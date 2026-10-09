@@ -427,6 +427,17 @@ def normalize_item(item: str | None) -> str | None:
     return item
 
 
+def item_was_lost(raw_item: str | None) -> bool:
+    """True when poke-env's raw ``Pokemon.item`` says the item is gone (consumed, knocked off,
+    tricked away), as opposed to merely unrevealed (``"unknown_item"``).
+
+    poke-env sets an opponent's item to ``None`` on ``-enditem`` and our own request reports
+    ``""`` once it is gone. Used for Unburden (``PolicyConfig.model_unburden``).
+    """
+
+    return raw_item is None or raw_item == ""
+
+
 def normalize_status(status: Any) -> str | None:
     # Public for the same reason as normalize_item -- vgc.evaluator builds PokemonStates
     # for our own side (poke-env Status enum) with the same normalization rules as
@@ -590,6 +601,7 @@ def opponent_state(
     usage: dict[str, list[dict[str, Any]]] | None = None,
     nature_override: str | None = None,
     evolved_form: bool = True,
+    unburden: bool = False,
 ) -> PokemonState:
     """Build a `PokemonState` for an opponent Pokemon observed through poke-env.
 
@@ -641,6 +653,7 @@ def opponent_state(
         status=_normalize_status(pokemon.status),
         item=item,
         ability=ability,
+        item_lost=unburden and item_was_lost(pokemon.item),
     )
     # poke-env reports current_hp/max_hp for OPPONENT Pokemon on a 0-100 or pixel scale,
     # not real Champions HP (see poke_env.battle.pokemon.Pokemon.current_hp's own

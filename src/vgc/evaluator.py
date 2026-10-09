@@ -114,6 +114,7 @@ from vgc.principles import (
     utility_kind,
 )
 from vgc.sets import (
+    item_was_lost,
     live_form,
     mega_species_id,
     set_priors_for,
@@ -124,6 +125,7 @@ from vgc.sets import (
     opponent_signal_team,
     opponent_state,
 )
+from vgc.priority_rules import psychic_terrain_blocks
 from vgc.stats import STAT_IDS
 from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
@@ -134,12 +136,13 @@ from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 _UNSET = object()
 
 _PARALYSIS_SPEED_MULTIPLIER = 0.5
+_UNBURDEN_SPEED_MULTIPLIER = 2.0  # data/abilities.ts unburden volatile onModifySpe
 _CHOICE_SCARF_SPEED_MULTIPLIER = 1.5
 
 
 def effective_speed(state: PokemonState) -> float:
     """Effective Speed stat for turn-order purposes: boost stage, then Choice Scarf
-    (1.5x) and paralysis (0.5x). A float estimate (not the engine's exact 4096ths-chain
+    (1.5x), paralysis (0.5x) and Unburden once the holder's item is gone (2x). A float estimate (not the engine's exact 4096ths-chain
     integer math) -- fine for comparing two Pokemon's turn order, which is all this is
     used for; nothing here feeds back into `vgc.damage`'s own (exact) calculations.
     """
@@ -150,6 +153,8 @@ def effective_speed(state: PokemonState) -> float:
         speed *= _CHOICE_SCARF_SPEED_MULTIPLIER
     if state.status == "par":
         speed *= _PARALYSIS_SPEED_MULTIPLIER
+    if state.item_lost and state.ability == "unburden":
+        speed *= _UNBURDEN_SPEED_MULTIPLIER
     return speed
 
 
@@ -640,7 +645,9 @@ def _screens_from(side_conditions) -> frozenset[str]:
     )
 
 
-def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonState:
+def _our_pokemon_state(
+    pokemon: Pokemon, evolved_form: bool = True, unburden: bool = False
+) -> PokemonState:
     """Build a PokemonState for one of OUR OWN Pokemon. Unlike `vgc.sets.opponent_state`,
     our own Stat Points/nature are genuinely known (poke-env parses them straight from
     the Teambuilder team we supplied, see `Pokemon.evs`/`Pokemon.nature`'s docstrings) --
@@ -672,6 +679,7 @@ def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonSt
         status=normalize_status(pokemon.status),
         item=item,
         ability=ability,
+        item_lost=unburden and item_was_lost(pokemon.item),
     )
     if sp_spread is None or nature is None:
         from vgc.stats import default_opponent_nature, default_opponent_spread
@@ -706,10 +714,17 @@ def _with_revealed_sets(preview_mons: Sequence, battle) -> list:
 
 
 def _best_attacking_move(
-    attacker: PokemonState, move_ids: list[str], defender: PokemonState, field_state: FieldState
+    attacker: PokemonState,
+    move_ids: list[str],
+    defender: PokemonState,
+    field_state: FieldState,
+    block_psychic_priority: bool = False,
 ) -> tuple[float, str | None, int]:
     """The attacker's single best (highest expected %) supported, non-immune attacking
     move against `defender` from `move_ids`. Returns (0.0, None, 0) if none qualify.
+
+    ``block_psychic_priority`` (``PolicyConfig.psychic_terrain_blocks_priority``) drops
+    priority moves Psychic Terrain would stop from hitting a grounded `defender`.
     """
     moves_data = load_moves()
     best_pct, best_move_id, best_priority = 0.0, None, 0
@@ -717,6 +732,10 @@ def _best_attacking_move(
         move_id = to_id(raw_move_id)
         data = moves_data.get(move_id)
         if data is None or data["category"] == "Status":
+            continue
+        if block_psychic_priority and psychic_terrain_blocks(
+            data, attacker, defender, field_state.terrain
+        ):
             continue
         result = damage_range(attacker, defender, move_id, field_state)
         if not result.breakdown["move_supported"] or result.breakdown["immune"]:
@@ -757,8 +776,11 @@ def build_context(
         opp_pokemon.append(None)
 
     evolved_form = config.mega_state_uses_evolved_form
+    unburden = config.model_unburden
     our_states = [
-        _our_pokemon_state(mon, evolved_form) if mon is not None and not mon.fainted else None
+        _our_pokemon_state(mon, evolved_form, unburden)
+        if mon is not None and not mon.fainted
+        else None
         for mon in our_pokemon
     ]
     opp_states: list[PokemonState | None] = []
@@ -772,6 +794,7 @@ def build_context(
                 usage=usage,
                 nature_override=known_nature(meta_team, mon),
                 evolved_form=evolved_form,
+                unburden=unburden,
             )
             if mon is not None and not mon.fainted
             else None
@@ -825,7 +848,11 @@ def build_context(
                 continue
             move_ids = opponent_move_ids(opp_mon, priors=priors, config=config)
             pct, move_id, priority = _best_attacking_move(
-                opp_state, move_ids, our_state, field_vs_us
+                opp_state,
+                move_ids,
+                our_state,
+                field_vs_us,
+                config.psychic_terrain_blocks_priority,
             )
             threats_from_each_opp.append(pct)
             if pct > threat_on_us[our_idx].percent:
@@ -1165,6 +1192,17 @@ def _score_attack_order(
     num_hit = len(opp_targets) + len(ally_targets)
     actor_priority = int(move_data.get("priority", 0))
     actor_mon = ctx.our_pokemon[actor_slot]
+    if config.psychic_terrain_blocks_priority and ctx.terrain == "psychic":
+        # Blocked foes still count toward the spread modifier (`num_hit` above): the engine
+        # decides spread from the target list BEFORE the terrain's TryHit filter.
+        opp_targets = [
+            idx
+            for idx in opp_targets
+            if ctx.opp_states[idx] is None
+            or not psychic_terrain_blocks(
+                move_data, attacker_state, ctx.opp_states[idx], ctx.terrain
+            )
+        ]
 
     # A mega evolution that grants a weather-setting ability (Drought/Drizzle) takes
     # effect before this turn's moves resolve in the real engine -- score THIS order's

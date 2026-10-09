@@ -101,7 +101,12 @@ def test_falls_back_gracefully_with_no_opponent_preview() -> None:
 
 
 def test_sun_mega_is_recognized_as_a_lead_mode() -> None:
-    battle = _FakeBattle(_our_team(), _our_team())
+    # Mirror matchup, but the foe's Sylveon uses Cute Charm rather than Pixilate: with Pixilate its
+    # Hyper Voice is now (correctly) a STAB Fairy move, which changes the lead choice for reasons
+    # unrelated to what this test is about.
+    opp_team = _our_team()
+    opp_team[5] = _mon("sylveon", ["hypervoice", "protect"], ability="cutecharm")
+    battle = _FakeBattle(_our_team(), opp_team)
 
     order = build_team_order(battle, PolicyConfig())
 

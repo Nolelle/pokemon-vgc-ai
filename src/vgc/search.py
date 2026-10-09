@@ -154,6 +154,7 @@ from vgc.sets import (
     pre_mega_species_id,
     usage_spreads_for,
 )
+from vgc.priority_rules import psychic_terrain_blocks
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
 from vgc.weather_abilities import weather_adjusted_accuracy
 from vgc.action_sanity import choice_locked_status_slots
@@ -723,6 +724,9 @@ class ExchangeResult:
     # `PolicyConfig.weather_accuracy_modifiers`: Thunder/Hurricane/Blizzard hit with their
     # weather-dependent probability (see `vgc.weather_abilities.weather_adjusted_accuracy`).
     weather_accuracy: bool = False
+    # `PolicyConfig.psychic_terrain_blocks_priority` / `spread_recount_targets`.
+    psychic_terrain_priority: bool = False
+    spread_recount: bool = False
 
 
 @dataclass(frozen=True)
@@ -813,6 +817,31 @@ class _Action:
     # while PolicyConfig.search_apply_setup_boosts is on (see `_attach_setup_boosts`), so
     # with the knob off `_apply_action` never sees one.
     boost_plan: SetupBoost | None = None
+
+
+_TERRAIN_SEEDS = {
+    "electricseed": "electric",
+    "grassyseed": "grassy",
+    "psychicseed": "psychic",
+    "mistyseed": "misty",
+}
+
+
+def _consume_terrain_seeds(states: list[PokemonState | None], terrain: str | None) -> None:
+    """A terrain seed is eaten the moment its terrain is up. For an Unburden holder (Sneasler
+    with a Psychic Seed) that consumption doubles its Speed, so apply it before the turn's
+    move order is fixed. Other holders are left alone: the seed's stat boost is not modelled."""
+
+    if terrain is None:
+        return
+    for state in states:
+        if (
+            state is not None
+            and state.ability == "unburden"
+            and _TERRAIN_SEEDS.get(state.item or "") == terrain
+        ):
+            state.item = None
+            state.item_lost = True
 
 
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
@@ -1401,6 +1430,16 @@ def _apply_action(
         return
 
     num_targets = len(action.targets)
+    if result.spread_recount and action.spread:
+        # The engine reads the spread modifier off the targets present when the move
+        # executes, so a target KO'd earlier this turn no longer counts (a Protecting or
+        # terrain-blocked target still does: both filters run after the count).
+        num_targets = sum(
+            1
+            for target_side, target_idx, _ally in action.targets
+            if (our_states if target_side == "our" else opp_states)[target_idx] is not None
+            and (our_states if target_side == "our" else opp_states)[target_idx].hp_or_max() > 0
+        )
     field_vs_us = FieldState(
         weather=weather_for_exchange,
         terrain=terrain_now,
@@ -1431,6 +1470,14 @@ def _apply_action(
         defender_state = defender_states[idx]
         if defender_state is None or defender_state.hp_or_max() <= 0:
             continue  # already fainted earlier this exchange -- no damage to deal
+        if (
+            result.psychic_terrain_priority
+            and side != action.side
+            and psychic_terrain_blocks(
+                load_moves().get(action.move_id) or {}, actor_state, defender_state, terrain_now
+            )
+        ):
+            continue  # Psychic Terrain stops priority moves onto grounded foes.
         protected = our_protected if side == "our" else opp_protected
         protect_success_prob = protected[idx]
         if protect_success_prob >= 1.0:
@@ -1498,6 +1545,9 @@ def resolve_exchange(
                 weather_for_exchange = value
             else:
                 terrain_for_exchange = value
+    if config.model_unburden:
+        _consume_terrain_seeds(our_states, terrain_for_exchange)
+        _consume_terrain_seeds(opp_states, terrain_for_exchange)
     opp_actions = _build_opp_actions(opp_response, ctx)
     if config.search_apply_setup_boosts:
         _attach_setup_boosts(our_actions + opp_actions, config)
@@ -1559,6 +1609,8 @@ def resolve_exchange(
         result.our_tailwind_last = remaining["our_tailwind"]
         result.opp_tailwind_last = remaining["opp_tailwind"]
     result.weather_accuracy = config.weather_accuracy_modifiers
+    result.psychic_terrain_priority = config.psychic_terrain_blocks_priority
+    result.spread_recount = config.spread_recount_targets
     if config.search_model_field_setters:
         result.field_setters = True
         result.weather = weather_for_exchange
