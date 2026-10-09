@@ -584,8 +584,12 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 		// lost its item (consumed, knocked off) came back without the doubled Speed.
 		// Own side: the packed team gave it an item and the request now shows none.
 		// Foe: the item is publicly known to be gone.
-		const itemGone = snapshot.item_state === 'consumed' ||
-			(snapshot.item_state === 'none' && Boolean(originalItem));
+		// Showdown ends Unburden on switch-out and a return without the item does not bring
+		// it back, so the public protocol's "lost it DURING THIS STINT" fact decides when the
+		// battle memory supplied it; only without memory fall back to "the item is gone".
+		const itemGone = snapshot.item_lost_this_stint ??
+			(snapshot.item_state === 'consumed' ||
+				(snapshot.item_state === 'none' && Boolean(originalItem)));
 		if (pokemon.ability === 'unburden' && !pokemon.item && itemGone &&
 			!pokemon.volatiles.unburden) {
 			pokemon.volatiles.unburden = { id: 'unburden', target: pokemon };

@@ -432,7 +432,9 @@ def item_was_lost(raw_item: str | None) -> bool:
     tricked away), as opposed to merely unrevealed (``"unknown_item"``).
 
     poke-env sets an opponent's item to ``None`` on ``-enditem`` and our own request reports
-    ``""`` once it is gone. Used for Unburden (``PolicyConfig.model_unburden``).
+    ``""`` once it is gone. Used for Unburden (``PolicyConfig.model_unburden``) together with
+    ``BattleMemory.item_lost_this_stint``: Unburden ends on switch-out, so an empty item alone
+    (a Pokemon that lost it in an earlier stint) does not make it active.
     """
 
     return raw_item is None or raw_item == ""
@@ -602,6 +604,7 @@ def opponent_state(
     nature_override: str | None = None,
     evolved_form: bool = True,
     unburden: bool = False,
+    stint_lost: bool | None = None,
 ) -> PokemonState:
     """Build a `PokemonState` for an opponent Pokemon observed through poke-env.
 
@@ -653,7 +656,7 @@ def opponent_state(
         status=_normalize_status(pokemon.status),
         item=item,
         ability=ability,
-        item_lost=unburden and item_was_lost(pokemon.item),
+        item_lost=unburden and item_was_lost(pokemon.item) and stint_lost is not False,
     )
     # poke-env reports current_hp/max_hp for OPPONENT Pokemon on a 0-100 or pixel scale,
     # not real Champions HP (see poke_env.battle.pokemon.Pokemon.current_hp's own

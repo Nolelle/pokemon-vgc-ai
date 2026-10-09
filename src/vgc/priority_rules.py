@@ -11,6 +11,12 @@ from __future__ import annotations
 
 from vgc.damage import PokemonState, _is_grounded, to_id
 
+# Psychic Terrain's onTryHit runs once per targeted Pokemon. Moves aimed at the user, its side,
+# a whole side or the field (``self``, ``allySide``, ``foeSide``, ``all``, ``allies``,
+# ``adjacentAlly*``) never ask a foe to be hit, so a priority boost does not get them blocked.
+_TARGETS_WITH_PER_FOE_TRYHIT = frozenset(
+    {"normal", "any", "adjacentFoe", "allAdjacentFoes", "allAdjacent", "randomNormal"}
+)
 _GALE_WINGS_BONUS = 1
 _PRANKSTER_BONUS = 1
 _TRIAGE_BONUS = 3
@@ -58,7 +64,7 @@ def psychic_terrain_blocks(
     are exempt by the caller never asking.
     """
 
-    if terrain != "psychic" or move_data.get("target") == "self":
+    if terrain != "psychic" or move_data.get("target") not in _TARGETS_WITH_PER_FOE_TRYHIT:
         return False
     at_full_hp = attacker.hp_or_max() >= attacker.max_hp()
     if effective_priority(move_data, attacker.ability, at_full_hp) <= 0:

@@ -766,7 +766,15 @@ class ExchangeResult:
     # `model_move_accuracy` (per-target hit chance scales HP lost and faints in expectation).
     psychic_terrain_priority: bool = False
     spread_recount: bool = False
+    # With `move_accuracy`, a hit that may miss splits the target into "fainted" and "still
+    # up". `*_alive` is the probability each slot is still on the board; a slot's `current_hp`
+    # during the exchange is its HP GIVEN it is alive (a lethal hit lowers the alive mass and
+    # leaves HP alone, a non-lethal hit lowers expected HP by hit-chance x damage). Faints are
+    # the alive mass that was removed, so they can never exceed 1 per Pokemon, and a slot's
+    # later actions are scaled by its alive probability when it acts.
     move_accuracy: bool = False
+    our_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
+    opp_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
 
 
 @dataclass(frozen=True)
@@ -1341,6 +1349,11 @@ def _apply_action(
     terrain_now = result.terrain if result.field_setters else ctx.terrain
     can_act = our_can_act if action.side == "our" else opp_can_act
     actor_probability = action.action_probability * can_act[action.slot]
+    if result.move_accuracy:
+        # A Pokemon that may already have fainted this turn acts only on the surviving mass.
+        actor_probability *= (result.our_alive if action.side == "our" else result.opp_alive)[
+            action.slot
+        ]
     if actor_probability <= 0.0:
         return
 
@@ -1360,6 +1373,21 @@ def _apply_action(
             if actor_probability >= 0.5:  # modal-branch convention, as for Tailwind below
                 _set_field_condition(result, *setter)
             return
+        if result.psychic_terrain_priority and action.targets:
+            # A priority status move (Prankster Taunt, sleep, Thunder Wave, ...) aimed only at
+            # grounded foes is stopped by Psychic Terrain like a damaging one.
+            foe_states = [
+                (our_states if target_side == "our" else opp_states)[target_idx]
+                for target_side, target_idx, _ally in action.targets
+                if target_side != action.side
+            ]
+            action_data = load_moves().get(action.move_id) or {}
+            if foe_states and all(
+                state is not None
+                and psychic_terrain_blocks(action_data, actor_state, state, terrain_now)
+                for state in foe_states
+            ):
+                return
         # The flat utility proxy is signed by WHO it finally lands on: a foe-directed
         # effect (sleep, Taunt, Thunder Wave, ...) on the actor's own ally is a cost, not
         # the benefit it would be against a foe. Before this, a Sleep Powder on our own
@@ -1538,10 +1566,33 @@ def _apply_action(
             )
         before = defender_state.hp_or_max()
         actual_loss = min(damage_result.expected_damage, before)
+        max_hp = defender_state.max_hp()
+        if result.move_accuracy:
+            alive = result.our_alive if side == "our" else result.opp_alive
+            hit_mass = alive[idx] * target_probability  # P(still up AND the hit lands)
+            if actual_loss >= before:
+                # Lethal when it lands: remove that much of the alive mass, leave HP-given-alive.
+                removed = hit_mass
+                alive[idx] -= removed
+                if alive[idx] <= 0.0:
+                    alive[idx] = 0.0
+                    defender_state.current_hp = 0.0
+            else:
+                removed = 0.0
+                defender_state.current_hp = max(0.0, before - actual_loss * target_probability)
+            loss_pct = (
+                actual_loss / max_hp * 100.0 * failure_prob * hit_mass if max_hp else 0.0
+            )
+            if side == "our":
+                result.our_hp_lost_pct += loss_pct
+                result.our_faints += failure_prob * removed
+            else:
+                result.opp_hp_lost_pct += loss_pct
+                result.opp_faints += failure_prob * removed
+            continue
         probabilistic_action = target_probability < 1.0
         applied_loss = actual_loss * target_probability if probabilistic_action else actual_loss
         defender_state.current_hp = max(0.0, before - applied_loss)
-        max_hp = defender_state.max_hp()
         loss_pct = (
             actual_loss / max_hp * 100.0 * failure_prob * target_probability
             if max_hp
@@ -1710,6 +1761,14 @@ def resolve_exchange(
                 )
             pending.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
 
+    if result.move_accuracy:
+        # Expose EXPECTED HP (alive probability x HP given alive) to the value model; slots
+        # that are certainly down already read 0.
+        for states, alive in ((our_states, result.our_alive), (opp_states, result.opp_alive)):
+            for slot, mass in enumerate(alive):
+                state = states[slot]
+                if state is not None and 0.0 < mass < 1.0:
+                    state.current_hp = mass * state.hp_or_max()
     # `_apply_action` keeps each partially protected slot in the Protect-failure branch
     # so multiple incoming hits remain correlated. Convert that branch to expected HP
     # before exposing the post-exchange snapshot to the value model.

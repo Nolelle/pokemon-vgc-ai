@@ -194,6 +194,9 @@ class PokemonMechanicsState:
     terastallized: bool
     tera_type: str | None
     weight: float | None
+    # Public-protocol fact for Unburden: the item went away DURING the current stint (since the
+    # last switch-in). ``None`` = unknown (no battle memory), the consumer falls back to a guess.
+    item_lost_this_stint: bool | None = None
 
 
 def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str | None:
@@ -311,6 +314,7 @@ def snapshot_pokemon(
     opponent: bool,
     revealed_items: Mapping[str, str] | None = None,
     available_move_ids: tuple[str, ...] | None = None,
+    item_lost_this_stint: bool | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -445,6 +449,7 @@ def snapshot_pokemon(
         weight=float(getattr(pokemon, "weight", 0.0))
         if getattr(pokemon, "weight", None) is not None
         else None,
+        item_lost_this_stint=item_lost_this_stint,
     )
 
 
@@ -517,11 +522,20 @@ def _side_snapshot(
     while len(active) < 2:
         active.append(None)
     revealed_items = _revealed_items_for(battle) if opponent else None
+    memory = getattr(battle, "_vgc_battle_memory", None)
+    memory_role = None
+    if memory is not None:
+        memory_role = memory.opponent_role if opponent else memory.our_role
     pokemon_snapshots = tuple(
         snapshot_pokemon(
             mon,
             opponent=opponent,
             revealed_items=revealed_items,
+            item_lost_this_stint=(
+                memory.item_lost_this_stint(memory_role, getattr(mon, "species", None))
+                if memory is not None
+                else None
+            ),
             available_move_ids=_slot_available_move_ids(
                 opponent=opponent,
                 active=active,

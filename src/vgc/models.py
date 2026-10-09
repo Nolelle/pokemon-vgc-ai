@@ -392,8 +392,10 @@ class PolicyConfig:
     # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
     # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's
     # Psychic Seed) when the terrain is up, so the Speed doubling shows up in the same turn's
-    # move order. Known gap: poke-env keeps the empty item across a switch-out, so an Unburden
-    # Pokemon that returns without its item is still read as boosted. False is the legacy control.
+    # move order. Unburden ends on switch-out, so the builders also require the item to have been
+    # lost DURING THE CURRENT STINT (`BattleMemory.item_lost_this_stint`, from `-enditem`
+    # while active); without a battle memory they fall back to "the item is gone".
+    # False is the legacy control.
     model_unburden: bool = True
     # Spread-move damage modifier (x0.75) is decided by the targets the move actually has when
     # it executes (data: sim/battle-actions.ts trySpreadMoveHit), so a target KO'd earlier in

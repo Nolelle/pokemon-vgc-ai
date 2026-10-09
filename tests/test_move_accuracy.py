@@ -19,7 +19,7 @@ from vgc.data import load_moves
 from vgc.evaluator import _score_attack_order
 from vgc.models import PolicyConfig
 from vgc.priority_rules import usable_move_ids
-from vgc.search import _opp_slot_candidates, resolve_exchange
+from vgc.search import OppResponse, _OppSlotAction, _opp_slot_candidates, resolve_exchange
 
 MOVES = load_moves()
 OFF = PolicyConfig(model_move_accuracy=False, weather_accuracy_modifiers=False)
@@ -218,3 +218,73 @@ def test_search_only_offers_the_opponent_fake_out_on_its_first_turn() -> None:
     assert "fakeout" not in _opp_candidates(False, cfg)
     legacy = PolicyConfig(search_opp_moves_per_slot=4, first_turn_moves_restricted=False)
     assert "fakeout" in _opp_candidates(False, legacy)
+
+
+# --- KO accounting with misses (alive probability) ------------------------------------------
+
+
+def test_two_lethal_eighty_percent_hits_make_a_96_percent_ko_not_160() -> None:
+    attackers = [
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+    ]
+    foe = PokemonState("garchomp", current_hp=1)
+    ctx = _search_ctx(attackers, [foe, None])
+    order = _fake_order(
+        _fake_single("headsmash", move_target=1), _fake_single("headsmash", move_target=1)
+    )
+    on = resolve_exchange(order, _NO_OPP, ctx, PolicyConfig())
+    assert on.opp_faints == pytest.approx(1 - 0.2 * 0.2)
+    assert on.opp_faints <= 1.0
+
+
+def test_possibly_fainted_target_deals_only_its_surviving_share_of_its_reply() -> None:
+    attacker = PokemonState("golem", sp_spread={"atk": 32}, nature="adamant")
+    slow_foe = PokemonState("shuckle", sp_spread={"atk": 32}, nature="adamant", current_hp=1)
+    response = OppResponse(
+        slot0=_OppSlotAction(kind="move", move_id="earthquake", target_our_slot=0),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    def run(order, config):
+        return resolve_exchange(
+            order, response, _search_ctx([attacker, None], [slow_foe, None]), config
+        )
+
+    full_reply = run(_fake_order(None, None), PolicyConfig()).our_hp_lost_pct
+    assert full_reply > 0.0
+    # Head Smash (80%) KOs the slower Shuckle first 80% of the time: it replies 20% of the time.
+    smashed = run(_fake_order(_fake_single("headsmash", move_target=1), None), PolicyConfig())
+    assert smashed.our_hp_lost_pct == pytest.approx(0.2 * full_reply)
+    assert smashed.opp_faints == pytest.approx(0.8)
+    # A sure hit still KOs outright, so the reply never lands.
+    sure = run(_fake_order(_fake_single("earthquake", move_target=1), None), PolicyConfig())
+    assert sure.opp_faints == 1.0 and sure.our_hp_lost_pct == 0.0
+
+
+def test_sure_hit_kos_stay_exactly_one_even_when_stacked() -> None:
+    attackers = [
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+    ]
+    ctx = _search_ctx(attackers, [PokemonState("garchomp", current_hp=1), None])
+    order = _fake_order(
+        _fake_single("earthquake", move_target=1), _fake_single("earthquake", move_target=1)
+    )
+    assert resolve_exchange(order, _NO_OPP, ctx, PolicyConfig()).opp_faints == 1.0
+
+
+def test_accuracy_off_keeps_the_legacy_ko_bookkeeping() -> None:
+    # Legacy treats every damaging move as a sure hit: the first Head Smash KOs, the second
+    # finds a fainted target and does nothing.
+    attackers = [
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+        PokemonState("golem", sp_spread={"atk": 32}, nature="adamant"),
+    ]
+    ctx = _search_ctx(attackers, [PokemonState("garchomp", current_hp=1), None])
+    order = _fake_order(
+        _fake_single("headsmash", move_target=1), _fake_single("headsmash", move_target=1)
+    )
+    off = resolve_exchange(order, _NO_OPP, ctx, OFF)
+    assert off.opp_faints == 1.0
+    assert off.our_alive == [1.0, 1.0] and off.opp_alive == [1.0, 1.0]

@@ -110,6 +110,11 @@ class BattleMemory:
     # effect but drops the move from `|-start|...|Disable|Move`; the exact mirror needs it.
     # Deliberately NOT in `summary()` (that feeds the search's randomness key).
     disabled_moves: dict[tuple[str, str], str] = field(default_factory=dict)
+    # (role, species) of Pokemon that lost or consumed their item since they last came in.
+    # Showdown ends Unburden when its holder switches out, so only a loss during the CURRENT
+    # stint (cleared on the next switch-in) makes it active. Public protocol only.
+    _lost_item_this_stint: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    _stint_ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -175,6 +180,11 @@ class BattleMemory:
                     )
                 continue
             if kind == "-enditem" and len(message) > 3:
+                stint_role = _side(message[2])
+                if stint_role:
+                    self._lost_item_this_stint.add(
+                        (stint_role, self._stint_species(message[2]))
+                    )
                 if _side(message[2]) == self.opponent_role:
                     # Keep the revealed original item as knowledge even after consumption.
                     self.opponent_items.setdefault(
@@ -198,11 +208,32 @@ class BattleMemory:
                 self._observe_damage(message)
                 continue
             if kind in {"switch", "drag", "replace"} and len(message) > 2:
+                stint_role = _side(message[2])
+                if stint_role:
+                    details = message[3] if len(message) > 3 else _display_name(message[2])
+                    stint_species = to_id(str(details).split(",", 1)[0]) or "unknown"
+                    self._stint_ident_species[str(message[2])] = stint_species
+                    # A fresh stint: the previous one's Unburden volatile is gone.
+                    self._lost_item_this_stint.discard((stint_role, stint_species))
                 if _side(message[2]) == self.opponent_role:
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def _stint_species(self, token: object) -> str:
+        raw = str(token or "")
+        return self._stint_ident_species.get(raw, to_id(_display_name(raw)) or "unknown")
+
+    def item_lost_this_stint(self, role: str | None, species_id: str | None) -> bool | None:
+        """Did the ``role`` side's ``species_id`` lose its item since it last switched in?
+
+        ``None`` when the role is unknown. Used for Unburden (``-enditem`` while active).
+        """
+
+        if not role:
+            return None
+        return (role, to_id(species_id)) in self._lost_item_this_stint
 
     def _species_for_ident(self, token: object) -> str:
         raw = str(token or "")

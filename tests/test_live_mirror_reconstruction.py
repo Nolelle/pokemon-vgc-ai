@@ -314,6 +314,33 @@ def test_unburden_survives_after_the_foes_item_is_knocked_off() -> None:
             assert "unburden" not in _mon(legacy, "p2", "hitmonlee")["volatiles"]
 
 
+@pytest.mark.integration
+def test_unburden_does_not_return_after_a_switch_out_and_back_in() -> None:
+    by = _mons()
+    p1 = _team(
+        by["Garchomp"].replace("RockSlide,DragonClaw,Earthquake,Protect", "KnockOff,Protect,Earthquake,DragonClaw"),
+        by["Sylveon"], by["Venusaur"], by["Farigiraf"], by["Incineroar"], by["Charizard"],
+    )
+    hitmonlee = "Hitmonlee||SitrusBerry|Unburden|CloseCombat,KnockOff,Protect,FakeOut|Jolly|,32,,,2,32||||50|"
+    p2 = _team(hitmonlee, by["Farigiraf"], by["Venusaur"], by["Garchomp"], by["Incineroar"], by["Sylveon"])
+    turns = [
+        ("move knockoff 1, move protect", "move fakeout 2, move psychic 2"),
+        ("move protect, move protect", "switch 3, move psychic 2"),
+        ("move dragonclaw 2, move protect", "switch 3, move psychic 2"),
+    ]
+    with _battle(p1, p2, turns) as (source, memory):
+        view = source.battles["p1"]
+        if view.opponent_active_pokemon[0].species != "hitmonlee":
+            pytest.skip("Hitmonlee did not return to the field")
+        truth = _mon(source, "p2", "hitmonlee")
+        # Real battle: Unburden ended on switch-out and the berry stays gone.
+        assert "unburden" not in truth["volatiles"] and not truth["item"]
+        assert memory.item_lost_this_stint("p2", "hitmonlee") is False
+        next(m for m in view.opponent_team.values() if m.species == "hitmonlee").ability = "unburden"
+        with _root(source, p1) as root:
+            assert "unburden" not in _mon(root, "p2", "hitmonlee")["volatiles"]
+
+
 # --- 6. sleep timers / 11. reply dedupe ------------------------------------------------
 
 

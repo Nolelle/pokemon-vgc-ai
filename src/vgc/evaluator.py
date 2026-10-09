@@ -647,7 +647,10 @@ def _screens_from(side_conditions) -> frozenset[str]:
 
 
 def _our_pokemon_state(
-    pokemon: Pokemon, evolved_form: bool = True, unburden: bool = False
+    pokemon: Pokemon,
+    evolved_form: bool = True,
+    unburden: bool = False,
+    stint_lost: bool | None = None,
 ) -> PokemonState:
     """Build a PokemonState for one of OUR OWN Pokemon. Unlike `vgc.sets.opponent_state`,
     our own Stat Points/nature are genuinely known (poke-env parses them straight from
@@ -680,7 +683,7 @@ def _our_pokemon_state(
         status=normalize_status(pokemon.status),
         item=item,
         ability=ability,
-        item_lost=unburden and item_was_lost(pokemon.item),
+        item_lost=unburden and item_was_lost(pokemon.item) and stint_lost is not False,
     )
     if sp_spread is None or nature is None:
         from vgc.stats import default_opponent_nature, default_opponent_spread
@@ -784,8 +787,17 @@ def build_context(
 
     evolved_form = config.mega_state_uses_evolved_form
     unburden = config.model_unburden
+    memory = getattr(battle, "_vgc_battle_memory", None)
+
+    def stint_lost(mon, opponent: bool) -> bool | None:
+        """Public-protocol fact: did `mon` lose its item since it last switched in (Unburden)?"""
+        if memory is None or not unburden:
+            return None
+        role = memory.opponent_role if opponent else memory.our_role
+        return memory.item_lost_this_stint(role, getattr(mon, "species", None))
+
     our_states = [
-        _our_pokemon_state(mon, evolved_form, unburden)
+        _our_pokemon_state(mon, evolved_form, unburden, stint_lost(mon, False))
         if mon is not None and not mon.fainted
         else None
         for mon in our_pokemon
@@ -802,6 +814,7 @@ def build_context(
                 nature_override=known_nature(meta_team, mon),
                 evolved_form=evolved_form,
                 unburden=unburden,
+                stint_lost=stint_lost(mon, True),
             )
             if mon is not None and not mon.fainted
             else None
@@ -1591,6 +1604,21 @@ def _score_status_move(
                 "target_slot": ally_idx,
             }
         return 0.0, {"reason": "ally_target_unmodeled", "target_slot": ally_idx}
+    if (
+        config.psychic_terrain_blocks_priority
+        and ctx.terrain == "psychic"
+        and targets
+        and ctx.our_states[actor_slot] is not None
+    ):
+        # Priority status moves (Prankster Taunt/Thunder Wave/sleep, ...) are stopped by
+        # Psychic Terrain on grounded foes just like damaging ones.
+        foe_states = [ctx.opp_states[idx] for idx, is_ally in targets if not is_ally]
+        if foe_states and all(
+            state is not None
+            and psychic_terrain_blocks(move_data, ctx.our_states[actor_slot], state, ctx.terrain)
+            for state in foe_states
+        ):
+            return 0.0, {"reason": "psychic_terrain_blocks_priority"}
     if move_id == "trickroom":
         return _score_trick_room(ctx, config)
     if move_id in SLEEP_MOVES:

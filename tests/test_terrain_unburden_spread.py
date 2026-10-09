@@ -239,3 +239,53 @@ def test_spread_move_with_two_living_targets_is_unchanged() -> None:
             order, _NO_OPP, ctx, PolicyConfig(spread_recount_targets=False)
         ).opp_hp_lost_pct
     )
+
+
+# --- priority STATUS moves under Psychic Terrain ---------------------------------------------
+
+
+def _prankster_taunt_score(foe: PokemonState, config: PolicyConfig, terrain, ability="prankster"):
+    from vgc.evaluator import _score_status_move
+
+    attacker = PokemonState("whimsicott", ability=ability)
+    ctx = replace(
+        _attack_ctx(ally_state=None, opp_state=foe, attacker_state=attacker),
+        terrain=terrain,
+    )
+    ctx.opp_pokemon[0].moves = {"protect": None, "swordsdance": None, "earthquake": None}
+    move, single = _single_for("taunt", move_target=1)
+    return _score_status_move("taunt", MOVES["taunt"], single, 0, ctx, config)
+
+
+def test_prankster_taunt_into_grounded_foe_is_blocked_by_psychic_terrain() -> None:
+    on, off = PolicyConfig(), PolicyConfig(psychic_terrain_blocks_priority=False)
+    blocked = _prankster_taunt_score(_garchomp(), on, "psychic")
+    assert blocked[0] == 0.0 and blocked[1]["reason"] == "psychic_terrain_blocks_priority"
+    assert _prankster_taunt_score(_garchomp(), off, "psychic")[0] > 0.0
+    assert _prankster_taunt_score(_garchomp(), on, None)[0] > 0.0
+    # Not Prankster (priority 0), or an airborne foe: Taunt still lands.
+    assert _prankster_taunt_score(_garchomp(), on, "psychic", ability="infiltrator")[0] > 0.0
+    assert _prankster_taunt_score(PokemonState("talonflame"), on, "psychic")[0] > 0.0
+
+
+def test_psychic_terrain_ignores_status_moves_that_do_not_target_a_foe() -> None:
+    prankster = PokemonState("whimsicott", ability="prankster")
+    foe = _garchomp()
+    for move_id in ("tailwind", "reflect", "protect", "stealthrock"):
+        assert psychic_terrain_blocks(MOVES[move_id], prankster, foe, "psychic") is False
+    assert psychic_terrain_blocks(MOVES["taunt"], prankster, foe, "psychic") is True
+
+
+def test_search_prankster_taunt_is_blocked_by_psychic_terrain() -> None:
+    prankster = PokemonState("whimsicott", ability="prankster")
+    order = _fake_order(_fake_single("taunt", move_target=1), None)
+
+    def utility(foe, config, terrain="psychic"):
+        ctx = _search_ctx([prankster, None], [foe, None], terrain)
+        ctx.opp_pokemon[0].moves = {"protect": None, "earthquake": None, "swordsdance": None}
+        return resolve_exchange(order, _NO_OPP, ctx, config).our_utility_value
+
+    assert utility(_garchomp(), PolicyConfig(psychic_terrain_blocks_priority=False)) > 0.0
+    assert utility(_garchomp(), PolicyConfig()) == 0.0
+    assert utility(_garchomp(), PolicyConfig(), terrain=None) > 0.0
+    assert utility(PokemonState("talonflame"), PolicyConfig()) > 0.0
