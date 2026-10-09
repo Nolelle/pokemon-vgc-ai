@@ -504,6 +504,36 @@ class PolicyConfig:
     # survives the public patch, and an already-Mega'd foe holds the stone its forme
     # requires. False is the exact legacy control (the foe never Megas in the mirror).
     exact_mirror_opponent_mega: bool = True
+    # Live-mirror reconstruction fixes (2026-10-09, from a read-only Codex audit). Each is
+    # True = fixed, False = the exact legacy reconstruction, kept for same-session A/Bs.
+    # HP scale: a foe's public HP is a PERCENT (100/100), and the patch copied it into
+    # Showdown's absolute hp/maxhp, so a 186-HP foe was simulated with 100 max HP and died
+    # to about half the real damage. True keeps the mirror set's calculated max HP and
+    # converts the percent to the HP Champions would have displayed it as.
+    exact_mirror_hp_scale: bool = True
+    # Hidden foe items: an unrevealed foe's guessed (belief / prior) item was blanked by
+    # the public patch on ACTIVE foes (benched foes kept it). True keeps the guess until
+    # the item is publicly consumed/removed or revealed to be something else.
+    exact_mirror_keep_hidden_items: bool = True
+    # A foe that already Mega Evolved had its species and types patched but kept the BASE
+    # forme's stats (a foe's numeric stats are never public). True recalculates them from
+    # the Mega forme's base stats and the mirror set's own spread, as Showdown does.
+    exact_mirror_mega_stats: bool = True
+    # State the public patch used to drop: moves used since switch-in (Fake Out / First
+    # Impression could be used again in every branch), the Choice lock on a revealed
+    # Choice item, the Toxic stage (Toxic did 0 damage), the Disable target move, and an
+    # activated Unburden. True restores them for both sides.
+    exact_mirror_restore_state: bool = True
+    # Exact live-judge timers: with one hypothesis the judge kept only the most likely
+    # remaining sleep and dropped the 1/3 shorter one (a real wake chance became 0).
+    # True searches every remaining-duration branch (up to exact_search_state_hypotheses)
+    # and weights them by the real sampling prior. False is the single-branch legacy.
+    exact_judge_exact_timers: bool = True
+    # Opponent reply shortlist: a Mega and a non-Mega version of the same move plan are
+    # two orders to the evaluator, so in a Mega position every one of the top N replies
+    # could be the same two plans twice. True keeps only the higher-scored twin so N slots
+    # hold N distinct plans. False is the legacy top-N.
+    exact_search_dedupe_mega_replies: bool = True
     # Points per Pokemon still standing (brought and not fainted, unseen opponent
     # reserves included), on top of its HP. Without it a KO was worth only the target's
     # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,

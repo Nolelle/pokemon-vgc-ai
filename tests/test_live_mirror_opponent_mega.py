@@ -167,21 +167,23 @@ def test_legacy_knob_false_never_lets_the_opponent_mega() -> None:
 
 
 @pytest.mark.integration
-def test_opponent_reply_shortlist_mega_duplicates_are_counted(capsys) -> None:
-    """Informational: how many of the judge's opp replies are Mega variants."""
+def test_opponent_reply_shortlist_holds_distinct_plans() -> None:
+    """The judge's N opp replies are N distinct plans, not Mega/non-Mega twins."""
 
+    from vgc.rl.exact_search import _opponent_replies
+
+    config = replace(CONFIG, search_opp_candidates=CONFIG.exact_judge_opp_candidates)
     with _fogged_source() as (source, own_team):
         with _mirror_root(source, own_team, CONFIG) as root:
-            replies = score_joint_orders(root.battles["p2"], CONFIG)[
-                : CONFIG.exact_judge_opp_candidates
-            ]
-            mega = [entry for entry in replies if _MEGA.search(entry.order.message)]
-            with capsys.disabled():
-                print(
-                    f"\nopp replies kept={len(replies)} mega variants={len(mega)}: "
-                    + " | ".join(entry.order.message for entry in replies)
-                )
-            assert replies
+            ranked = score_joint_orders(root.battles["p2"], config)
+            legacy = _opponent_replies(
+                ranked, replace(config, exact_search_dedupe_mega_replies=False)
+            )
+            deduped = _opponent_replies(ranked, config)
+            plans = {_MEGA.sub("", entry.order.message) for entry in deduped}
+            assert len(deduped) == config.search_opp_candidates
+            assert len(plans) == len(deduped)
+            assert len(legacy) == len(deduped)
 
 
 def test_snapshot_reports_opponent_mega_as_unknown_until_used() -> None:

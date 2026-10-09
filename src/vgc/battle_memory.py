@@ -106,6 +106,10 @@ class BattleMemory:
     damage_observations: list[DamageObservation] = field(default_factory=list)
     opponent_items: dict[str, str] = field(default_factory=dict)
     opponent_abilities: dict[str, str] = field(default_factory=dict)
+    # (side, species or name) -> the move Disable shut off. poke-env keeps the Disable
+    # effect but drops the move from `|-start|...|Disable|Move`; the exact mirror needs it.
+    # Deliberately NOT in `summary()` (that feeds the search's randomness key).
+    disabled_moves: dict[tuple[str, str], str] = field(default_factory=dict)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -176,6 +180,12 @@ class BattleMemory:
                     self.opponent_items.setdefault(
                         self._species_for_ident(message[2]), to_id(message[3]) or "unknown"
                     )
+                continue
+            if kind == "-start" and len(message) > 4 and to_id(message[3]) == "disable":
+                role = _side(message[2])
+                move_id = to_id(message[4])
+                if role and move_id:
+                    self.disabled_moves[(role, self._species_for_ident(message[2]))] = move_id
                 continue
             if kind == "-crit" and len(message) > 2:
                 target_role = _side(message[2])

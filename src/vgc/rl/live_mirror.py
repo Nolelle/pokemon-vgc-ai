@@ -137,6 +137,45 @@ def _evolved_mega_stone(mon) -> str | None:
     return to_id((load_species().get(forme_id) or {}).get("requiredItem")) or None
 
 
+def _disabled_move_payload(battle) -> dict[str, dict[str, dict[str, str]]]:
+    """``{our|opponent: {species_id: {disabledMove}}}`` for every Pokemon under Disable.
+
+    poke-env keeps the Disable effect but not the move it shut off; the protocol memory
+    recorded it from the ``-start`` line. A Pokemon whose Disable has since ended or been
+    cleared by a switch has no Disable effect in the snapshot, so a stale record is never
+    used.
+    """
+
+    memory = getattr(battle, "_vgc_battle_memory", None)
+    disabled = getattr(memory, "disabled_moves", None)
+    if not disabled:
+        return {}
+    state = snapshot_battle(battle)
+    roles = {
+        "our": getattr(memory, "our_role", None) or getattr(battle, "player_role", None),
+        "opponent": getattr(memory, "opponent_role", None),
+    }
+    result: dict[str, dict[str, dict[str, str]]] = {}
+    for key, side in (("our", state.our_side), ("opponent", state.opponent_side)):
+        for mon in side.pokemon:
+            if not any(effect.id == "disable" for effect in mon.effects):
+                continue
+            names = [
+                to_id(mon.name), mon.base_species_id, mon.species_id,
+            ]
+            move = next(
+                (
+                    disabled[(roles[key], name)]
+                    for name in names
+                    if name and (roles[key], name) in disabled
+                ),
+                None,
+            )
+            if move:
+                result.setdefault(key, {})[mon.species_id] = {"disabledMove": move}
+    return result
+
+
 def _fallback_moves(species_id: str) -> list[str]:
     learnset = list((load_learnsets().get(species_id) or {}).keys())
     moves = load_moves()
@@ -605,6 +644,32 @@ class LiveExactMirror:
         self.last_excluded_hypotheses: list[MirrorHypothesis] = []
         self._last_representatives: list[MirrorHypothesis] = []
 
+    def patch_options(self) -> dict[str, bool]:
+        """Which reconstruction fixes the public patch applies (see the PolicyConfig knobs)."""
+
+        config = self.config
+        return {
+            "hpScale": config.exact_mirror_hp_scale,
+            "keepHiddenItems": config.exact_mirror_keep_hidden_items,
+            "megaStats": config.exact_mirror_mega_stats,
+            "restoreState": config.exact_mirror_restore_state,
+        }
+
+    def _hidden_payload(self, battle, hypothesis) -> dict | None:
+        """The hypothesis's hidden timers plus public history the snapshot cannot carry."""
+
+        payload = hypothesis.payload if hypothesis is not None else None
+        if not self.config.exact_mirror_restore_state:
+            return payload
+        history = _disabled_move_payload(battle)
+        if not history:
+            return payload
+        merged = {side: dict(species) for side, species in (payload or {}).items()}
+        for side, by_species in history.items():
+            for species_id, facts in by_species.items():
+                merged.setdefault(side, {}).setdefault(species_id, {}).update(facts)
+        return merged
+
     def _snapshot(self, battle):
         return snapshot_battle(
             battle, opponent_mega_unknown=self.config.exact_mirror_opponent_mega
@@ -748,8 +813,9 @@ class LiveExactMirror:
                 self._snapshot(battle),
                 perspective=side,
                 observation_battle=battle,
-                hidden_hypothesis=hypothesis.payload if hypothesis is not None else None,
+                hidden_hypothesis=self._hidden_payload(battle, hypothesis),
                 opponent_mega=self.config.exact_mirror_opponent_mega,
+                options=self.patch_options(),
             )
             return root
         except Exception:
@@ -779,8 +845,9 @@ class LiveExactMirror:
             self._snapshot(battle),
             perspective=self.side_for(battle),
             observation_battle=battle,
-            hidden_hypothesis=hypothesis.payload,
+            hidden_hypothesis=self._hidden_payload(battle, hypothesis),
             opponent_mega=self.config.exact_mirror_opponent_mega,
+            options=self.patch_options(),
         )
         return root
 
