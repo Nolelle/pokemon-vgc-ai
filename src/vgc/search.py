@@ -89,7 +89,8 @@ before it).
 - **This is not a complete Showdown mechanics engine.** Existing sleep and newly caused
   sleep now reduce action probability using the Champions mod's custom duration, base
   accuracy, common immunities, berries, terrain, and Protect. The forecast still omits
-  damaging-move accuracy, most secondary effects and residual damage, flinch/Fake Out
+  damaging-move accuracy (except the weather-dependent Thunder/Hurricane/Blizzard, see
+  ``PolicyConfig.weather_accuracy_modifiers``), most secondary effects and residual damage, flinch/Fake Out
   action cancellation, paralysis/freeze action denial, side-wide guards, exact setup
   stage changes, Focus Sash/Sturdy survival, and many item/ability effects. The current
   coverage and ladder-team priorities are tracked in ``docs/mechanics_coverage.md``.
@@ -125,7 +126,6 @@ from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.field_setters import ability_condition, move_condition
 from vgc.evaluator import (
-    _ABILITY_WEATHER,
     _PROTECT_MOVES,
     _SELF_PROTECT_MOVES,
     _SINGLE_TARGETS,
@@ -133,6 +133,7 @@ from vgc.evaluator import (
     _SPREAD_TARGETS_HITTING_ALLY,
     _TERRAIN_TO_STR,
     _Context,
+    _ability_weather,
     _best_attacking_move,
     _our_pokemon_state,
     _resolve_targets,
@@ -154,6 +155,7 @@ from vgc.sets import (
     usage_spreads_for,
 )
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
+from vgc.weather_abilities import weather_adjusted_accuracy
 from vgc.action_sanity import choice_locked_status_slots
 
 # --- opponent response candidates ---------------------------------------------------------
@@ -718,6 +720,9 @@ class ExchangeResult:
     # while the exchange resolves (a setter move or switch-in changes them for the actions
     # after it) and `terrain` is read by the forecast even without condition expiry.
     field_setters: bool = False
+    # `PolicyConfig.weather_accuracy_modifiers`: Thunder/Hurricane/Blizzard hit with their
+    # weather-dependent probability (see `vgc.weather_abilities.weather_adjusted_accuracy`).
+    weather_accuracy: bool = False
 
 
 @dataclass(frozen=True)
@@ -853,8 +858,9 @@ def _build_our_actions(
             state = our_states[slot]
             if state is not None:
                 our_states[slot] = mega_evolved_state(state)
-                if our_states[slot].ability in _ABILITY_WEATHER:
-                    weather_override = _ABILITY_WEATHER[our_states[slot].ability]
+                mega_weather = _ability_weather(our_states[slot].ability, config)
+                if mega_weather is not None:
+                    weather_override = mega_weather
         if move_data["category"] == "Status":
             if move_id in _PROTECT_MOVES:
                 pokemon = ctx.our_pokemon[slot]
@@ -1411,6 +1417,10 @@ def _apply_action(
         is_doubles=True,
         num_targets=num_targets,
     )
+    if result.weather_accuracy:
+        hit_probability = weather_adjusted_accuracy(action.move_id, weather_for_exchange)
+        if hit_probability is not None:
+            actor_probability *= hit_probability
     for side, original_idx, _is_ally in action.targets:
         idx = original_idx
         if not action.spread and side != action.side:
@@ -1476,7 +1486,7 @@ def resolve_exchange(
         elif slot_action.mega_state is not None:
             # Mega Evolution resolves before any move, like ours in `_build_our_actions`.
             opp_states[slot] = _copy_state(slot_action.mega_state)
-            mega_weather = _ABILITY_WEATHER.get(slot_action.mega_state.ability)
+            mega_weather = _ability_weather(slot_action.mega_state.ability, config)
             if mega_weather is not None and weather_override is None:
                 weather_for_exchange = mega_weather
     terrain_for_exchange = ctx.terrain
@@ -1548,6 +1558,7 @@ def resolve_exchange(
         result.trick_room_last = remaining["trick_room"]
         result.our_tailwind_last = remaining["our_tailwind"]
         result.opp_tailwind_last = remaining["opp_tailwind"]
+    result.weather_accuracy = config.weather_accuracy_modifiers
     if config.search_model_field_setters:
         result.field_setters = True
         result.weather = weather_for_exchange

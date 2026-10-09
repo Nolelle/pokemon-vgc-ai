@@ -339,6 +339,39 @@ class PolicyConfig:
     # alternate Megas remain legal but need a real current-turn gain to overcome it.
     default_mega_bonus: float = 6.0
     alternate_mega_penalty: float = 8.0
+    # Which abilities count as "the Mega sets weather" for the quick scorer and the fast
+    # search (`vgc.evaluator._ability_weather`). The legacy table held only Drought and
+    # Drizzle, so Mega Tyranitar (Sand Stream), Mega Abomasnow and Mega Froslass (Snow
+    # Warning) looked weatherless: their damage was scored in the stale pre-Mega weather and
+    # their weather change never made the Mega "material". True uses
+    # `vgc.field_setters.ABILITY_CONDITIONS` filtered to weather; False is the legacy
+    # control (Drought/Drizzle only).
+    weather_abilities_complete: bool = True
+    # Weather-dependent accuracy in the fast search's damage forecast: Thunder and
+    # Hurricane never miss in rain and are 50% accurate in sun, Blizzard never misses in snow
+    # (data/moves.ts onModifyMove; the Champions mod does not override them). The forecast
+    # otherwise ignores damaging-move accuracy, so only these weather-dependent moves are
+    # discounted (70% base elsewhere). False is the legacy control: they always connect.
+    weather_accuracy_modifiers: bool = True
+    # Sign the weather change a Mega Evolution causes. A Mega whose ability REPLACES a weather
+    # our own team gains from (setters, Chlorophyll/Swift Swim/Sand Rush/Slush Rush and the
+    # other weather-benefit abilities of our remaining Pokemon, including Mega forms) with one
+    # it gains less from is not "material" and pays `mega_harmful_weather_penalty`; a change
+    # to a weather our team gains from still counts as material. False is the legacy control:
+    # any weather change is material.
+    mega_weather_signed: bool = True
+    # Score cost for a Mega Evolution that replaces a weather our team prefers with a worse
+    # one. Set just above `mega_material_gain_floor` (10): the Mega must clearly out-damage
+    # its non-Mega twin before it is worth taking our own weather off the board. It stacks
+    # with `mega_unnecessary_penalty` when the Mega is also not otherwise material.
+    mega_harmful_weather_penalty: float = 12.0
+    # When our living team holds exactly ONE usable Mega stone there is no once-per-battle
+    # resource to preserve against a better target, so skip `mega_unnecessary_penalty` (and
+    # prefer the Mega twin by a tiny tie-break so the exact judge, which keeps fast-search
+    # order on equal values, evolves). Exception: a Mega whose own weather is ALREADY up gains
+    # nothing weather-wise now, and holding keeps the evolution available to re-summon it after
+    # an opposing setter replaces it, so the penalty stays. False is the legacy control.
+    mega_single_stone_no_hold: bool = True
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when

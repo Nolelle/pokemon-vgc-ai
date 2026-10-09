@@ -125,6 +125,7 @@ from vgc.sets import (
     opponent_state,
 )
 from vgc.stats import STAT_IDS
+from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
 # --- pure building blocks (unit tested directly against hand-built PokemonStates) ------
 
@@ -325,7 +326,71 @@ _SIDE_CONDITION_TO_SCREEN = {
 # so a mega order that evolves into one of these abilities needs its own moves (including
 # the mega's own turn) scored against the NEW weather, not the stale pre-mega one -- see
 # `_score_attack_order`'s `weather_for_this_order` computation.
+#
+# This is the LEGACY table (Drought/Drizzle only); `_ability_weather` picks the complete
+# `vgc.weather_abilities.SETTER_ABILITY_WEATHER` (adds Sand Stream, Snow Warning, ...) when
+# `PolicyConfig.weather_abilities_complete` is on.
 _ABILITY_WEATHER = {"drought": "sun", "drizzle": "rain"}
+# Tie-break nudge toward the Mega twin when holding has no value (same magnitude as the
+# `mega_evolve_asap` nudge); far below any scoring weight.
+_MEGA_TIEBREAK = 1e-3
+
+
+def _ability_weather(ability: str | None, config: PolicyConfig) -> str | None:
+    """Weather an ability sets on entering/evolving, per ``config.weather_abilities_complete``."""
+
+    table = SETTER_ABILITY_WEATHER if config.weather_abilities_complete else _ABILITY_WEATHER
+    return table.get(ability or "")
+
+
+def _our_team_mons(ctx: _Context) -> list:
+    """Our remaining Pokemon (bench included) as poke-env objects; the actives only when the
+    battle stub has no ``team`` (unit-test contexts)."""
+
+    team = getattr(ctx.battle, "team", None)
+    if team:
+        return list(team.values())
+    return [mon for mon in ctx.our_pokemon if mon is not None]
+
+
+def _mega_weather_effect(
+    mega_ability: str | None, ctx: _Context, config: PolicyConfig
+) -> tuple[str | None, bool, bool]:
+    """``(new_weather, changes, harmful)`` for a Mega that evolves into ``mega_ability``.
+
+    ``changes``: it sets a weather that is not the one now up. ``harmful`` (only with
+    ``mega_weather_signed``): our team gains from the weather it would replace strictly more
+    than from the one it brings, so the swap hurts us and must not count as material.
+    """
+
+    new_weather = _ability_weather(mega_ability, config)
+    changes = new_weather is not None and new_weather != ctx.weather
+    harmful = False
+    if changes and config.mega_weather_signed:
+        scores = team_weather_scores(_our_team_mons(ctx))
+        harmful = scores.get(new_weather, 0) < scores.get(ctx.weather or "", 0)
+    return new_weather, changes, harmful
+
+
+def _mega_hold_has_no_value(mega_ability: str | None, ctx: _Context, config: PolicyConfig) -> bool:
+    """True when ``mega_single_stone_no_hold`` applies: our living team holds exactly one
+    usable Mega stone (nothing to preserve for a better target) and evolving is not merely a
+    re-summon of the Mega's own weather that is already up (that case keeps the option of a
+    later re-summon, so holding still has value)."""
+
+    if not config.mega_single_stone_no_hold:
+        return False
+    stones = sum(
+        1
+        for mon in _our_team_mons(ctx)
+        if not getattr(mon, "fainted", False)
+        and mega_species_id(to_id(getattr(mon, "species", None)), to_id(getattr(mon, "item", None)))
+        is not None
+    )
+    if stones != 1:
+        return False
+    own_weather = _ability_weather(mega_ability, config)
+    return not (own_weather is not None and own_weather == ctx.weather)
 _WEATHER_SPEED_ABILITY = {
     "sun": "chlorophyll",
     "rain": "swiftswim",
@@ -1011,13 +1076,22 @@ def _score_status_mega(
     if base_state is None:
         return -config.mega_unnecessary_penalty, {"mega_material": False}
     mega_state = mega_evolved_state(base_state)
-    weather_change = _ABILITY_WEATHER.get(mega_state.ability, ctx.weather) != ctx.weather
+    _new_weather, weather_change, harmful_weather = _mega_weather_effect(
+        mega_state.ability, ctx, config
+    )
     speed_flip = any(
         effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(mega_state)
         for idx in ctx.opp_alive()
     )
-    material = weather_change or speed_flip
-    score = 0.0 if material else -config.mega_unnecessary_penalty
+    material = (weather_change and not harmful_weather) or speed_flip
+    score = 0.0
+    if harmful_weather:
+        score -= config.mega_harmful_weather_penalty
+    if not material:
+        if _mega_hold_has_no_value(mega_state.ability, ctx, config):
+            score += _MEGA_TIEBREAK
+        else:
+            score -= config.mega_unnecessary_penalty
     planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
     actor_species = to_id(getattr(actor_mon, "species", None))
     if planned_mega is not None:
@@ -1029,6 +1103,7 @@ def _score_status_mega(
     return score, {
         "mega_material": material,
         "mega_weather_change": weather_change,
+        "mega_harmful_weather": harmful_weather,
         "mega_speed_flip": speed_flip,
     }
 
@@ -1096,7 +1171,9 @@ def _score_attack_order(
     # own damage against that new weather, not the pre-mega snapshot in ctx.weather.
     weather_for_this_order = ctx.weather
     if getattr(single, "mega", False):
-        weather_for_this_order = _ABILITY_WEATHER.get(attacker_state.ability, ctx.weather)
+        weather_for_this_order = (
+            _ability_weather(attacker_state.ability, config) or ctx.weather
+        )
 
     score = 0.0
     raw_damage_score = 0.0
@@ -1275,11 +1352,21 @@ def _score_attack_order(
                 for idx in opp_targets
             )
             weather_change = weather_for_this_order != ctx.weather
-            mega_material = (
-                mega_gain >= config.mega_material_gain_floor or speed_flip or weather_change
+            _new_weather, _changes, harmful_weather = _mega_weather_effect(
+                attacker_state.ability, ctx, config
             )
+            mega_material = (
+                mega_gain >= config.mega_material_gain_floor
+                or speed_flip
+                or (weather_change and not harmful_weather)
+            )
+            if harmful_weather:
+                score -= config.mega_harmful_weather_penalty
             if not mega_material:
-                score -= config.mega_unnecessary_penalty
+                if _mega_hold_has_no_value(attacker_state.ability, ctx, config):
+                    score += _MEGA_TIEBREAK
+                else:
+                    score -= config.mega_unnecessary_penalty
         planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
         actor_species = to_id(getattr(actor_mon, "species", None))
         if planned_mega is not None:

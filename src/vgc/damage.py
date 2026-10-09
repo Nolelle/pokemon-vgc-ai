@@ -41,6 +41,10 @@ apply verbatim.
    (level is always 50 in this format -- see `vgc.stats.FORMAT_LEVEL`).
 6. Spread modifier (0.75x, only for `allAdjacent`/`allAdjacentFoes`-target moves
    actually hitting >=2 targets this turn -- `field.num_targets >= 2`).
+6b. Weather defence boosts, applied to the (staged) defending stat before the base formula,
+   exactly where the real engine's ModifySpD/ModifyDef events run: Sandstorm gives Rock-type
+   defenders 1.5x Sp. Def, Snow gives Ice-type defenders 1.5x Def (ground-truth tested in
+   `tests/test_damage_ground_truth.py`).
 7. Weather (sun/rain boost-or-cut Fire/Water 1.5x/0.5x) and terrain (Electric/Grassy/
    Psychic terrain 1.3x their type for a grounded attacker; Misty Terrain halves Dragon
    moves against a grounded defender; Grassy Terrain also halves Earthquake/Bulldoze/
@@ -169,10 +173,9 @@ class PokemonState:
 class FieldState:
     """Battle-field context shared by both sides for one `damage_range` call.
 
-    :param weather: `"sun"` | `"rain"` | None. (Sand/snow are accepted as values too for
-        callers that want to carry them through, but neither has a damage-formula effect
-        implemented here -- sand/snow's real effects are Sp.Def/Def boosts, not damage
-        multipliers, so they're out of scope for a damage *calculator*.)
+    :param weather: `"sun"` | `"rain"` | `"sand"` | `"snow"` | None. Sun/rain scale Fire/Water
+        damage; sand raises Rock-type defenders' Sp. Def and snow raises Ice-type defenders'
+        Def by 1.5x (see `_weather_defense_value`). Cloud Nine/Air Lock are not modelled.
     :param terrain: `"electric"` | `"grassy"` | `"psychic"` | `"misty"` | None.
     :param screens: side conditions active on the DEFENDER's side, subset of
         `{"reflect", "lightscreen", "auroraveil"}`.
@@ -372,6 +375,23 @@ def _weather_modifier(field: FieldState, move_type: str) -> float:
     return 1.0
 
 
+def _weather_defense_value(
+    defense_value: int, field: FieldState, defender: PokemonState, defense_stat_id: str
+) -> int:
+    """Sandstorm: Rock-type Sp. Def x1.5; Snow: Ice-type Def x1.5 (data/conditions.ts).
+
+    The engine applies it with ``battle.modify(stat, 1.5)`` -- 4096-based fixed point whose
+    rounding sends exact halves DOWN, hence ``(v * 6144 + 2047) // 4096`` rather than ``v * 3 // 2``
+    rounded up. Runs on the already-staged stat, before the base formula.
+    """
+
+    if field.weather == "sand" and defense_stat_id == "spd" and "Rock" in defender.types():
+        return (defense_value * 6144 + 2047) // 4096
+    if field.weather == "snow" and defense_stat_id == "def" and "Ice" in defender.types():
+        return (defense_value * 6144 + 2047) // 4096
+    return defense_value
+
+
 def _screen_modifier(field: FieldState, category: str) -> float:
     per_side_multiplier = _SCREEN_MULTIPLIER_DOUBLES if field.is_doubles else _SCREEN_MULTIPLIER_SINGLES
     has_reflect = "reflect" in field.screens and category == "Physical"
@@ -424,10 +444,9 @@ def _zero_result(breakdown: dict[str, object]) -> DamageResult:
 
 # Weather -> the type Weather Ball becomes (data/moves.ts weatherball.onModifyType); BP
 # doubles (50 -> 100, onModifyMove) for every one of these four cases identically. Sand/
-# snow have no *damage-multiplier* effect elsewhere in this module (real gen9 Sandstorm/
-# Snow are Def/SpD boosts for Rock/Ice types, not a Fire/Water-style damage modifier --
-# see `FieldState`'s docstring), but they still drive Weather Ball's type/power exactly
-# like sun/rain do.
+# snow have no *damage-multiplier* effect (real gen9 Sandstorm/Snow are Def/SpD boosts for
+# Rock/Ice defenders, see `_weather_defense_value`), but they drive Weather Ball's type/power
+# exactly like sun/rain do.
 _WEATHER_BALL_TYPE: dict[str, str] = {"sun": "Fire", "rain": "Water", "sand": "Rock", "snow": "Ice"}
 
 # data/moves.ts grassknot/lowkick vs. heavyslam/heatcrash basePowerCallback -- both pairs
@@ -631,6 +650,7 @@ def damage_range(
 
     attack_value = _apply_stage(attacker_stats[attack_stat_id], attacker.boost_stage(attack_stat_id))
     defense_value = _apply_stage(defender_stats[defense_stat_id], defender.boost_stage(defense_stat_id))
+    defense_value = _weather_defense_value(defense_value, field, defender, defense_stat_id)
 
     # Raw-stat abilities/items (applied to the boosted stat, before the base formula).
     if attacker.ability in _HUGE_POWER_ABILITIES:

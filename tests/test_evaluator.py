@@ -190,7 +190,9 @@ def test_mega_evolved_state_uses_mega_stats_and_ability() -> None:
 
 
 def test_mega_is_delayed_when_it_does_not_change_the_current_turn() -> None:
-    config = PolicyConfig()
+    # Legacy control: `mega_single_stone_no_hold` off (this lone stone would otherwise skip
+    # the hold penalty -- see the single-stone tests below).
+    config = PolicyConfig(mega_single_stone_no_hold=False)
     ctx = _attack_ctx(
         ally_state=None,
         opp_state=_klefki(),

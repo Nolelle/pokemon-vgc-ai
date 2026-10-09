@@ -224,6 +224,86 @@ def test_weather_rain_cuts_fire_move() -> None:
     assert_actual_in_range(result, actual)
 
 
+def test_sandstorm_boosts_rock_type_special_defense() -> None:
+    # Tyranitar's own Sand Stream summons sand on switch-in; the control swaps it for
+    # Unnerve (hidden ability) so no weather is up. Sand gives Rock types 1.5x Sp. Def.
+    attacker_set = pokeset(
+        "Garchomp", ["dragonpulse"], nature="Modest", sp={"hp": 30, "spa": 32, "spe": 4}, ability="Rough Skin"
+    )
+    sand_set = pokeset("Tyranitar", ["splash"], nature="Careful", sp={"hp": 32, "spd": 32}, ability="Sand Stream")
+    clear_set = pokeset("Tyranitar", ["splash"], nature="Careful", sp={"hp": 32, "spd": 32}, ability="Unnerve")
+    _, actual_sand = _run_single_hit(attacker_set, sand_set, "dragonpulse")
+    _, actual_clear = _run_single_hit(attacker_set, clear_set, "dragonpulse")
+
+    attacker = PokemonState("garchomp", sp_spread={"hp": 30, "spa": 32, "spe": 4}, nature="modest")
+    defender = PokemonState("tyranitar", sp_spread={"hp": 32, "spd": 32}, nature="careful")
+    sand = damage_range(attacker, defender, "dragonpulse", FieldState(weather="sand", is_doubles=False))
+    clear = damage_range(attacker, defender, "dragonpulse", FieldState(is_doubles=False))
+    assert sand.breakdown["defense_stat"] == "spd"
+    assert sand.breakdown["defense_value"] == clear.breakdown["defense_value"] * 3 // 2
+    assert_actual_in_range(sand, actual_sand)
+    assert_actual_in_range(clear, actual_clear)
+    assert actual_sand < actual_clear
+
+
+def test_sandstorm_does_not_boost_physical_defense_or_non_rock_types() -> None:
+    attacker = PokemonState("garchomp", sp_spread={"atk": 32}, nature="adamant")
+    rock = PokemonState("tyranitar", sp_spread={"def": 32}, nature="impish")
+    other = PokemonState("klefki", sp_spread={"spd": 32}, nature="calm")
+    sand = FieldState(weather="sand", is_doubles=False)
+    clear = FieldState(is_doubles=False)
+    assert (
+        damage_range(attacker, rock, "earthquake", sand).breakdown["defense_value"]
+        == damage_range(attacker, rock, "earthquake", clear).breakdown["defense_value"]
+    )
+    special = PokemonState("garchomp", sp_spread={"spa": 32}, nature="modest")
+    assert (
+        damage_range(special, other, "dragonpulse", sand).breakdown["defense_value"]
+        == damage_range(special, other, "dragonpulse", clear).breakdown["defense_value"]
+    )
+
+
+def test_snow_boosts_ice_type_defense() -> None:
+    # Garchomp with Snow Warning (forced; Custom Game does not validate) summons snow on
+    # switch-in. Snow gives Ice types 1.5x Def. The control keeps Garchomp's Rough Skin.
+    snow_attacker = pokeset(
+        "Garchomp", ["earthquake"], nature="Adamant", sp={"hp": 30, "atk": 32, "spe": 4}, ability="Snow Warning"
+    )
+    clear_attacker = pokeset(
+        "Garchomp", ["earthquake"], nature="Adamant", sp={"hp": 30, "atk": 32, "spe": 4}, ability="Rough Skin"
+    )
+    defender_set = pokeset("Glaceon", ["splash"], nature="Bold", sp={"hp": 32, "def": 32}, ability="Ice Body")
+    _, actual_snow = _run_single_hit(snow_attacker, defender_set, "earthquake")
+    _, actual_clear = _run_single_hit(clear_attacker, defender_set, "earthquake")
+
+    attacker = PokemonState("garchomp", sp_spread={"hp": 30, "atk": 32, "spe": 4}, nature="adamant")
+    defender = PokemonState("glaceon", sp_spread={"hp": 32, "def": 32}, nature="bold")
+    snow = damage_range(attacker, defender, "earthquake", FieldState(weather="snow", is_doubles=False))
+    clear = damage_range(attacker, defender, "earthquake", FieldState(is_doubles=False))
+    assert snow.breakdown["defense_stat"] == "def"
+    assert snow.breakdown["defense_value"] == clear.breakdown["defense_value"] * 3 // 2
+    assert_actual_in_range(snow, actual_snow)
+    assert_actual_in_range(clear, actual_clear)
+    assert actual_snow < actual_clear
+
+
+def test_sandstorm_rounding_matches_engine_for_odd_stat() -> None:
+    # An odd Sp. Def lands on an exact half; the engine's modify() rounds it DOWN.
+    attacker_set = pokeset(
+        "Garchomp", ["dragonpulse"], nature="Modest", sp={"hp": 30, "spa": 32, "spe": 4}, ability="Rough Skin"
+    )
+    sand_set = pokeset("Tyranitar", ["splash"], nature="Hardy", sp={"hp": 32, "spd": 31}, ability="Sand Stream")
+    _, actual = _run_single_hit(attacker_set, sand_set, "dragonpulse")
+    attacker = PokemonState("garchomp", sp_spread={"hp": 30, "spa": 32, "spe": 4}, nature="modest")
+    defender = PokemonState("tyranitar", sp_spread={"hp": 32, "spd": 31}, nature="hardy")
+    clear = damage_range(attacker, defender, "dragonpulse", FieldState(is_doubles=False))
+    sand = damage_range(attacker, defender, "dragonpulse", FieldState(weather="sand", is_doubles=False))
+    raw = clear.breakdown["defense_value"]
+    assert raw % 2 == 1
+    assert sand.breakdown["defense_value"] == raw * 3 // 2  # floor of x.5
+    assert_actual_in_range(sand, actual)
+
+
 # --- status / screens ------------------------------------------------------------------
 
 
