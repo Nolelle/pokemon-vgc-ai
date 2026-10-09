@@ -305,3 +305,10 @@
 - Hidden opponent sets (#33; infer_hidden_opponent_sets True vs False), pool160 mirror, 36 games/team, seed 20261008: **3019/5760 = 52.4%, cluster-robust [0.484, 0.564], not significant** (was 55-56% on 2026-09-30, before the M-C set-priors/spreads refresh). Team-effect SD 0.248: bimodal, not null -- 38 teams >= 70%, 30 teams <= 30%. Kept on (positive lean, fixes the preview blindness); next: find what separates winning from losing teams, and test owner teams vs real M-C teams. Result: runs/eval/remeasure_20261008_hidden_sets_pool160.json.
 - Showdown synced to ad7ca5d51 (#36): Champions OU tier label for Mega Raichu Y. Not a Reg M-C ban (Flat Rules; team_049 validates).
 - review_lost_decisions fixed (#37): clock guard ran the 30 s deep review on a timed worker; 2 games / 15 decisions now review with 0 failures. Live reproduction only 53% because the tool rebuilds the fast pick, not the judge's.
+
+## 2026-10-09 — Protect valuation: odds-scaled bonuses + exact stall odds (branch worktree-agent-a7abb9c51a6e5824d)
+- Evidence: 46 ladder games, 25 back-to-back Protects (~2/3 failed); losses 2.6 Protects/game vs 1.5 in wins.
+- Fast evaluator: `_score_protect` scales information/stall/reposition bonuses by `protect_success_decay**counter` (`protect_bonuses_scale_with_odds`, True; False = legacy). Low-threat penalty stays unscaled.
+- Exact search: `exact_search_exact_stall_odds` (True; False = sampled). Repeat Protect-family rolls (stall volatile present, counter 3/9/..) run BOTH forced outcomes per (choice, seed) sample, weighted 1/counter vs rest; all combinations when several Pokemon repeat. Worker: `clone` takes `stallForce`, `stallInfo` lists stallers; the pin is consulted by a per-battle `randomChance` wrapper (dex/conditions are frozen) and still takes the stock PRNG draw. Tests: tests/test_exact_stall_odds.py.
+- Cost (judge width, 38 decisions): median unchanged (0.249 s); only 2/38 had a repeat roll, +0.03 s median / +0.10 s max on those.
+- Not A/B'd for strength. Full readiness gates currently BLOCKED only by Showdown parity drift (upstream 7332b60e2); `--static-only` passes for all three.

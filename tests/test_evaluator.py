@@ -583,6 +583,51 @@ def test_protect_score_ratio_across_counters_is_1_third_ninth() -> None:
     assert scores[2] == pytest.approx(scores[0] / 9.0)
 
 
+def test_protect_bonuses_scale_with_success_odds() -> None:
+    """A failed Protect yields no scouting/stall/reposition value: those three bonuses
+    scale by the same 1/3-per-repeat success odds as the threat term, while the low-threat
+    penalty (the cost of spending the turn) does not.
+    """
+    scaled = PolicyConfig()
+    legacy = PolicyConfig(protect_bonuses_scale_with_odds=False)
+    assert scaled.protect_bonuses_scale_with_odds is True
+
+    def ctx_with_bonuses(threat_percent: float, counter: int) -> _Context:
+        ctx = _two_slot_ctx()
+        ctx.battle = SimpleNamespace(side_conditions=[], available_switches=[[object()], []])
+        ctx.weather = "sunnyday"  # one field-stall reason
+        ctx.opp_uncertainty = [2, 2]
+        ctx.threat_on_us[0] = _ThreatInfo(percent=threat_percent, move_id="x", priority=0)
+        ctx.our_pokemon[0] = SimpleNamespace(protect_counter=counter)
+        return ctx
+
+    raw_bonuses = (
+        4 * scaled.protect_information_per_unknown
+        + scaled.protect_field_stall_per_turn
+        + scaled.protect_reposition_bonus
+    )
+    for counter in (0, 1, 2):
+        odds = scaled.protect_success_decay**counter
+        score, info = _score_protect(0, ctx_with_bonuses(90.0, counter), scaled)
+        legacy_score, legacy_info = _score_protect(0, ctx_with_bonuses(90.0, counter), legacy)
+        threat_term = 90.0 * scaled.protect_threat_weight * odds
+        reported = info["information_value"] + info["stall_value"] + info["reposition_value"]
+        assert reported == pytest.approx(raw_bonuses)  # components are reported unscaled
+        assert score == pytest.approx(threat_term + raw_bonuses * odds)
+        assert info["bonus_scale"] == pytest.approx(odds)
+        assert legacy_score == pytest.approx(threat_term + raw_bonuses)
+        assert legacy_info["bonus_scale"] == 1.0
+
+    # Low threat: the penalty is not scaled by the odds, the bonuses are.
+    score, _ = _score_protect(0, ctx_with_bonuses(5.0, 1), scaled)
+    odds = scaled.protect_success_decay
+    assert score == pytest.approx(
+        5.0 * scaled.protect_threat_weight * odds
+        - scaled.protect_low_threat_penalty
+        + raw_bonuses * odds
+    )
+
+
 def test_protect_with_no_real_threat_is_penalized_and_negative() -> None:
     config = PolicyConfig()
     ctx = _two_slot_ctx()

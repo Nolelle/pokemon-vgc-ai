@@ -11,7 +11,9 @@ Use this to create mechanics-correct teacher targets. Do not label a choice with
 
 from __future__ import annotations
 
+import itertools
 import math
+import re
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -40,9 +42,80 @@ class ExactMechanicsBranch:
     # "search" continuation mode: value (searching side's view, scored by the caller's
     # `score_state`) of the small continuation-turn search; None otherwise.
     continuation_value: float | None = None
+    # Exact stall odds (`PolicyConfig.exact_search_exact_stall_odds`): one (choice, seed)
+    # sample is split into forced outcomes of the repeat Protect-family rolls in it. Each
+    # outcome is its own branch; `sample_index` (= choice index * seeds + seed index) names
+    # the sample and `weight` is the outcome's probability, so the weights of one sample
+    # sum to 1. Without a repeat roll every branch is its sample's only one (weight 1).
+    weight: float = 1.0
+    sample_index: int = 0
+    stall_force: tuple[tuple[str, bool], ...] = ()
 
     def state_for(self, side: str) -> BattleMechanicsState:
         return dict(self.public_states)[side]
+
+
+def _to_id(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def repeat_stall_rolls(
+    stallers: Sequence[dict[str, object]], choices: dict[str, str]
+) -> list[tuple[str, float]]:
+    """The Protect-family rolls a joint choice will make, as ``(slot, P[success])``.
+
+    ``stallers`` is `DirectBattle.stall_info()`: the active Pokemon that still hold
+    Showdown's ``stall`` volatile (they used a protect-family move last turn). A repeat
+    use of such a move succeeds with probability ``1 / counter`` (1/3, then 1/9, ...);
+    anything else the Pokemon does (attack, switch, Wide Guard) makes no roll. Slots whose
+    first use of the move is certain (no volatile) never appear here.
+    """
+
+    rolls: list[tuple[str, float]] = []
+    for staller in stallers:
+        side = str(staller["side"])
+        if side not in choices:
+            continue
+        position = str(staller["position"])
+        parts = [part.strip() for part in choices[side].split(",")]
+        index = ord(position) - ord("a")
+        if index >= len(parts):
+            continue
+        tokens = parts[index].split()
+        moves = [str(move) for move in staller["moves"]]  # type: ignore[union-attr]
+        disabled = [bool(flag) for flag in staller["disabled"]]  # type: ignore[union-attr]
+        rolling = [bool(flag) for flag in staller["rolls"]]  # type: ignore[union-attr]
+        move_slot: int | None = None
+        if tokens and tokens[0] == "default":
+            move_slot = next((i for i, off in enumerate(disabled) if not off), None)
+        elif len(tokens) >= 2 and tokens[0] == "move":
+            if tokens[1].isdigit():
+                move_slot = int(tokens[1]) - 1
+            elif _to_id(tokens[1]) in moves:
+                move_slot = moves.index(_to_id(tokens[1]))
+        if move_slot is None or not 0 <= move_slot < len(moves) or not rolling[move_slot]:
+            continue
+        counter = max(1.0, float(staller["counter"]))  # type: ignore[arg-type]
+        if counter > 1.0:
+            rolls.append((f"{side}{position}", 1.0 / counter))
+    return rolls
+
+
+def stall_outcomes(
+    rolls: Sequence[tuple[str, float]],
+) -> list[tuple[dict[str, bool], float, str]]:
+    """Every success/failure combination of ``rolls`` as ``(forced, probability, suffix)``."""
+
+    if not rolls:
+        return [({}, 1.0, "")]
+    outcomes: list[tuple[dict[str, bool], float, str]] = []
+    for combo in itertools.product((True, False), repeat=len(rolls)):
+        probability = 1.0
+        for (_slot, p_success), ok in zip(rolls, combo):
+            probability *= p_success if ok else 1.0 - p_success
+        forced = {slot: ok for (slot, _p), ok in zip(rolls, combo)}
+        outcomes.append((forced, probability, "-s" + "".join("1" if ok else "0" for ok in combo)))
+    return outcomes
 
 
 def _battle_turn(clone: DirectBattle) -> int:
@@ -257,6 +330,10 @@ def evaluate_exact_branches(
         raise ValueError("search continuation needs N=1, our_side and score_state")
     expected_sides = set(root.sides_to_move())
     base_turn = _battle_turn(root)
+    # Exact Protect-family odds: with the knob on, a repeat Protect-family roll is split
+    # into both forced outcomes instead of being left to the sampled PRNG stream.
+    exact_stall = config is not None and bool(config.exact_search_exact_stall_odds)
+    stallers = root.stall_info() if exact_stall else []
     # (partial branch kwargs, clone) kept open only while a continuation still needs them.
     live: list[tuple[dict[str, object], DirectBattle]] = []
     branches: list[ExactMechanicsBranch] = []
@@ -279,41 +356,49 @@ def evaluate_exact_branches(
                 raise ValueError(
                     f"root expects choices from {sorted(expected_sides)}, got {sorted(choices)}"
                 )
+            outcomes = stall_outcomes(repeat_stall_rolls(stallers, choices))
             for seed_index, raw_seed in enumerate(future_seeds):
                 seed = tuple(int(v) for v in raw_seed) if raw_seed is not None else None
-                branch_id = f"{branch_prefix}-{choice_index}-{seed_index}"
-                clone = root.clone(branch_id, seed=seed)
-                keep = False
-                try:
-                    rejections_before = getattr(clone, "hidden_trap_rejections", 0)
-                    result = clone.step(dict(choices))
-                    if getattr(clone, "hidden_trap_rejections", 0) != rejections_before:
-                        # DirectBattle lets a live game retry after Showdown's hidden-trap
-                        # rejection, but this branch never resolved its turn: scoring its
-                        # unchanged board would read the rejected switch as a free exchange.
-                        reason = getattr(clone, "last_hidden_rejection", "") or "hidden trap"
-                        raise InvalidChoice(
-                            f"branch {branch_id}: choice rejected by hidden information "
-                            f"({reason}); the turn did not resolve"
-                        )
-                    kwargs = {
-                        "branch_id": branch_id,
-                        "choices": tuple(sorted(choices.items())),
-                        "future_seed": seed,
-                        "public_lines": tuple((side, tuple(result.lines[side])) for side in SIDES),
-                    }
-                    if turns > 0 and not clone.ended:
-                        kwargs["turn1_public_states"] = tuple(
-                            (side, snapshot_battle(clone.battles[side])) for side in SIDES
-                        )
-                        live.append((kwargs, clone))
-                        keep = True
-                    else:
-                        # Asked for more turns but the game ended on the searched step.
-                        snapshot(kwargs, clone, continuation_ended_early=turns > 0)
-                finally:
-                    if not keep:
-                        clone.close()
+                for forced, weight, suffix in outcomes:
+                    branch_id = f"{branch_prefix}-{choice_index}-{seed_index}{suffix}"
+                    clone = root.clone(branch_id, seed=seed, stall_force=forced or None)
+                    keep = False
+                    try:
+                        rejections_before = getattr(clone, "hidden_trap_rejections", 0)
+                        result = clone.step(dict(choices))
+                        if getattr(clone, "hidden_trap_rejections", 0) != rejections_before:
+                            # DirectBattle lets a live game retry after Showdown's
+                            # hidden-trap rejection, but this branch never resolved its
+                            # turn: scoring its unchanged board would read the rejected
+                            # switch as a free exchange.
+                            reason = getattr(clone, "last_hidden_rejection", "") or "hidden trap"
+                            raise InvalidChoice(
+                                f"branch {branch_id}: choice rejected by hidden information "
+                                f"({reason}); the turn did not resolve"
+                            )
+                        kwargs = {
+                            "branch_id": branch_id,
+                            "choices": tuple(sorted(choices.items())),
+                            "future_seed": seed,
+                            "public_lines": tuple(
+                                (side, tuple(result.lines[side])) for side in SIDES
+                            ),
+                            "weight": weight,
+                            "sample_index": choice_index * len(future_seeds) + seed_index,
+                            "stall_force": tuple(sorted(forced.items())),
+                        }
+                        if turns > 0 and not clone.ended:
+                            kwargs["turn1_public_states"] = tuple(
+                                (side, snapshot_battle(clone.battles[side])) for side in SIDES
+                            )
+                            live.append((kwargs, clone))
+                            keep = True
+                        else:
+                            # Asked for more turns but the game ended on the searched step.
+                            snapshot(kwargs, clone, continuation_ended_early=turns > 0)
+                    finally:
+                        if not keep:
+                            clone.close()
         if live:
             assert config is not None
             clones = [clone for _kwargs, clone in live]
@@ -343,11 +428,7 @@ def evaluate_exact_branches(
         for _kwargs, clone in live:
             clone.close()
     # Branch order must equal (choice, seed) order, as before: continuation branches were
-    # appended after the one-turn ones, so restore it.
-    order = {
-        f"{branch_prefix}-{c}-{s}": c * len(future_seeds) + s
-        for c in range(len(joint_choices))
-        for s in range(len(future_seeds))
-    }
-    branches.sort(key=lambda branch: order[branch.branch_id])
+    # appended after the one-turn ones, so restore it (stable: forced outcomes of one
+    # sample stay together).
+    branches.sort(key=lambda branch: branch.sample_index)
     return branches

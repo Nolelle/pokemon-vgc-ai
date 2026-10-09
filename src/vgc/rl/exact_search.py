@@ -222,9 +222,12 @@ def search_joint_orders_exact(
     )
     per_choice = len(future_seeds)
     continuation_done = [branch.continuation_turns_completed for branch in branches]
-    for branch_index, branch in enumerate(branches):
-        choice_index = branch_index // per_choice
-        owner = choice_owner[choice_index]
+    # With exact stall odds one (choice, seed) sample can be several forced-outcome
+    # branches; each sample's value is their probability-weighted sum (weights sum to 1,
+    # and a plain sample is its own single branch with weight 1).
+    sample_values: dict[int, float] = defaultdict(float)
+    sample_fields: dict[int, float] = defaultdict(float)
+    for branch in branches:
         turn1 = getattr(branch, "turn1_public_states", None)
         final_state = branch.state_for(side)
         # A game that ended during the continuation ended under the continuation policy,
@@ -238,20 +241,24 @@ def search_joint_orders_exact(
         if turn1 is not None and cont_value is not None:
             # "search" continuation mode: the continuation-turn search is the later board.
             mid = _position_value(dict(turn1)[side], config)
-            values[owner].append(
-                (mid - before) + config.exact_search_continuation_weight * (cont_value - mid)
+            value = (mid - before) + config.exact_search_continuation_weight * (
+                cont_value - mid
             )
         elif turn1 is not None and config.exact_search_continuation_weight != 1.0:
             mid = _position_value(dict(turn1)[side], config)
-            values[owner].append(
-                (mid - before) + config.exact_search_continuation_weight * (final - mid)
-            )
+            value = (mid - before) + config.exact_search_continuation_weight * (final - mid)
         else:
-            values[owner].append(final - before)
+            value = final - before
+        sample_values[branch.sample_index] += branch.weight * value
         if config.exact_search_field_control:
-            field_deltas[owner[0]].append(
+            sample_fields[branch.sample_index] += branch.weight * (
                 field_control_value(branch.state_for(side), config) - root_field
             )
+    for sample_index in sorted(sample_values):
+        owner = choice_owner[sample_index // per_choice]
+        values[owner].append(sample_values[sample_index])
+        if config.exact_search_field_control:
+            field_deltas[owner[0]].append(sample_fields[sample_index])
 
     results: list[ScoredOrder] = []
     searched_finals: list[float] = []
@@ -287,6 +294,7 @@ def search_joint_orders_exact(
                 "searched": True,
                 "mechanics_source": "official_showdown_clone",
                 "exact_random_samples": len(future_seeds),
+                "exact_stall_outcome_branches": len(branches) - len(sample_values),
                 "exact_opponent_responses": len(opponent_orders),
                 "n_responses": len(opponent_orders),
                 "approximate_transition": False,
@@ -323,7 +331,7 @@ def search_joint_orders_exact(
     metrics = {
         "searched_actions": len(searched),
         "opponent_responses": len(opponent_orders),
-        "exchange_count": len(joint_choices) * len(future_seeds),
+        "exchange_count": len(branches),
         "forecast_count": 0,
         "elapsed_ms": round((time.perf_counter() - started_at) * 1000.0, 3),
         "mechanics_source": "official_showdown_clone",
