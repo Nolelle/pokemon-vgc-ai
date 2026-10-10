@@ -12,9 +12,9 @@ on BOTH perspectives' poke-env battle objects, with a `BattleMemory` fed the sam
 exactly like a live decision) with the worker's `dump` of Showdown's own state, restricted to
 what is PUBLICLY observable:
 
-    active slots / species forme / types / HP (exact own, percent foe) / fainted / status
-    + sleep & toxic counters / all 7 boosts / item (known, consumed, lost) / ability
-    / volatiles / protect counter / weather / terrain / pseudo-weather (Trick Room, ...)
+    active pieces BY EXACT SLOT / species forme / types / HP (exact own, percent foe) /
+    fainted / status + sleep & toxic counters / all 7 boosts / item (known, consumed, lost)
+    / ability / volatiles / protect counter / weather / terrain / pseudo-weather
     / side conditions / remaining durations / revealed foe moves
 
 Mismatches are grouped by (field, kind, detail), counted two ways -- observations (turns it
@@ -22,10 +22,21 @@ was wrong) and episodes (distinct battle x perspective x Pokemon x thing that we
 and attributed to the protocol messages that touched the Pokemon on the step the mismatch
 first appeared, so each group points at the message that broke it.
 
-Truth that is legitimately hidden (an unrevealed foe item, an unrevealed ability, Illusion
-while it holds, hidden timers) is NOT a mismatch; `_check_*` documents each exemption.
+How the answer key is built (and what is exempt):
+
+* The truth is Showdown's own dump. A live Illusion is compared as the other side's client
+  sees it: the disguise's name/species/types over the holder's real HP, status, boosts and
+  volatiles; only the deliberately deceptive identity (true name, item, ability, moves) is
+  exempt, and only while the disguise holds. After it breaks the true Pokemon is compared
+  normally.
+* "Revealed" abilities / items / moves come from `audit_protocol.ProtocolKnowledge`, which
+  shares no code with `vgc.poke_env_compat` or `vgc.battle_memory`.
+* There are no group-level exemptions. Each documented cause is a predicate in
+  `audit_exemptions.py` evaluated against the specific finding (move / ability / message plus
+  the Pokemon's history); a mismatch that does not satisfy one counts as UNEXPLAINED.
 
     .venv/bin/python offline/audit_battle_parsing.py --battles 200 --workers 8
+    .venv/bin/python offline/audit_battle_parsing.py --scenarios-only --coverage-report
 """
 
 from __future__ import annotations
@@ -43,6 +54,8 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import audit_exemptions as EX
+from audit_protocol import ProtocolKnowledge
 from vgc.battle_memory import BattleMemory
 from vgc.config import REPO_ROOT, RUNS_DIR
 from vgc.damage import to_id
@@ -182,6 +195,9 @@ def _hp_percent(hp: int, maxhp: int) -> int:
     return max(1, hp * 100 // maxhp)  # Showdown (Champions): floor(100 * hp / maxhp) || 1
 
 
+_ILLUSION_REF = re.compile(r"\[Pokemon:p[1-4]([a-f])\]")
+
+
 def _truth_mon(p: dict[str, Any]) -> dict[str, Any]:
     species = to_id(str(p.get("species", "")).replace("[Species:", "").rstrip("]")) or to_id(
         p.get("details", "").split(",")[0]
@@ -200,6 +216,7 @@ def _truth_mon(p: dict[str, Any]) -> dict[str, Any]:
         "ability": to_id(p.get("ability")),
         "base_ability": to_id(p.get("baseAbility")),
         "types": [to_id(t) for t in (p.get("types") or [])],
+        "base_types": [to_id(t) for t in (p.get("baseTypes") or [])],
         "added_type": to_id(p.get("addedType")),
         "active": bool(p.get("isActive")),
         "position": p.get("position"),
@@ -207,15 +224,60 @@ def _truth_mon(p: dict[str, Any]) -> dict[str, Any]:
         "had_item": bool((p.get("set") or {}).get("item")),
         "transformed": bool(p.get("transformed")),
         "illusion": bool(p.get("illusion")),
+        "illusion_ref": str(p.get("illusion") or ""),
+        "illusion_name": None,  # filled in by truth_view once the whole side is known
         "moves": [to_id(m.get("id") or m.get("move")) for m in (p.get("moveSlots") or [])],
         "base_moves": [to_id(m) for m in (p.get("set", {}).get("moves") or [])],
+        "disguised_as": False,
+        "true_name": None,
     }
 
 
 def truth_view(state: dict[str, Any]) -> dict[str, Any]:
     sides = {}
     for side in state["sides"]:
-        mons = {m["name"]: m for m in (_truth_mon(p) for p in side["pokemon"])}
+        raw = side["pokemon"]
+        mons = {m["name"]: m for m in (_truth_mon(p) for p in raw)}
+        names = [p["set"]["name"] for p in raw]
+        for tm in mons.values():
+            ref = _ILLUSION_REF.match(tm["illusion_ref"])
+            if ref:
+                index = ord(ref.group(1)) - ord("a")
+                if 0 <= index < len(names):
+                    tm["illusion_name"] = names[index]
+        # What the OTHER side's client is shown. A live Illusion shows the disguise's identity
+        # (name, species, types) over the holder's HP, status, boosts and volatiles; the true
+        # holder is not visible by name, and the disguise Pokemon's own state is replaced.
+        visible = dict(mons)
+        for name, tm in mons.items():
+            if tm["illusion_name"] and tm["illusion_name"] in mons:
+                disguise = mons[tm["illusion_name"]]
+                view = dict(tm)
+                view.update(
+                    name=disguise["name"],
+                    species=disguise["species"],
+                    types=disguise["base_types"] or disguise["types"],
+                    added_type="",
+                    illusion=False,
+                    disguised_as=True,
+                    true_name=name,
+                    transformed=False,
+                )
+                visible[disguise["name"]] = view
+                visible[name] = {**tm, "hidden_identity": True}
+        slots_true: list[str | None] = [None, None]
+        for tm in mons.values():
+            if tm["active"] and not tm["fainted"] and tm["position"] in (0, 1):
+                slots_true[tm["position"]] = tm["name"]
+        slots: list[str | None] = [None, None]
+        for tm in visible.values():
+            if (
+                tm.get("active")
+                and not tm.get("fainted")
+                and not tm.get("hidden_identity")
+                and tm.get("position") in (0, 1)
+            ):
+                slots[tm["position"]] = tm["name"]
         conditions = {}
         for cid, cs in (side.get("sideConditions") or {}).items():
             conditions[to_id(cid)] = {
@@ -223,7 +285,13 @@ def truth_view(state: dict[str, Any]) -> dict[str, Any]:
                 "layers": cs.get("layers"),
                 "setter": (cs.get("sourceSlot") or "")[:2],
             }
-        sides[side["id"]] = {"mons": mons, "conditions": conditions}
+        sides[side["id"]] = {
+            "mons": mons,
+            "visible": visible,
+            "slots": slots,
+            "slots_true": slots_true,
+            "conditions": conditions,
+        }
     field = state["field"]
     return {
         "turn": state["turn"],
@@ -242,6 +310,19 @@ def truth_view(state: dict[str, Any]) -> dict[str, Any]:
             to_id(k): v.get("duration") for k, v in (field.get("pseudoWeather") or {}).items()
         },
     }
+
+
+def illusion_alias(*truths: dict[str, Any] | None) -> dict[tuple[str, str], tuple[str, str]]:
+    """(role, disguise name) -> (role, true holder name), over every given truth snapshot."""
+    alias: dict[tuple[str, str], tuple[str, str]] = {}
+    for truth in truths:
+        if not truth:
+            continue
+        for role, side in truth["sides"].items():
+            for tm in side["mons"].values():
+                if tm["illusion_name"]:
+                    alias[(role, tm["illusion_name"])] = (role, tm["name"])
+    return alias
 
 
 # --- comparing ----------------------------------------------------------------------------
@@ -279,13 +360,31 @@ HIDDEN_VOLATILES = frozenset(
         "fakeout",
     }
 )
-# poke-env effects that are bookkeeping, not battle state (never in Showdown's volatiles).
-POKEENV_ONLY_EFFECTS = frozenset({"flashfire", "protean"})  # filled from audit review
+
+_SPECIES: dict[str, Any] | None = None
+
+
+def legal_abilities(species_id: str) -> set[str]:
+    """Ability ids a species can have in the exported data (empty if unknown)."""
+    global _SPECIES
+    if _SPECIES is None:
+        _SPECIES = json.loads((REPO_ROOT / "data" / "champions" / "species.json").read_text())
+    entry = _SPECIES.get(species_id) or {}
+    return {to_id(a) for a in (entry.get("abilities") or {}).values()}
 
 
 class Findings:
-    def __init__(self) -> None:
+    """Collects mismatches and classifies each one at creation against the exemption registry
+    (`audit_exemptions`): an exemption only applies when its predicate holds for THIS finding,
+    so a documented cause can never excuse an unrelated mismatch of the same field."""
+
+    def __init__(self, base: dict[str, Any]) -> None:
         self.items: list[dict[str, Any]] = []
+        self.base = base
+        self.bound: dict[str, Any] = {}
+
+    def bind(self, **context: Any) -> None:
+        self.bound = context
 
     def add(
         self,
@@ -297,20 +396,21 @@ class Findings:
         truth: Any,
         belief: Any,
         note: str = "",
-        legit: bool = False,
+        extra: dict[str, Any] | None = None,
     ) -> None:
-        self.items.append(
-            {
-                "legit": legit,
-                "field": field,
-                "kind": kind,
-                "detail": detail,
-                "mon": mon,
-                "truth": truth,
-                "belief": belief,
-                "note": note,
-            }
-        )
+        finding = {
+            "field": field,
+            "kind": kind,
+            "detail": detail,
+            "mon": mon,
+            "truth": truth,
+            "belief": belief,
+            "note": note,
+            "extra": extra or {},
+        }
+        context = {**self.base, **self.bound, "finding": finding}
+        finding["exempt"] = EX.classify(finding, context) or ""
+        self.items.append(finding)
 
 
 def _belief_remaining(snapshot_turn: int, effect: Any) -> int | None:
@@ -323,18 +423,11 @@ def _belief_remaining(snapshot_turn: int, effect: Any) -> int | None:
 def _duration_finding(
     out: "Findings", detail: str, label: str, truth_dur: int, rem: int, setter: str, foe_role: str
 ) -> None:
-    """A remaining-duration disagreement. A foe's Damp Rock / Light Clay / Terrain Extender is
-    hidden until it is revealed, so truth == belief + 3 on a foe-set condition is legitimate."""
-    hidden = truth_dur - rem == 3 and setter == foe_role
     out.add(
-        "duration",
-        "hidden_foe_extender" if hidden else "mismatch",
-        detail,
-        label,
-        truth=truth_dur,
-        belief=rem,
-        legit=hidden,
-    )
+        "duration", "mismatch", detail, label,
+        truth=truth_dur, belief=rem,
+        extra={"setter": setter, "foe_role": foe_role, "condition": detail},
+    )  # fmt: skip
 
 
 def compare_perspective(
@@ -342,36 +435,38 @@ def compare_perspective(
     snapshot: Any,
     truth: dict[str, Any],
     memory: BattleMemory,
-    revealed_abilities: dict[str, set[str]],
-    revealed_foe_moves: dict[str, set[str]],
+    know: ProtocolKnowledge,
+    battle: Any,
+    step_lines: list[str] | None = None,
+    prev_truth: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    out = Findings()
     foe_role = "p2" if me == "p1" else "p1"
+    out = Findings(
+        {
+            "me": me,
+            "foe_role": foe_role,
+            "truth": truth,
+            "prev_truth": prev_truth,
+            "know": know,
+            "memory": memory,
+            "lines": step_lines or [],
+            "snapshot": snapshot,
+        }
+    )
     if snapshot.turn != truth["turn"]:
         out.add("turn", "mismatch", "", "-", truth=truth["turn"], belief=snapshot.turn)
 
-    illusion_names = {
-        name
-        for role in SIDES
-        for name, mon in truth["sides"][role]["mons"].items()
-        if mon["illusion"]
-    }
-
-    illusion_roles = {
-        role
-        for role in SIDES
-        if any(m["base_ability"] == "illusion" for m in truth["sides"][role]["mons"].values())
-    }
-
-    for label, role, side_state in (
-        ("own", me, snapshot.our_side),
-        ("foe", foe_role, snapshot.opponent_side),
+    for label, role, side_state, active_list in (
+        ("own", me, snapshot.our_side, battle.active_pokemon),
+        ("foe", foe_role, snapshot.opponent_side, battle.opponent_active_pokemon),
     ):
-        tmons = truth["sides"][role]["mons"]
-        seen_names = set()
+        side_truth = truth["sides"][role]
+        # What this perspective's client is shown: its own team truthfully, the other side
+        # through any live Illusion.
+        tmons = side_truth["visible"] if label == "foe" else side_truth["mons"]
+        out.bind(label=label, role=role)
         for bmon in side_state.pokemon:
             name = bmon.name
-            seen_names.add(name)
             tm = tmons.get(name)
             if tm is None:
                 if label == "own" and not bmon.active:
@@ -382,38 +477,28 @@ def compare_perspective(
                         truth=sorted(tmons), belief=name,
                     )  # fmt: skip
                 continue
-            if tm["illusion"] or name in illusion_names:
-                continue  # Illusion is deliberately deceptive; only post-break state counts
-            if label == "foe" and (not bmon.revealed or role in illusion_roles):
-                continue  # Illusion: the protocol deliberately shows the wrong identities
-            _compare_mon(
-                out, label, name, tm, bmon, memory, revealed_abilities, revealed_foe_moves,
-                me, mid_turn=truth["mid_turn"],
-            )  # fmt: skip
+            if tm.get("hidden_identity"):
+                # A live Illusion holder: its true name is deliberately not shown to this
+                # perspective, so whatever the client holds under that name is stale by design.
+                continue
+            if label == "foe" and not bmon.revealed:
+                continue  # never shown to this perspective
+            _compare_mon(out, label, name, tm, bmon, memory, know, mid_turn=truth["mid_turn"])
 
-        # active slots
-        truth_active = {m["position"]: m["name"] for m in tmons.values() if m["active"]}
-        for pos, bmon in enumerate(side_state.active_species):
-            pass
-        belief_active = {}
-        for bmon in side_state.pokemon:
-            if bmon.active:
-                belief_active[bmon.name] = True
-        t_active_names = {n for n in truth_active.values() if not tmons[n]["fainted"]}
-        b_active_names = {n for n in belief_active if n in tmons and not _fainted(side_state, n)}
-        if label == "foe":
-            t_active_names = {n for n in t_active_names if n not in illusion_names}
-            b_active_names = {n for n in b_active_names if n not in illusion_names}
-        if t_active_names != b_active_names and not (label == "foe" and role in illusion_roles):
+        # active slots, compared by exact position (a left/right swap is a defect)
+        truth_slots = side_truth["slots"] if label == "foe" else side_truth["slots_true"]
+        belief_slots = [m.name if m is not None else None for m in active_list]
+        out.bind(label=label, role=role)
+        if truth_slots != belief_slots:
             out.add(
-                "active_set", "mismatch", label, "-",
-                truth=sorted(t_active_names), belief=sorted(b_active_names),
+                "active_slots", "mismatch", label, "-",
+                truth=truth_slots, belief=belief_slots,
             )  # fmt: skip
 
         # side conditions
         t_cond = {
             k: v
-            for k, v in truth["sides"][role]["conditions"].items()
+            for k, v in side_truth["conditions"].items()
             if k not in ("wideguard", "quickguard", "matblock", "craftyguard")  # -singleturn
         }
         b_cond = {e.id: e for e in side_state.side_conditions}
@@ -443,6 +528,7 @@ def compare_perspective(
                     )
 
     # field: weather / terrain / pseudo-weather
+    out.bind(label="field", role="")
     t_weather = truth["weather"]
     b_weather = {e.id: e for e in snapshot.weather}
     b_weather_id = next(iter(b_weather), "")
@@ -489,10 +575,6 @@ def _eff(e: Any) -> dict[str, Any]:
     return {"id": e.id, "turns": e.turns, "kind": e.counter_kind, "raw": e.raw_value}
 
 
-def _fainted(side_state: Any, name: str) -> bool:
-    return any(m.name == name and m.fainted for m in side_state.pokemon)
-
-
 def _compare_mon(
     out: Findings,
     label: str,
@@ -500,13 +582,14 @@ def _compare_mon(
     tm: dict[str, Any],
     bm: Any,
     memory: BattleMemory,
-    revealed_abilities: dict[str, set[str]],
-    revealed_foe_moves: dict[str, set[str]],
-    me: str,
+    know: ProtocolKnowledge,
     *,
     mid_turn: bool,
 ) -> None:
     key = f"{label}:{name}"
+    role = out.bound["role"]
+    disguised = bool(tm.get("disguised_as"))
+    out.bind(label=label, role=role, name=name, tm=tm, bm=bm, disguised=disguised)
     # fainted / bench
     if tm["fainted"] != bm.fainted:
         out.add("fainted", "mismatch", label, key, truth=tm["fainted"], belief=bm.fainted)
@@ -532,12 +615,8 @@ def _compare_mon(
             "types", "mismatch", label, key,
             truth=sorted(t_types), belief=sorted(b_types),
         )  # fmt: skip
-    # HP. A benched foe with Regenerator heals silently on the way out, so its percent is
-    # legitimately hidden until it returns.
-    hp_hidden = label == "foe" and not tm["active"] and tm["ability"] == "regenerator"
-    if hp_hidden:
-        pass
-    elif label == "own":
+    # HP (exact own, percent foe)
+    if label == "own":
         if (tm["hp"], tm["maxhp"]) != (bm.current_hp, bm.max_hp):
             out.add(
                 "hp", "own_exact", "", key,
@@ -578,35 +657,21 @@ def _compare_mon(
             out.add(
                 "boosts", "mismatch", stat, key, truth=val, belief=b_boosts.get(stat, 0),
             )  # fmt: skip
-    # item
+    # item and ability: what a disguised Pokemon "has" is exactly what the Illusion hides
     if label == "own":
         t_item = tm["item"] or None
         if t_item != bm.item_id:
             out.add(
                 "item", "own", f"{t_item}->{bm.item_id}", key, truth=t_item, belief=bm.item_id,
             )  # fmt: skip
-    else:
-        _compare_foe_item(out, tm, bm, key)
-    # ability
-    if label == "own":
         if tm["ability"] != (bm.ability_id or ""):
             out.add(
                 "ability", "own", f"{tm['ability']}->{bm.ability_id}", key,
                 truth=tm["ability"], belief=bm.ability_id,
             )  # fmt: skip
-    else:
-        believed_ability = bm.ability_id or memory.opponent_abilities.get(bm.species_id)
-        revealed = revealed_abilities.get(name, set())
-        if believed_ability and believed_ability != tm["ability"]:
-            out.add(
-                "ability", "foe_wrong", f"{tm['ability']}->{believed_ability}", key,
-                truth=tm["ability"], belief=believed_ability,
-            )  # fmt: skip
-        elif not believed_ability and revealed:
-            out.add(
-                "ability", "foe_revealed_but_unknown", ",".join(sorted(revealed)), key,
-                truth=tm["ability"], belief=None,
-            )  # fmt: skip
+    elif not disguised:
+        _compare_foe_item(out, tm, bm, key, know, role, name)
+        _compare_foe_ability(out, tm, bm, key, know, role, name, memory)
     # volatiles
     t_vol = {
         vid
@@ -641,38 +706,95 @@ def _compare_mon(
         out.add(
             "protect_counter", "mismatch", "", key, truth=t_protect, belief=bm.protect_counter
         )  # fmt: skip
-    # foe moves
-    if label == "foe" and not tm["transformed"] and "mimic" not in tm["moves"]:
+    # foe moves (a disguise's moves are the deceived client's own business)
+    if label == "foe" and not disguised and not tm["transformed"]:
         known = {m.id for m in bm.moves}
+        shown = know.revealed_moves(role, name)
         legit = set(tm["moves"]) | set(tm["base_moves"]) | {"struggle", "recharge"}
         extra = sorted(known - legit)
         if extra:
             out.add(
-                "foe_moves",
-                "not_in_truth",
-                ",".join(extra),
-                key,
-                truth=sorted(legit),
-                belief=sorted(known),
-            )
+                "foe_moves", "not_in_truth", ",".join(extra), key,
+                truth=sorted(legit), belief=sorted(known),
+            )  # fmt: skip
+        missing = sorted(shown - known)
+        if missing:
+            out.add(
+                "foe_moves", "shown_but_unknown", ",".join(missing), key,
+                truth=sorted(shown), belief=sorted(known),
+            )  # fmt: skip
+        unrevealed = sorted((known & legit) - shown - {"struggle", "recharge"})
+        if unrevealed:
+            out.add(
+                "foe_moves", "known_but_unrevealed", ",".join(unrevealed), key,
+                truth=sorted(shown), belief=sorted(known),
+            )  # fmt: skip
 
 
-def _compare_foe_item(out: Findings, tm: dict[str, Any], bm: Any, key: str) -> None:
+def _compare_foe_ability(
+    out: Findings,
+    tm: dict[str, Any],
+    bm: Any,
+    key: str,
+    know: ProtocolKnowledge,
+    role: str,
+    name: str,
+    memory: BattleMemory,
+) -> None:
+    believed = bm.ability_id or memory.opponent_abilities.get(bm.species_id)
+    revealed = know.current_ability(role, name)
+    if believed and believed != tm["ability"]:
+        out.add(
+            "ability", "foe_wrong", f"{tm['ability']}->{believed}", key,
+            truth=tm["ability"], belief=believed,
+        )  # fmt: skip
+    elif not believed and revealed and revealed == tm["ability"]:
+        out.add(
+            "ability", "foe_revealed_but_unknown", revealed, key,
+            truth=tm["ability"], belief=None,
+        )  # fmt: skip
+    elif (
+        believed
+        and not know.revealed_abilities(role, name)
+        and len(legal_abilities(tm["species"])) != 1
+    ):
+        # the bot holds an ability the protocol never showed for a species with a choice
+        out.add(
+            "ability", "foe_known_but_unrevealed", believed, key,
+            truth=tm["ability"], belief=believed,
+        )  # fmt: skip
+
+
+def _compare_foe_item(
+    out: Findings,
+    tm: dict[str, Any],
+    bm: Any,
+    key: str,
+    know: ProtocolKnowledge,
+    role: str,
+    name: str,
+) -> None:
     t_item = tm["item"]
+    mk = know.mons.get((role, name))
+    shown = mk.item_shown if mk else None
     if t_item:
         # Item still held: believing a different known item, or "consumed", is wrong;
-        # "unknown" is legitimately hidden.
+        # "unknown" is legitimately hidden unless the protocol showed it.
         if bm.item_state == "known" and bm.item_id != t_item:
             out.add(
-                "item",
-                "foe_wrong_known",
-                f"{t_item}->{bm.item_id}",
-                key,
-                truth=t_item,
-                belief=bm.item_id,
-            )
+                "item", "foe_wrong_known", f"{t_item}->{bm.item_id}", key,
+                truth=t_item, belief=bm.item_id,
+            )  # fmt: skip
         elif bm.item_state == "consumed":
             out.add("item", "foe_marked_consumed", t_item, key, truth=t_item, belief="consumed")
+        elif bm.item_state != "known" and shown == t_item and not (mk and mk.item_gone):
+            out.add(
+                "item", "foe_shown_but_unknown", t_item, key, truth=t_item, belief=bm.item_state
+            )  # fmt: skip
+        elif bm.item_state == "known" and shown != t_item:
+            out.add(
+                "item", "foe_known_but_unrevealed", t_item, key, truth=t_item, belief=bm.item_id
+            )  # fmt: skip
     elif not tm["had_item"]:
         return  # never held one: "no item" is not public information
     else:
@@ -685,7 +807,7 @@ def _compare_foe_item(out: Findings, tm: dict[str, Any], bm: Any, key: str) -> N
             out.add("item", "foe_gone_but_unknown", "", key, truth=None, belief="unknown")
 
 
-# --- protocol bookkeeping (for attribution and for "revealed" ground truth) ---------------
+# --- protocol bookkeeping (for attribution) ----------------------------------------------
 
 _FROM = re.compile(r"\[from\] (?:ability|item|move): ([^|]+)")
 
@@ -713,42 +835,11 @@ def line_tag(split: list[str]) -> str:
     return f"{tag}:{detail}{suffix}" if detail else f"{tag}{suffix}"
 
 
-_IDENT = re.compile(r"p[12][ab]?: ([^|,]+)")
-
-
-def update_revealed(
-    lines: list[str], my_role: str, abilities: dict[str, set[str]], moves: dict[str, set[str]]
-) -> None:
-    """Record, from the public protocol, which foe abilities/moves have been revealed.
-
-    Uses `vgc.poke_env_compat._revealed_ability_holder` for the holder rule, so a wrong rule
-    shows up as `foe_wrong` (the believed ability disagrees with Showdown) rather than here.
-    """
-    from vgc.poke_env_compat import _revealed_ability_holder
-
-    foe = "p2" if my_role == "p1" else "p1"
-    for line in lines:
-        split = line.split("|")
-        if len(split) < 3:
-            continue
-        tag = split[1]
-        found = _revealed_ability_holder(split) if len(split) > 3 else None
-        if tag == "-ability" and len(split) > 3:
-            found = (split[2], split[3])
-            if any("[from] move:" in part for part in split[4:]):
-                found = (
-                    (split[2], split[4])
-                    if len(split) > 4 and not split[4].startswith("[")
-                    else None
-                )
-        if found and found[0].startswith(foe):
-            mm = _IDENT.match(found[0])
-            if mm:
-                abilities[mm.group(1).strip()].add(to_id(found[1]))
-        if tag == "move" and len(split) > 3 and split[2].startswith(foe) and "[from]" not in line:
-            mm = _IDENT.match(split[2])
-            if mm:
-                moves[mm.group(1).strip()].add(to_id(split[3]))
+def _group(f: dict[str, Any]) -> str:
+    base = (
+        f"{f['field']}/{f['kind']}/{f['detail']}" if f["detail"] else f"{f['field']}/{f['kind']}"
+    )
+    return f"[{f['exempt']}] {base}" if f.get("exempt") else base
 
 
 # --- the audited battle -------------------------------------------------------------------
@@ -764,14 +855,75 @@ def _new_acc() -> dict[str, Any]:
         "tags": defaultdict(Counter),
         "examples": defaultdict(list),
         "coverage": Counter(),
+        "cov": defaultdict(Counter),
         "errors": [],
         "agents": Counter(),
         "winners": Counter(),
+        "tracker_notes": Counter(),
     }
 
 
-def _group(f: dict[str, Any]) -> str:
-    return f"{f['field']}/{f['kind']}/{f['detail']}" if f["detail"] else f"{f['field']}/{f['kind']}"
+def _record_coverage(acc: dict[str, Any], lines: list[str], truth_state: dict[str, Any]) -> None:
+    """What this step exercised: protocol effects from the raw lines, and the Pokemon / items /
+    abilities / conditions present on the board in the dump (presence is the weaker tier)."""
+    cov = acc["cov"]
+    for ln in lines:
+        split = ln.split("|")
+        if len(split) < 3 or split[1] == "request":
+            continue
+        cov["tags"][split[1]] += 1
+        for part in split[2:]:
+            if part.startswith("[from]"):
+                body = part[len("[from]"):].strip()
+                kind, _, name = body.partition(":")
+                kind = kind.strip()
+                if kind in ("ability", "item", "move"):
+                    cov[f"{kind}_trigger"][to_id(name)] += 1
+            elif part.startswith("ability:"):
+                cov["ability_trigger"][to_id(part.split(":", 1)[1])] += 1
+            elif part.startswith("item:"):
+                cov["item_trigger"][to_id(part.split(":", 1)[1])] += 1
+            elif part.startswith("move:") and split[1] in ("-activate", "-start", "-end", "-singleturn"):
+                cov["move_trigger"][to_id(part.split(":", 1)[1])] += 1
+        if split[1] == "move" and len(split) > 3:
+            cov["move_used"][to_id(split[3])] += 1
+        elif split[1] == "-ability" and len(split) > 3:
+            cov["ability_trigger"][to_id(split[3])] += 1
+        elif split[1] in ("-item", "-enditem") and len(split) > 3:
+            cov["item_trigger"][to_id(split[3])] += 1
+        elif split[1] == "-mega" and len(split) > 4:
+            cov["item_trigger"][to_id(split[4])] += 1
+        elif split[1] == "-weather":
+            cov["field_condition"][to_id(split[2])] += 1
+        elif split[1] in ("-fieldstart", "-sidestart") and len(split) > 3:
+            cov["field_condition" if split[1] == "-fieldstart" else "side_condition"][
+                to_id(split[3].split(":")[-1])
+            ] += 1
+        elif split[1] == "-start" and len(split) > 3:
+            cov["volatile"][to_id(split[3].split(":")[-1])] += 1
+    for side in truth_state["sides"]:
+        for p in side["pokemon"]:
+            if p.get("isActive"):
+                cov["ability_present"][to_id(p.get("ability"))] += 1
+                if p.get("item"):
+                    cov["item_present"][to_id(p.get("item"))] += 1
+                for vid in (p.get("volatiles") or {}):
+                    cov["volatile"][to_id(vid)] += 1
+                if p.get("status"):
+                    cov["status"][p["status"]] += 1
+                cov["species_present"][to_id(str(p.get("species", "")).replace("[Species:", "").rstrip("]"))] += 1
+        for cid in side.get("sideConditions") or {}:
+            cov["side_condition"][to_id(cid)] += 1
+        for slot in side.get("slotConditions") or []:
+            for cid in slot or {}:
+                cov["slot_condition"][to_id(cid)] += 1
+    field = truth_state["field"]
+    if field.get("weather"):
+        cov["field_condition"][to_id(field["weather"])] += 1
+    if field.get("terrain"):
+        cov["field_condition"][to_id(field["terrain"])] += 1
+    for cid in field.get("pseudoWeather") or {}:
+        cov["field_condition"][to_id(cid)] += 1
 
 
 def audit_battle(
@@ -782,12 +934,17 @@ def audit_battle(
     seed: list[int],
     acc: dict[str, Any],
     trace: bool = False,
+    agents: dict[str, Any] | None = None,
+    max_steps: int = MAX_STEPS,
 ) -> None:
-    agents = {s: make_direct_agent(names[s], teams[s]) for s in SIDES}
+    """Play one battle, comparing the bot's view with Showdown's after every step.
+
+    `agents` replaces the baseline players (the targeted scenarios pass scripted ones)."""
+    agents = agents or {s: make_direct_agent(names[s], teams[s]) for s in SIDES}
     battle = DirectBattle.start(worker, battle_id, teams["p1"], teams["p2"], seed=seed)
     memories = {s: BattleMemory(battle_tag=battle_id) for s in SIDES}
-    revealed_ab = {s: defaultdict(set) for s in SIDES}
-    revealed_mv = {s: defaultdict(set) for s in SIDES}
+    knowledge = {s: ProtocolKnowledge(s) for s in SIDES}
+    prev_truth: dict[str, Any] | None = None
     episodes: set[tuple] = set()
     acc["battles"] += 1
     for s in SIDES:
@@ -797,13 +954,53 @@ def audit_battle(
         for s in SIDES:
             agents[s].observe(battle_id, lines[s])
             memories[s].observe_protocol([ln.split("|") for ln in lines[s]])
-            update_revealed(lines[s], s, revealed_ab[s], revealed_mv[s])
+            knowledge[s].feed(lines[s])
             for ln in lines[s]:
                 acc["coverage"][line_tag(ln.split("|"))] += 1
 
+    def record(f: dict[str, Any], s: str, truth: dict[str, Any], lines: list[str], step: int) -> None:
+        g = _group(f)
+        if trace:
+            print(
+                f"  !! {s} turn {truth['turn']} {g} {f['mon']} truth={f['truth']} "
+                f"belief={f['belief']}"
+            )
+        acc["observations"][g] += 1
+        ep = (s, f["mon"], g)
+        if ep in episodes:
+            return
+        episodes.add(ep)
+        acc["episodes"][g] += 1
+        mon_name = f["mon"].split(":", 1)[-1]
+        touching = [ln for ln in lines if mon_name and mon_name in ln] or lines
+        for ln in touching:
+            acc["tags"][g][line_tag(ln.split("|"))] += 1
+        if len(acc["examples"][g]) < MAX_EXAMPLES:
+            acc["examples"][g].append(
+                {
+                    "battle": battle_id,
+                    "seed": seed,
+                    "perspective": s,
+                    "turn": truth["turn"],
+                    "step": step,
+                    "mon": f["mon"],
+                    "truth": f["truth"],
+                    "belief": f["belief"],
+                    "lines": touching[-8:],
+                }
+            )
+
     def compare(lines: dict[str, list[str]], step: int) -> None:
+        nonlocal prev_truth
         state = worker.request({"cmd": "dump", "id": battle_id})["state"]
         truth = truth_view(state)
+        _record_coverage(acc, [ln for s in SIDES for ln in lines[s]], state)
+        alias = illusion_alias(truth, prev_truth)
+        truth_mons = {
+            (role, name): tm
+            for role, side in truth["sides"].items()
+            for name, tm in side["mons"].items()
+        }
         for s in SIDES:
             bt = battle.battles[s]
             if bt.teampreview:
@@ -812,44 +1009,23 @@ def audit_battle(
             setattr(bt, "_vgc_battle_memory", memories[s])
             snap = snapshot_battle(bt)
             acc["compares"] += 1
-            for f in compare_perspective(
-                s, snap, truth, memories[s], revealed_ab[s], revealed_mv[s]
-            ):
-                g = _group(f)
-                if trace:
-                    print(
-                        f"  !! {s} turn {truth['turn']} {g} {f['mon']} truth={f['truth']} "
-                        f"belief={f['belief']}"
-                    )
-                acc["observations"][g] += 1
-                ep = (s, f["mon"], g)
-                if ep in episodes:
-                    continue
-                episodes.add(ep)
-                acc["episodes"][g] += 1
-                mon_name = f["mon"].split(":", 1)[-1]
-                touching = [ln for ln in lines[s] if mon_name and mon_name in ln] or lines[s]
-                for ln in touching:
-                    acc["tags"][g][line_tag(ln.split("|"))] += 1
-                if len(acc["examples"][g]) < MAX_EXAMPLES:
-                    acc["examples"][g].append(
-                        {
-                            "battle": battle_id,
-                            "seed": seed,
-                            "perspective": s,
-                            "turn": truth["turn"],
-                            "step": step,
-                            "mon": f["mon"],
-                            "truth": f["truth"],
-                            "belief": f["belief"],
-                            "lines": touching[-8:],
-                        }
-                    )
+            know = knowledge[s]
+            unresolved = know.resolve(truth_mons, alias)
+            findings = compare_perspective(
+                s, snap, truth, memories[s], know, bt, lines[s], prev_truth
+            )
+            for cand in unresolved:
+                # the tracker's own rule could not attribute this line; informational (the
+                # bot-vs-truth comparisons above are what fail the audit)
+                acc["tracker_notes"][f"{cand.kind}:{cand.tag}"] += 1
+            for f in findings:
+                record(f, s, truth, lines[s], step)
+        prev_truth = truth
 
     feed(battle.last_lines)
     step = 0
     try:
-        while not battle.ended and step < MAX_STEPS:
+        while not battle.ended and step < max_steps:
             to_move = battle.sides_to_move()
             for side in to_move:
                 battle.battles[side]._vgc_direct_root = battle
@@ -925,10 +1101,12 @@ def worker_main(job: dict[str, Any]) -> dict[str, Any]:
 def merge(into: dict[str, Any], part: dict[str, Any]) -> None:
     for key in ("battles", "steps", "compares"):
         into[key] += part[key]
-    for key in ("observations", "episodes", "coverage", "agents", "winners"):
+    for key in ("observations", "episodes", "coverage", "agents", "winners", "tracker_notes"):
         into[key].update(part[key])
     for g, counter in part["tags"].items():
         into["tags"][g].update(counter)
+    for g, counter in part["cov"].items():
+        into["cov"][g].update(counter)
     for g, examples in part["examples"].items():
         room = MAX_EXAMPLES - len(into["examples"][g])
         into["examples"][g].extend(examples[:room])
@@ -948,53 +1126,15 @@ def load_pool_teams(manifests: list[Path], limit: int) -> list[str]:
     return teams[:limit]
 
 
-# Groups that are NOT parsing defects: Showdown does not show the information.
-LEGITIMATELY_HIDDEN = (
-    (
-        "duration/hidden_foe_extender",
-        "a foe's Damp Rock / Heat Rock / Light Clay / Terrain Extender is not shown until revealed",
-    ),
-)
-# Real divergences left in the bot's view, each with the reason it is not repaired. All are
-# rarer than ~1 in 100 random-moveset games. An entry may require a triggering protocol message
-# (substring match on the tags attributed to the group) so it cannot hide an unrelated defect
-# in the same field; a group that matches no entry is reported as UNEXPLAINED.
-KNOWN_LIMITATIONS = (
-    ("types/mismatch", None, "Trick-or-Treat / Forest's Curse add a THIRD type; poke-env has no slot for it"),
-    ("ability/foe_wrong", None, "abilities swapped or changed by Skill Swap / Entrainment / Mummy / "
-     "Imposter with the abilities hidden, then lost again on switch-out"),
-    ("ability/foe_revealed_but_unknown", None, "same family: the holder's ability changed after the reveal"),
-    ("hp/foe_percent", None, "a benched foe's silent Regenerator heal when the ability was acquired mid-battle"),
-    ("foe_moves/not_in_truth/transform", None, "Imposter: poke-env lists Transform as a revealed move"),
-    ("volatile/missing/yawn", None, "Rest while yawned: poke-env ends Yawn, Showdown keeps the volatile"),
-    ("field/missing/fairylock", None, "Fairy Lock arrives as -fieldactivate, which poke-env ignores"),
-    ("status_counter/mismatch/slp", None, "sleep timer edge cases (Rest then a Red Card drag)"),
-    ("boosts/mismatch", ("Illusion", "replace"), "Illusion broke through a path the repairs do not cover"),
-    ("volatile/stale", ("Illusion", "replace"), "Illusion: effects earned under a disguise"),
-    ("volatile/stale/focusband", None, "Focus Band activation marker survived one request"),
-    ("volatile/stale/gastroacid", None, "Gastro Acid on a disguised Zoroark, found through a request"),
-    ("volatile/missing/gastroacid", None, "same: the effect stays on the disguise object"),
-    ("duration/mismatch", None, "screens / weather set through Court Change or a swapped Light Clay"),
-)  # fmt: skip
-
-
-def classify_group(group: str, tags: dict[str, int] | None = None) -> tuple[str, str]:
-    """("hidden" | "limitation" | "unexplained", reason)."""
-    for prefix, reason in LEGITIMATELY_HIDDEN:
-        if group.startswith(prefix):
-            return "hidden", reason
-    for prefix, needs, reason in KNOWN_LIMITATIONS:
-        if not group.startswith(prefix):
-            continue
-        if needs is None or tags is None or any(n in t for n in needs for t in tags):
-            return "limitation", reason
-    return "unexplained", ""
+def classify_group(group: str) -> tuple[str, str]:
+    """("exempt" | "unexplained", exemption id). Exemptions were decided per finding by
+    `audit_exemptions.classify`; the group key carries the id as a `[id]` prefix."""
+    match = re.match(r"^\[([a-z0-9_]+)\] ", group)
+    return ("exempt", match.group(1)) if match else ("unexplained", "")
 
 
 def unexplained_groups(acc: dict[str, Any]) -> list[str]:
-    return sorted(
-        g for g in acc["episodes"] if classify_group(g, acc["tags"].get(g))[0] == "unexplained"
-    )
+    return sorted(g for g in acc["episodes"] if classify_group(g)[0] == "unexplained")
 
 
 def report_text(acc: dict[str, Any], elapsed: float) -> str:
@@ -1005,21 +1145,20 @@ def report_text(acc: dict[str, Any], elapsed: float) -> str:
     ]
     for kind, title in (
         ("unexplained", "DEFECTS (unexplained mismatches)"),
-        ("limitation", "KNOWN LIMITATIONS (not repaired)"),
-        ("hidden", "LEGITIMATELY HIDDEN (not defects)"),
+        ("exempt", "EXEMPT (documented predicate holds for the specific finding)"),
     ):
         rows = [
             (g, n)
             for g, n in sorted(acc["episodes"].items(), key=lambda kv: -kv[1])
-            if classify_group(g, acc["tags"].get(g))[0] == kind
+            if classify_group(g)[0] == kind
         ]
         total = sum(n for _, n in rows)
         lines += ["", f"== {title}: {len(rows)} groups, {total} episodes"]
         if rows:
-            lines.append(f"{'group':52s} {'episodes':>8s} {'obs':>8s}  top triggering messages")
+            lines.append(f"{'group':64s} {'episodes':>8s} {'obs':>8s}  top triggering messages")
         for g, n in rows:
             top = ", ".join(f"{t} x{c}" for t, c in acc["tags"][g].most_common(3))
-            lines.append(f"{g:52s} {n:8d} {acc['observations'][g]:8d}  {top}")
+            lines.append(f"{g:64s} {n:8d} {acc['observations'][g]:8d}  {top}")
     return "\n".join(lines)
 
 
@@ -1035,7 +1174,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--fail-on-unexplained",
         action="store_true",
-        help="exit 1 when a mismatch group matches no documented limitation",
+        help="exit 1 when a mismatch group matches no documented exemption",
     )
     parser.add_argument(
         "--disable-fixes",
@@ -1049,7 +1188,28 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="play only this battle index and print every step",
     )
+    parser.add_argument(
+        "--scenarios",
+        action="store_true",
+        help="also play the targeted coverage scenarios (offline/audit_scenarios.py)",
+    )
+    parser.add_argument(
+        "--scenarios-only",
+        action="store_true",
+        help="play only the targeted coverage scenarios (no seeded random battles)",
+    )
+    parser.add_argument(
+        "--scenario-filter", default="", help="substring: play only matching scenario names"
+    )
+    parser.add_argument(
+        "--coverage-report",
+        action="store_true",
+        help="print which legal moves / abilities / items / messages / conditions were exercised",
+    )
     args = parser.parse_args(argv)
+    if args.scenarios_only:
+        args.scenarios = True
+        args.battles = 0
 
     pool_teams = load_pool_teams(list(DEFAULT_MANIFESTS), args.pool_limit)
     from vgc import poke_env_compat
@@ -1072,8 +1232,8 @@ def main(argv: list[str] | None = None) -> int:
             print(err["trace"])
         return 0
     jobs = []
-    workers = max(1, min(args.workers, args.battles))
-    for w in range(workers):
+    workers = max(1, min(args.workers, max(args.battles, 1)))
+    for w in range(workers if args.battles else 0):
         jobs.append(
             {
                 "indices": list(range(w, args.battles, workers)),
@@ -1084,16 +1244,34 @@ def main(argv: list[str] | None = None) -> int:
                 "disable": disable,
             }
         )
+    scenario_jobs = []
+    if args.scenarios:
+        import audit_scenarios
+
+        scenario_jobs = audit_scenarios.make_jobs(
+            max(1, args.workers), disable=disable, name_filter=args.scenario_filter
+        )
     started = time.time()
     total = _new_acc()
     ctx = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
-        for part in pool.map(worker_main, jobs):
-            merge(total, part)
+    n_pool = max(1, len(jobs) + len(scenario_jobs))
+    with ProcessPoolExecutor(max_workers=min(args.workers, n_pool), mp_context=ctx) as pool:
+        futures = [pool.submit(worker_main, job) for job in jobs]
+        if scenario_jobs:
+            import audit_scenarios
+
+            futures += [pool.submit(audit_scenarios.run_job, job) for job in scenario_jobs]
+        for future in futures:
+            merge(total, future.result())
     elapsed = time.time() - started
     print(report_text(total, elapsed))
     for err in total["errors"][:5]:
         print("\nERROR", err["index"], err["error"], "\n", err["trace"])
+    if args.coverage_report:
+        import audit_coverage
+
+        print()
+        print(audit_coverage.report_text(total["cov"]))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     serial = {
         "battles": total["battles"],
@@ -1101,15 +1279,14 @@ def main(argv: list[str] | None = None) -> int:
         "compares": total["compares"],
         "elapsed_seconds": round(elapsed, 1),
         "episodes": dict(total["episodes"]),
-        "classification": {
-            g: classify_group(g, total["tags"].get(g))[0] for g in total["episodes"]
-        },
+        "classification": {g: classify_group(g)[0] for g in total["episodes"]},
         "unexplained": unexplained_groups(total),
         "disabled_fixes": disable,
         "observations": dict(total["observations"]),
         "tags": {g: dict(c.most_common(6)) for g, c in total["tags"].items()},
         "examples": dict(total["examples"]),
         "coverage": dict(total["coverage"].most_common()),
+        "cov": {k: dict(v) for k, v in total["cov"].items()},
         "errors": total["errors"],
         "agents": dict(total["agents"]),
         "seed": args.seed,
