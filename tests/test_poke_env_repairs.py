@@ -680,3 +680,60 @@ def test_toxic_stage_caps_at_fifteen() -> None:
     for turn in range(2, 22):
         lines += ["|upkeep", f"|turn|{turn}"]
     assert foe(play(lines), "Alcremie").status_counter == 15
+
+
+def test_illusion_break_moves_expiry_records_with_the_copied_effects() -> None:
+    """A disguised Zoroark uses Endure, the Illusion breaks, the next turn begins: the real
+    Zoroark must lose Endure too (the expiry record used to stay on the disguise)."""
+    lines = LEADS + [
+        "|move|p2a: Alcremie|Endure|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|move: Endure",
+        "|replace|p2a: Zoroark|Zoroark, L50, M",
+        "|upkeep",
+        "|turn|2",
+    ]
+    assert Effect.ENDURE not in foe(play(lines), "Zoroark").effects
+    with without("illusion_break_state"):
+        assert Effect.ENDURE not in foe(play(lines), "Zoroark").effects
+
+
+def _screen_battle(item_event: list[str]) -> tuple[DoubleBattle, int]:
+    from vgc.condition_clock import observe_condition_line, remaining_turns
+
+    battle = play(LEADS)
+    for line in (
+        "|move|p2a: Alcremie|Reflect|p2a: Alcremie",
+        "|-sidestart|p2: foe|Reflect",
+        "|upkeep",
+        "|turn|2",
+        "|upkeep",
+        "|turn|3",
+        *item_event,
+    ):
+        observe_condition_line(battle, line.split("|"))
+        battle.parse_message(line.split("|"))
+    return battle, remaining_turns(battle, "side", "reflect", "p2")
+
+
+def test_light_clay_gained_after_the_screen_went_up_does_not_extend_it() -> None:
+    event = ["|-item|p2a: Alcremie|Light Clay|[from] move: Thief|[of] p1a: Heracross"]
+    battle, remaining = _screen_battle([])
+    foe(battle, "Alcremie")._item = "lightclay"  # revealed later, no acquisition seen
+    assert _screen_battle([])[1] == 3
+    traded, remaining = _screen_battle(event)
+    foe(traded, "Alcremie")._item = "lightclay"
+    from vgc.condition_clock import remaining_turns
+
+    assert remaining_turns(traded, "side", "reflect", "p2") == 3
+    with without("extender_acquired_later"):
+        assert remaining_turns(traded, "side", "reflect", "p2") == 6
+
+
+def test_an_extender_revealed_by_knock_off_after_the_set_still_counts() -> None:
+    from vgc.condition_clock import observe_condition_line, remaining_turns
+
+    battle, _ = _screen_battle([])
+    for line in ("|-enditem|p2a: Alcremie|Light Clay|[from] move: Knock Off|[of] p1a: Heracross",):
+        observe_condition_line(battle, line.split("|"))
+        battle.parse_message(line.split("|"))
+    assert remaining_turns(battle, "side", "reflect", "p2") == 6

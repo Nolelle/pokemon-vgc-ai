@@ -60,6 +60,7 @@ ALL_FIXES = (
     "blocked_priority_is_not_cant",  # Armor Tail / Dazzling `cant` lines are the holder's, not a miss
     "shed_tail",  # Shed Tail's Substitute was not handed to the replacement
     "toxic_stage_cap",  # Showdown caps the toxic stage at 15
+    "extender_acquired_later",  # a Light Clay / Damp Rock gained AFTER the set stretched it
     "status_change_resets_counter",  # a new status inherited the old status's turn counter
 )
 _DISABLED: set[str] = {
@@ -1021,6 +1022,21 @@ if not getattr(Pokemon.moved, "_vgc_keeps_flash_fire", False):
 _original_end_illusion_on = AbstractBattle._end_illusion_on
 
 
+def _migrate_expiry(battle: AbstractBattle, fake: Pokemon, real: Pokemon) -> None:
+    """Move the end-of-turn / next-action expiry records (and the swapped-ability flag) from
+    the disguise to the real Pokemon, or the copied Endure would never expire."""
+    store = vars(battle).get("_vgc_ephemeral")
+    if store:
+        for bucket in ("turn", "move"):
+            store[bucket] = [
+                (real if mon is fake else mon, effect) for mon, effect in store[bucket]
+            ]
+    swapped = vars(battle).get("_vgc_ability_swapped")
+    if swapped and id(fake) in swapped:
+        swapped.discard(id(fake))
+        swapped.add(id(real))
+
+
 def _end_illusion_on_keeping_state(
     self: AbstractBattle, illusionist: str | None, illusioned: Pokemon | None, details: str
 ) -> Pokemon:
@@ -1038,6 +1054,7 @@ def _end_illusion_on_keeping_state(
         real._effects.update(carried[1])
         real._protect_counter = carried[2]
         real._status_counter = carried[3]
+        _migrate_expiry(self, illusioned, real)
     return real
 
 
@@ -1055,6 +1072,7 @@ def _update_team_keeping_illusion_state(
     self: AbstractBattle, side: dict[str, Any], strict_battle_tracking: bool = False
 ) -> None:
     pairs: list[tuple[Pokemon, tuple[Any, ...]]] = []
+    fakes: list[Pokemon] = []
     if fix_enabled("illusion_break_state"):
         falsely: list[Pokemon] = []
         truly: list[Pokemon] = []
@@ -1070,14 +1088,16 @@ def _update_team_keeping_illusion_state(
         # ones carrying state can be the disguise.)
         carrying = [m for m in falsely if any(m._boosts.values()) or m._effects]
         if carrying and len(carrying) == len(truly):
+            fakes = carrying
             pairs = [
                 (real, (dict(fake._boosts), dict(fake._effects)))
                 for real, fake in zip(truly, carrying, strict=True)
             ]
     _original_update_team_from_request(self, side, strict_battle_tracking)
-    for real, (boosts, effects) in pairs:
+    for (real, (boosts, effects)), fake in zip(pairs, fakes, strict=True):
         real._boosts = boosts
         real._effects.update(effects)
+        _migrate_expiry(self, fake, real)
 
 
 if not getattr(AbstractBattle._update_team_from_request, "_vgc_repairs", False):

@@ -101,12 +101,52 @@ def _start(battle: Any, clock: dict, key: tuple[str, ...], setter: str | None) -
     # Showdown fixes the duration when the condition starts; losing the rock later
     # (Knock Off, Trick) does not shorten it, so record what the setter held THEN.
     clock[("extended", *key)] = _setter_holds_extender(battle, key[-1], setter)
+    clock[("start_seq", *key)] = clock.get(("seq",), 0)
 
 
 def _end(clock: dict, key: tuple[str, ...]) -> None:
     clock.pop(key, None)
     clock.pop(("setter", *key), None)
     clock.pop(("extended", *key), None)
+    clock.pop(("start_seq", *key), None)
+
+
+def _mon_key(ident: str) -> str:
+    return ident if len(ident) < 4 or ident[2] == ":" else ident[:2] + ident[3:]
+
+
+def _observe_item_event(battle: Any, clock: dict, split: list[str]) -> None:
+    """Track WHEN a Pokemon gains an item, and when a held extender is revealed by losing it.
+
+    Showdown fixes a condition's duration when it starts, so an extender the setter only
+    acquired later (Trick, Switcheroo, Thief, Bestow, Symbiosis, Pickup, Harvest) says
+    nothing about that duration; one it loses later (Knock Off) was still there when it
+    started.
+    """
+    tag = split[1]
+    if len(split) < 4:
+        return
+    if tag == "-item" and any(
+        p.startswith("[from] move:")
+        or p in ("[from] ability: Pickup", "[from] ability: Harvest", "[from] ability: Symbiosis")
+        for p in split[4:]
+    ):
+        clock[("acq", _mon_key(split[2]))] = clock[("seq",)]
+    elif tag == "-activate" and split[3] == "ability: Symbiosis" and len(split) > 5:
+        clock[("acq", _mon_key(split[5].replace("[of] ", "")))] = clock[("seq",)]
+    elif tag == "-enditem":
+        item = to_id(split[3])
+        holder = _mon_key(split[2])
+        for key in [k for k in clock if k[0] in _TIMED]:
+            setter = clock.get(("setter", *key))
+            if (
+                setter
+                and ":" in setter
+                and _mon_key(setter) == holder
+                and _EXTENDER.get(key[-1]) == item
+                and clock.get(("acq", holder), -1) < clock.get(("start_seq", *key), 0)
+            ):
+                clock[("extended", *key)] = True
 
 
 def observe_condition_line(battle: Any, split: list[str]) -> None:
@@ -116,10 +156,15 @@ def observe_condition_line(battle: Any, split: list[str]) -> None:
         return
     tag = split[1]
     if tag not in (
-        "upkeep", "move", "-weather", "-fieldstart", "-fieldend", "-sidestart", "-sideend"
-    ):
+        "upkeep", "move", "-weather", "-fieldstart", "-fieldend", "-sidestart", "-sideend",
+        "-item", "-enditem", "-activate",
+    ):  # fmt: skip
         return
     clock = _clock(battle)
+    clock[("seq",)] = clock.get(("seq",), 0) + 1
+    if tag in ("-item", "-enditem", "-activate"):
+        _observe_item_event(battle, clock, split)
+        return
     if tag == "upkeep":
         for key in clock:
             if key[0] in _TIMED:
@@ -169,8 +214,10 @@ def _setter_holds_extender(battle: Any, effect_id: str, setter: str | None) -> b
     if effect_id in _SCREENS and not fix_enabled("screen_clock"):
         return False
     role = getattr(battle, "player_role", None)
-    team = getattr(battle, "team", None) if setter[:2] == role else getattr(
-        battle, "opponent_team", None
+    team = (
+        getattr(battle, "team", None)
+        if setter[:2] == role
+        else getattr(battle, "opponent_team", None)
     )
     # Team keys drop the slot letter: "p1a: Torkoal" -> "p1: Torkoal".
     mon = (team or {}).get(setter[:2] + setter[3:])
@@ -201,7 +248,18 @@ def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = Non
         and setter[:2] == getattr(battle, "player_role", None)
     )
     # (Our own item is known from the start; a later Trick / Thief must not stretch a screen.)
-    if not extended and not own_setter and _setter_holds_extender(battle, effect_id, setter):
+    acquired_later = (
+        bool(setter)
+        and ":" in setter
+        and clock.get(("acq", _mon_key(setter)), -1) >= clock.get(("start_seq", *key), 0)
+        and fix_enabled("extender_acquired_later")
+    )
+    if (
+        not extended
+        and not own_setter
+        and not acquired_later
+        and _setter_holds_extender(battle, effect_id, setter)
+    ):
         # Revealed after the start (e.g. an opponent's rock shown later): it was there then.
         extended = clock[("extended", *key)] = True
     if extended or (base is not None and ticks >= base):
@@ -210,9 +268,7 @@ def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = Non
     return ticks
 
 
-def remaining_turns(
-    battle: Any, kind: str, effect_id: str, side: str | None = None
-) -> int | None:
+def remaining_turns(battle: Any, kind: str, effect_id: str, side: str | None = None) -> int | None:
     """Turns ``effect_id`` still lasts INCLUDING the one being decided, or None if unknown.
 
     ``base_duration - elapsed_ticks`` (net of any item extension, see `elapsed_ticks`).
