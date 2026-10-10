@@ -265,6 +265,20 @@ Four rules learned the hard way on 2026-08-11/12, all now enforced in code:
   change was built to chase it, and it measured 54.9% on the next seed. The guardrail is
   now a one-sided cluster-robust test per archetype, Holm-corrected.
 
+**Before running a pool A/B, ask whether self-play can even produce the situation.** The pool
+harness plays our bot against copies of itself on fixed teams. That measures well:
+whole-game mechanics and judgement changes that come up in most games (the 2026-10-09
+correctness pass: 53.8%/54.0%), and anything both seats meet often. It measures badly:
+behaviour that only shows up against HUMAN play or in specific positions (stalling with
+repeated Protect in lost positions, opponent setup like Psych Up/Minimize, rare mechanics).
+A null there means "self-play cannot see it", not "it does not matter". For those, first
+count how often the target situation occurs in the pool (e.g. repeat-Protect decisions per
+game from traces) — if it is rare, skip the pool A/B and test on recorded ladder positions
+(`offline/replay_judge_positions.py`, `offline/review_lost_decisions.py`) or a ladder
+session instead. Pure correctness fixes verified another way (ground-truth tests, the
+parsing audit) do not need a win-rate A/B at all. Examples of wasted runs: passive
+look-ahead 50.0% and forecast locks 49.7% (2026-10-10), both behaviours rare in self-play.
+
 **Run `--null-test` (A/A: both arms identical) whenever the harness changes.** It must
 return 50%. This is what retired the phantom "accurate own spreads cost 10 points"
 result: that 200/500 = 40.0% run predates commit `e8417bd`, before which `DirectBattle`
