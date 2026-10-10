@@ -328,3 +328,8 @@
   - Note: the ground-truth damage fixes are in both arms, so their effect is not in these numbers.
 - Showdown synced to 2796de703 (two upstream syncs on this branch). Tests: 1356 unit, 232 integration (0 skipped); all gates PASS.
 - Codex exec gotcha: background `codex exec` hangs on stdin; always add `< /dev/null` and an alarm.
+
+## 2026-10-09 — Judge stalling look-ahead + reply diversity (branch worktree-agent-a5b494afc72d4d716)
+- New knobs, all default False: `exact_judge_passive_lookahead` (+ `_alternatives`, `_samples`, `exact_search_passive_lookahead_board_terminals`), `exact_search_diverse_replies` (+ `_min_weight_ratio`). Code: `vgc/rl/exact_search.py` (`is_passive_order`, `_diverse_replies`), `vgc/exact_judge.py` (`narrow_for_lookahead`).
+- Offline harness: `offline/replay_judge_positions.py` replays ladder state-replays through the judge once per arm; see CLAUDE.md "Judge stalling and reply diversity" for the tables. Look-ahead changed 52/321 picks (49% of loss repeat-Protects), repeat Protects 34 -> 29; diverse replies 86.0% -> 86.6% agreement with a 16-reply judge. Needs the owner's pool A/B before any default flips.
+- The shared scratchpad dir is written by other agents (show.py/peek.py got overwritten); use a private subdir.

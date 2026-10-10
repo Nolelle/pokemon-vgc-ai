@@ -135,3 +135,48 @@ def test_search_continuation_mode_values_and_root_untouched() -> None:
         for p, s in zip(pol, sea, strict=True)
         if s.continuation_value is not None
     )
+
+
+def test_passive_lookahead_fires_only_with_a_stall_turn_among_the_searched_orders(
+    monkeypatch,
+) -> None:
+    if not DEFAULT_SHOWDOWN_REPO.exists():
+        pytest.skip("local Pokemon Showdown checkout is unavailable")
+    import vgc.rl.exact_search as exact_search
+
+    cfg = replace(
+        PolicyConfig(),
+        search_our_candidates=2,
+        search_opp_candidates=2,
+        exact_search_future_samples=1,
+        exact_search_passive_lookahead=True,
+        use_rolling_horizon=False,
+        use_value_head=False,
+    )
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as worker:
+        root = _root(worker, "cont-passive")
+        orders = enumerate_joint_orders(root.battles["p1"])
+        # The meta1 leads do not both know Protect, so name one legal order the stall turn
+        # (the classifier itself is unit-tested in test_exact_search_diversity.py).
+        stall, other_a, other_b = orders[0].message, orders[1], orders[2]
+        monkeypatch.setattr(exact_search, "is_passive_order", lambda o: o.message == stall)
+
+        def only(*chosen):
+            wanted = {o.message for o in chosen}
+            return lambda ranked, _c: (
+                [e for e in ranked if e.order.message in wanted],
+                [e for e in ranked if e.order.message not in wanted],
+            )
+
+        mixed = search_joint_orders_exact(
+            root, "p1", cfg, candidate_selector=only(orders[0], other_a)
+        )
+        plain = search_joint_orders_exact(
+            root, "p1", cfg, candidate_selector=only(other_a, other_b)
+        )
+        root.close()
+    searched = [e for e in mixed if e.breakdown.get("searched")]
+    assert len(searched) == 2 and all(e.breakdown["passive_lookahead"] for e in searched)
+    assert mixed[0].breakdown["search_metrics"]["continuation_turns"] == 1
+    assert not any(e.breakdown["passive_lookahead"] for e in plain if e.breakdown.get("searched"))
+    assert plain[0].breakdown["search_metrics"]["continuation_turns"] == 0

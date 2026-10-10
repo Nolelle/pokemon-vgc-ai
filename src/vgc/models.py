@@ -624,6 +624,48 @@ class PolicyConfig:
     # could be the same two plans twice. True keeps only the higher-scored twin so N slots
     # hold N distinct plans. False is the legacy top-N.
     exact_search_dedupe_mega_replies: bool = True
+    # Opponent reply DIVERSITY (2026-10-09). The top-N replies by the evaluator's score are
+    # often target/slot variations of one plan (same two moves, different targets), which
+    # leaves out qualitatively different replies: Protect, a switch, a status move, focus
+    # fire on the other slot. True keeps the top reply, then fills the remaining slots by
+    # farthest-first distance (a different move in a slot counts 2, the same move at another
+    # target 1), after making sure a Protect reply and a switch reply are present when one
+    # exists and is plausible (below). Reply WEIGHTS are unchanged (the same softmax of the
+    # evaluator's own scores); only which replies are searched changes. False = legacy
+    # top-N. Applies to every exact search, the live judge included.
+    exact_search_diverse_replies: bool = False
+    # "Plausible" for the diverse selection: a reply must carry at least this fraction of
+    # the top reply's softmax weight (exp((score - top) / search_response_temperature)), so
+    # a reply the evaluator rates as hopeless is not searched just to look different. The
+    # worst-case term (search_worst_case_weight) counts a searched reply in full whatever
+    # its weight, which is why this floor exists. 0.05 = within ~90 points at the shipped
+    # temperature of 30. Candidates below it only fill slots no plausible reply can.
+    exact_search_diverse_reply_min_weight_ratio: float = 0.05
+    # PASSIVE look-ahead (2026-10-09). The exact value is a one-turn board change, so a
+    # line that only postpones an elimination (Protect, Protect, ...) outranks the trade
+    # that escapes it: on the ladder the live judge overturned the fast pick INTO a repeat
+    # Protect in 21 of 44 such decisions, and losses averaged 1.9 back-to-back Protects
+    # against 0.05 in wins. True: when the searched set holds BOTH a passive order (every
+    # active slot uses a Protect-family move) and a non-passive one, every searched order
+    # is valued one turn deeper with the existing small continuation search (our best
+    # options x their top replies, see exact_search_continuation_*), so the values stay
+    # comparable. Decisions with no passive candidate, or only passive ones, cost nothing
+    # extra. False = the one-turn exact search exactly as before. The judge maps its own
+    # switch `exact_judge_passive_lookahead` onto this.
+    exact_search_passive_lookahead: bool = False
+    exact_judge_passive_lookahead: bool = False
+    # Whether the look-ahead scores a game that ENDS on the extra turn by its board
+    # (HP, survivors) instead of +-10,000, as exact_search_continuation_board_terminals does.
+    exact_search_passive_lookahead_board_terminals: bool = False
+    # Live-judge cost control for the look-ahead (it adds ~4 exact clones and 2 evaluator
+    # passes per branch, which does not fit the judge's wall-clock cap at six candidates):
+    # when it fires the judge narrows its candidate set to every passive order plus this many
+    # of the fast search's best non-passive orders (the fast pick is always one of them),
+    # and, if `exact_judge_passive_lookahead_samples` > 0, uses that many sampled futures
+    # per branch instead of `exact_judge_future_samples`. Decisions where the look-ahead
+    # does not fire are judged exactly as before.
+    exact_judge_passive_lookahead_alternatives: int = 2
+    exact_judge_passive_lookahead_samples: int = 0
     # Points per Pokemon still standing (brought and not fainted, unseen opponent
     # reserves included), on top of its HP. Without it a KO was worth only the target's
     # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,

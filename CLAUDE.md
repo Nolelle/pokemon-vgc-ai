@@ -745,6 +745,49 @@ its frozen value; this is not a calibration change and no new weight was added.
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
   +7.6 pts), myopic blend double-counts damage.
 
+## Judge stalling and reply diversity (2026-10-09): built, measured offline, both OFF
+
+Ladder session 20261010T003212Z (50 games, correctness pass): losses averaged 1.9 back-to-back
+Protects vs 0.05 in wins. Codex verified the Protect mechanics are right; the cause is the
+one-turn horizon of `_position_value`. Two knobs, both default False, measured offline by
+replaying all 50 `state-replays` bundles through the live judge (`offline/replay_judge_positions.py`:
+fast search under the bundle's own config, then the judge once per arm on the same public mirror and
+random key; 370 decisions, 321 judged):
+
+- **Passive look-ahead** (`exact_judge_passive_lookahead`, mapped to `exact_search_passive_lookahead`).
+  When the judged set holds a passive order (every acting slot Protect-family,
+  `vgc.rl.exact_search.is_passive_order`) AND a non-passive one, the judge keeps every passive
+  order plus the fast search's best `exact_judge_passive_lookahead_alternatives` (2) non-passive
+  ones, and values ALL of them one turn deeper with the existing `continuation_mode="search"`
+  machinery (our top 2 x their top 2 on the next turn). It fires on 101/321 judged decisions.
+  `..._samples` (0 = judge default of 2) and `exact_search_passive_lookahead_board_terminals`
+  are the other levers.
+- **Diverse replies** (`exact_search_diverse_replies`): top reply, then a plausible Protect and
+  switch reply, then farthest-first by move plan (`exact_search_diverse_reply_min_weight_ratio`
+  = plausibility floor on the softmax weight). Weights unchanged.
+
+Pick changes vs the live judge (idle timings: base p50 0.54 s / p99 1.1 s):
+
+| group (n) | look-ahead changed | passive->active / active->passive | repeat Protect picks |
+|---|---|---|---|
+| all judged (321) | 52 (16%) | 18 / 10 | 34 -> 29 |
+| losses, repeat-Protect (37) | 18 (49%) | 10 / 2 | 28 -> 24 |
+| game 2695880700 T7-11 (5) | 3 | 2 / 0 | 3 -> 3 |
+| wins, Protect in pick (31) | 7 (23%) | 2 / 1 | 1 -> 1 |
+| wins, Protect vs foe Tailwind/TR (8) | 2 (25%) | 0 / 0 | 0 -> 0 |
+
+Verdict: look-ahead moves picks (half the loss repeat-Protect decisions) but only trims repeat
+Protects by ~15% net, and 17 of the 28 loss repeat-Protect picks are lone-Pokemon endgames where every line
+scores about -10,000 anyway. Game 17 T8-T11 are such lost positions: look-ahead breaks the
+double Protect in 3 of 5, but the values there are dice on whether a +-10,000 ending lands in
+the 2 sampled futures (1 vs 2 samples agree on only 303/321 picks). Board-terminal scoring
+(`..._board_terminals`) made repeat Protects go UP (34 -> 36). No ground truth says the changed
+picks are better; it needs the pool A/B (use `exact_judge_passive_lookahead_samples=1`, which
+fits the 3 s cap: p99 1.7 s, 1/321 timeouts; the default 2 samples gave p99 3.0 s and 7/321
+timeouts, p90 1.8 s). Diverse replies: agreement with a 16-reply judge 276/321 = 86.0% (4 replies)
+vs 278/321 = 86.6% (diverse 4), mean regret under the 16-reply values 4.77 vs 4.49; no real gain,
+no extra latency. Both stay off until an A/B says otherwise.
+
 ## Measured plan value (2026-10-06): what weather/terrain ENABLE, measured by the engine
 
 Weather/terrain are worth what they enable for a set (rain: Electro Shot fires in one turn;
