@@ -220,8 +220,8 @@ def speed_partner(target: int) -> tuple[str, int, str, int]:
     return sid, points, nature, best
 
 
-def base_speed() -> int:
-    return calculate_stats(A_SPECIES, sp={"spe": A_SPEED_SP}, nature="serious")["spe"]
+def base_speed(species: str = A_SPECIES) -> int:
+    return calculate_stats(species, sp={"spe": A_SPEED_SP}, nature="serious")["spe"]
 
 
 @dataclass
@@ -296,8 +296,8 @@ def speed_cases(entry_kind: str, entry: str) -> list[Case]:
     """Speed-ratio grid for an ability/item on A, under every field/status condition."""
 
     cases: list[Case] = []
-    base = base_speed()
     forced = item_species(entry) if entry_kind == "item" else None
+    base = base_speed(forced or A_SPECIES)
     for cond in speed_conditions():
         for ratio, ratio_name in SPEED_RATIOS:
             for delta in (-1, 0, 1):
@@ -329,8 +329,8 @@ def priority_cases(entry_kind: str, entry: str) -> list[Case]:
 
     cases: list[Case] = []
     legal = set(legal_moves())
-    base = base_speed()
     forced = item_species(entry) if entry_kind == "item" else None
+    base = base_speed(forced or A_SPECIES)
     for move_id in PRIORITY_BATTERY:
         if move_id not in legal:
             continue
@@ -436,6 +436,11 @@ def compare_order(case: Case, probe: dict) -> dict[str, Any]:
     ours = ours_order(case)
     if ours == engine:
         out["status"] = "match"
+        return out
+    if engine == "tie" and case.entry in RANDOM_ORDER_ENTRIES:
+        # The engine's order is a die roll (Quick Claw / Quick Draw); a deterministic guess is
+        # the documented approximation.
+        out.update(status="mismatch", reason="order_random", ours=ours, engine=engine, rel_err=0.2, abs_diff=0)
         return out
     out.update(status="mismatch", reason="order_differs", ours=ours, engine=engine, rel_err=1.0)
     return out
@@ -568,7 +573,7 @@ def compare_accuracy(case: Case, probe: dict) -> dict[str, Any]:
     if not any(line.startswith("|move|p1a:") for line in log):
         out.update(status="unexercised", reason="not_used")
         return out
-    numbers = results[0].get("accuracy") or []
+    numbers = [entry["n"] for entry in (results[0].get("accuracy") or []) if entry["t"] == "p2a"]
     engine = 1.0 if not numbers else min(1.0, max(0.0, numbers[0] / 100.0))
     ours = ours_accuracy(case)
     if abs(ours - engine) < 1e-9:

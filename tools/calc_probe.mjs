@@ -124,10 +124,13 @@ function instrument(battle, rec) {
 	};
 	const origRandomChance = battle.randomChance;
 	battle.randomChance = function (numerator, denominator) {
-		if (denominator === 100 && !rec.accuracyLocked && battle.activePokemon && slotOf(battle.activePokemon) === "p1a") {
-			rec.accuracy.push(numerator);
-			rec.accuracyLocked = true;
-			return true;
+		if (denominator === 100 && battle.activePokemon && slotOf(battle.activePokemon) === "p1a" && battle.activeTarget) {
+			const targetSlot = slotOf(battle.activeTarget);
+			if (!rec.accuracySeen.has(targetSlot)) {
+				rec.accuracySeen.add(targetSlot);
+				rec.accuracy.push({ t: targetSlot, n: numerator });
+				return true;
+			}
 		}
 		if (denominator === 100 || rec.forcePass) return true;
 		return origRandomChance.call(this, numerator, denominator);
@@ -196,7 +199,7 @@ function choiceFor(battle, mon, moveId, target, mega) {
 }
 
 function run(req, seed) {
-	const rec = { calls: [], accuracy: [], accuracyLocked: false, forcePass: !!req.forcePass };
+	const rec = { calls: [], accuracy: [], accuracySeen: new Set(), forcePass: !!req.forcePass };
 	const battle = new Battle({
 		formatid: FORMAT,
 		seed,
@@ -229,7 +232,7 @@ function run(req, seed) {
 	const turns = req.turns || 1;
 	let turnsRun = 0;
 	for (let turn = 0; turn < turns; turn++) {
-		rec.accuracyLocked = false;
+		rec.accuracySeen = new Set();
 		try {
 			const choices = { p1: [], p2: [] };
 			for (const slot of SLOTS) {

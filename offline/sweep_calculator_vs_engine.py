@@ -53,7 +53,7 @@ def build_cases(
         cases.extend(picked)
 
     def wanted(entry: str) -> bool:
-        return only is None or entry in only
+        return entry not in cs.UNTESTABLE and (only is None or entry in only)
 
     if "moves" in families:
         for move_id in moves:
@@ -150,6 +150,11 @@ def evaluate(cases: list[cs.Case], workers: int) -> tuple[dict, dict[str, int]]:
             table[key].add(row)
             totals[row["status"]] += 1
         del results, probes, control_probes
+    for entry in cs.UNTESTABLE:
+        for kind in ("damage", "order", "accuracy"):
+            entry_kind = "ability"
+            result = cs.EntryResult(kind, entry_kind, entry, n=1, n_unexercised=1)
+            table[(kind, entry_kind, entry)] = result
     return table, dict(totals)
 
 

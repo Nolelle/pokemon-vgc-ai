@@ -75,6 +75,11 @@ SP_DUMMY = {"hp": 32, "def": 17, "spd": 17}
 
 STATUSES = ("brn", "par", "psn", "tox", "slp", "frz")
 
+# Entries the scenario family cannot represent; reported as NOT_EXERCISED with the reason.
+UNTESTABLE: dict[str, str] = {
+    "imposter": "transforms into the opposing Pokemon on switch-in (stats, moves, ability copied)",
+}
+
 
 # --- legal entities, usage weights ------------------------------------------------------------
 
@@ -583,12 +588,23 @@ def ours_damage(case: Case, *, default_config: bool = True) -> dict[str, Any]:
     md = _move(move_id)
     slot = case.meta.get("target_slot", "p2a")
     attacker = case.mons["p1a"].state()
+    fld = case.fld
     if case.mega.get("p1a"):
         from vgc.evaluator import mega_evolved_state
+        from vgc.weather_abilities import SETTER_ABILITY_WEATHER
 
         attacker = mega_evolved_state(attacker)
+        # The Mega's weather ability (Drought...) resolves before the move, as in the evaluator.
+        new_weather = SETTER_ABILITY_WEATHER.get(attacker.ability or "")
+        if new_weather:
+            fld = Field(
+                weather=new_weather,
+                terrain=fld.terrain,
+                trick_room=fld.trick_room,
+                p1side=fld.p1side,
+                p2side=fld.p2side,
+            )
     defender = case.mons[slot].state()
-    fld = case.fld
     num_targets = spread_target_count(move_id, case.mons)
     state = FieldState(
         weather=fld.weather,
@@ -773,6 +789,8 @@ class EntryResult:
         self.n_mismatch += 1
         if row.get("reason") == "ours_unsupported":
             self.n_unsupported += 1
+        elif row.get("reason") == "order_random":
+            self.n_approx += 1
         elif row.get("reason") in ("damage_differs", "accuracy_differs") and (
             row.get("abs_diff", 999) <= 1 or row.get("rel_err", 1.0) <= APPROX_BOUND
         ):
