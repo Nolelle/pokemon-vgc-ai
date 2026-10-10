@@ -550,6 +550,16 @@ behaviour change behind a `PolicyConfig` knob (default True, False = legacy cont
   Sand Rush doubling off flips 80/100, speed weight 0 flips 52/100). No wrong sign/double count;
   fixing it needs a lead-specific matchup term (a new feature + A/B), not a knob.
 
+## Bug-fix round 2 A/Bs (2026-10-10)
+
+Owner teams vs the 226 train teams, both arms exact judge, 1808 games each:
+`forecast_respects_locks` + `forecast_move_accuracy` 49.7% [0.480, 0.514] (null, kept on as
+correctness fixes); `exact_judge_passive_lookahead` (samples 1) 50.0% [0.482, 0.518] (null,
+stays off). The poke-env parsing repairs apply to both arms (process-wide), so they are
+validated by `offline/audit_battle_parsing.py`, not by these A/Bs. The ladder stalling
+pattern (repeated double Protect in losing positions) is still open: the one-turn exact
+value prefers surviving a turn; offline bot-vs-bot games rarely produce those positions.
+
 ## Battle parsing audit (2026-10-09): what the bot READS now matches Showdown
 
 The bot reads Showdown through poke-env 0.15, and poke-env gets real state wrong. Found from

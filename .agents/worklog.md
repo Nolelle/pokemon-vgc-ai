@@ -343,3 +343,12 @@
 - Repairs: `vgc.poke_env_compat` (copyboost, Champions Mega abilities, single-turn/momentary effects, charge cancel, Worry Seed/Skill Swap abilities, ability reveals, Baton Pass, sleep/toxic counters, forme species, Flash Fire, Regenerator, Illusion state, unbrought actives, Psych Up crit volatiles, gastro acid); `vgc.mechanics_state` (layer counts, effect aliases/markers, foe consumed item, Floette-Mega); `vgc.condition_clock` (Light Clay); `vgc.battle_memory` (changed abilities).
 - Trace: `VgcPlayer._record_final_choice` re-scores the order actually sent into `chosen_breakdown` (+ `chosen_breakdown_order`).
 - Tests: 1407 unit, 235 integration; `tests/test_poke_env_repairs.py` (44), `tests/test_battle_parsing_audit.py`, `tests/test_final_choice_trace.py`. Not A/B'd for strength.
+
+## 2026-10-10 — Bug-fix round 2 merged + A/Bs (branch claude/bugfix-round2)
+- Second 50-game ladder session after PR #39 (session 20261010T003212Z): 24-26, peak ~1385 (previous best ~1280), mean opponent 1256 (was 1144), vs >=1200 14/33 (was 2/9), vs >=1300 4/16. Judge 0 errors.
+- Found: Protect stalling in losses (4.2 Protects, 1.9 repeats per loss vs 1.7/0.05 in wins; one-turn horizon, confirmed by Codex); poke-env applies `-copyboost` (Psych Up) backwards (game 2695881082).
+- Round 2 (3 Sonnet agents + Opus fix, Codex-reviewed, 5 review findings fixed): poke-env parsing audit + repairs (11,186 -> 0 unexplained mismatch episodes, 3 seeds x 2400 battles, 0 errors); switches sent by request position (transformed teammate captured switch-by-name); forecast respects locks + accuracy; finished-battle worker no longer blocks; trace attribution; passive look-ahead + diverse replies built (off).
+- A/Bs (owner teams vs 226 train teams, 4 games/unit, both arms exact judge):
+  - forecast_respects_locks + forecast_move_accuracy on vs off: 899/1808 = 49.7% [0.480, 0.514] -- null; kept ON as correctness fixes.
+  - exact_judge_passive_lookahead (samples=1) on vs off: 904/1808 = 50.0% [0.482, 0.518] -- null; stays OFF. Offline self-play may rarely produce the human-style stalling positions.
+- Parsing repairs are process-wide (both arms), so their effect is not in these numbers.
