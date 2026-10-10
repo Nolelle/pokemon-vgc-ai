@@ -523,6 +523,33 @@ behaviour change behind a `PolicyConfig` knob (default True, False = legacy cont
   54.0% [0.520, 0.559]**. Both PASS, every archetype >= 52%. Damage fixes are in both arms.
   Judge measurements before this branch simulated half-bulk, itemless, never-Mega opponents.
 
+### Follow-up (2026-10-09): fast-search forecast locks/accuracy, worker slot, preview leads
+
+- **Forecast move locks** (`forecast_respects_locks`): projected turns (turn 2+) offered every
+  learned move, so a Choice Scarf Indeedee locked into Protect was forecast to cast Expanding
+  Force (ladder 2695880700 T10: forecast opp_hp_lost 104% / 2 foe faints; with locks + accuracy 8% / 0.14).
+  `search._projected_move_locks` records, per resolved exchange, which moves each slot may still
+  use: Choice item + this turn's move (ours from the item; the foe's only when its Choice item is
+  publicly known, pinned to the move it already used since switching in), foe Encore, our
+  request's `disabled` flags (Encore/Disable/no PP), Torment no-repeat. A switching slot carries
+  nothing. Taunt is ignored (forecast uses attacks only). Disable/Encore are assumed to last the
+  2 projected turns (the request does not say how long is left).
+- **Forecast accuracy** (`forecast_move_accuracy`): projected attacks use `hit_probability` for
+  move choice and damage, and continue the exchange's alive-probability bookkeeping
+  (`ExchangeResult.our_alive/opp_alive`; post-exchange `current_hp` is expected HP, so the forecast
+  divides it back to HP-given-alive). Faints, plan progress and `trapped_slots` are expected counts.
+- **Worker slot** (`WorkerSlot.owner/cancel`, `VgcPlayer._worker_slot(battle)`): a still-running
+  decision worker whose battle is over (opponent left during preview, slow LLM call) is cancelled
+  and replaced by a fresh slot, so the next battle's preview/first turn no longer falls back with
+  `previous-worker-busy`. A live battle's worker still blocks (one worker per player at a time).
+- **Preview leads always Tyranitar + Excadrill (psyspam_sand): not a bug.** For a fixed four,
+  `exchange_score` ignores who leads (it averages all four picks) except via the lead-weather
+  matrix, so lead choice is decided by `speed_score` = mean lead Speed (opponent-independent;
+  `opp_avg_speed` is a constant) x 0.3. Sand Rush doubling under a Tyranitar lead adds ~+20 pts
+  against a median 30-pt gap to the next lead pair (100 ladder previews: 100/100 same leads;
+  Sand Rush doubling off flips 80/100, speed weight 0 flips 52/100). No wrong sign/double count;
+  fixing it needs a lead-specific matchup term (a new feature + A/B), not a knob.
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public
