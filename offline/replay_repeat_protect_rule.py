@@ -82,6 +82,26 @@ def uses_repeat_protect(desc: str, slots: list[int]) -> bool:
     return any(slot < len(parts) and slot_kind(parts[slot]) == "protect" for slot in slots)
 
 
+def board_context(battle) -> str:
+    """One line: our actives (hp% / Protect counter) vs foe actives, and the field."""
+
+    def mon(m) -> str:
+        if m is None:
+            return "-"
+        hp = f"{round(100 * m.current_hp_fraction)}%" if m.current_hp_fraction is not None else "?"
+        return f"{m.species} {hp}" + (f" (prot{m.protect_counter})" if m.protect_counter else "")
+
+    ours = ", ".join(mon(m) for m in battle.active_pokemon)
+    foes = ", ".join(mon(m) for m in battle.opponent_active_pokemon)
+    fields = [str(f).split(".")[-1].split(" ")[0].lower() for f in battle.fields]
+    weather = [str(w).split(".")[-1].split(" ")[0].lower() for w in battle.weather]
+    foe_tw = any("tailwind" in str(c).lower() for c in battle.opponent_side_conditions)
+    our_tw = any("tailwind" in str(c).lower() for c in battle.side_conditions)
+    extra = [x for x in (fields + weather + (["foe tailwind"] if foe_tw else [])
+                         + (["our tailwind"] if our_tw else [])) if x]
+    return f"us [{ours}] vs foe [{foes}]; field {extra}"
+
+
 def load_games(args) -> list[dict]:
     rows = [json.loads(line) for line in args.ladder_jsonl.read_text().splitlines() if line.strip()]
     rows = [
@@ -91,6 +111,8 @@ def load_games(args) -> list[dict]:
         and str(r.get("session_id", "")) in args.sessions
         and r.get("lost") in (True, False)
     ]
+    if args.only:
+        rows = [r for r in rows if any(tag in r["battle_tag"] for tag in args.only)]
     return rows[: args.limit] if args.limit else rows
 
 
@@ -117,6 +139,7 @@ async def replay_game(row: dict, args) -> dict:
         return describe_order(result[0].order), {
             "fast_pick": fast_desc,
             "judge_status": rep["status"],
+            "judge_error": rep.get("error"),
             "overturned": rep.get("overturned"),
         }
 
@@ -160,6 +183,7 @@ async def replay_game(row: dict, args) -> dict:
             "n_myopic": len(scored_all),
             "n_removed": len(removed),
             "recorded_repeat_protect": uses_repeat_protect(recorded, slots),
+            "context": board_context(battle),
         }
         if not removed:
             rec["rule_active"] = False
@@ -297,6 +321,7 @@ def main() -> int:
     p.add_argument("--ladder-jsonl", type=Path, default=MAIN_CHECKOUT / "runs" / "ladder.jsonl")
     p.add_argument("--sessions", nargs="*", default=list(SESSIONS))
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--only", nargs="*", default=[], help="battle tag substrings to keep")
     p.add_argument("--budget", type=float, default=120.0, help="judge wall-clock cap per call")
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--out", type=Path, required=True)
