@@ -62,6 +62,8 @@ ALL_FIXES = (
     "toxic_stage_cap",  # Showdown caps the toxic stage at 15
     "extender_acquired_later",  # a Light Clay / Damp Rock gained AFTER the set stretched it
     "status_change_resets_counter",  # a new status inherited the old status's turn counter
+    "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
+    "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
 _DISABLED: set[str] = {
     name.strip()
@@ -768,10 +770,38 @@ _HANDLERS = {
 }
 
 
+def _bench_state(mon: Pokemon) -> dict[str, Any]:
+    """What a benched foe looked like before a switch-in line touched it."""
+    return {
+        "hp": mon._current_hp,
+        "max_hp": mon._max_hp,
+        "status": mon._status,
+        "status_counter": mon._status_counter,
+        "moves": dict(mon._moves._base_moves),
+        "item": mon._item,
+        "ability": mon._ability,
+        "temporary_ability": mon._temporary_ability,
+        "revealed": mon._revealed,
+    }
+
+
+def _remember_bench_state(battle: AbstractBattle, split: list[str]) -> None:
+    """Record the incoming foe's state BEFORE the switch line (it may be a Zoroark's disguise)."""
+    if not fix_enabled("illusion_restore_disguise") or battle.player_role is None:
+        return
+    if split[2][:2] == battle.player_role:
+        return  # our own team comes from the request, not from protocol guesses
+    key = split[2][:2] + split[2][3:]
+    mon = battle._opponent_team.get(key)
+    store = vars(battle).setdefault("_vgc_bench_state", {})
+    store[key] = _bench_state(mon) if mon is not None else None
+
+
 def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
     """Baton Pass: poke-env cleared the outgoing Pokemon's boosts and volatiles on switch-out
     and the incoming one started clean; Showdown hands them over."""
     battle._vgc_cant_sleep = None  # type: ignore[attr-defined]
+    _remember_bench_state(battle, split)
     late = vars(battle).get("_vgc_late_switch_ins")
     if late is not None and vars(battle).get("_vgc_after_upkeep"):
         late_key = split[2]
@@ -1048,6 +1078,9 @@ def _end_illusion_on_keeping_state(
             illusioned._protect_counter,
             illusioned._status_counter,
         )
+    key = None
+    if illusioned is not None and fix_enabled("illusion_restore_disguise"):
+        key = next((k for k, m in self._opponent_team.items() if m is illusioned), None)
     real = _original_end_illusion_on(self, illusionist, illusioned, details)
     if carried is not None and real is not illusioned:
         real._boosts = carried[0]
@@ -1055,7 +1088,41 @@ def _end_illusion_on_keeping_state(
         real._protect_counter = carried[2]
         real._status_counter = carried[3]
         _migrate_expiry(self, illusioned, real)
+    if key is not None and real is not illusioned:
+        _restore_disguise(self, key, illusioned, real)
     return real
+
+
+def _restore_disguise(
+    battle: AbstractBattle, key: str, disguise: Pokemon, real: Pokemon
+) -> None:
+    """The foe's Illusion broke: what the disguise's ident accumulated belongs to the real
+    Pokemon (moves shown, item used or lost, ability revealed), and the disguise Pokemon itself
+    goes back to what it was before it was (falsely) switched in -- Showdown's HP, status and
+    moves for it were never shown. A disguise that was never really seen is unrevealed again."""
+    baseline = vars(battle).get("_vgc_bench_state", {}).get(key)
+    if baseline is None:
+        fresh = Pokemon(gen=disguise._gen, species=disguise._species)
+        baseline = _bench_state(fresh)
+        baseline["revealed"] = False
+    for move_id, move in disguise._moves._base_moves.items():
+        if move_id not in baseline["moves"]:
+            real._moves._base_moves.setdefault(move_id, move)
+    if disguise._item != baseline["item"]:
+        real._item = disguise._item
+    if disguise._ability is not None and disguise._ability != baseline["ability"]:
+        real._ability = disguise._ability
+    if disguise._temporary_ability != baseline["temporary_ability"]:
+        real._temporary_ability = disguise._temporary_ability
+    disguise._current_hp = baseline["hp"]
+    disguise._max_hp = baseline["max_hp"]
+    disguise._status = baseline["status"]
+    disguise._status_counter = baseline["status_counter"]
+    disguise._moves._base_moves = dict(baseline["moves"])
+    disguise._item = baseline["item"]
+    disguise._ability = baseline["ability"]
+    disguise._temporary_ability = baseline["temporary_ability"]
+    disguise._revealed = baseline["revealed"]
 
 
 if not getattr(AbstractBattle._end_illusion_on, "_vgc_repairs", False):
@@ -1076,13 +1143,19 @@ def _update_team_keeping_illusion_state(
     if fix_enabled("illusion_break_state"):
         falsely: list[Pokemon] = []
         truly: list[Pokemon] = []
-        for entry in side["pokemon"]:
-            mon = self._team.get(entry["ident"])
-            if mon is None:
-                continue
-            if entry["active"] and not mon.active:
+        # Compare the request with the slots poke-env believes in. (The `active` flags are not
+        # enough: the team-preview request leaves its first two Pokemon flagged active, so a
+        # Zoroark among them is already "active" when the first request after the lead switch-ins
+        # arrives, and the disguise's boosts were dropped.)
+        believed = list(getattr(self, "_active_pokemon", {}).values())
+        requested = [
+            self._team[e["ident"]] for e in side["pokemon"] if e["active"] and e["ident"] in self._team
+        ]
+        for mon in requested:
+            if not any(mon is b for b in believed):
                 truly.append(mon)
-            elif not entry["active"] and mon.active:
+        for mon in believed:
+            if not any(mon is r for r in requested):
                 falsely.append(mon)
         # (A team-preview request also leaves bench Pokemon looking active, so only the
         # ones carrying state can be the disguise.)
@@ -1098,6 +1171,18 @@ def _update_team_keeping_illusion_state(
         real._boosts = boosts
         real._effects.update(effects)
         _migrate_expiry(self, fake, real)
+    if fix_enabled("illusion_slot_from_request") and self.player_role is not None:
+        # Showdown keeps the Pokemon in battle slot i at party position i, so the request names
+        # who really holds each slot. poke-env only repairs the slot from a move request, and a
+        # Zoroark that switches in on a Flip Turn / U-turn / replacement is announced under its
+        # disguise's ident, which poke-env files on the (benched) disguise object.
+        active = getattr(self, "_active_pokemon", None)
+        if isinstance(active, dict):
+            for index, entry in enumerate(side["pokemon"][:2]):
+                mon = self._team.get(entry["ident"])
+                key = f"{self.player_role}{'ab'[index]}"
+                if entry["active"] and mon is not None and key in active and active[key] is not mon:
+                    active[key] = mon
 
 
 if not getattr(AbstractBattle._update_team_from_request, "_vgc_repairs", False):

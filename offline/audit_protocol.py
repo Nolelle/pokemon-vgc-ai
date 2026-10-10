@@ -159,9 +159,21 @@ class ProtocolKnowledge:
             # holder for -block, where the subject is the protected Pokemon)
             effect = split[3] if len(split) > 3 else ""
             if effect.startswith("ability:"):
-                self._add(
-                    "ability", effect.split(":", 1)[1], self._holders(subject, of), f"{tag}:ability"
-                )
+                ability_name = effect.split(":", 1)[1]
+                if tag == "-block":
+                    # `-block|PROTECTED|ability: X|[of] HOLDER`: the holder is the [of] mon
+                    self._add("ability", ability_name, self._holders(of, subject), f"{tag}:ability")
+                else:
+                    self._add(
+                        "ability", ability_name, self._holders(subject, of), f"{tag}:ability"
+                    )
+                if to_id(ability_name) == "symbiosis" and tag == "-activate" and len(split) > 5:
+                    # |-activate|GIVER|ability: Symbiosis|ITEM|[of] RECEIVER
+                    self._add("item", split[4], self._holders(of, None), "symbiosis", True)
+                elif tag == "-activate" and len(split) > 4 and parse_ident(split[4]):
+                    # Mummy / Lingering Aroma: |-activate|HOLDER|ability: Mummy|ATTACKER|[ability] OLD
+                    # leaves the attacker with the holder's ability
+                    self._add("ability", ability_name, self._holders(split[4], None), "-activate:swap")
             elif effect.startswith("item:"):
                 self._add(
                     "item", effect.split(":", 1)[1], self._holders(subject, of), f"{tag}:item"
@@ -172,10 +184,14 @@ class ProtocolKnowledge:
                 move = effect.split(":", 1)[1]
                 if to_id(move) in ("mimic",):
                     self.events_for(subject).add("mimic")
-        if from_kind == "ability" and tag != "-ability":
-            self._add("ability", from_name, self._holders(subject, of), f"{tag}[from ability]")
-        if from_kind == "item":
-            self._add("item", from_name, self._holders(subject, of), f"{tag}[from item]")
+        if from_kind in ("ability", "item") and tag != "-ability":
+            # `[of]` is the effect's SOURCE: the holder for damage / status / weather lines
+            # (Rough Skin, Rocky Helmet, Drought), but the ATTACKER for an absorbing heal
+            # (Water Absorb) and the thief's victim for Pickpocket; the dump arbitrates, with the
+            # tag's usual holder tried first.
+            of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status")
+            order = (of, subject) if of_first else (subject, of)
+            self._add(from_kind, from_name, self._holders(*order), f"{tag}[from {from_kind}]")
         if from_kind == "move" and tag == "-heal" and to_id(from_name) == "healingwish":
             pass
 
@@ -199,7 +215,8 @@ class ProtocolKnowledge:
         if tag == "move" and len(split) > 3:
             mon = self._mon(split[2])
             if mon is not None:
-                if not kw.get("from"):
+                # Struggle is not one of the Pokemon's moves and no client lists it as one
+                if not kw.get("from") and to_id(split[3]) != "struggle":
                     self._add("move", split[3], (mon,), "move")
                 if to_id(split[3]) in ("rest",):
                     self.events_for(split[2]).add("rest")
@@ -221,8 +238,13 @@ class ProtocolKnowledge:
             self.events_for(split[2]).add("yawned")
         if tag == "-end" and len(split) > 3 and split[3] == "move: Yawn":
             self.events_for(split[2]).discard("yawned")
-        if tag == "-transform":
+        if tag == "-transform" and len(split) > 3:
             self.events_for(split[2]).add("transformed")
+            holders = self._holders(split[2], split[3])
+            if len(holders) == 2:
+                self.pending.append(
+                    Candidate("transform", "", holders, "-transform", self.step, explicit=True)
+                )
         if tag in ("switch", "drag"):
             mon = self._mon(split[2])
             if mon:
@@ -244,6 +266,11 @@ class ProtocolKnowledge:
         else:
             for ident in (subject, of):
                 self.events_for(ident).add("hidden_skillswap")
+            holders = self._holders(subject, of)
+            if len(holders) == 2:
+                self.pending.append(
+                    Candidate("swap_abilities", "", holders, "skillswap:hidden", self.step, explicit=True)
+                )
 
     # -- attribution --------------------------------------------------------------------------
 
@@ -269,7 +296,17 @@ class ProtocolKnowledge:
         unresolved: list[Candidate] = []
         for cand in self.pending:
             winner = None
-            if cand.explicit or (cand.kind == "move" and cand.value == "struggle"):
+            if cand.kind == "swap_abilities":
+                a, b = (self.mons[h] for h in cand.holders)
+                la = a.abilities[-1] if a.abilities else None
+                lb = b.abilities[-1] if b.abilities else None
+                if la or lb:
+                    if lb:
+                        a.abilities.append((lb[0], "skillswap:inferred"))
+                    if la:
+                        b.abilities.append((la[0], "skillswap:inferred"))
+                continue
+            if cand.explicit:
                 winner = cand.holders[0]
             for holder in cand.holders:
                 if winner is not None:
@@ -295,8 +332,20 @@ class ProtocolKnowledge:
             if winner is None:
                 unresolved.append(cand)
                 continue
+            # (events announced under a live disguise's ident belong to the real holder)
+            winner = alias.get(winner, winner)
             cand.resolved = winner
             mk = self.mons[winner]
+            if cand.kind == "transform":
+                copier, target = cand.holders
+                target_ability = (
+                    truth_mons[alias.get(target, target)]["ability"]
+                    if target[0] == self.role and alias.get(target, target) in truth_mons
+                    else self.current_ability(*target)
+                )
+                if target_ability:
+                    mk.abilities.append((target_ability, "transform"))
+                continue
             if cand.kind == "ability":
                 mk.abilities.append((cand.value, cand.tag))
             elif cand.kind == "item":

@@ -52,3 +52,83 @@ def classify(finding: dict[str, Any], cx: dict[str, Any]) -> str | None:
         if re.fullmatch(ex.key, key) and ex.predicate(finding, cx):
             return ex.id
     return None
+
+
+# --- registered exemptions --------------------------------------------------------------------
+
+_EXTENDERS = {
+    "sunnyday": "heatrock",
+    "raindance": "damprock",
+    "sandstorm": "smoothrock",
+    "snowscape": "icyrock",
+    "snow": "icyrock",
+    "electricterrain": "terrainextender",
+    "grassyterrain": "terrainextender",
+    "psychicterrain": "terrainextender",
+    "mistyterrain": "terrainextender",
+    "reflect": "lightclay",
+    "lightscreen": "lightclay",
+    "auroraveil": "lightclay",
+}
+
+
+@register(
+    id="illusion_name_collision",
+    key=r".*",
+    kind="limitation",
+    reason=(
+        "a live Illusion copies an ACTIVE ally (every benched Pokemon had fainted), so two "
+        "on-field Pokemon share one protocol ident and poke-env's team dict (keyed by ident) "
+        "holds a single entry for both"
+    ),
+)
+def _illusion_name_collision(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    tm = cx.get("tm") or {}
+    if tm.get("collision"):
+        return True
+    # After the break the one shared entry is still polluted by both Pokemon, until the next
+    # line that restates its HP / status / boosts. Only the two names that collided are exempt.
+    names = (cx.get("collided") or {}).get(cx.get("role"), set())
+    if finding["field"] == "active_slots":
+        slots = cx["truth"]["sides"][cx["role"]]["slots"]
+        return any(name in names for name in slots if name)
+    return cx.get("name") in names and finding["field"] in _COLLISION_FIELDS
+
+
+_COLLISION_FIELDS = frozenset(
+    {"hp", "boosts", "status", "status_counter", "active_flag", "volatile", "protect_counter",
+     "foe_moves", "preparing", "fainted"}
+)  # fmt: skip
+
+
+@register(
+    id="hidden_foe_extender",
+    key=r"duration/mismatch/(weather|field|side):[a-z]+",
+    kind="hidden",
+    reason=(
+        "Damp/Heat/Smooth/Icy Rock, Terrain Extender and Light Clay lengthen a condition by 3 "
+        "turns, and the protocol never says so; it is exempt only while a foe Pokemon that "
+        "set it holds the matching item and the bot has not been shown that item"
+    ),
+)
+def _hidden_foe_extender(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    extra = finding["extra"]
+    if finding["truth"] - finding["belief"] != 3 or extra.get("setter") != extra.get("foe_role"):
+        return False
+    effect = extra["condition"].split(":", 1)[1]
+    extender = _EXTENDERS.get(effect)
+    if extender is None:
+        return False
+    foe_role = extra["foe_role"]
+    truth_mons = cx["truth"]["sides"][foe_role]["mons"]
+    holders = [
+        name for name, tm in truth_mons.items() if extender in (tm["item"], tm["last_item"])
+    ]
+    if not holders:
+        return False
+    shown = {
+        mon.name
+        for mon in cx["snapshot"].opponent_side.pokemon
+        if mon.item_state == "known" and mon.item_id == extender
+    }
+    return any(name not in shown for name in holders)

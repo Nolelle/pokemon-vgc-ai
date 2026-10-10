@@ -241,7 +241,8 @@ def truth_view(state: dict[str, Any]) -> dict[str, Any]:
         names = [p["set"]["name"] for p in raw]
         for tm in mons.values():
             ref = _ILLUSION_REF.match(tm["illusion_ref"])
-            if ref:
+            # (Showdown leaves `illusion` set on a benched Zoroark; it only disguises while active)
+            if ref and tm["active"] and not tm["fainted"]:
                 index = ord(ref.group(1)) - ord("a")
                 if 0 <= index < len(names):
                     tm["illusion_name"] = names[index]
@@ -263,6 +264,12 @@ def truth_view(state: dict[str, Any]) -> dict[str, Any]:
                     true_name=name,
                     transformed=False,
                 )
+                if disguise["active"] and not disguise["fainted"]:
+                    # The disguise copies an ACTIVE ally (every benched Pokemon had fainted):
+                    # two on-field Pokemon now share one protocol ident, which poke-env keys
+                    # its team by, so the one entry cannot hold both.
+                    view["collision"] = True
+                    view["collides_with"] = disguise["name"]
                 visible[disguise["name"]] = view
                 visible[name] = {**tm, "hidden_identity": True}
         slots_true: list[str | None] = [None, None]
@@ -270,14 +277,10 @@ def truth_view(state: dict[str, Any]) -> dict[str, Any]:
             if tm["active"] and not tm["fainted"] and tm["position"] in (0, 1):
                 slots_true[tm["position"]] = tm["name"]
         slots: list[str | None] = [None, None]
-        for tm in visible.values():
-            if (
-                tm.get("active")
-                and not tm.get("fainted")
-                and not tm.get("hidden_identity")
-                and tm.get("position") in (0, 1)
-            ):
-                slots[tm["position"]] = tm["name"]
+        for tm in mons.values():
+            if tm["active"] and not tm["fainted"] and tm["position"] in (0, 1):
+                disguised_as = tm["illusion_name"] if tm["illusion_name"] in mons else None
+                slots[tm["position"]] = disguised_as or tm["name"]
         conditions = {}
         for cid, cs in (side.get("sideConditions") or {}).items():
             conditions[to_id(cid)] = {
@@ -439,6 +442,7 @@ def compare_perspective(
     battle: Any,
     step_lines: list[str] | None = None,
     prev_truth: dict[str, Any] | None = None,
+    collided: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
     foe_role = "p2" if me == "p1" else "p1"
     out = Findings(
@@ -447,6 +451,7 @@ def compare_perspective(
             "foe_role": foe_role,
             "truth": truth,
             "prev_truth": prev_truth,
+            "collided": collided or {},
             "know": know,
             "memory": memory,
             "lines": step_lines or [],
@@ -945,6 +950,7 @@ def audit_battle(
     memories = {s: BattleMemory(battle_tag=battle_id) for s in SIDES}
     knowledge = {s: ProtocolKnowledge(s) for s in SIDES}
     prev_truth: dict[str, Any] | None = None
+    collided: dict[str, set[str]] = {s: set() for s in SIDES}
     episodes: set[tuple] = set()
     acc["battles"] += 1
     for s in SIDES:
@@ -996,6 +1002,10 @@ def audit_battle(
         truth = truth_view(state)
         _record_coverage(acc, [ln for s in SIDES for ln in lines[s]], state)
         alias = illusion_alias(truth, prev_truth)
+        for role, side in truth["sides"].items():
+            for tm in side["visible"].values():
+                if tm.get("collision"):
+                    collided[role] |= {tm["name"], tm["true_name"]}
         truth_mons = {
             (role, name): tm
             for role, side in truth["sides"].items()
@@ -1012,7 +1022,7 @@ def audit_battle(
             know = knowledge[s]
             unresolved = know.resolve(truth_mons, alias)
             findings = compare_perspective(
-                s, snap, truth, memories[s], know, bt, lines[s], prev_truth
+                s, snap, truth, memories[s], know, bt, lines[s], prev_truth, collided
             )
             for cand in unresolved:
                 # the tracker's own rule could not attribute this line; informational (the
