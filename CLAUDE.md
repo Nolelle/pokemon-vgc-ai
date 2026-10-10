@@ -574,6 +574,38 @@ validated by `offline/audit_battle_parsing.py`, not by these A/Bs. The ladder st
 pattern (repeated double Protect in losing positions) is still open: the one-turn exact
 value prefers surviving a turn; offline bot-vs-bot games rarely produce those positions.
 
+## Repeat-Protect rule (2026-10-10): `forbid_repeat_protect`, ships ON
+
+Ladder losses averaged 1.9 back-to-back Protects per game vs 0.05 in wins (two 50-game
+sessions). A repeat Protect succeeds 1/3, then 1/9, and the exact judge's one-turn value ranks
+"survive this turn" above trading. The owner asked for a plain rule instead of more value
+tuning: an active Pokemon of ours that Protected last turn (poke-env `protect_counter >= 1`; a
+failed Protect resets it to 0, so only a successful one counts) may not use a stall-rolling
+move again (`vgc.evaluator.STALL_ROLL_MOVES` = Showdown's stalling moves: Protect, Detect,
+Spiky Shield, King's Shield, Baneful Bunker, Burning Bulwark, Silk Trap, Obstruct, Endure, Max
+Guard; Wide/Quick Guard, Mat Block do not roll). Two exceptions keep it: (a) **forced** --
+every legal option for the slot is such a move (Encore, Choice lock); (b) **partner KO** --
+the partner's action in the same joint order KOs (evaluator `ko_slots`, hit chance and foe
+Protect odds beyond 50%, and `resolves_before` the foe's best move) every foe whose best known
+move does at least `protect_low_threat_floor` to the protecting slot. If the filter would
+empty the list, the unfiltered list is used.
+
+- **Where**: `vgc.evaluator.apply_repeat_protect_rule`, called from `score_joint_orders` (the
+  one source of candidates for the fast search, the exact judge's judged set -- which is a
+  subset of the fast search's list -- and `VgcPlayer._cheap_order`, the clock guard's
+  fallback). Callers that score the OPPONENT's view pass `repeat_protect_rule=False`
+  (`rl.exact_search` replies, `rl.mechanics_oracle` continuation), and
+  `search_joint_orders_exact` skips it when the caller supplied a `candidate_selector` (the
+  set was fixed upstream; the mirror must not re-filter it with its own view). Known gap:
+  the neural hybrid path (`rl.search_guidance`, no compatible M-C checkpoint) hands its own
+  selector to the mirror and so is not filtered. Trace note `repeat_protect_rule` when it
+  removed orders; kept exceptions are tagged `breakdown["repeat_protect_exception"]`.
+- **Measured by replay, not a pool A/B** (self-play rarely makes these positions): see
+  `offline/replay_repeat_protect_rule.py` (both ladder sessions, 100 games, 737 move
+  decisions, live path = fast search + judge, rule off vs on, same mirror). Numbers in
+  `.agents/worklog.md`.
+- Tests: `tests/test_repeat_protect_rule.py` (filter, forced, partner KO, fallback, knob).
+
 ## Battle parsing audit (2026-10-09): what the bot READS now matches Showdown
 
 The bot reads Showdown through poke-env 0.15, and poke-env gets real state wrong. Found from

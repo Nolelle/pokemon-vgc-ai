@@ -352,3 +352,8 @@
   - forecast_respects_locks + forecast_move_accuracy on vs off: 899/1808 = 49.7% [0.480, 0.514] -- null; kept ON as correctness fixes.
   - exact_judge_passive_lookahead (samples=1) on vs off: 904/1808 = 50.0% [0.482, 0.518] -- null; stays OFF. Offline self-play may rarely produce the human-style stalling positions.
 - Parsing repairs are process-wide (both arms), so their effect is not in these numbers.
+
+## 2026-10-10 — Repeat-Protect rule (branch worktree-agent-adc1b873830c5983f)
+- New knob `forbid_repeat_protect` (ships True; False = legacy). `vgc.evaluator.apply_repeat_protect_rule`, called from `score_joint_orders` (fast search, judge's judged set and `_cheap_order` all take candidates from it). A slot whose Pokemon Protected last turn (`protect_counter >= 1`) may not use a stall-rolling move again unless forced (no other legal option) or the partner KOs every threatening foe first. Empty result -> unfiltered list. Opponent-view callers pass `repeat_protect_rule=False`.
+- Replay (`offline/replay_repeat_protect_rule.py`, both ladder sessions, 100 games, 737 move decisions): see CLAUDE.md "Repeat-Protect rule" and the final report. Violations (rule-on pick or cheap pick that is a removed order): 0. Legacy cheap fallback would have repeated in 64/171 rule-active decisions.
+- Judge mirror error seen in replay unrelated to the rule: "Can't switch: You can't switch to a fainted Pokemon" on some switch candidates (2 games).
