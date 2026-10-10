@@ -165,7 +165,6 @@ async def replay_game(row: dict, args) -> dict:
         kept = apply_repeat_protect_rule(list(scored_all), ctx, cfg_on)
         kept_ids = {id(e) for e in kept}
         removed = [e for e in scored_all if id(e) not in kept_ids]
-        removed_msgs = {e.order.message for e in removed}
         removed_desc = {describe_order(e.order) for e in removed}
         exception_of = {
             describe_order(e.order): e.breakdown["repeat_protect_exception"]
