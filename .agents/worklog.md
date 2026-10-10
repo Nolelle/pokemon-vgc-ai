@@ -328,3 +328,27 @@
   - Note: the ground-truth damage fixes are in both arms, so their effect is not in these numbers.
 - Showdown synced to 2796de703 (two upstream syncs on this branch). Tests: 1356 unit, 232 integration (0 skipped); all gates PASS.
 - Codex exec gotcha: background `codex exec` hangs on stdin; always add `< /dev/null` and an alarm.
+
+## 2026-10-09 — Fast-search forecast locks/accuracy, worker slot, preview-lead diagnosis (branch worktree-agent-aa4263ce6b2b5c654)
+- `forecast_respects_locks`, `forecast_move_accuracy` (default True; False = legacy). Finished battle's worker no longer blocks the next battle (`WorkerSlot.owner/cancel`). Preview "always Tyranitar+Excadrill" is the opponent-independent lead-speed term, not a bug (see CLAUDE.md follow-up). Not A/B'd for strength. Tests: 1378 unit, 232 integration; three gates PASS.
+
+## 2026-10-09 — Judge stalling look-ahead + reply diversity (branch worktree-agent-a5b494afc72d4d716)
+- New knobs, all default False: `exact_judge_passive_lookahead` (+ `_alternatives`, `_samples`, `exact_search_passive_lookahead_board_terminals`), `exact_search_diverse_replies` (+ `_min_weight_ratio`). Code: `vgc/rl/exact_search.py` (`is_passive_order`, `_diverse_replies`), `vgc/exact_judge.py` (`narrow_for_lookahead`).
+- Offline harness: `offline/replay_judge_positions.py` replays ladder state-replays through the judge once per arm; see CLAUDE.md "Judge stalling and reply diversity" for the tables. Look-ahead changed 52/321 picks (49% of loss repeat-Protects), repeat Protects 34 -> 29; diverse replies 86.0% -> 86.6% agreement with a 16-reply judge. Needs the owner's pool A/B before any default flips.
+- The shared scratchpad dir is written by other agents (show.py/peek.py got overwritten); use a private subdir.
+
+## 2026-10-09 — Battle parsing audit and poke-env repairs
+- Trigger: ladder game 2695881082 (`-copyboost` applied backwards by poke-env). Built `offline/audit_battle_parsing.py`: seeded local battles, after every step compare both perspectives' bot-visible state (`snapshot_battle` + `BattleMemory`) with Showdown's `dump`.
+- Seed 99, 2400 battles / 85k compares: 11,186 mismatch episodes with all repairs off (`--disable-fixes all`), 153 on (0 unexplained, 88 documented limitations, 65 legitimately hidden foe Damp Rock/Light Clay). ~50 s on 8 workers.
+- Repairs: `vgc.poke_env_compat` (copyboost, Champions Mega abilities, single-turn/momentary effects, charge cancel, Worry Seed/Skill Swap abilities, ability reveals, Baton Pass, sleep/toxic counters, forme species, Flash Fire, Regenerator, Illusion state, unbrought actives, Psych Up crit volatiles, gastro acid); `vgc.mechanics_state` (layer counts, effect aliases/markers, foe consumed item, Floette-Mega); `vgc.condition_clock` (Light Clay); `vgc.battle_memory` (changed abilities).
+- Trace: `VgcPlayer._record_final_choice` re-scores the order actually sent into `chosen_breakdown` (+ `chosen_breakdown_order`).
+- Tests: 1407 unit, 235 integration; `tests/test_poke_env_repairs.py` (44), `tests/test_battle_parsing_audit.py`, `tests/test_final_choice_trace.py`. Not A/B'd for strength.
+
+## 2026-10-10 — Bug-fix round 2 merged + A/Bs (branch claude/bugfix-round2)
+- Second 50-game ladder session after PR #39 (session 20261010T003212Z): 24-26, peak ~1385 (previous best ~1280), mean opponent 1256 (was 1144), vs >=1200 14/33 (was 2/9), vs >=1300 4/16. Judge 0 errors.
+- Found: Protect stalling in losses (4.2 Protects, 1.9 repeats per loss vs 1.7/0.05 in wins; one-turn horizon, confirmed by Codex); poke-env applies `-copyboost` (Psych Up) backwards (game 2695881082).
+- Round 2 (3 Sonnet agents + Opus fix, Codex-reviewed, 5 review findings fixed): poke-env parsing audit + repairs (11,186 -> 0 unexplained mismatch episodes, 3 seeds x 2400 battles, 0 errors); switches sent by request position (transformed teammate captured switch-by-name); forecast respects locks + accuracy; finished-battle worker no longer blocks; trace attribution; passive look-ahead + diverse replies built (off).
+- A/Bs (owner teams vs 226 train teams, 4 games/unit, both arms exact judge):
+  - forecast_respects_locks + forecast_move_accuracy on vs off: 899/1808 = 49.7% [0.480, 0.514] -- null; kept ON as correctness fixes.
+  - exact_judge_passive_lookahead (samples=1) on vs off: 904/1808 = 50.0% [0.482, 0.518] -- null; stays OFF. Offline self-play may rarely produce the human-style stalling positions.
+- Parsing repairs are process-wide (both arms), so their effect is not in these numbers.

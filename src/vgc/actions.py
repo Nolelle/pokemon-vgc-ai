@@ -9,6 +9,8 @@ can't mega evolve the same turn, both slots can't be PassBattleOrder, etc.).
 
 from __future__ import annotations
 
+import re
+
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
@@ -81,6 +83,64 @@ def index_locked_choice(battle, message: str) -> str:
         tokens = parts[slot].split()
         if len(tokens) >= 2 and tokens[0] == "move" and tokens[1] == locked_id:
             parts[slot] = "move 1" + (" mega" if "mega" in tokens[2:] else "")
+    return prefix + ", ".join(parts)
+
+
+def _showdown_id(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def index_switch_choice(battle, message: str) -> str:
+    """Rewrite `switch <name>` to `switch <position>` from the current request.
+
+    Showdown resolves a switch by name OR current species (`chooseSwitch` in
+    `sim/side.ts`), scanning the team in order. If an active Pokemon has transformed into
+    a teammate's species (our Ditto copying our own Golurk), `switch golurk` matches the
+    ACTIVE Ditto first and is rejected ("You can't switch to an active Pokemon"). A
+    switch can only ever target a benched Pokemon, so pick the non-active request entry
+    whose ident names it and send its 1-based position. Same send-time rule as
+    `index_locked_choice`.
+    """
+    if not isinstance(message, str) or "switch " not in message:
+        return message
+    request = getattr(battle, "last_request", None) or {}
+    team = (request.get("side") or {}).get("pokemon") or []
+    if not team:
+        return message
+    prefix = "/choose " if message.startswith("/choose ") else ""
+    parts = message.removeprefix(prefix).split(", ")
+    for slot, part in enumerate(parts):
+        tokens = part.split(maxsplit=1)
+        if len(tokens) != 2 or tokens[0] != "switch" or tokens[1].isdigit():
+            continue
+        # Showdown's own rule: a nickname matches literally (case-insensitive), a species
+        # by id. Nicknames win, so "A-B" never resolves to a bench mon named "AB".
+        text = tokens[1]
+        bench = [
+            (position, entry)
+            for position, entry in enumerate(team, start=1)
+            if not entry.get("active") and not str(entry.get("condition", "")).endswith(" fnt")
+        ]
+        match = next(
+            (
+                position
+                for position, entry in bench
+                if str(entry.get("ident", "")).split(": ", 1)[-1].lower() == text.lower()
+            ),
+            None,
+        )
+        if match is None:
+            match = next(
+                (
+                    position
+                    for position, entry in bench
+                    if _showdown_id(str(entry.get("details", "")).split(",", 1)[0])
+                    == _showdown_id(text)
+                ),
+                None,
+            )
+        if match is not None:
+            parts[slot] = f"switch {match}"
     return prefix + ", ".join(parts)
 
 

@@ -323,15 +323,28 @@ class WorkerSlot:
 
     A worker that missed its deadline cannot be killed, and subclasses share unlocked
     simulator connections, so a new decision must not start while the old one is alive.
+
+    ``owner`` names who holds the slot (the player records the battle tag) and ``cancel`` is
+    that worker's cancel flag, so a caller can tell whose worker is still running and, when
+    that battle is over, abandon it (set its flag and use a fresh slot) instead of letting a
+    finished battle's slow call block the next battle's decisions.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.owner: object | None = None
+        self.cancel: threading.Event | None = None
 
-    def try_acquire(self) -> bool:
-        return self._lock.acquire(blocking=False)
+    def try_acquire(
+        self, owner: object | None = None, cancel: threading.Event | None = None
+    ) -> bool:
+        if not self._lock.acquire(blocking=False):
+            return False
+        self.owner, self.cancel = owner, cancel
+        return True
 
     def release(self) -> None:
+        self.owner = self.cancel = None
         self._lock.release()
 
     def busy(self) -> bool:
@@ -353,6 +366,8 @@ def run_with_deadline(
     *,
     clock: Callable[[], float] = time.monotonic,
     slot: WorkerSlot | None = None,
+    owner: object | None = None,
+    cancel: threading.Event | None = None,
 ) -> DeadlineResult:
     """Run ``decide`` within ``budget``; otherwise return ``fallback``'s value.
 
@@ -378,7 +393,7 @@ def run_with_deadline(
     safe = fallback()
     if budget.fallback_only:
         return DeadlineResult(safe, "fallback-only", clock() - start)
-    if slot is not None and not slot.try_acquire():
+    if slot is not None and not slot.try_acquire(owner, cancel):
         return DeadlineResult(safe, "previous-worker-busy", clock() - start)
 
     box: dict[str, Any] = {}

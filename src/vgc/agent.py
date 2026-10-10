@@ -24,7 +24,12 @@ from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import BattleOrder, DoubleBattleOrder
 from poke_env.player.player import Player
 
-from vgc.actions import choice_wire_message, describe_order, index_locked_choice
+from vgc.actions import (
+    choice_wire_message,
+    describe_order,
+    index_locked_choice,
+    index_switch_choice,
+)
 from vgc.battle_state_replay import DecisionReplayRecorder
 from vgc.battle_memory import BattleMemory
 from vgc.bc.policy import load_bc_policy, score_orders
@@ -46,7 +51,7 @@ from vgc.decision_trace import (
     start_trace,
     trace_enabled,
 )
-from vgc.evaluator import score_joint_orders
+from vgc.evaluator import breakdown_for_order, score_joint_orders
 from vgc.condition_clock import observe_condition_line
 from vgc.team_scope import bind_own_team
 from vgc.poke_env_compat import normalize_for_poke_env
@@ -155,7 +160,7 @@ class VgcPlayer(Player):
                 choice = await choice
             message = choice.message
         if message:
-            message = index_locked_choice(battle, message)
+            message = index_switch_choice(battle, index_locked_choice(battle, message))
             await self.ps_client.send_message(message, battle.battle_tag)
 
     async def _handle_battle_message(self, split_messages) -> None:
@@ -304,12 +309,39 @@ class VgcPlayer(Player):
             )
         return trackers[battle_tag]
 
-    def _worker_slot(self) -> WorkerSlot:
+    def _worker_slot(self, battle: AbstractBattle | None = None) -> WorkerSlot:
+        """The player's single decision-worker slot.
+
+        Given the battle about to decide, a slot still held by a worker of a DIFFERENT battle
+        that is already over (for example a slow LLM team-preview call whose opponent left)
+        is abandoned: that worker is cancelled -- it can no longer write memory or samples,
+        see `vgc.clock.cancelled` -- and a fresh slot replaces it, so it cannot make the next
+        battle's preview or first turns fall back with ``previous-worker-busy``. A worker of a
+        live battle (including the same battle's earlier turn) still blocks, as before."""
+
         slot = getattr(self, "_decide_slot", None)
         if slot is None:
             slot = WorkerSlot()
             self._decide_slot = slot
+        if battle is not None and slot.busy():
+            owner = slot.owner
+            if (
+                owner is not None
+                and owner != battle.battle_tag
+                and self._battle_is_over(owner)
+            ):
+                if slot.cancel is not None:
+                    slot.cancel.set()
+                slot = WorkerSlot()
+                self._decide_slot = slot
         return slot
+
+    def _battle_is_over(self, battle_tag: str) -> bool:
+        tracked = getattr(self, "_battles", None)
+        if not isinstance(tracked, dict):
+            return False
+        battle = tracked.get(battle_tag)
+        return battle is None or bool(getattr(battle, "finished", False))
 
     def _memory_for(self, battle: AbstractBattle) -> BattleMemory:
         memory = self._memory_for_tag(battle.battle_tag)
@@ -386,6 +418,8 @@ class VgcPlayer(Player):
                 scored = score_orders(policy, battle, scored, self.config)
             if self.config.log_decisions:
                 record_note("chosen_order_score", round(scored[0].score, 3))
+            if trace_enabled():
+                self._record_final_choice(battle, scored[0])
             if isinstance(scored[0].order, DoubleBattleOrder) and not cancelled():
                 memory.record_choice(
                     int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
@@ -396,6 +430,32 @@ class VgcPlayer(Player):
             return scored[0].order
         record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
+
+    def _record_final_choice(self, battle: AbstractBattle, final) -> None:
+        """Make the trace describe the order that is actually sent.
+
+        The evaluator records `chosen_breakdown` for ITS top pick every time it ranks orders,
+        including the shortlist the search builds and each exact-mirror root, so the note held
+        whichever ranking ran last: ladder game 2695880700 turn 8 played a double Protect
+        while the trace explained Trick. After search, judge and BC blending this re-scores
+        the final order with the evaluator and overwrites both notes (the myopic ranking stays
+        in `top_candidates`, labelled as such).
+        """
+
+        order = final.order
+        if not isinstance(order, DoubleBattleOrder):
+            return
+        record_note(
+            "final_choice",
+            {"order": describe_order(order), "score": round(float(final.score), 3)},
+        )
+        try:
+            breakdown = breakdown_for_order(battle, order, self.config)
+        except Exception:  # noqa: BLE001 - diagnostics must never cost a decision
+            breakdown = None
+        if breakdown is not None:
+            record_note("chosen_breakdown", breakdown)
+            record_note("chosen_breakdown_order", describe_order(order))
 
     def _search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
         """The fast search, then (opt-in) the exact judge over its best candidates.
@@ -510,7 +570,7 @@ class VgcPlayer(Player):
         start = time.monotonic()
         result = None
         try:
-            slot = self._worker_slot()
+            slot = self._worker_slot(battle)
             if budget.seconds is None and not slot.busy():
                 value = contextvars.copy_context().run(scoped_decide)
                 reason = "none"
@@ -520,7 +580,9 @@ class VgcPlayer(Player):
                     lambda: self._run_isolated(scoped_decide, cancel, deadline),
                     lambda: self._run_isolated(fallback, None)[0],
                     budget,
-                    slot=self._worker_slot(),
+                    slot=slot,
+                    owner=battle.battle_tag,
+                    cancel=cancel,
                 )
                 reason = result.reason
                 if reason == "none":

@@ -265,6 +265,20 @@ Four rules learned the hard way on 2026-08-11/12, all now enforced in code:
   change was built to chase it, and it measured 54.9% on the next seed. The guardrail is
   now a one-sided cluster-robust test per archetype, Holm-corrected.
 
+**Before running a pool A/B, ask whether self-play can even produce the situation.** The pool
+harness plays our bot against copies of itself on fixed teams. That measures well:
+whole-game mechanics and judgement changes that come up in most games (the 2026-10-09
+correctness pass: 53.8%/54.0%), and anything both seats meet often. It measures badly:
+behaviour that only shows up against HUMAN play or in specific positions (stalling with
+repeated Protect in lost positions, opponent setup like Psych Up/Minimize, rare mechanics).
+A null there means "self-play cannot see it", not "it does not matter". For those, first
+count how often the target situation occurs in the pool (e.g. repeat-Protect decisions per
+game from traces) — if it is rare, skip the pool A/B and test on recorded ladder positions
+(`offline/replay_judge_positions.py`, `offline/review_lost_decisions.py`) or a ladder
+session instead. Pure correctness fixes verified another way (ground-truth tests, the
+parsing audit) do not need a win-rate A/B at all. Examples of wasted runs: passive
+look-ahead 50.0% and forecast locks 49.7% (2026-10-10), both behaviours rare in self-play.
+
 **Run `--null-test` (A/A: both arms identical) whenever the harness changes.** It must
 return 50%. This is what retired the phantom "accurate own spreads cost 10 points"
 result: that 200/500 = 40.0% run predates commit `e8417bd`, before which `DirectBattle`
@@ -523,6 +537,100 @@ behaviour change behind a `PolicyConfig` knob (default True, False = legacy cont
   54.0% [0.520, 0.559]**. Both PASS, every archetype >= 52%. Damage fixes are in both arms.
   Judge measurements before this branch simulated half-bulk, itemless, never-Mega opponents.
 
+### Follow-up (2026-10-09): fast-search forecast locks/accuracy, worker slot, preview leads
+
+- **Forecast move locks** (`forecast_respects_locks`): projected turns (turn 2+) offered every
+  learned move, so a Choice Scarf Indeedee locked into Protect was forecast to cast Expanding
+  Force (ladder 2695880700 T10: forecast opp_hp_lost 104% / 2 foe faints; with locks + accuracy 8% / 0.14).
+  `search._projected_move_locks` records, per resolved exchange, which moves each slot may still
+  use: Choice item + this turn's move (ours from the item; the foe's only when its Choice item is
+  publicly known, pinned to the move it already used since switching in), foe Encore, our
+  request's `disabled` flags (Encore/Disable/no PP), Torment no-repeat. A switching slot carries
+  nothing. Taunt is ignored (forecast uses attacks only). Disable/Encore are assumed to last the
+  2 projected turns (the request does not say how long is left).
+- **Forecast accuracy** (`forecast_move_accuracy`): projected attacks use `hit_probability` for
+  move choice and damage, and continue the exchange's alive-probability bookkeeping
+  (`ExchangeResult.our_alive/opp_alive`; post-exchange `current_hp` is expected HP, so the forecast
+  divides it back to HP-given-alive). Faints, plan progress and `trapped_slots` are expected counts.
+- **Worker slot** (`WorkerSlot.owner/cancel`, `VgcPlayer._worker_slot(battle)`): a still-running
+  decision worker whose battle is over (opponent left during preview, slow LLM call) is cancelled
+  and replaced by a fresh slot, so the next battle's preview/first turn no longer falls back with
+  `previous-worker-busy`. A live battle's worker still blocks (one worker per player at a time).
+- **Preview leads always Tyranitar + Excadrill (psyspam_sand): not a bug.** For a fixed four,
+  `exchange_score` ignores who leads (it averages all four picks) except via the lead-weather
+  matrix, so lead choice is decided by `speed_score` = mean lead Speed (opponent-independent;
+  `opp_avg_speed` is a constant) x 0.3. Sand Rush doubling under a Tyranitar lead adds ~+20 pts
+  against a median 30-pt gap to the next lead pair (100 ladder previews: 100/100 same leads;
+  Sand Rush doubling off flips 80/100, speed weight 0 flips 52/100). No wrong sign/double count;
+  fixing it needs a lead-specific matchup term (a new feature + A/B), not a knob.
+
+## Bug-fix round 2 A/Bs (2026-10-10)
+
+Owner teams vs the 226 train teams, both arms exact judge, 1808 games each:
+`forecast_respects_locks` + `forecast_move_accuracy` 49.7% [0.480, 0.514] (null, kept on as
+correctness fixes); `exact_judge_passive_lookahead` (samples 1) 50.0% [0.482, 0.518] (null,
+stays off). The poke-env parsing repairs apply to both arms (process-wide), so they are
+validated by `offline/audit_battle_parsing.py`, not by these A/Bs. The ladder stalling
+pattern (repeated double Protect in losing positions) is still open: the one-turn exact
+value prefers surviving a turn; offline bot-vs-bot games rarely produce those positions.
+
+## Battle parsing audit (2026-10-09): what the bot READS now matches Showdown
+
+The bot reads Showdown through poke-env 0.15, and poke-env gets real state wrong. Found from
+ladder game 2695881082 (`-copyboost` applied backwards: a +evasion Slowbro looked unboosted),
+then audited systematically with `offline/audit_battle_parsing.py`: it plays seeded local
+battles (synthetic mechanics-heavy teams + the team pools, random/maxpower/heuristic/
+vgc_myopic players) and after EVERY step compares each side's bot-visible state
+(`snapshot_battle` on both perspectives, with a `BattleMemory`) against the worker's `dump`
+of Showdown's own state: forme, types, HP (exact own / percent foe), status + counters,
+all 7 boosts, item, ability, volatiles, Protect counter, weather/terrain/Trick Room and side
+conditions with remaining durations, charge state, revealed foe moves. Mismatches are grouped
+by field and attributed to the protocol messages that touched the Pokemon.
+
+- **Run it**: `.venv/bin/python offline/audit_battle_parsing.py --battles 2400 --workers 8`
+  (~50 s on 8 cores, 85k perspective-compares). `--disable-fixes all` replays the same seeds
+  with every repair off (the before arm); `--trace-index N` prints one battle step by step;
+  `--fail-on-unexplained` exits 1 on a group that is neither a documented limitation nor
+  legitimately hidden. `tests/test_battle_parsing_audit.py` (integration) runs 40 seeded
+  battles and requires no unexplained group, and requires the repair-free arm to have some.
+- **Result (seed 99, 2400 battles)**: 11,186 mismatch episodes with repairs off, 153 with them
+  on; 0 unexplained, 88 in documented limitations, 65 legitimately hidden (a foe's
+  Damp Rock / Light Clay / Terrain Extender).
+- **Repairs live in `vgc.poke_env_compat`** (method patches on poke-env + stateful message
+  hooks; names in `ALL_FIXES`, switchable via `VGC_DISABLE_COMPAT_FIXES` or
+  `set_disabled_fixes`), plus three fixes in our own layers: `vgc.mechanics_state` (layered
+  side conditions reported a START TURN as their layer count because the condition clock
+  overwrote it, so the exact mirror got up to 14 layers of Toxic Spikes; poke-env marker
+  effects such as `typechange`/`futuresight`/`whirlpool` reached Showdown as bogus volatiles;
+  a foe's consumed item read as "unknown", so the mirror kept its guessed Focus Sash/Sitrus),
+  `vgc.condition_clock` (Light Clay screens last 8 turns) and `vgc.battle_memory` (a Worry
+  Seed / Trace result was recorded as the foe's base ability).
+- **Biggest defects found**: `-copyboost` reversed (Psych Up, Costar); single-turn effects
+  (Endure, Helping Hand, Destiny Bond) and activation markers (Struggle, Quick Claw) never
+  ended, and `vgc.rl.live_mirror` writes every poke-env effect into Showdown's `volatiles`,
+  so a stale Endure/Protect/Helping Hand was live in the exact search; Baton Pass dropped
+  the passed boosts; 16 Champions Megas have a different ability than poke-env's vanilla
+  dex (Garchomp-Mega-Z Levitate, Golisopod-Mega Tough Claws, ...) so they were mis-modelled
+  or not recognised; Palafin-Hero / Mimikyu-Busted / Aegislash-Blade kept the base species;
+  Flash Fire boost "used up" by the first Fire move; Regenerator healed twice; a foe's
+  ability revealed by `[from] ability:` lines (Drought, Grassy Surge, Frisk, Water Absorb...)
+  was never stored; Worry Seed / Simple Beam / Entrainment made the new ability permanent;
+  a skipped charge (Power Herb, Solar Beam in sun, Electro Shot in rain) left the foe
+  "preparing"; the toxic/sleep counters were off after replacements, Rest, Snore/Sleep Talk
+  and recharge; Illusion dropped the disguise's boosts; own preview-only Pokemon stayed
+  `active`.
+- **Known limitations** are listed with reasons in the audit (`KNOWN_LIMITATIONS`): a third
+  type from Trick-or-Treat / Forest's Curse, ally Skill Swap residue, Fairy Lock, Rest while
+  yawned, Imposter listing Transform, a few Illusion paths.
+- **Trace attribution**: `VgcPlayer._record_final_choice` (tracing only) re-scores the order
+  actually sent and overwrites `chosen_breakdown` / `chosen_breakdown_order`; the evaluator's
+  own ranking stays in `top_candidates` labelled as such. Before, the note held whichever
+  ranking ran last (ladder game 2695880700 turn 8 explained Trick while a double Protect was
+  played).
+- Not a strength claim: nothing here was A/B'd for win rate. These are correctness fixes held
+  by regression tests (`tests/test_poke_env_repairs.py`, 44 cases, most also assert the bug
+  reappears with the repair off).
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public
@@ -744,6 +852,49 @@ its frozen value; this is not a calibration change and no new weight was added.
   (violates docs/search_contract.md section 4), Trick Room/weather/terrain score 0, flat
   boost/status weights, one-turn horizon (the fast search's 2-turn forecast was worth
   +7.6 pts), myopic blend double-counts damage.
+
+## Judge stalling and reply diversity (2026-10-09): built, measured offline, both OFF
+
+Ladder session 20261010T003212Z (50 games, correctness pass): losses averaged 1.9 back-to-back
+Protects vs 0.05 in wins. Codex verified the Protect mechanics are right; the cause is the
+one-turn horizon of `_position_value`. Two knobs, both default False, measured offline by
+replaying all 50 `state-replays` bundles through the live judge (`offline/replay_judge_positions.py`:
+fast search under the bundle's own config, then the judge once per arm on the same public mirror and
+random key; 370 decisions, 321 judged):
+
+- **Passive look-ahead** (`exact_judge_passive_lookahead`, mapped to `exact_search_passive_lookahead`).
+  When the judged set holds a passive order (every acting slot Protect-family,
+  `vgc.rl.exact_search.is_passive_order`) AND a non-passive one, the judge keeps every passive
+  order plus the fast search's best `exact_judge_passive_lookahead_alternatives` (2) non-passive
+  ones, and values ALL of them one turn deeper with the existing `continuation_mode="search"`
+  machinery (our top 2 x their top 2 on the next turn). It fires on 101/321 judged decisions.
+  `..._samples` (0 = judge default of 2) and `exact_search_passive_lookahead_board_terminals`
+  are the other levers.
+- **Diverse replies** (`exact_search_diverse_replies`): top reply, then a plausible Protect and
+  switch reply, then farthest-first by move plan (`exact_search_diverse_reply_min_weight_ratio`
+  = plausibility floor on the softmax weight). Weights unchanged.
+
+Pick changes vs the live judge (idle timings: base p50 0.54 s / p99 1.1 s):
+
+| group (n) | look-ahead changed | passive->active / active->passive | repeat Protect picks |
+|---|---|---|---|
+| all judged (321) | 52 (16%) | 18 / 10 | 34 -> 29 |
+| losses, repeat-Protect (37) | 18 (49%) | 10 / 2 | 28 -> 24 |
+| game 2695880700 T7-11 (5) | 3 | 2 / 0 | 3 -> 3 |
+| wins, Protect in pick (31) | 7 (23%) | 2 / 1 | 1 -> 1 |
+| wins, Protect vs foe Tailwind/TR (8) | 2 (25%) | 0 / 0 | 0 -> 0 |
+
+Verdict: look-ahead moves picks (half the loss repeat-Protect decisions) but only trims repeat
+Protects by ~15% net, and 17 of the 28 loss repeat-Protect picks are lone-Pokemon endgames where every line
+scores about -10,000 anyway. Game 17 T8-T11 are such lost positions: look-ahead breaks the
+double Protect in 3 of 5, but the values there are dice on whether a +-10,000 ending lands in
+the 2 sampled futures (1 vs 2 samples agree on only 303/321 picks). Board-terminal scoring
+(`..._board_terminals`) made repeat Protects go UP (34 -> 36). No ground truth says the changed
+picks are better; it needs the pool A/B (use `exact_judge_passive_lookahead_samples=1`, which
+fits the 3 s cap: p99 1.7 s, 1/321 timeouts; the default 2 samples gave p99 3.0 s and 7/321
+timeouts, p90 1.8 s). Diverse replies: agreement with a 16-reply judge 276/321 = 86.0% (4 replies)
+vs 278/321 = 86.6% (diverse 4), mean regret under the 16-reply values 4.77 vs 4.49; no real gain,
+no extra latency. Both stay off until an A/B says otherwise.
 
 ## Measured plan value (2026-10-06): what weather/terrain ENABLE, measured by the engine
 

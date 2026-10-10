@@ -107,6 +107,7 @@ from functools import cmp_to_key, partial
 from itertools import product
 
 from poke_env.battle.double_battle import DoubleBattle
+from poke_env.battle.effect import Effect
 from poke_env.battle.field import Field
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
@@ -159,7 +160,7 @@ from vgc.accuracy import hit_probability
 from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
 from vgc.weather_abilities import weather_adjusted_accuracy
-from vgc.action_sanity import choice_locked_status_slots
+from vgc.action_sanity import CHOICE_ITEMS, CHOICE_LOCK_EXEMPT_MOVES, choice_locked_status_slots
 
 # --- opponent response candidates ---------------------------------------------------------
 
@@ -775,6 +776,12 @@ class ExchangeResult:
     move_accuracy: bool = False
     our_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
     opp_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
+    # `PolicyConfig.forecast_respects_locks`: ("our"|"opp", slot) -> the move ids that Pokemon
+    # may still use on the projected turns after this exchange (Choice lock, Encore, a request's
+    # disabled moves), and the move a Torment holder cannot repeat on the next turn. Absent =
+    # unrestricted. See `_projected_move_locks`.
+    move_locks: dict[tuple[str, int], frozenset[str]] = field(default_factory=dict)
+    no_repeat_moves: dict[tuple[str, int], str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -784,11 +791,11 @@ class PositionForecast:
     score: float
     our_hp_lost_pct: float
     opp_hp_lost_pct: float
-    our_faints: int
-    opp_faints: int
+    our_faints: float
+    opp_faints: float
     our_safe_switches: int
     opp_safe_switches: int
-    trapped_slots: int
+    trapped_slots: float
     plan_progress: float
 
     def summary(self) -> dict[str, object]:
@@ -1242,6 +1249,98 @@ def _exchange_on_turn(exchange: ExchangeResult, turn: int) -> ExchangeResult:
         our_tailwind=exchange.our_tailwind and active(exchange.our_tailwind_last),
         opp_tailwind=exchange.opp_tailwind and active(exchange.opp_tailwind_last),
     )
+
+
+def _request_enabled_moves(ctx: _Context, slot: int) -> frozenset[str] | None:
+    """Move ids the saved request leaves enabled for our ``slot`` (Encore / Disable / no PP /
+    Choice lock show up as ``disabled``); None when there is no restriction to read.
+
+    A request with a single move and no ``target`` is a multi-turn lock (Outrage) or a recharge
+    turn, which only binds the CURRENT turn here, so it is not carried forward."""
+
+    request = getattr(ctx.battle, "last_request", None)
+    if not isinstance(request, dict):
+        return None
+    if request.get("forceSwitch") or request.get("teamPreview") or request.get("wait"):
+        return None
+    actives = request.get("active") or []
+    if slot >= len(actives) or not isinstance(actives[slot], dict):
+        return None
+    moves = actives[slot].get("moves") or []
+    if len(moves) < 2:
+        return None
+    enabled = frozenset(
+        to_id(move.get("id")) for move in moves if isinstance(move, dict) and not move.get("disabled")
+    )
+    if not enabled or len(enabled) == len(moves):
+        return None
+    return enabled
+
+
+def _slot_move(single: object) -> str | None:
+    order = getattr(single, "order", None)
+    return to_id(order.id) if isinstance(order, Move) else None
+
+
+def _projected_move_locks(
+    our_order: DoubleBattleOrder, opp_response: OppResponse, ctx: _Context
+) -> tuple[dict[tuple[str, int], frozenset[str]], dict[tuple[str, int], str]]:
+    """Which moves each side's Pokemon can still pick on the turns AFTER this exchange.
+
+    (``PolicyConfig.forecast_respects_locks``.) Returns ``(move_locks, no_repeat_moves)`` keyed
+    by ``("our" | "opp", slot)``:
+
+    * Choice item + a move used this turn -> locked to it. Ours is read from the held item;
+      the foe's only when its Choice item is publicly known, and then to the move it has
+      already used since switching in if any (it cannot have changed it), else this turn's.
+    * Encore -> locked to the last move (the foe's from poke-env's effect + last move; ours is in
+      the request's disabled flags below).
+    * Our other request restrictions (Disable, no PP) carry as the enabled-move set.
+    * Torment -> may not repeat this turn's move on the next turn.
+
+    A slot that switches (or passes) out of the exchange carries nothing: the Pokemon that comes
+    in is fresh. Trick / Switcheroo do not lock (they swap the item)."""
+
+    locks: dict[tuple[str, int], frozenset[str]] = {}
+    no_repeat: dict[tuple[str, int], str] = {}
+    for slot, attr in enumerate(("first_order", "second_order")):
+        move_id = _slot_move(getattr(our_order, attr, None))
+        mon = ctx.our_pokemon[slot] if slot < len(ctx.our_pokemon) else None
+        if move_id is None or mon is None:
+            continue
+        key = ("our", slot)
+        effects = getattr(mon, "effects", None) or {}
+        if to_id(getattr(mon, "item", None)) in CHOICE_ITEMS and move_id not in CHOICE_LOCK_EXEMPT_MOVES:
+            locks[key] = frozenset({move_id})
+        else:
+            enabled = _request_enabled_moves(ctx, slot)
+            if Effect.TORMENT in effects:
+                no_repeat[key] = move_id
+                if enabled is not None:
+                    # Torment's own disabled move (last turn's) is legal again next turn;
+                    # every other request restriction (Disable, no PP, Encore) still holds.
+                    last = getattr(mon, "last_move", None)
+                    last_id = to_id(getattr(last, "id", None)) if last is not None else None
+                    if last_id:
+                        enabled = enabled | {last_id}
+            if enabled is not None:
+                locks[key] = enabled
+    for slot, action in enumerate((opp_response.slot0, opp_response.slot1)):
+        mon = ctx.opp_pokemon[slot] if slot < len(ctx.opp_pokemon) else None
+        if mon is None or action.kind not in ("move", "protect", "utility") or not action.move_id:
+            continue
+        key = ("opp", slot)
+        move_id = to_id(action.move_id)
+        effects = getattr(mon, "effects", None) or {}
+        last = getattr(mon, "last_move", None)
+        last_id = to_id(getattr(last, "id", None)) if last is not None else None
+        if last_id and Effect.ENCORE in effects:
+            locks[key] = frozenset({last_id})
+        elif to_id(getattr(mon, "item", None)) in CHOICE_ITEMS and move_id not in CHOICE_LOCK_EXEMPT_MOVES:
+            locks[key] = frozenset({last_id or move_id})
+        elif Effect.TORMENT in effects:
+            no_repeat[key] = move_id
+    return locks, no_repeat
 
 
 def _action_order_cmp(a: _Action, b: _Action, trick_room: bool) -> int:
@@ -1711,6 +1810,10 @@ def resolve_exchange(
     result.psychic_terrain_priority = config.psychic_terrain_blocks_priority
     result.spread_recount = config.spread_recount_targets
     result.move_accuracy = config.model_move_accuracy
+    if config.forecast_respects_locks:
+        result.move_locks, result.no_repeat_moves = _projected_move_locks(
+            our_order, opp_response, ctx
+        )
     if config.search_model_field_setters:
         result.field_setters = True
         result.weather = weather_for_exchange
@@ -1933,6 +2036,21 @@ def _drop_spent_first_turn_moves(
     return usable_move_ids(move_ids, SimpleNamespace(first_turn=False), config.first_turn_moves_restricted)
 
 
+def _locked_move_ids(
+    move_ids: list[str], side: str, slot: int, exchange: ExchangeResult
+) -> list[str]:
+    """``move_ids`` narrowed by the exchange's carried move locks (`_projected_move_locks`;
+    both maps are empty unless `PolicyConfig.forecast_respects_locks`)."""
+
+    allowed = exchange.move_locks.get((side, slot))
+    if allowed is not None:
+        move_ids = [move_id for move_id in move_ids if to_id(move_id) in allowed]
+    barred = exchange.no_repeat_moves.get((side, slot))
+    if barred is not None:
+        move_ids = [move_id for move_id in move_ids if to_id(move_id) != barred]
+    return move_ids
+
+
 def _forecast_field(
     exchange: ExchangeResult, ctx: _Context, defender_side: str
 ) -> FieldState:
@@ -1979,7 +2097,9 @@ def _forecast_options(
             options_by_slot.append([None])  # stuck on the status move it locked into
             continue
         best_by_target: dict[int, tuple[float, str, int]] = {}
-        for move_id in _move_ids_for_state(state, side, ctx, config):
+        for move_id in _locked_move_ids(
+            _move_ids_for_state(state, side, ctx, config), side, slot, exchange
+        ):
             normalized = to_id(move_id)
             data = moves_data.get(normalized)
             if data is None or data["category"] == "Status":
@@ -1990,13 +2110,12 @@ def _forecast_options(
                 result = damage_range(state, defender, normalized, field_state)
                 if not result.breakdown["move_supported"] or result.breakdown["immune"]:
                     continue
+                value = result.expected_damage
+                if config.forecast_move_accuracy:
+                    value *= hit_probability(data, state, defender, exchange.weather)
                 previous = best_by_target.get(target)
-                if previous is None or result.expected_damage > previous[0]:
-                    best_by_target[target] = (
-                        result.expected_damage,
-                        normalized,
-                        int(data.get("priority", 0)),
-                    )
+                if previous is None or value > previous[0]:
+                    best_by_target[target] = (value, normalized, int(data.get("priority", 0)))
         speed = field_effective_speed(state, weather=exchange.weather, tailwind=tailwind)
         options_by_slot.append(
             [
@@ -2031,6 +2150,7 @@ def _best_joint_forecast_attacks(
     """Choose a PAIR of attacks together, with overkill capped at remaining HP."""
 
     options = _forecast_options(side, states, defenders, exchange, ctx, config)
+    moves_data = load_moves()
     best: list[_ForecastAttack] = []
     best_score = float("-inf")
     defender_side = "opp" if side == "our" else "our"
@@ -2040,6 +2160,7 @@ def _best_joint_forecast_attacks(
         remaining = [state.hp_or_max() if state is not None else 0.0 for state in defenders]
         hp_lost_pct = 0.0
         faints = 0
+        alive_share = [1.0] * len(defenders)
         for attack in sorted(
             attacks,
             key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=exchange.trick_room)),
@@ -2050,6 +2171,21 @@ def _best_joint_forecast_attacks(
                 continue
             result = damage_range(actor, defender, attack.move_id, field_state)
             dealt = min(remaining[attack.target], result.expected_damage)
+            if config.forecast_move_accuracy:
+                # Expected values: a hit that may miss removes only its share of HP / of the
+                # target (the pair is chosen on the same currency the forecast then scores in).
+                hit = hit_probability(
+                    moves_data.get(attack.move_id) or {}, actor, defender, exchange.weather
+                )
+                lethal = result.expected_damage >= remaining[attack.target]
+                share = alive_share[attack.target]  # P(this foe is still up) from earlier hits
+                hp_lost_pct += dealt * hit * share / defender.max_hp() * 100.0
+                if lethal:
+                    faints += hit * share
+                    alive_share[attack.target] = share * (1.0 - hit)
+                else:
+                    remaining[attack.target] -= dealt * hit
+                continue
             hp_lost_pct += dealt / defender.max_hp() * 100.0
             remaining[attack.target] -= dealt
             if remaining[attack.target] <= 0:
@@ -2105,14 +2241,20 @@ def _safe_switch_count(
     safe = 0
     for defender in bench:
         combined_pct = 0.0
-        for attacker in attackers:
+        for attacker_slot, attacker in enumerate(attackers):
             if attacker is None or attacker.hp_or_max() <= 0:
                 continue
             pct, _move_id, _priority = _best_attacking_move(
                 attacker,
-                _move_ids_for_state(attacker, attacker_side, ctx, config),
+                _locked_move_ids(
+                    _move_ids_for_state(attacker, attacker_side, ctx, config),
+                    attacker_side,
+                    attacker_slot,
+                    exchange,
+                ),
                 defender,
                 field_state,
+                model_accuracy=config.forecast_move_accuracy,
             )
             combined_pct += pct
         if combined_pct < config.rolling_safe_switch_damage_ceiling:
@@ -2133,6 +2275,25 @@ def forecast_position(
 
     our_states = [_copy_state(state) for state in exchange.our_states]
     opp_states = [_copy_state(state) for state in exchange.opp_states]
+    # `forecast_move_accuracy`: carry the exchange's alive-probability bookkeeping. After the
+    # exchange a slot's `current_hp` is EXPECTED HP (alive mass x HP given alive); the forecast
+    # works in "HP given alive" like the exchange does mid-turn, so undo that product here.
+    our_alive = [1.0, 1.0]
+    opp_alive = [1.0, 1.0]
+    if config.forecast_move_accuracy:
+        for states, alive, mass in (
+            (our_states, our_alive, exchange.our_alive),
+            (opp_states, opp_alive, exchange.opp_alive),
+        ):
+            for slot, state in enumerate(states):
+                if state is None:
+                    continue
+                alive[slot] = mass[slot] if slot < len(mass) else 1.0
+                if state.hp_or_max() <= 0:
+                    alive[slot] = 0.0
+                elif 0.0 < alive[slot] < 1.0:
+                    state.current_hp = min(state.max_hp(), state.hp_or_max() / alive[slot])
+    moves_data = load_moves()
     # Projected turn 1 was the exchange itself; the board the next turns see (and the
     # safe-pivot check, which asks about the NEXT turn) has expired conditions removed.
     first_forecast_view = _exchange_on_turn(exchange, 2)
@@ -2151,15 +2312,31 @@ def forecast_position(
         our_states, first_forecast_view, ctx, config
     )
     our_loss = opp_loss = 0.0
-    our_faints = opp_faints = 0
+    our_faints = opp_faints = 0.0
+    no_repeat = dict(exchange.no_repeat_moves)
     for turn_index in range(max(0, config.rolling_horizon_turns)):
         turn_board = _exchange_on_turn(exchange, turn_index + 2)
+        if no_repeat != turn_board.no_repeat_moves:
+            turn_board = replace(turn_board, no_repeat_moves=dict(no_repeat))
         our_attacks = _best_joint_forecast_attacks(
             "our", our_states, opp_states, turn_board, ctx, config
         )
         opp_attacks = _best_joint_forecast_attacks(
             "opp", opp_states, our_states, turn_board, ctx, config
         )
+        for key in list(no_repeat):  # Torment: next turn may not repeat THIS turn's move
+            used = next(
+                (
+                    attack.move_id
+                    for attack in (our_attacks if key[0] == "our" else opp_attacks)
+                    if attack.slot == key[1]
+                ),
+                None,
+            )
+            if used is None:
+                del no_repeat[key]
+            else:
+                no_repeat[key] = used
         all_attacks = sorted(
             our_attacks + opp_attacks,
             key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=turn_board.trick_room)),
@@ -2185,6 +2362,32 @@ def forecast_position(
             )
             before = defender.hp_or_max()
             dealt = min(before, damage.expected_damage)
+            if config.forecast_move_accuracy:
+                # Same bookkeeping as `_apply_action`: a lethal swing removes only the share of
+                # the target's surviving mass it actually connects on; a non-lethal one lowers
+                # HP-given-alive by its expected damage.
+                actor_alive = (our_alive if attack.side == "our" else opp_alive)[attack.slot]
+                def_alive = opp_alive if attack.side == "our" else our_alive
+                actor_mass = actor_alive * hit_probability(
+                    moves_data.get(attack.move_id) or {}, actor, defender, turn_board.weather
+                )
+                hit_mass = def_alive[attack.target] * actor_mass
+                removed = 0.0
+                if damage.expected_damage >= before:
+                    removed = hit_mass
+                    def_alive[attack.target] = max(0.0, def_alive[attack.target] - removed)
+                    if def_alive[attack.target] <= 0.0:
+                        defender.current_hp = 0
+                else:
+                    defender.current_hp = max(0.0, before - dealt * actor_mass)
+                pct = dealt / defender.max_hp() * 100.0 * hit_mass
+                if attack.side == "our":
+                    opp_loss += pct
+                    opp_faints += removed
+                else:
+                    our_loss += pct
+                    our_faints += removed
+                continue
             defender.current_hp = max(0, round(before - dealt))
             pct = dealt / defender.max_hp() * 100.0
             if attack.side == "our":
@@ -2199,7 +2402,7 @@ def forecast_position(
     memory = getattr(ctx.battle, "_vgc_battle_memory", None)
     plan_progress = 0.0
     if memory is not None:
-        for before, after in zip(ctx.opp_states, opp_states, strict=True):
+        for slot, (before, after) in enumerate(zip(ctx.opp_states, opp_states, strict=True)):
             if (
                 before is not None
                 and after is not None
@@ -2209,7 +2412,17 @@ def forecast_position(
                 and after.hp_or_max() <= 0
             ):
                 plan_progress += 1.0
-        for before, after in zip(ctx.our_states, our_states, strict=True):
+            elif (
+                config.forecast_move_accuracy
+                and before is not None
+                and after is not None
+                and {before.species_id, pre_mega_species_id(before.species_id)}
+                & memory.plan_breakers
+                and before.hp_or_max() > 0
+                and opp_alive[slot] < 1.0
+            ):
+                plan_progress += 1.0 - opp_alive[slot]
+        for slot, (before, after) in enumerate(zip(ctx.our_states, our_states, strict=True)):
             if (
                 before is not None
                 and after is not None
@@ -2219,8 +2432,22 @@ def forecast_position(
                 and after.hp_or_max() <= 0
             ):
                 plan_progress -= 1.0
+            elif (
+                config.forecast_move_accuracy
+                and before is not None
+                and after is not None
+                and memory.current_win_con
+                in {before.species_id, pre_mega_species_id(before.species_id)}
+                and before.hp_or_max() > 0
+                and our_alive[slot] < 1.0
+            ):
+                plan_progress -= 1.0 - our_alive[slot]
 
-    trapped = min(2, our_faints) if our_safe == 0 and opp_faints == 0 else 0
+    if config.forecast_move_accuracy:
+        # Expected counts: trapped by the share of our faints no opposing removal offsets.
+        trapped = min(2.0, our_faints) * max(0.0, 1.0 - opp_faints) if our_safe == 0 else 0.0
+    else:
+        trapped = min(2, our_faints) if our_safe == 0 and opp_faints == 0 else 0
     score = (
         (opp_loss - our_loss) * config.search_hp_weight
         + (opp_faints - our_faints) * config.search_faint_weight
