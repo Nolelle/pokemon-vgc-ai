@@ -14,7 +14,11 @@ import math
 import re
 import time
 from collections import defaultdict
+from dataclasses import replace
 from typing import Callable, Sequence
+
+from poke_env.battle.move import Move
+from poke_env.battle.pokemon import Pokemon
 
 from vgc.actions import describe_order
 from vgc.belief_scoring import belief_ordered_candidates
@@ -23,6 +27,7 @@ from vgc.field_control import field_control_value
 from vgc.mechanics_state import BattleMechanicsState, PokemonMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.position_effects import effect_polarity, side_condition_polarity
+from vgc.principles import SELF_PROTECT_MOVES, WIDE_DEFENSE_MOVES
 from vgc.rl.env import DirectBattle, SIDES, choice_string
 from vgc.rl.mechanics_oracle import evaluate_exact_branches
 from vgc.search import _select_search_candidates, _validate_selected_partition
@@ -139,7 +144,108 @@ def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     return value
 
 
+_PROTECT_FAMILY = SELF_PROTECT_MOVES | WIDE_DEFENSE_MOVES
+
+
+def _slot_plan(single) -> tuple[str, str, int]:
+    """One slot of an order as ``(kind, id, target)``; Mega and tera flags are dropped."""
+
+    target = single.order
+    if isinstance(target, Move):
+        return ("move", target.id, int(single.move_target or 0))
+    if isinstance(target, Pokemon):
+        return ("switch", str(target.species), 0)
+    return ("pass", "", 0)
+
+
+def _order_plan(order) -> tuple[tuple[str, str, int], tuple[str, str, int]]:
+    return _slot_plan(order.first_order), _slot_plan(order.second_order)
+
+
+def is_passive_order(order) -> bool:
+    """True when every acting slot uses a Protect-family move (a stall turn)."""
+
+    slots = [slot for slot in _order_plan(order) if slot[0] != "pass"]
+    return bool(slots) and all(kind == "move" and mid in _PROTECT_FAMILY for kind, mid, _t in slots)
+
+
+def _has_protect(order) -> bool:
+    return any(kind == "move" and mid in _PROTECT_FAMILY for kind, mid, _t in _order_plan(order))
+
+
+def _has_switch(order) -> bool:
+    return any(kind == "switch" for kind, _mid, _t in _order_plan(order))
+
+
+def _reply_distance(a, b) -> int:
+    """How differently two replies play: per slot 0 identical, 1 same move at another
+    target, 2 a different move (or switch-in)."""
+
+    total = 0
+    for slot_a, slot_b in zip(_order_plan(a), _order_plan(b), strict=True):
+        if slot_a[:2] != slot_b[:2]:
+            total += 2
+        elif slot_a[2] != slot_b[2]:
+            total += 1
+    return total
+
+
 _MEGA_TOKEN = re.compile(r"\s+mega\b")
+
+
+def _dedupe_mega(scored: list[ScoredOrder]) -> list[ScoredOrder]:
+    kept: list[ScoredOrder] = []
+    seen: set[str] = set()
+    for entry in scored:
+        plan = _MEGA_TOKEN.sub("", entry.order.message)
+        if plan in seen:
+            continue
+        seen.add(plan)
+        kept.append(entry)
+    return kept
+
+
+def _diverse_replies(candidates: list[ScoredOrder], config: PolicyConfig) -> list[ScoredOrder]:
+    """The top reply, a plausible Protect and switch reply if any, then farthest-first."""
+
+    cap = config.search_opp_candidates
+    if len(candidates) <= cap:
+        return list(candidates)
+    top = candidates[0].score
+    scale = max(float(config.search_response_temperature), 1e-6)
+    floor = float(config.exact_search_diverse_reply_min_weight_ratio)
+    chosen = [0]
+    pool = [
+        i
+        for i in range(1, len(candidates))
+        if math.exp((candidates[i].score - top) / scale) >= floor
+    ]
+    for wanted in (_has_protect, _has_switch):
+        if len(chosen) >= cap:
+            break
+        if any(wanted(candidates[i].order) for i in chosen):
+            continue
+        hit = next((i for i in pool if wanted(candidates[i].order)), None)
+        if hit is not None:
+            chosen.append(hit)
+            pool.remove(hit)
+    while len(chosen) < cap and pool:
+        # Farthest-first from what is already kept; ties go to the better-scored reply.
+        best = max(
+            pool,
+            key=lambda i: (
+                min(_reply_distance(candidates[i].order, candidates[j].order) for j in chosen),
+                -i,
+            ),
+        )
+        chosen.append(best)
+        pool.remove(best)
+    for i in range(1, len(candidates)):
+        if len(chosen) >= cap:
+            break
+        if i not in chosen:
+            chosen.append(i)  # nothing plausible left: legacy top-N fill
+    return [candidates[i] for i in sorted(chosen)]
 
 
 def _opponent_replies(
@@ -150,22 +256,17 @@ def _opponent_replies(
     The evaluator scores "Heat Wave + Mega" and "Heat Wave" as two orders. With the foe's
     Mega live in the mirror, the top N could be the same few plans twice over, spending
     the reply budget on near-duplicates. The higher-scored twin stands for the plan.
+    With `exact_search_diverse_replies` the N slots are also spread across qualitatively
+    different plans instead of the N best-scored target variations of one.
     """
 
     cap = config.search_opp_candidates
     if not config.exact_search_dedupe_mega_replies:
         return scored[:cap]
-    kept: list[ScoredOrder] = []
-    seen: set[str] = set()
-    for entry in scored:
-        plan = _MEGA_TOKEN.sub("", entry.order.message)
-        if plan in seen:
-            continue
-        seen.add(plan)
-        kept.append(entry)
-        if len(kept) >= cap:
-            break
-    return kept
+    deduped = _dedupe_mega(scored)
+    if config.exact_search_diverse_replies:
+        return _diverse_replies(deduped, config)
+    return deduped[:cap]
 
 
 def _softmax_weights(scored: list[ScoredOrder], temperature: float) -> list[float]:
@@ -202,6 +303,22 @@ def search_joint_orders_exact(
     else:
         searched, unsearched = candidate_selector(list(ranked), config)
         _validate_selected_partition(ranked, searched, unsearched, config)
+
+    # Passive look-ahead: compare a stall turn with the trade that escapes it one turn
+    # deeper, for EVERY searched order so their values stay comparable.
+    lookahead = False
+    if config.exact_search_passive_lookahead and config.exact_search_continuation_turns == 0:
+        passive = sum(1 for entry in searched if is_passive_order(entry.order))
+        lookahead = 0 < passive < len(searched)
+    if lookahead:
+        config = replace(
+            config,
+            exact_search_continuation_turns=1,
+            exact_search_continuation_mode="search",
+            exact_search_continuation_board_terminals=(
+                config.exact_search_passive_lookahead_board_terminals
+            ),
+        )
 
     expected = root.sides_to_move()
     other = "p2" if side == "p1" else "p1"
@@ -325,6 +442,7 @@ def search_joint_orders_exact(
                 "mechanics_source": "official_showdown_clone",
                 "exact_random_samples": len(future_seeds),
                 "exact_stall_outcome_branches": len(branches) - len(sample_values),
+                "passive_lookahead": lookahead,
                 "exact_opponent_responses": len(opponent_orders),
                 "n_responses": len(opponent_orders),
                 "approximate_transition": False,

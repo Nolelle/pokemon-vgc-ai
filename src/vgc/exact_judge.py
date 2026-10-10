@@ -77,15 +77,47 @@ def select_judged(
     return judged
 
 
-def judge_config(config: PolicyConfig, n_candidates: int) -> PolicyConfig:
+def narrow_for_lookahead(
+    judged: Sequence[ScoredOrder], config: PolicyConfig
+) -> tuple[list[ScoredOrder], bool]:
+    """The judged set for the passive look-ahead, and whether the look-ahead fires.
+
+    It fires only when the set holds both a passive order (every active slot Protect-family,
+    `vgc.rl.exact_search.is_passive_order`) and a non-passive one. Then every passive order
+    is kept, plus the ``exact_judge_passive_lookahead_alternatives`` best non-passive ones in
+    fast-search order (the fast pick is first among either kind, so it always survives).
+    Otherwise the set comes back unchanged and costs nothing extra.
+    """
+
+    if not config.exact_judge_passive_lookahead:
+        return list(judged), False
+    from vgc.rl.exact_search import is_passive_order
+
+    passive = [e for e in judged if is_passive_order(e.order)]
+    active = [e for e in judged if not is_passive_order(e.order)]
+    if not passive or not active:
+        return list(judged), False
+    keep = {id(e) for e in passive} | {
+        id(e) for e in active[: max(1, int(config.exact_judge_passive_lookahead_alternatives))]
+    }
+    return [e for e in judged if id(e) in keep], True
+
+
+def judge_config(
+    config: PolicyConfig, n_candidates: int, *, lookahead: bool = False
+) -> PolicyConfig:
     """``config`` with the exact search sized for the judge (`exact_judge_*` widths)."""
 
     hypotheses = max(1, int(config.exact_judge_hypotheses))
+    samples = config.exact_judge_future_samples
+    if lookahead and config.exact_judge_passive_lookahead_samples > 0:
+        samples = config.exact_judge_passive_lookahead_samples
     return replace(
         config,
         search_our_candidates=max(1, n_candidates),
         search_opp_candidates=config.exact_judge_opp_candidates,
-        exact_search_future_samples=config.exact_judge_future_samples,
+        exact_search_future_samples=samples,
+        exact_search_passive_lookahead=config.exact_judge_passive_lookahead,
         exact_search_state_hypotheses=hypotheses,
         exact_search_spread_hypotheses=hypotheses,
         exact_search_set_hypotheses=hypotheses,
@@ -309,6 +341,8 @@ class ExactJudge:
         judged = select_judged(
             scored, config.exact_judge_top_k, config.exact_judge_extra_myopic
         )
+        judged, lookahead = narrow_for_lookahead(judged, config)
+        report["lookahead"] = lookahead
         if len(judged) < 2:
             report["status"] = "skipped_few_candidates"
             return scored
@@ -331,7 +365,9 @@ class ExactJudge:
         values = self._run_bounded(
             battle,
             memory,
-            with_exact_timers(judge_config(config, len(wanted)), battle, config),
+            with_exact_timers(
+                judge_config(config, len(wanted), lookahead=lookahead), battle, config
+            ),
             wanted,
             budget,
             report,
