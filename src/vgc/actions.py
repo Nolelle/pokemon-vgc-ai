@@ -113,15 +113,34 @@ def index_switch_choice(battle, message: str) -> str:
         tokens = part.split(maxsplit=1)
         if len(tokens) != 2 or tokens[0] != "switch" or tokens[1].isdigit():
             continue
-        wanted = _showdown_id(tokens[1])
-        for position, entry in enumerate(team, start=1):
-            name = str(entry.get("ident", "")).split(": ", 1)[-1]
-            species = str(entry.get("details", "")).split(",", 1)[0]
-            if entry.get("active") or entry.get("condition", "").endswith(" fnt"):
-                continue
-            if wanted in (_showdown_id(name), _showdown_id(species)):
-                parts[slot] = f"switch {position}"
-                break
+        # Showdown's own rule: a nickname matches literally (case-insensitive), a species
+        # by id. Nicknames win, so "A-B" never resolves to a bench mon named "AB".
+        text = tokens[1]
+        bench = [
+            (position, entry)
+            for position, entry in enumerate(team, start=1)
+            if not entry.get("active") and not str(entry.get("condition", "")).endswith(" fnt")
+        ]
+        match = next(
+            (
+                position
+                for position, entry in bench
+                if str(entry.get("ident", "")).split(": ", 1)[-1].lower() == text.lower()
+            ),
+            None,
+        )
+        if match is None:
+            match = next(
+                (
+                    position
+                    for position, entry in bench
+                    if _showdown_id(str(entry.get("details", "")).split(",", 1)[0])
+                    == _showdown_id(text)
+                ),
+                None,
+            )
+        if match is not None:
+            parts[slot] = f"switch {match}"
     return prefix + ", ".join(parts)
 
 

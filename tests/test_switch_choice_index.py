@@ -39,3 +39,15 @@ def test_no_request_leaves_message_alone():
     assert index_switch_choice(SimpleNamespace(last_request={}), "switch Golurk") == (
         "switch Golurk"
     )
+
+
+def test_nickname_matches_literally_before_species_ids():
+    team = [
+        {"ident": "p1: Ditto", "details": "Ditto, L50", "active": True, "condition": "1/1"},
+        {"ident": "p1: X", "details": "Pikachu, L50", "active": True, "condition": "1/1"},
+        {"ident": "p1: AB", "details": "Golurk, L50", "active": False, "condition": "1/1"},
+        {"ident": "p1: A-B", "details": "Garchomp, L50", "active": False, "condition": "1/1"},
+    ]
+    assert index_switch_choice(_battle(team), "switch A-B") == "switch 4"
+    assert index_switch_choice(_battle(team), "switch AB") == "switch 3"
+    assert index_switch_choice(_battle(team), "switch Garchomp") == "switch 4"
