@@ -54,6 +54,12 @@ ALL_FIXES = (
     "mega_changes_from",  # Floette-Mega was not recognised (it changes from Floette-Eternal)
     "memory_ability_changes",  # BattleMemory recorded a Worry Seed / Trace result as the base
     "illusion_break_state",  # a broken Illusion dropped the disguise's boosts and volatiles
+    "cud_chew_keeps_item",  # Cud Chew's re-eaten berry "consumed" the held item
+    "stolen_item_eaten",  # a stolen White Herb is logged eaten BEFORE it is received
+    "symbiosis_item_order",  # a Symbiosis item is logged BEFORE the berry it replaces
+    "blocked_priority_is_not_cant",  # Armor Tail / Dazzling `cant` lines are the holder's, not a miss
+    "shed_tail",  # Shed Tail's Substitute was not handed to the replacement
+    "toxic_stage_cap",  # Showdown caps the toxic stage at 15
     "status_change_resets_counter",  # a new status inherited the old status's turn counter
 )
 _DISABLED: set[str] = {
@@ -264,7 +270,7 @@ _BATON_PASS_EFFECTS = frozenset(
     for name in (
         "AQUA_RING", "CONFUSION", "DRAGON_CHEER", "FOCUS_ENERGY", "GASTRO_ACID", "HEAL_BLOCK",
         "INGRAIN", "LEECH_SEED", "MAGNET_RISE", "NO_RETREAT", "OCTOLOCK", "POWER_TRICK",
-        "SUBSTITUTE", "TAUNT",
+        "SUBSTITUTE", "TAUNT", "THROAT_CHOP",
     )
     if hasattr(Effect, name)
 )  # fmt: skip
@@ -342,6 +348,11 @@ def _on_turn(battle: AbstractBattle) -> Any:
             for mon in late_mons:
                 if mon._status is not None and mon._status.name == "TOX":
                     mon._status_counter = max(0, mon._status_counter - 1)
+        if fix_enabled("toxic_stage_cap"):
+            for mon in battle.all_active_pokemons:
+                if mon is not None and mon._status_counter > 15 and mon._status is not None:
+                    if mon._status.name == "TOX":
+                        mon._status_counter = 15
         if fix_enabled("single_turn_effects"):
             store = _ephemeral(battle)
             for mon, effect in store["turn"]:
@@ -356,12 +367,30 @@ def _on_move_or_cant(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     tag = split[1]
+    battle._vgc_last_enditem = None  # type: ignore[attr-defined]
+    battle._vgc_symbiosis = None  # type: ignore[attr-defined]
     if fix_enabled("single_turn_effects"):
         # A -singlemove effect (Destiny Bond, Grudge) ends when its holder next acts.
         store = _ephemeral(battle)
         store["move"] = [(m, e) for m, e in store["move"] if m is not mon or _drop(m, e)]
     if tag == "cant":
         reason = split[3] if len(split) > 3 else ""
+        if (
+            reason.startswith("ability: ")
+            and reason != "ability: Truant"
+            and fix_enabled("blocked_priority_is_not_cant")
+        ):
+            # `|cant|HOLDER|ability: Armor Tail|Sucker Punch|[of] ATTACKER`: the holder is the
+            # one that blocked the move and did not lose its own action, so its Protect chain
+            # and charge are untouched (poke-env resets both on any `cant`).
+            counter = mon._protect_counter
+            move, target = mon._preparing_move, mon._preparing_target
+
+            def blocked_attacker() -> None:
+                mon._protect_counter = counter
+                mon._preparing_move, mon._preparing_target = move, target
+
+            return blocked_attacker
         hooks = []
         if fix_enabled("interrupted_charge"):
             # Showdown drops the `twoturnmove` volatile when the second turn is aborted (full
@@ -438,16 +467,24 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     before = set(mon.effects)
+    if split[3] == "ability: Cud Chew":
+        battle._vgc_cud_chew = mon  # type: ignore[attr-defined]
+    symbiosis_to = None
+    if split[3] == "ability: Symbiosis" and len(split) > 5 and fix_enabled("symbiosis_item_order"):
+        symbiosis_to = _find_mon(battle, split[5].replace("[of] ", ""))
     swap_target = next((m.group(1) for p in split[4:] if (m := _OF.search(p))), None)
     skill_swap = split[3].replace("move: ", "") == "Skill Swap"
     # Ally Skill Swap hides both abilities (`|-activate|A|move: Skill Swap|||[of] B`).
     hidden_swap = skill_swap and not any(part for part in split[4:] if not part.startswith("[of]"))
-    known_before = (mon.ability, None)
+    known_before = (_effective_ability(mon), None)
     other = _find_mon(battle, swap_target) if swap_target else None
     if other is not None:
-        known_before = (mon.ability, other.ability)
+        known_before = (known_before[0], _effective_ability(other))
 
     def after() -> None:
+        if symbiosis_to is not None and symbiosis_to._item:
+            # Showdown logs the ally's item arriving BEFORE the berry it replaces is eaten.
+            battle._vgc_symbiosis = (symbiosis_to, symbiosis_to._item)  # type: ignore[attr-defined]
         if skill_swap and fix_enabled("swapped_ability_temporary"):
             # Both Pokemon hold a swapped ability until they switch out, even when the
             # abilities were hidden: anything revealed later is temporary.
@@ -463,6 +500,31 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
     return after
 
 
+_LAST_TEMPORARY: dict[int, tuple[Pokemon, str]] = {}
+_original_faint = Pokemon.faint
+
+
+def _faint_remembering_ability(self: Pokemon) -> None:
+    if self._temporary_ability:
+        _LAST_TEMPORARY[id(self)] = (self, self._temporary_ability)
+    _original_faint(self)
+
+
+if not getattr(Pokemon.faint, "_vgc_remembers", False):
+    _faint_remembering_ability._vgc_remembers = True  # type: ignore[attr-defined]
+    Pokemon.faint = _faint_remembering_ability  # type: ignore[method-assign]
+
+
+def _effective_ability(mon: Pokemon) -> str | None:
+    """`mon.ability`, or the swapped-in one it held when it fainted: Showdown logs a KO'd
+    Pokemon's Skill Swap line after the KO damage, and `faint()` has already wiped it."""
+    if mon.fainted and fix_enabled("swapped_ability_temporary"):
+        remembered = _LAST_TEMPORARY.get(id(mon))
+        if remembered is not None and remembered[0] is mon:
+            return remembered[1]
+    return mon.ability
+
+
 def _swap_hidden_abilities(
     battle: AbstractBattle, source: Pokemon, target: Pokemon, before: tuple[Any, Any]
 ) -> None:
@@ -472,7 +534,11 @@ def _swap_hidden_abilities(
     of staying at the stale old value."""
     old_source, old_target = before
     if old_source is not None and old_target is not None:
-        return  # poke-env already swapped two known abilities
+        # Both known (always true for our own pair): set the exchange explicitly. poke-env's
+        # own swap left the first result in place when the pair swapped back.
+        source._temporary_ability = old_target
+        target._temporary_ability = old_source
+        return
     foe_role = "p2" if battle.player_role == "p1" else "p1"
     if _mon_role(battle, source) != foe_role or _mon_role(battle, target) != foe_role:
         return  # our own abilities come from the request
@@ -623,7 +689,64 @@ def _on_anim(battle: AbstractBattle, split: list[str]) -> Any:
     return after_anim
 
 
+def _on_enditem(battle: AbstractBattle, split: list[str]) -> Any:
+    if len(split) < 4:
+        return None
+    mon = _find_mon(battle, split[2])
+    if mon is None:
+        return None
+    if not any(part.startswith("[from]") for part in split[4:]):
+        battle._vgc_last_enditem = (mon, _to_id(split[3]))  # type: ignore[attr-defined]
+    given = vars(battle).get("_vgc_symbiosis")
+    if (
+        given is not None
+        and given[0] is mon
+        and not any(part.startswith("[from]") for part in split[4:])
+    ):
+        battle._vgc_symbiosis = None  # type: ignore[attr-defined]
+
+        def keep_given() -> None:
+            mon._item = given[1]
+
+        return keep_given
+    if fix_enabled("cud_chew_keeps_item") and vars(battle).get("_vgc_cud_chew") is mon:
+        held = mon._item
+        battle._vgc_cud_chew = None  # type: ignore[attr-defined]
+
+        def keep() -> None:
+            # Cud Chew re-eats the berry it ate last turn; the Pokemon's current item is
+            # whatever it holds now (Shell Bell), which that line says nothing about.
+            mon._item = held
+
+        return keep
+    return None
+
+
+def _on_item(battle: AbstractBattle, split: list[str]) -> Any:
+    if len(split) < 5 or not fix_enabled("stolen_item_eaten"):
+        return None
+    mon = _find_mon(battle, split[2])
+    last = vars(battle).get("_vgc_last_enditem")
+    if (
+        mon is None
+        or last is None
+        or last[0] is not mon
+        or last[1] != _to_id(split[3])
+        or not any(part.startswith("[from] move:") for part in split[4:])
+    ):
+        return None
+    battle._vgc_last_enditem = None  # type: ignore[attr-defined]
+
+    def eaten_on_arrival() -> None:
+        # Thief / Covet logs the stolen berry or White Herb as used up, THEN as received.
+        mon._item = None
+
+    return eaten_on_arrival
+
+
 _HANDLERS = {
+    "-enditem": _on_enditem,
+    "-item": _on_item,
     "move": _on_move_or_cant,
     "cant": _on_move_or_cant,
     "switch": lambda battle, split: _prepare_switch(battle, split),
@@ -683,6 +806,24 @@ def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
         part.replace("move: ", "").endswith("Baton Pass") for part in tail
     ):
         out_mon = active.get(slot)
+    if fix_enabled("shed_tail") and any(
+        part.replace("move: ", "").endswith("Shed Tail") for part in tail
+    ):
+        shed_from = active.get(slot)
+
+        def hand_over_substitute() -> None:
+            incoming = _find_mon(battle, split[2])
+            if incoming is not None and incoming is not shed_from:
+                incoming._effects.setdefault(Effect.SUBSTITUTE, 0)
+
+        inner_shed = late_hook
+
+        def shed_and_note() -> None:
+            hand_over_substitute()
+            if inner_shed is not None:
+                inner_shed()
+
+        late_hook = shed_and_note
     if hp_after_protocol_heal is not None and leaving is not None:
         outgoing_hp = hp_after_protocol_heal
         inner_hook = late_hook

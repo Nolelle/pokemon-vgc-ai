@@ -580,3 +580,103 @@ def test_battle_memory_does_not_record_a_changed_ability_as_the_base() -> None:
         ]
     )
     assert memory.opponent_abilities.get("gardevoir") == "trace"
+
+
+# --- round-2 audit findings -------------------------------------------------------------
+
+
+def test_baton_pass_carries_throat_chop() -> None:
+    lines = LEADS + [
+        "|-start|p2a: Alcremie|Throat Chop",
+        "|move|p2a: Alcremie|Baton Pass|p2a: Alcremie",
+        "|switch|p2a: Dragonite|Dragonite, L50, M|60/100|[from] Baton Pass",
+    ]
+    assert Effect.THROAT_CHOP in foe(play(lines), "Dragonite").effects
+    ordinary = lines[:-1] + ["|switch|p2a: Dragonite|Dragonite, L50, M|60/100"]
+    assert Effect.THROAT_CHOP not in foe(play(ordinary), "Dragonite").effects
+
+
+def _alcremie_with_shell_bell(extra: list[str]) -> DoubleBattle:
+    battle = play(LEADS)
+    foe(battle, "Alcremie")._item = "shellbell"
+    for line in extra:
+        battle.parse_message(line.split("|"))
+    return battle
+
+
+def test_cud_chew_replaying_a_berry_does_not_consume_the_held_item() -> None:
+    lines = [
+        "|-activate|p2a: Alcremie|ability: Cud Chew",
+        "|-enditem|p2a: Alcremie|Pecha Berry|[eat]",
+    ]
+    assert foe(_alcremie_with_shell_bell(lines), "Alcremie").item == "shellbell"
+    with without("cud_chew_keeps_item"):
+        assert foe(_alcremie_with_shell_bell(lines), "Alcremie").item is None
+
+
+def test_a_stolen_white_herb_logged_eaten_before_received_is_gone() -> None:
+    lines = LEADS + [
+        "|move|p2b: Torkoal|Thief|p1a: Heracross",
+        "|-enditem|p2b: Torkoal|White Herb",
+        "|-clearnegativeboost|p2b: Torkoal|[silent]",
+        "|-enditem|p1a: Heracross|White Herb|[silent]|[from] move: Thief|[of] p2b: Torkoal",
+        "|-item|p2b: Torkoal|White Herb|[from] move: Thief|[of] p1a: Heracross",
+    ]
+    assert foe(play(lines), "Torkoal").item is None
+    with without("stolen_item_eaten"):
+        assert foe(play(lines), "Torkoal").item == "whiteherb"
+
+
+def test_ally_skill_swap_twice_returns_the_abilities_even_when_one_fainted() -> None:
+    battle = play(LEADS)
+    heracross, vivillon = own(battle, "Heracross"), own(battle, "Vivillon")
+    heracross._ability, vivillon._ability = "wanderingspirit", "scrappy"
+    for line in (
+        "|-activate|p1b: Vivillon|Skill Swap|||[of] p1a: Heracross",
+        "|-damage|p1b: Vivillon|0 fnt",
+        "|-activate|p1a: Heracross|Skill Swap|||[of] p1b: Vivillon",
+    ):
+        battle.parse_message(line.split("|"))
+    assert heracross.ability == "wanderingspirit"
+
+
+def test_symbiosis_item_logged_before_the_berry_it_replaces_survives() -> None:
+    lines = [
+        "|-activate|p1a: Heracross|ability: Symbiosis|Shell Bell|[of] p2a: Alcremie",
+        "|-enditem|p2a: Alcremie|Shuca Berry|[weaken]",
+    ]
+    battle = play(LEADS)
+    foe(battle, "Alcremie")._item = "shucaberry"
+    for line in lines[:1]:
+        battle.parse_message(line.split("|"))
+    assert foe(battle, "Alcremie").item == "shellbell"
+    battle.parse_message(lines[1].split("|"))
+    assert foe(battle, "Alcremie").item == "shellbell"
+
+
+def test_armor_tail_cant_line_does_not_reset_the_holders_protect_chain() -> None:
+    lines = LEADS + [
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|Protect",
+        "|cant|p2a: Alcremie|ability: Armor Tail|Sucker Punch|[of] p1a: Heracross",
+    ]
+    assert foe(play(lines), "Alcremie").protect_counter == 1
+    with without("blocked_priority_is_not_cant"):
+        assert foe(play(lines), "Alcremie").protect_counter == 0
+
+
+def test_shed_tail_hands_the_substitute_to_the_replacement() -> None:
+    lines = LEADS + [
+        "|move|p2a: Alcremie|Shed Tail|p2a: Alcremie",
+        "|switch|p2a: Dragonite|Dragonite, L50, M|50/100|[from] Shed Tail",
+    ]
+    assert Effect.SUBSTITUTE in foe(play(lines), "Dragonite").effects
+    with without("shed_tail"):
+        assert Effect.SUBSTITUTE not in foe(play(lines), "Dragonite").effects
+
+
+def test_toxic_stage_caps_at_fifteen() -> None:
+    lines = LEADS + ["|-status|p2a: Alcremie|tox"]
+    for turn in range(2, 22):
+        lines += ["|upkeep", f"|turn|{turn}"]
+    assert foe(play(lines), "Alcremie").status_counter == 15

@@ -972,6 +972,8 @@ KNOWN_LIMITATIONS = (
     ("boosts/mismatch", ("Illusion", "replace"), "Illusion broke through a path the repairs do not cover"),
     ("volatile/stale", ("Illusion", "replace"), "Illusion: effects earned under a disguise"),
     ("volatile/stale/focusband", None, "Focus Band activation marker survived one request"),
+    ("volatile/stale/gastroacid", None, "Gastro Acid on a disguised Zoroark, found through a request"),
+    ("volatile/missing/gastroacid", None, "same: the effect stays on the disguise object"),
     ("duration/mismatch", None, "screens / weather set through Court Change or a swapped Light Clay"),
 )  # fmt: skip
 
