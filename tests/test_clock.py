@@ -255,3 +255,40 @@ def test_preview_budget_spends_starting_grace_not_bank():
     # Grace already spent (e.g. a delayed preview) is not offered again.
     late = budget_seconds(state, "preview", CFG, now=80.0)
     assert late.fallback_only or late.seconds <= 10.0
+
+
+def test_finished_battles_worker_does_not_block_the_next_battle():
+    from vgc.battle_memory import BattleMemory
+
+    old = SimpleNamespace(battle_tag="old", turn=0, finished=False)
+    new = SimpleNamespace(battle_tag="new", turn=0, finished=False)
+    player = _player(clock_cap_normal_s=0.2, clock_cap_preview_s=0.2)
+    player._battles = {"old": old, "new": new}
+    memory = BattleMemory(battle_tag="old")
+    release = threading.Event()
+    seen: list[bool] = []
+
+    def slow_preview():  # e.g. an LLM call that outlives the opponent's departure
+        release.wait(5)
+        seen.append(cancelled())
+        memory.record_choice(0, "late-unsent-order")
+        return "late"
+
+    assert player._guarded(old, "preview", slow_preview, lambda: "fb") == "fb"
+    assert player.clock_log[-1]["fallback_reason"] == "deadline"
+
+    # The old battle is still live: one worker at a time, exactly as before.
+    assert player._guarded(new, "preview", lambda: "fresh", lambda: "fb2") == "fb2"
+    assert player.clock_log[-1]["fallback_reason"] == "previous-worker-busy"
+
+    # The opponent left: the old battle is over, so its worker is abandoned, not waited for.
+    old.finished = True
+    assert player._guarded(new, "preview", lambda: "fresh", lambda: "fb3") == "fresh"
+    assert player.clock_log[-1]["fallback_reason"] == "none"
+
+    release.set()
+    time.sleep(0.2)
+    assert seen == [True]  # the abandoned worker knows it was discarded
+    assert memory.our_orders == []  # and its late result never reached memory
+    # The new battle's own worker is still serialised against itself.
+    assert player._guarded(new, "normal", lambda: "next", lambda: "fb4") == "next"

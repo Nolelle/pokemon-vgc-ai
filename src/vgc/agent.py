@@ -304,12 +304,39 @@ class VgcPlayer(Player):
             )
         return trackers[battle_tag]
 
-    def _worker_slot(self) -> WorkerSlot:
+    def _worker_slot(self, battle: AbstractBattle | None = None) -> WorkerSlot:
+        """The player's single decision-worker slot.
+
+        Given the battle about to decide, a slot still held by a worker of a DIFFERENT battle
+        that is already over (for example a slow LLM team-preview call whose opponent left)
+        is abandoned: that worker is cancelled -- it can no longer write memory or samples,
+        see `vgc.clock.cancelled` -- and a fresh slot replaces it, so it cannot make the next
+        battle's preview or first turns fall back with ``previous-worker-busy``. A worker of a
+        live battle (including the same battle's earlier turn) still blocks, as before."""
+
         slot = getattr(self, "_decide_slot", None)
         if slot is None:
             slot = WorkerSlot()
             self._decide_slot = slot
+        if battle is not None and slot.busy():
+            owner = slot.owner
+            if (
+                owner is not None
+                and owner != battle.battle_tag
+                and self._battle_is_over(owner)
+            ):
+                if slot.cancel is not None:
+                    slot.cancel.set()
+                slot = WorkerSlot()
+                self._decide_slot = slot
         return slot
+
+    def _battle_is_over(self, battle_tag: str) -> bool:
+        tracked = getattr(self, "_battles", None)
+        if not isinstance(tracked, dict):
+            return False
+        battle = tracked.get(battle_tag)
+        return battle is None or bool(getattr(battle, "finished", False))
 
     def _memory_for(self, battle: AbstractBattle) -> BattleMemory:
         memory = self._memory_for_tag(battle.battle_tag)
@@ -510,7 +537,7 @@ class VgcPlayer(Player):
         start = time.monotonic()
         result = None
         try:
-            slot = self._worker_slot()
+            slot = self._worker_slot(battle)
             if budget.seconds is None and not slot.busy():
                 value = contextvars.copy_context().run(scoped_decide)
                 reason = "none"
@@ -520,7 +547,9 @@ class VgcPlayer(Player):
                     lambda: self._run_isolated(scoped_decide, cancel, deadline),
                     lambda: self._run_isolated(fallback, None)[0],
                     budget,
-                    slot=self._worker_slot(),
+                    slot=slot,
+                    owner=battle.battle_tag,
+                    cancel=cancel,
                 )
                 reason = result.reason
                 if reason == "none":

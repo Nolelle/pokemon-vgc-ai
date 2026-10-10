@@ -418,6 +418,25 @@ class PolicyConfig:
     # projected turns. True drops them unless poke-env's `first_turn` says the Pokemon is on its
     # first turn out. False is the legacy control.
     first_turn_moves_restricted: bool = True
+    # The fast search's projected turns (turn 2+) offered every learned move, so a Choice Scarf
+    # holder locked into Protect was forecast to attack (ladder game 2695880700 T10: Indeedee
+    # was locked into Protect, the forecast gave it Expanding Force). True carries move locks
+    # into the forecast: a Pokemon that holds a Choice item and is using a move this turn (ours
+    # from the item; the foe's when its Choice item is publicly known) can only repeat that move
+    # on later turns (its already-locked move when it has one), as can an Encore; our own
+    # Disable / no-PP restrictions are read from the request's `disabled` flags and Torment bars
+    # repeating the previous turn's move. A slot that switches out carries nothing. The foe's
+    # Encore uses poke-env's effect + its last move. Taunt blocks status moves only, which the
+    # forecast never uses. False is the legacy control (all learned moves, only a status lock
+    # created this turn is excluded).
+    forecast_respects_locks: bool = True
+    # Move accuracy on the forecast's projected turns, mirroring `model_move_accuracy` for the
+    # explicit exchange: attack choice and damage are scaled by the hit chance, a lethal hit
+    # removes only the hit-chance share of the target's surviving probability mass (the same
+    # alive-probability KO accounting `resolve_exchange` uses, carried over from its
+    # `our_alive`/`opp_alive`), and faints/plan progress are expected counts. False is the legacy
+    # control: every projected attack hits.
+    forecast_move_accuracy: bool = True
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when
