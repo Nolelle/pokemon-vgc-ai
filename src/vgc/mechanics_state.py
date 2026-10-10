@@ -19,6 +19,7 @@ from typing import Any, Iterable, Mapping
 from vgc.condition_clock import elapsed_ticks
 from vgc.damage import to_id
 from vgc.data import load_species
+from vgc.poke_env_compat import fix_enabled
 from vgc.sets import normalize_item, normalize_status
 
 BOOST_IDS = ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion")
@@ -64,6 +65,28 @@ class EffectSnapshot:
 
 _LAYERED_SIDE_CONDITIONS = frozenset({"spikes", "toxicspikes", "stealthrock", "stickyweb"})
 
+# poke-env's `Pokemon.effects` mixes real Showdown volatiles with its own bookkeeping. Showdown
+# knows these under other ids, or not at all; `vgc/rl/mechanics_oracle` and the exact mirror
+# write each id straight into a Showdown Pokemon's `volatiles`, so an id Showdown does not
+# use becomes a bogus condition there.
+_EFFECT_ALIASES = {
+    **{
+        trap: "partiallytrapped"
+        for trap in (
+            "bind", "clamp", "firespin", "infestation", "magmastorm", "sandtomb", "snaptrap",
+            "thundercage", "whirlpool", "wrap",
+        )
+    },
+    **{f"stockpile{n}": "stockpile" for n in (1, 2, 3)},
+    **{f"perish{n}": "perishsong" for n in (0, 1, 2, 3)},
+}  # fmt: skip
+# Not volatiles in Showdown: a type change is recorded in the Pokemon's `types`, which the
+# snapshot already carries.
+# (Future Sight lives in a slot condition; Supreme Overlord's count lives in the ability state.)
+_NON_VOLATILE_EFFECTS = frozenset(
+    {"typechange", "typeadd", "futuresight", "doomdesire", "fallen", *(f"fallen{n}" for n in range(1, 6))}
+)
+
 
 def _effect_snapshots(
     values: Any,
@@ -72,6 +95,7 @@ def _effect_snapshots(
     battle: Any = None,
     clock_kind: str | None = None,
     clock_side: str | None = None,
+    canonical_volatiles: bool = False,
 ) -> tuple[EffectSnapshot, ...]:
     if values is None:
         return ()
@@ -81,13 +105,26 @@ def _effect_snapshots(
     else:
         entries = ((value, None) for value in values)
     result: list[EffectSnapshot] = []
+    seen: set[str] = set()
     for effect, raw in entries:
         effect_id = _effect_id(effect)
         if not effect_id:
             continue
+        if canonical_volatiles and fix_enabled("snapshot_effects"):
+            if effect_id in _NON_VOLATILE_EFFECTS:
+                continue
+            effect_id = _EFFECT_ALIASES.get(effect_id, effect_id)
+            if effect_id in seen:
+                continue
+            seen.add(effect_id)
         serializable_raw = raw if isinstance(raw, (str, int, float, bool)) else None
         turns = _optional_int(raw)
-        if clock_kind is not None and battle is not None:
+        layered = (
+            counter_kind == "side_start_turn"
+            and effect_id in _LAYERED_SIDE_CONDITIONS
+            and fix_enabled("snapshot_layers")
+        )
+        if clock_kind is not None and battle is not None and not layered:
             # poke-env's start turn is wrong for weather (restamped every upkeep) and
             # for switch-in setters; report the start implied by Showdown's real
             # duration ticks instead (vgc.condition_clock).
@@ -215,15 +252,24 @@ def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str 
     species = load_species().get(species_id)
     if not species:
         return None
-    for forme_name in species.get("otherFormes") or ():
-        forme_id = to_id(forme_name)
+    forme_ability = forme_change_ability_id
+    candidates = [to_id(name) for name in species.get("otherFormes") or ()]
+    if fix_enabled("mega_changes_from"):
+        # Floette-Mega is listed under Floette but changes from Floette-Eternal, which has no
+        # `otherFormes` of its own.
+        candidates += [
+            forme_id
+            for forme_id, forme in load_species().items()
+            if forme.get("isMega") and forme.get("changesFrom") == species.get("name")
+        ]
+    for forme_id in candidates:
         if not forme_id:
             continue
         forme = load_species().get(forme_id)
         if not forme or not forme.get("isMega"):
             continue
         mega_ability = to_id((forme.get("abilities") or {}).get("0"))
-        if mega_ability == forme_change_ability_id:
+        if mega_ability == forme_ability:
             return forme_id
     return None
 
@@ -250,6 +296,13 @@ def _resolve_item_state(
     if not opponent:
         return ("known", item_id) if item_id is not None else ("none", None)
 
+    if raw_item is None and fix_enabled("snapshot_foe_item"):
+        # A hidden foe item is poke-env's "unknown_item" sentinel; `None` is only reached
+        # through `-enditem` (consumed, knocked off, Fling, Trick-away), which is public.
+        # The old test below needed some OTHER item to have been revealed first, so a foe
+        # whose only item was just consumed read as "unknown" and the exact mirror kept
+        # its guessed item (a Focus Sash, a Sitrus Berry) alive.
+        return "consumed", None
     if raw_item == "unknown_item" or item_id is None and not revealed_items:
         return "unknown", None
     if item_id is not None:
@@ -396,7 +449,9 @@ def snapshot_pokemon(
         status=normalize_status(getattr(pokemon, "status", None)),
         status_counter=int(getattr(pokemon, "status_counter", 0) or 0),
         effects=_effect_snapshots(
-            getattr(pokemon, "effects", None), counter_kind="elapsed_actions"
+            getattr(pokemon, "effects", None),
+            counter_kind="elapsed_actions",
+            canonical_volatiles=True,
         ),
         item_id=item,
         item_state=item_state,

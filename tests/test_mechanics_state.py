@@ -43,7 +43,7 @@ def _pokemon(species: str, *, opponent: bool = False):
         status="par",
         status_counter=3,
         effects={"substitute": 2, "confusion": 1},
-        item=None if opponent else "Fairy Feather",
+        item="unknown_item" if opponent else "Fairy Feather",
         ability=None if opponent else "Pixilate",
         base_ability=None if opponent else "Pixilate",
         temporary_ability=None,
@@ -227,16 +227,19 @@ def test_item_state_classifies_known_consumed_none_and_unknown() -> None:
         opponent=True,
         revealed_items={"gengar": "lifeorb"},
     ) == ("consumed", None)
+    # poke-env hides a foe item as "unknown_item"; `None` is only reached through `-enditem`
+    # (consumed, knocked off, Fling, Trick-away), so it is public even when no OTHER item has
+    # been revealed yet.
     assert _resolve_item_state(
         SimpleNamespace(item=None, species="Gengar", revealed=True),
         opponent=True,
         revealed_items={},
-    ) == ("unknown", None)
+    ) == ("consumed", None)
     assert _resolve_item_state(
         SimpleNamespace(item=None, species="Gengar", revealed=True),
         opponent=True,
         revealed_items=None,
-    ) == ("unknown", None)
+    ) == ("consumed", None)
     assert _resolve_item_state(
         SimpleNamespace(item="unknown_item", species="Gengar", revealed=False),
         opponent=True,

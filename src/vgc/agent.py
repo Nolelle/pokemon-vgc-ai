@@ -46,7 +46,7 @@ from vgc.decision_trace import (
     start_trace,
     trace_enabled,
 )
-from vgc.evaluator import score_joint_orders
+from vgc.evaluator import breakdown_for_order, score_joint_orders
 from vgc.condition_clock import observe_condition_line
 from vgc.team_scope import bind_own_team
 from vgc.poke_env_compat import normalize_for_poke_env
@@ -413,6 +413,8 @@ class VgcPlayer(Player):
                 scored = score_orders(policy, battle, scored, self.config)
             if self.config.log_decisions:
                 record_note("chosen_order_score", round(scored[0].score, 3))
+            if trace_enabled():
+                self._record_final_choice(battle, scored[0])
             if isinstance(scored[0].order, DoubleBattleOrder) and not cancelled():
                 memory.record_choice(
                     int(getattr(battle, "turn", 0) or 0), describe_order(scored[0].order)
@@ -423,6 +425,32 @@ class VgcPlayer(Player):
             return scored[0].order
         record_note("battle_memory", memory.summary())
         return self.choose_random_move(battle)
+
+    def _record_final_choice(self, battle: AbstractBattle, final) -> None:
+        """Make the trace describe the order that is actually sent.
+
+        The evaluator records `chosen_breakdown` for ITS top pick every time it ranks orders,
+        including the shortlist the search builds and each exact-mirror root, so the note held
+        whichever ranking ran last: ladder game 2695880700 turn 8 played a double Protect
+        while the trace explained Trick. After search, judge and BC blending this re-scores
+        the final order with the evaluator and overwrites both notes (the myopic ranking stays
+        in `top_candidates`, labelled as such).
+        """
+
+        order = final.order
+        if not isinstance(order, DoubleBattleOrder):
+            return
+        record_note(
+            "final_choice",
+            {"order": describe_order(order), "score": round(float(final.score), 3)},
+        )
+        try:
+            breakdown = breakdown_for_order(battle, order, self.config)
+        except Exception:  # noqa: BLE001 - diagnostics must never cost a decision
+            breakdown = None
+        if breakdown is not None:
+            record_note("chosen_breakdown", breakdown)
+            record_note("chosen_breakdown_order", describe_order(order))
 
     def _search(self, battle: DoubleBattle, memory: BattleMemory) -> list:
         """The fast search, then (opt-in) the exact judge over its best candidates.
