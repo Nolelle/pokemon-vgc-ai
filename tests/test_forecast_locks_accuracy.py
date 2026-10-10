@@ -280,3 +280,41 @@ def test_accuracy_picks_the_reliable_move_when_expected_damage_is_close() -> Non
     # 110 BP at 70% is worth less than 90 BP that always lands.
     assert [a.move_id for a in _our_attacks(ctx, exchange, LEGACY)] == ["thunder"]
     assert [a.move_id for a in _our_attacks(ctx, exchange, ACCURACY_ONLY)] == ["thunderbolt"]
+
+
+def test_torment_keeps_disable_and_other_request_restrictions() -> None:
+    ctx = _board(["earthquake", "bodyslam", "protect"], item="leftovers")
+    ctx.our_pokemon[0].effects = {Effect.TORMENT: 1}
+    ctx.our_pokemon[0].last_move = SimpleNamespace(id="protect")
+    # Earthquake is Disabled; Protect is barred by Torment in the request (last turn's move).
+    ctx.battle.last_request = {
+        "active": [
+            {
+                "moves": [
+                    {"id": "earthquake", "disabled": True},
+                    {"id": "bodyslam", "disabled": False},
+                    {"id": "protect", "disabled": True},
+                ]
+            }
+        ]
+    }
+    exchange = resolve_exchange(
+        _fake_order(_fake_single("bodyslam", 1), None), NO_OP, ctx, LOCKS_ONLY
+    )
+    assert exchange.no_repeat_moves == {("our", 0): "bodyslam"}
+    assert exchange.move_locks == {("our", 0): frozenset({"bodyslam", "protect"})}
+    assert _our_attacks(ctx, exchange, LOCKS_ONLY) == []  # EQ disabled, Body Slam tormented
+
+
+def test_pair_selection_composes_two_hits_on_one_foe() -> None:
+    # Two 70% lethal attacks on ONE foe KO it 91% of the time, not 140%: splitting across
+    # two foes (0.7 + 0.7 expected KOs) must beat doubling up.
+    ctx = _build_ctx(
+        our_states=[_garchomp(), _garchomp()],
+        opp_states=[_klefki(current_hp=1), _klefki(current_hp=1)],
+        our_pokemon=[_holder(None, ["focusblast"]), _holder(None, ["focusblast"])],
+        opp_pokemon=[_mon(species="klefki"), _mon(species="klefki")],
+    )
+    exchange = ExchangeResult(our_states=ctx.our_states, opp_states=ctx.opp_states)
+    attacks = _our_attacks(ctx, exchange, PolicyConfig())
+    assert sorted(a.target for a in attacks) == [0, 1]

@@ -1312,10 +1312,17 @@ def _projected_move_locks(
         effects = getattr(mon, "effects", None) or {}
         if to_id(getattr(mon, "item", None)) in CHOICE_ITEMS and move_id not in CHOICE_LOCK_EXEMPT_MOVES:
             locks[key] = frozenset({move_id})
-        elif Effect.TORMENT in effects:
-            no_repeat[key] = move_id
         else:
             enabled = _request_enabled_moves(ctx, slot)
+            if Effect.TORMENT in effects:
+                no_repeat[key] = move_id
+                if enabled is not None:
+                    # Torment's own disabled move (last turn's) is legal again next turn;
+                    # every other request restriction (Disable, no PP, Encore) still holds.
+                    last = getattr(mon, "last_move", None)
+                    last_id = to_id(getattr(last, "id", None)) if last is not None else None
+                    if last_id:
+                        enabled = enabled | {last_id}
             if enabled is not None:
                 locks[key] = enabled
     for slot, action in enumerate((opp_response.slot0, opp_response.slot1)):
@@ -2153,6 +2160,7 @@ def _best_joint_forecast_attacks(
         remaining = [state.hp_or_max() if state is not None else 0.0 for state in defenders]
         hp_lost_pct = 0.0
         faints = 0
+        alive_share = [1.0] * len(defenders)
         for attack in sorted(
             attacks,
             key=cmp_to_key(partial(_forecast_attack_cmp, trick_room=exchange.trick_room)),
@@ -2170,10 +2178,11 @@ def _best_joint_forecast_attacks(
                     moves_data.get(attack.move_id) or {}, actor, defender, exchange.weather
                 )
                 lethal = result.expected_damage >= remaining[attack.target]
-                hp_lost_pct += dealt * hit / defender.max_hp() * 100.0
+                share = alive_share[attack.target]  # P(this foe is still up) from earlier hits
+                hp_lost_pct += dealt * hit * share / defender.max_hp() * 100.0
                 if lethal:
-                    faints += hit
-                    remaining[attack.target] *= 1.0 - hit  # the share that survives the swing
+                    faints += hit * share
+                    alive_share[attack.target] = share * (1.0 - hit)
                 else:
                     remaining[attack.target] -= dealt * hit
                 continue
