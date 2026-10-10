@@ -218,8 +218,10 @@ function run(req, seed) {
 	battle.makeRequest("move");
 	const logStart = battle.log.length;
 	const stats = {};
+	const applied = {};
 	for (const slot of SLOTS) {
 		const mon = mons[slot];
+		applied[slot] = { status: mon.status || null, fainted: !!mon.fainted, hp: mon.hp, item: mon.item || "" };
 		stats[slot] = { hp: mon.maxhp, ...mon.storedStats, spe_now: mon.getStat("spe"), speed_action: mon.getActionSpeed() };
 	}
 	const order = [];
@@ -260,6 +262,7 @@ function run(req, seed) {
 		calls: rec.calls,
 		accuracy: rec.accuracy,
 		stats,
+		applied,
 		order,
 		err,
 		turnsRun,

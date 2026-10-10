@@ -20,6 +20,7 @@ from vgc.calc_sweep import (
     damage_case,
     dummy_mon,
     legal_moves,
+    state_not_applied,
 )
 from vgc.damage import PokemonState, to_id
 from vgc.data import load_items, load_moves, load_species
@@ -114,11 +115,25 @@ def _copy(value: Any) -> Any:
     return dict(value) if isinstance(value, dict) else value
 
 
+# Moves whose every condition is explored for an ability/item (the others run the base
+# condition only): both categories, contact and spread, and the types weather/terrain touch.
+COND_MOVES = (
+    "bodyslam", "earthquake", "icepunch", "flamethrower", "surf", "thunderbolt", "energyball",
+    "shadowball", "hex", "facade", "hypervoice", "quickattack", "knockoff", "dazzlinggleam",
+    "bravebird", "psychic",
+)
+QUICK_COND_MOVES = ("bodyslam", "earthquake", "flamethrower", "hypervoice", "hex", "quickattack")
+
+
 def holder_cases(entry_kind: str, entry: str, *, profile: str = "full") -> list[Case]:
     """Damage cases for one ability or item in each role: attacker, defender, the defender's
-    partner (Dazzling, redirection...) and the attacker's partner (Battery, Power Spot...)."""
+    partner (Dazzling, redirection...) and the attacker's partner (Battery, Power Spot...).
+
+    Every case carries a ``control`` twin without the entry, so the entry is judged on its own
+    effect (see `vgc.calc_sweep.compare_damage`)."""
 
     battery = BATTERY if profile == "full" else QUICK_BATTERY
+    cond_moves = set(COND_MOVES if profile == "full" else QUICK_COND_MOVES)
     legal = set(legal_moves())
     cases: list[Case] = []
     forced_species = item_species(entry) if entry_kind == "item" else None
@@ -126,23 +141,34 @@ def holder_cases(entry_kind: str, entry: str, *, profile: str = "full") -> list[
         if move_id not in legal:
             continue
         md = _move(move_id)
+        conds = condition_list(md["category"], profile) if move_id in cond_moves else [Cond("base")]
         for role in ("att", "def", "pfoe", "pally"):
-            for cond in condition_list(md["category"], profile):
+            for cond in conds:
                 partner = role in ("pfoe", "pally")
                 if partner and (cond.name not in PARTNER_CONDS or cond.holder or cond.other):
                     continue
-                mons = base_mons(move_id)
-                holder_slot = {"att": "p1a", "def": "p2a", "pfoe": "p2b", "pally": "p1b"}[role]
-                other_slot = "p2a" if role == "att" else "p1a"
-                setattr(mons[holder_slot], entry_kind, entry)
-                if forced_species and holder_slot in ("p1a", "p2a"):
-                    mons[holder_slot].species = forced_species
-                for attr, value in cond.holder.items():
-                    setattr(mons[holder_slot], attr, _copy(value))
-                for attr, value in cond.other.items():
-                    setattr(mons[other_slot], attr, _copy(value))
-                variant = f"{role}|{move_id}|{cond.name}"
-                cases.append(damage_case(entry_kind, entry, variant, move_id, mons, cond.fld))
+                pair = []
+                for with_entry in (True, False):
+                    mons = base_mons(move_id)
+                    holder_slot = {"att": "p1a", "def": "p2a", "pfoe": "p2b", "pally": "p1b"}[role]
+                    other_slot = "p2a" if role == "att" else "p1a"
+                    if with_entry:
+                        setattr(mons[holder_slot], entry_kind, entry)
+                    elif entry_kind == "item":
+                        # An inert item keeps "target holds an item" true (Knock Off, Poltergeist,
+                        # Acrobatics) so only the item under test differs between the twins.
+                        setattr(mons[holder_slot], "item", "sitrusberry" if entry == "leftovers" else "leftovers")
+                    if forced_species and holder_slot in ("p1a", "p2a"):
+                        mons[holder_slot].species = forced_species
+                    for attr, value in cond.holder.items():
+                        setattr(mons[holder_slot], attr, _copy(value))
+                    for attr, value in cond.other.items():
+                        setattr(mons[other_slot], attr, _copy(value))
+                    variant = f"{role}|{move_id}|{cond.name}"
+                    pair.append(damage_case(entry_kind, entry, variant, move_id, mons, cond.fld))
+                case, control = pair
+                case.control = control
+                cases.append(case)
     return cases
 
 
@@ -399,6 +425,10 @@ def compare_order(case: Case, probe: dict) -> dict[str, Any]:
     if not results or any(r.get("err") for r in results):
         out.update(status="unexercised", reason="probe_error")
         return out
+    not_applied = state_not_applied(case, probe)
+    if not_applied:
+        out.update(status="unexercised", reason=not_applied)
+        return out
     engine = engine_pair(results)
     if engine is None:
         out.update(status="unexercised", reason="no_order")
@@ -529,6 +559,10 @@ def compare_accuracy(case: Case, probe: dict) -> dict[str, Any]:
     out: dict[str, Any] = {"cid": case.cid, "variant": case.variant}
     if not results or results[0].get("err"):
         out.update(status="unexercised", reason="probe_error")
+        return out
+    not_applied = state_not_applied(case, probe)
+    if not_applied:
+        out.update(status="unexercised", reason=not_applied)
         return out
     log = results[0].get("log") or []
     if not any(line.startswith("|move|p1a:") for line in log):

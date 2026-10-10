@@ -110,29 +110,46 @@ COMPARATORS = {
 }
 
 
+def _request_key(case: cs.Case) -> str:
+    return json.dumps(case.request(), sort_keys=True)
+
+
 def evaluate(cases: list[cs.Case], workers: int) -> tuple[dict, dict[str, int]]:
-    """Run ``cases`` on the engine and compare. Returns (entry results, row-status counts)."""
+    """Run ``cases`` (and their control twins, deduplicated) on the engine and compare.
+
+    Returns (entry results, row-status counts). Memory stays bounded: cases are processed in
+    chunks and only compact rows are kept.
+    """
 
     table: dict[tuple[str, str, str], cs.EntryResult] = {}
-    by_kind: dict[str, list[int]] = defaultdict(list)
-    for index, case in enumerate(cases):
-        by_kind[case.kind].append(index)
-    probes: list[Any] = [None] * len(cases)
-    chunk = 20000
-    for kind, indexes in by_kind.items():
-        for start in range(0, len(indexes), chunk):
-            part = indexes[start : start + chunk]
-            results = cs.run_cases([cases[i] for i in part], workers=workers)
-            for i, probe in zip(part, results, strict=True):
-                probes[i] = probe
     totals: Counter[str] = Counter()
-    for case, probe in zip(cases, probes, strict=True):
-        row = COMPARATORS[case.kind](case, probe)
-        key = (case.kind, case.entry_kind, case.entry)
-        if key not in table:
-            table[key] = cs.EntryResult(case.kind, case.entry_kind, case.entry)
-        table[key].add(row)
-        totals[row["status"]] += 1
+    chunk = 12000
+    for start in range(0, len(cases), chunk):
+        part = cases[start : start + chunk]
+        controls: dict[str, cs.Case] = {}
+        control_key: list[str | None] = []
+        for case in part:
+            if case.control is not None:
+                key = _request_key(case.control)
+                controls.setdefault(key, case.control)
+                control_key.append(key)
+            else:
+                control_key.append(None)
+        keys = list(controls)
+        results = cs.run_cases([part[i] for i in range(len(part))] + [controls[k] for k in keys], workers=workers)
+        probes = results[: len(part)]
+        control_probes = dict(zip(keys, results[len(part) :], strict=True))
+        for case, probe, ckey in zip(part, probes, control_key, strict=True):
+            if case.kind == "damage" and case.control is not None:
+                row = cs.compare_damage(case, probe, case.control, control_probes[ckey])
+            else:
+                row = COMPARATORS[case.kind](case, probe)
+            key = (case.kind, case.entry_kind, case.entry)
+            if key not in table:
+                table[key] = cs.EntryResult(case.kind, case.entry_kind, case.entry)
+            table[key].add(row)
+            totals[row["status"]] += 1
+        del results, probes, control_probes
     return table, dict(totals)
 
 

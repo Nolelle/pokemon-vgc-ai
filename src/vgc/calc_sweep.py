@@ -310,6 +310,7 @@ class Case:
     turns: int = 3
     mega: dict[str, bool] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    control: "Case | None" = None
 
     @property
     def cid(self) -> str:
@@ -582,6 +583,10 @@ def ours_damage(case: Case, *, default_config: bool = True) -> dict[str, Any]:
     md = _move(move_id)
     slot = case.meta.get("target_slot", "p2a")
     attacker = case.mons["p1a"].state()
+    if case.mega.get("p1a"):
+        from vgc.evaluator import mega_evolved_state
+
+        attacker = mega_evolved_state(attacker)
     defender = case.mons[slot].state()
     fld = case.fld
     num_targets = spread_target_count(move_id, case.mons)
@@ -637,45 +642,106 @@ def _engine_call(case: Case, probe: dict) -> tuple[dict | None, str]:
     return None, "blocked"
 
 
-def compare_damage(case: Case, probe: dict) -> dict[str, Any]:
+def state_not_applied(case: Case, probe: dict) -> str | None:
+    """Reason the requested pre-turn state did not exist in the engine (an ability that prevents
+    the status, say), so the scenario cannot test anything; ``None`` when it was applied."""
+
+    results = probe.get("results") or []
+    if not results or "applied" not in results[0]:
+        return None
+    applied = results[0]["applied"]
+    for slot, mon in case.mons.items():
+        if mon.status and applied[slot]["status"] != mon.status:
+            return f"status_prevented:{slot}:{mon.status}"
+    return None
+
+
+def engine_outcome(case: Case, probe: dict) -> dict[str, Any]:
+    """What the engine did for a damage case: hit (ascending rolls), blocked, or unexercised."""
+
+    not_applied = state_not_applied(case, probe)
+    if not_applied:
+        return {"state": "unexercised", "reason": not_applied}
+
     call, reason = _engine_call(case, probe)
+    if call is None and reason in ("not_used", "failed") or reason.startswith(("probe_error", "engine_error")):
+        return {"state": "unexercised", "reason": reason}
+    if call is None:
+        return {"state": "blocked"}
+    return {
+        "state": "hit",
+        "rolls": [call["rolls"][15 - i] for i in range(16)],  # ascending 85%..100%
+        "move_type": call.get("moveType"),
+        "crit": bool(call.get("crit")),
+    }
+
+
+def roll_gap(ours_rolls: list[int], engine_rolls: list[int]) -> tuple[int, float]:
+    """(largest absolute difference over the 16 rolls, that difference relative to the engine max)."""
+
+    gap = max(abs(a - b) for a, b in zip(ours_rolls, engine_rolls, strict=True))
+    return gap, gap / max(max(engine_rolls), 1)
+
+
+def compare_damage(
+    case: Case, probe: dict, control: Case | None = None, control_probe: dict | None = None
+) -> dict[str, Any]:
+    """Compare one damage case; with a ``control`` (same scenario minus the ability/item under
+    test) the entry is judged on its own EFFECT, so baseline inexactness shared by both cannot
+    be blamed on it."""
+
+    engine = engine_outcome(case, probe)
     ours = ours_damage(case)
     out: dict[str, Any] = {"cid": case.cid, "variant": case.variant}
-    if call is None and reason in ("not_used", "failed") or reason.startswith(("probe_error", "engine_error")):
-        out["status"] = "unexercised"
-        out["reason"] = reason
+    if engine["state"] == "unexercised":
+        out.update(status="unexercised", reason=engine["reason"])
         return out
-    if call is None:  # engine blocked the move (immunity, absorb, redirect, priority block)
+    out["ours_supported"] = ours["supported"]
+    if engine["state"] == "blocked":
         if not ours["delivers"]:
             out["status"] = "match"
             return out
-        out.update(status="mismatch", reason="ours_credits_blocked_damage", ours_mean=ours["mean"], eng_mean=0.0)
-        out["rel_err"] = 1.0
-        out["ours_supported"] = ours["supported"]
+        out.update(status="mismatch", reason="ours_credits_blocked_damage", abs_diff=999, rel_err=1.0)
         return out
-    engine_rolls = [call["rolls"][15 - i] for i in range(16)]  # ascending 85%..100%
-    eng_mean = sum(engine_rolls) / 16.0
-    out["eng_mean"] = eng_mean
-    out["ours_supported"] = ours["supported"]
+    engine_rolls = engine["rolls"]
     if not ours["supported"]:
-        out.update(status="mismatch", reason="ours_unsupported", ours_mean=0.0, rel_err=1.0)
+        out.update(status="mismatch", reason="ours_unsupported", abs_diff=999, rel_err=1.0)
         return out
     if not ours["delivers"]:
-        out.update(status="mismatch", reason="ours_zero_engine_damages", ours_mean=0.0, rel_err=1.0)
+        out.update(status="mismatch", reason="ours_zero_engine_damages", abs_diff=999, rel_err=1.0)
         return out
-    if ours["rolls"] == engine_rolls and (call.get("moveType") == ours["move_type"]):
+    gap, rel = roll_gap(ours["rolls"], engine_rolls)
+    if gap == 0 and engine["move_type"] == ours["move_type"]:
         out["status"] = "match"
         return out
-    ours_mean = ours["mean"]
-    out.update(
-        status="mismatch",
-        reason="damage_differs",
-        ours_mean=ours_mean,
-        rel_err=abs(ours_mean - eng_mean) / max(eng_mean, 1.0),
-        ours_range=[ours["rolls"][0], ours["rolls"][-1]],
-        eng_range=[engine_rolls[0], engine_rolls[-1]],
-        crit=bool(call.get("crit")),
-    )
+    detail = {
+        "ours_range": [ours["rolls"][0], ours["rolls"][-1]],
+        "eng_range": [engine_rolls[0], engine_rolls[-1]],
+    }
+    if control is not None and control_probe is not None:
+        control_engine = engine_outcome(control, control_probe)
+        control_ours = ours_damage(control)
+        if (
+            control_engine["state"] == "hit"
+            and control_ours["supported"]
+            and control_ours["delivers"]
+        ):
+            eng_mean = sum(engine_rolls) / 16.0
+            eng_c_mean = sum(control_engine["rolls"]) / 16.0
+            ours_c_mean = control_ours["mean"]
+            if eng_c_mean > 0 and ours_c_mean > 0:
+                eng_ratio = eng_mean / eng_c_mean
+                ours_ratio = ours["mean"] / ours_c_mean
+                tolerance = 0.02 + 1.5 / eng_c_mean
+                if abs(ours_ratio - eng_ratio) / max(eng_ratio, 1e-9) <= tolerance:
+                    out["status"] = "match"
+                    out["note"] = "effect_matches_baseline_off"
+                    return out
+                rel = abs(ours_ratio - eng_ratio) / max(eng_ratio, 1e-9)
+                out.update(status="mismatch", reason="damage_differs", abs_diff=gap, rel_err=rel, **detail)
+                return out
+    out.update(status="mismatch", reason="damage_differs", abs_diff=gap, rel_err=rel, **detail)
+    out["crit"] = engine.get("crit", False)
     return out
 
 
@@ -690,19 +756,31 @@ class EntryResult:
     n: int = 0
     n_match: int = 0
     n_unexercised: int = 0
-    mismatches: list[dict] = field(default_factory=list)
     n_mismatch: int = 0
+    n_unsupported: int = 0
+    n_approx: int = 0
+    n_severe: int = 0
+    mismatches: list[dict] = field(default_factory=list)
 
     def add(self, row: dict) -> None:
         self.n += 1
         if row["status"] == "match":
             self.n_match += 1
-        elif row["status"] == "unexercised":
+            return
+        if row["status"] == "unexercised":
             self.n_unexercised += 1
+            return
+        self.n_mismatch += 1
+        if row.get("reason") == "ours_unsupported":
+            self.n_unsupported += 1
+        elif row.get("reason") in ("damage_differs", "accuracy_differs") and (
+            row.get("abs_diff", 999) <= 1 or row.get("rel_err", 1.0) <= APPROX_BOUND
+        ):
+            self.n_approx += 1
         else:
-            self.n_mismatch += 1
-            if len(self.mismatches) < 400:
-                self.mismatches.append(row)
+            self.n_severe += 1
+        if len(self.mismatches) < 60 or (row.get("reason") != "damage_differs" and len(self.mismatches) < 200):
+            self.mismatches.append(row)
 
     @property
     def status(self) -> str:
@@ -711,15 +789,11 @@ class EntryResult:
             return "NOT_EXERCISED"
         if not self.n_mismatch:
             return "EXACT"
-        if all(row.get("reason") == "ours_unsupported" for row in self.mismatches):
+        if self.n_severe:
+            return "WRONG"
+        if self.n_unsupported:
             return "UNSUPPORTED-SAFE"
-        if all(
-            row.get("reason") in ("damage_differs", "accuracy_differs", "ours_unsupported")
-            and row.get("rel_err", 1.0) <= APPROX_BOUND
-            for row in self.mismatches
-        ):
-            return "APPROXIMATE"
-        return "WRONG"
+        return "APPROXIMATE"
 
 
 def stable_hash(text: str) -> int:
