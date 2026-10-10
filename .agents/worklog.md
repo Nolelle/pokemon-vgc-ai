@@ -328,3 +328,6 @@
   - Note: the ground-truth damage fixes are in both arms, so their effect is not in these numbers.
 - Showdown synced to 2796de703 (two upstream syncs on this branch). Tests: 1356 unit, 232 integration (0 skipped); all gates PASS.
 - Codex exec gotcha: background `codex exec` hangs on stdin; always add `< /dev/null` and an alarm.
+
+## 2026-10-09 — Fast-search forecast locks/accuracy, worker slot, preview-lead diagnosis (branch worktree-agent-aa4263ce6b2b5c654)
+- `forecast_respects_locks`, `forecast_move_accuracy` (default True; False = legacy). Finished battle's worker no longer blocks the next battle (`WorkerSlot.owner/cancel`). Preview "always Tyranitar+Excadrill" is the opponent-independent lead-speed term, not a bug (see CLAUDE.md follow-up). Not A/B'd for strength. Tests: 1378 unit, 232 integration; three gates PASS.
