@@ -328,3 +328,10 @@
   - Note: the ground-truth damage fixes are in both arms, so their effect is not in these numbers.
 - Showdown synced to 2796de703 (two upstream syncs on this branch). Tests: 1356 unit, 232 integration (0 skipped); all gates PASS.
 - Codex exec gotcha: background `codex exec` hangs on stdin; always add `< /dev/null` and an alarm.
+
+## 2026-10-09 — Battle parsing audit and poke-env repairs
+- Trigger: ladder game 2695881082 (`-copyboost` applied backwards by poke-env). Built `offline/audit_battle_parsing.py`: seeded local battles, after every step compare both perspectives' bot-visible state (`snapshot_battle` + `BattleMemory`) with Showdown's `dump`.
+- Seed 99, 2400 battles / 85k compares: 11,186 mismatch episodes with all repairs off (`--disable-fixes all`), 153 on (0 unexplained, 88 documented limitations, 65 legitimately hidden foe Damp Rock/Light Clay). ~50 s on 8 workers.
+- Repairs: `vgc.poke_env_compat` (copyboost, Champions Mega abilities, single-turn/momentary effects, charge cancel, Worry Seed/Skill Swap abilities, ability reveals, Baton Pass, sleep/toxic counters, forme species, Flash Fire, Regenerator, Illusion state, unbrought actives, Psych Up crit volatiles, gastro acid); `vgc.mechanics_state` (layer counts, effect aliases/markers, foe consumed item, Floette-Mega); `vgc.condition_clock` (Light Clay); `vgc.battle_memory` (changed abilities).
+- Trace: `VgcPlayer._record_final_choice` re-scores the order actually sent into `chosen_breakdown` (+ `chosen_breakdown_order`).
+- Tests: 1407 unit, 235 integration; `tests/test_poke_env_repairs.py` (44), `tests/test_battle_parsing_audit.py`, `tests/test_final_choice_trace.py`. Not A/B'd for strength.

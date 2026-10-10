@@ -523,6 +523,63 @@ behaviour change behind a `PolicyConfig` knob (default True, False = legacy cont
   54.0% [0.520, 0.559]**. Both PASS, every archetype >= 52%. Damage fixes are in both arms.
   Judge measurements before this branch simulated half-bulk, itemless, never-Mega opponents.
 
+## Battle parsing audit (2026-10-09): what the bot READS now matches Showdown
+
+The bot reads Showdown through poke-env 0.15, and poke-env gets real state wrong. Found from
+ladder game 2695881082 (`-copyboost` applied backwards: a +evasion Slowbro looked unboosted),
+then audited systematically with `offline/audit_battle_parsing.py`: it plays seeded local
+battles (synthetic mechanics-heavy teams + the team pools, random/maxpower/heuristic/
+vgc_myopic players) and after EVERY step compares each side's bot-visible state
+(`snapshot_battle` on both perspectives, with a `BattleMemory`) against the worker's `dump`
+of Showdown's own state: forme, types, HP (exact own / percent foe), status + counters,
+all 7 boosts, item, ability, volatiles, Protect counter, weather/terrain/Trick Room and side
+conditions with remaining durations, charge state, revealed foe moves. Mismatches are grouped
+by field and attributed to the protocol messages that touched the Pokemon.
+
+- **Run it**: `.venv/bin/python offline/audit_battle_parsing.py --battles 2400 --workers 8`
+  (~50 s on 8 cores, 85k perspective-compares). `--disable-fixes all` replays the same seeds
+  with every repair off (the before arm); `--trace-index N` prints one battle step by step;
+  `--fail-on-unexplained` exits 1 on a group that is neither a documented limitation nor
+  legitimately hidden. `tests/test_battle_parsing_audit.py` (integration) runs 40 seeded
+  battles and requires no unexplained group, and requires the repair-free arm to have some.
+- **Result (seed 99, 2400 battles)**: 11,186 mismatch episodes with repairs off, 153 with them
+  on; 0 unexplained, 88 in documented limitations, 65 legitimately hidden (a foe's
+  Damp Rock / Light Clay / Terrain Extender).
+- **Repairs live in `vgc.poke_env_compat`** (method patches on poke-env + stateful message
+  hooks; names in `ALL_FIXES`, switchable via `VGC_DISABLE_COMPAT_FIXES` or
+  `set_disabled_fixes`), plus three fixes in our own layers: `vgc.mechanics_state` (layered
+  side conditions reported a START TURN as their layer count because the condition clock
+  overwrote it, so the exact mirror got up to 14 layers of Toxic Spikes; poke-env marker
+  effects such as `typechange`/`futuresight`/`whirlpool` reached Showdown as bogus volatiles;
+  a foe's consumed item read as "unknown", so the mirror kept its guessed Focus Sash/Sitrus),
+  `vgc.condition_clock` (Light Clay screens last 8 turns) and `vgc.battle_memory` (a Worry
+  Seed / Trace result was recorded as the foe's base ability).
+- **Biggest defects found**: `-copyboost` reversed (Psych Up, Costar); single-turn effects
+  (Endure, Helping Hand, Destiny Bond) and activation markers (Struggle, Quick Claw) never
+  ended, and `vgc.rl.live_mirror` writes every poke-env effect into Showdown's `volatiles`,
+  so a stale Endure/Protect/Helping Hand was live in the exact search; Baton Pass dropped
+  the passed boosts; 16 Champions Megas have a different ability than poke-env's vanilla
+  dex (Garchomp-Mega-Z Levitate, Golisopod-Mega Tough Claws, ...) so they were mis-modelled
+  or not recognised; Palafin-Hero / Mimikyu-Busted / Aegislash-Blade kept the base species;
+  Flash Fire boost "used up" by the first Fire move; Regenerator healed twice; a foe's
+  ability revealed by `[from] ability:` lines (Drought, Grassy Surge, Frisk, Water Absorb...)
+  was never stored; Worry Seed / Simple Beam / Entrainment made the new ability permanent;
+  a skipped charge (Power Herb, Solar Beam in sun, Electro Shot in rain) left the foe
+  "preparing"; the toxic/sleep counters were off after replacements, Rest, Snore/Sleep Talk
+  and recharge; Illusion dropped the disguise's boosts; own preview-only Pokemon stayed
+  `active`.
+- **Known limitations** are listed with reasons in the audit (`KNOWN_LIMITATIONS`): a third
+  type from Trick-or-Treat / Forest's Curse, ally Skill Swap residue, Fairy Lock, Rest while
+  yawned, Imposter listing Transform, a few Illusion paths.
+- **Trace attribution**: `VgcPlayer._record_final_choice` (tracing only) re-scores the order
+  actually sent and overwrites `chosen_breakdown` / `chosen_breakdown_order`; the evaluator's
+  own ranking stays in `top_candidates` labelled as such. Before, the note held whichever
+  ranking ran last (ladder game 2695880700 turn 8 explained Trick while a double Protect was
+  played).
+- Not a strength claim: nothing here was A/B'd for win rate. These are correctness fixes held
+  by regression tests (`tests/test_poke_env_repairs.py`, 44 cases, most also assert the bug
+  reappears with the repair off).
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public

@@ -81,6 +81,28 @@ class TurnMemory:
     our_screens: frozenset[str] = frozenset()
 
 
+def _revealed_base_ability(message: list[object]) -> str | None:
+    """The BASE ability a `-ability` line reveals, or None when it only shows a change.
+
+    A plain `-ability|mon|Intimidate` is the Pokemon's own ability. `[from] move: Worry
+    Seed` / Entrainment / Simple Beam lines show the NEW ability (temporary, gone on switch-out)
+    and carry the OLD, real one as the next field; `[from] ability: Trace` shows the copied
+    ability and reveals Trace itself.
+    """
+
+    from vgc.poke_env_compat import fix_enabled
+
+    tags = [str(part) for part in message[4:]]
+    if not fix_enabled("memory_ability_changes"):
+        return to_id(str(message[3])) or "unknown"
+    if any(tag.startswith("[from] move:") for tag in tags):
+        old = tags[0] if tags and not tags[0].startswith("[") else ""
+        return to_id(old) or None
+    if any(tag.startswith("[from] ability: Trace") for tag in tags):
+        return "trace"
+    return to_id(str(message[3])) or "unknown"
+
+
 @dataclass
 class BattleMemory:
     """Facts accumulated over one Showdown room, owned by one ``VgcPlayer``."""
@@ -169,9 +191,9 @@ class BattleMemory:
                 continue
             if kind in {"-ability", "ability"} and len(message) > 3:
                 if _side(message[2]) == self.opponent_role:
-                    self.opponent_abilities[self._species_for_ident(message[2])] = (
-                        to_id(message[3]) or "unknown"
-                    )
+                    revealed = _revealed_base_ability(message)
+                    if revealed:
+                        self.opponent_abilities[self._species_for_ident(message[2])] = revealed
                 continue
             if kind in {"-item", "item"} and len(message) > 3:
                 if _side(message[2]) == self.opponent_role:

@@ -36,6 +36,7 @@ from __future__ import annotations
 from typing import Any
 
 from vgc.damage import to_id
+from vgc.poke_env_compat import fix_enabled
 
 CLOCK_ATTRIBUTE = "_vgc_condition_clock"
 
@@ -53,12 +54,18 @@ _BASE_DURATION = {
     "mistyterrain": 5,
     "trickroom": 5,
     "tailwind": 4,
+    "reflect": 5,
+    "lightscreen": 5,
+    "auroraveil": 5,
 }
+# Light Clay stretches the screens 5 -> 8 turns when their setter holds it.
+_SCREENS = frozenset(("reflect", "lightscreen", "auroraveil"))
 # Item extensions that only become visible when a condition outlives its base duration.
 _EXTENSION = {
     **{weather: 3 for weather in ("sunnyday", "raindance", "sandstorm", "snowscape", "snow")},
     **{terrain: 3 for terrain in ("electricterrain", "grassyterrain", "psychicterrain")},
     "mistyterrain": 3,
+    **{screen: 3 for screen in _SCREENS},
 }
 _TERRAINS = frozenset(("electricterrain", "grassyterrain", "psychicterrain", "mistyterrain"))
 
@@ -151,12 +158,15 @@ _EXTENDER = {
     "snowscape": "icyrock",
     "snow": "icyrock",
     **{terrain: "terrainextender" for terrain in _TERRAINS},
+    **{screen: "lightclay" for screen in _SCREENS},
 }
 
 
 def _setter_holds_extender(battle: Any, effect_id: str, setter: str | None) -> bool:
     item = _EXTENDER.get(effect_id)
     if not item or not setter or ":" not in setter:
+        return False
+    if effect_id in _SCREENS and not fix_enabled("screen_clock"):
         return False
     role = getattr(battle, "player_role", None)
     team = getattr(battle, "team", None) if setter[:2] == role else getattr(
@@ -181,8 +191,17 @@ def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = Non
     if ticks is None:
         return None
     base = _BASE_DURATION.get(effect_id)
+    if effect_id in _SCREENS and not fix_enabled("screen_clock"):
+        return ticks
     extended = bool(clock.get(("extended", *key)))
-    if not extended and _setter_holds_extender(battle, effect_id, clock.get(("setter", *key))):
+    setter = clock.get(("setter", *key))
+    own_setter = (
+        fix_enabled("screen_clock")
+        and bool(setter)
+        and setter[:2] == getattr(battle, "player_role", None)
+    )
+    # (Our own item is known from the start; a later Trick / Thief must not stretch a screen.)
+    if not extended and not own_setter and _setter_holds_extender(battle, effect_id, setter):
         # Revealed after the start (e.g. an opponent's rock shown later): it was there then.
         extended = clock[("extended", *key)] = True
     if extended or (base is not None and ticks >= base):

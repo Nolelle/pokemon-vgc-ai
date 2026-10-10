@@ -514,10 +514,26 @@ def score_joint_orders_in_context(
     return scored
 
 
+def breakdown_for_order(
+    battle: DoubleBattle, order: DoubleBattleOrder, config: PolicyConfig | None = None
+) -> dict[str, object] | None:
+    """The evaluator's per-slot score breakdown for ONE specific joint order.
+
+    `score_joint_orders` only keeps the breakdown of each order it ranked; the order the bot
+    finally plays (after the opponent-response search or the exact judge) is usually not the
+    evaluator's own top pick. Traces use this to explain the order actually sent.
+    """
+
+    config = config or PolicyConfig()
+    scored = score_joint_orders_in_context([order], build_context(battle, config), config)
+    return scored[0].breakdown if scored else None
+
+
 def _record_trace(scored: list[ScoredOrder], config: PolicyConfig) -> None:
     if not scored:
         return
     top_k = max(1, config.trace_top_k)
+    record_note("top_candidates_source", "myopic evaluator ranking (not the final choice)")
     record_note(
         "top_candidates",
         [
@@ -525,7 +541,11 @@ def _record_trace(scored: list[ScoredOrder], config: PolicyConfig) -> None:
             for entry in scored[:top_k]
         ],
     )
+    # Several callers (the search's shortlist, the exact mirror) rank through here, and the
+    # last one to run wins this note. `VgcPlayer.decide` re-records both keys for the order it
+    # actually sends; the order name makes a stale value recognisable in a saved trace.
     record_note("chosen_breakdown", scored[0].breakdown)
+    record_note("chosen_breakdown_order", describe_order(scored[0].order))
     if len(scored) > 1:
         record_note("score_margin", round(scored[0].score - scored[1].score, 3))
 
