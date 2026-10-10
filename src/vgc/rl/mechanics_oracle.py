@@ -242,7 +242,9 @@ def _search_continuation(
                 continue
             ours = score_joint_orders(clone.battles[our_side], config)[:n_ours]
             theirs = (
-                score_joint_orders(clone.battles[other], config)[:n_opp] if other in sides else []
+                score_joint_orders(clone.battles[other], config, repeat_protect_rule=False)[:n_opp]
+                if other in sides
+                else []
             )
             if not ours:
                 continue

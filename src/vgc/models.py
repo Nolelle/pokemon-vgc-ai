@@ -204,6 +204,22 @@ class PolicyConfig:
     # Threat percent (of this Pokemon's max HP) below which protect_low_threat_penalty
     # applies.
     protect_low_threat_floor: float = 15.0
+    # Simple judgement rule, applied where the candidate list is built (the myopic scorer,
+    # so the fast search, the exact judge's judged set and the clock guard's cheap fallback
+    # all see it): an active Pokemon that Protected last turn (its stall counter is above 0,
+    # so a repeat is a 1/3 roll, then 1/9) may not use a Protect-family move again. Dropped
+    # moves are the ones Showdown rolls the stall odds for (Protect, Detect, Spiky Shield,
+    # King's Shield, Baneful Bunker, Burning Bulwark, Silk Trap, Obstruct, Endure, Max
+    # Guard); Wide/Quick Guard do not roll. Two exceptions keep the move: (a) it is forced,
+    # i.e. every legal option for that slot is such a move; (b) the partner's action in the
+    # same joint order is expected to remove the threat first, i.e. it KOs (likely or
+    # guaranteed, hit chance and foe Protect odds above 50%, and before the foe's move
+    # resolves) every foe whose best known move does at least `protect_low_threat_floor` to
+    # the protecting slot. An empty result falls back to the unfiltered list. Ladder
+    # evidence (two 50-game sessions): losses averaged 1.9 back-to-back Protects per game vs
+    # 0.05 in wins, because the one-turn exact value prefers "survive this turn" to
+    # trading. False = legacy (no filter), kept as the control.
+    forbid_repeat_protect: bool = True
 
     # -- Defense/utility: opponent Protect anticipation -----------------------------------
     # Baseline chance an opponent slot Protects this turn when it has an unused

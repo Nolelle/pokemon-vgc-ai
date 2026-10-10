@@ -459,7 +459,10 @@ class ScoredOrder:
 
 
 def score_joint_orders(
-    battle: DoubleBattle, config: PolicyConfig | None = None
+    battle: DoubleBattle,
+    config: PolicyConfig | None = None,
+    *,
+    repeat_protect_rule: bool = True,
 ) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn, best first.
 
@@ -467,6 +470,13 @@ def score_joint_orders(
     function's own documented empty-list contract) -- callers should fall back to a
     random/default move in that case, same as `vgc.agent.VgcPlayer`'s exception-safe
     wrapper already does for any other evaluator failure.
+
+    With `PolicyConfig.forbid_repeat_protect` (and ``repeat_protect_rule``) the list has
+    back-to-back Protects removed (`apply_repeat_protect_rule`). This is the one place the
+    fast search, the exact judge's judged set and the clock guard's cheap order all take
+    their candidates from, so no layer can pick a dropped order. Callers scoring the
+    OPPONENT's view pass ``repeat_protect_rule=False``: the rule is our own judgement, not
+    a model of how the foe plays.
     """
     config = config or PolicyConfig()
     joint_orders = enumerate_joint_orders(battle)
@@ -475,8 +485,162 @@ def score_joint_orders(
 
     ctx = build_context(battle, config)
     scored = score_joint_orders_in_context(joint_orders, ctx, config)
+    if repeat_protect_rule and config.forbid_repeat_protect:
+        scored = apply_repeat_protect_rule(scored, ctx, config)
     _record_trace(scored, config)
     return scored
+
+
+# --- repeat-Protect rule -----------------------------------------------------------------
+
+# Moves Showdown rolls the stall odds for (`stallingMove` with a `StallMove` event, see
+# `tools/sim_worker.mjs::STALL_ROLL_MOVES`, which `tests/test_exact_stall_odds.py` checks
+# against data/moves.ts). Wide Guard / Quick Guard / Mat Block add the stall volatile
+# without rolling, so repeating THEM is not the 1/3 gamble this rule is about.
+STALL_ROLL_MOVES = frozenset(
+    {
+        "protect",
+        "detect",
+        "spikyshield",
+        "kingsshield",
+        "banefulbunker",
+        "burningbulwark",
+        "silktrap",
+        "obstruct",
+        "endure",
+        "maxguard",
+    }
+)
+
+
+def _stall_roll_move(single) -> str | None:
+    """The stall-rolling move id this single order uses, else None."""
+    target = getattr(single, "order", None)
+    if not isinstance(target, Move):
+        return None
+    move_id = to_id(target.id)
+    return move_id if move_id in STALL_ROLL_MOVES else None
+
+
+def _slot_is_forced_to_stall(joint_orders: Sequence[DoubleBattleOrder], slot: int) -> bool:
+    """True when every legal option for ``slot`` is a stall-rolling move."""
+    options = []
+    for order in joint_orders:
+        single = order.first_order if slot == 0 else order.second_order
+        if single is None or not isinstance(getattr(single, "order", None), (Move, Pokemon)):
+            continue  # a pass is not an option the slot could choose instead
+        options.append(single)
+    return bool(options) and all(_stall_roll_move(single) is not None for single in options)
+
+
+def _partner_removes_threat(
+    breakdown: dict, protect_slot: int, ctx: _Context, config: PolicyConfig
+) -> bool:
+    """True when the partner's action KOs every foe that threatens ``protect_slot``, before
+    that foe moves. "Threatens" = the foe's best known move does at least
+    `protect_low_threat_floor` percent to the slot (the evaluator's own threat measure); a
+    slot nobody threatens has nothing to excuse the repeat, so that is False. A KO counts
+    when the evaluator calls it guaranteed or likely, the partner's hit chance and the
+    foe's Protect odds are on the right side of 50%, and `resolves_before` puts the
+    partner's move ahead of the foe's best move."""
+    partner = breakdown.get(f"slot{1 - protect_slot}") or {}
+    if partner.get("kind") != "move" or "ko_slots" not in partner:
+        return False
+    threats = [
+        (opp_slot, info)
+        for opp_slot, info in enumerate(ctx.threat_matrix[protect_slot])
+        if info is not None
+        and ctx.opp_pokemon[opp_slot] is not None
+        and not ctx.opp_pokemon[opp_slot].fainted
+        and info.percent >= config.protect_low_threat_floor
+    ]
+    if not threats:
+        return False
+    for opp_slot, info in threats:
+        if opp_slot not in partner["ko_slots"]:
+            return False
+        if partner.get("hit_probability_by_target", {}).get(opp_slot, 1.0) <= 0.5:
+            return False
+        if partner.get("protect_prob_by_target", {}).get(opp_slot, 0.0) >= 0.5:
+            return False
+        if not resolves_before(
+            int(partner.get("actor_priority", 0)),
+            float(partner.get("actor_speed", 0.0)),
+            info.priority,
+            ctx.opp_speed[opp_slot],
+            ctx.trick_room,
+        ):
+            return False
+    return True
+
+
+def apply_repeat_protect_rule(
+    scored: list[ScoredOrder], ctx: _Context, config: PolicyConfig
+) -> list[ScoredOrder]:
+    """Drop joint orders in which an active Pokemon that Protected last turn Protects again.
+
+    "Protected last turn" is poke-env's `protect_counter > 0` (the same notion `_score_protect`
+    and the search use; a failed Protect resets it to 0, so only a SUCCESSFUL one counts).
+    Exceptions per slot, see `PolicyConfig.forbid_repeat_protect`: (a) the slot has no legal
+    option but a stall-rolling move, (b) the partner's action in that same order removes the
+    threat first (`_partner_removes_threat`). If nothing would be left, the unfiltered list
+    comes back. Relative order and `ScoredOrder` objects are untouched; when orders were
+    removed a ``repeat_protect_rule`` note goes on the decision trace.
+    """
+    repeat_slots = [
+        slot
+        for slot in (0, 1)
+        if ctx.our_pokemon[slot] is not None
+        and not ctx.our_pokemon[slot].fainted
+        and int(getattr(ctx.our_pokemon[slot], "protect_counter", 0) or 0) >= 1
+    ]
+    if not repeat_slots or not scored:
+        return scored
+    all_orders = [entry.order for entry in scored]
+    forced = {slot: _slot_is_forced_to_stall(all_orders, slot) for slot in repeat_slots}
+    kept: list[ScoredOrder] = []
+    removed: list[str] = []
+    exceptions = {"forced": 0, "partner_ko": 0}
+    for entry in scored:
+        dropped = False
+        excused = None
+        for slot in repeat_slots:
+            single = entry.order.first_order if slot == 0 else entry.order.second_order
+            if _stall_roll_move(single) is None:
+                continue
+            if forced[slot]:
+                excused = excused or "forced"
+            elif _partner_removes_threat(entry.breakdown, slot, ctx, config):
+                excused = "partner_ko"
+            else:
+                dropped = True
+                break
+        if dropped:
+            removed.append(describe_order(entry.order))
+            continue
+        if excused:
+            exceptions[excused] += 1
+            entry.breakdown["repeat_protect_exception"] = excused
+        kept.append(entry)
+    if not removed:
+        return scored
+    if not kept:
+        record_note(
+            "repeat_protect_rule",
+            {"removed": len(removed), "kept": 0, "fallback": "unfiltered (nothing left)"},
+        )
+        return scored
+    record_note(
+        "repeat_protect_rule",
+        {
+            "slots": repeat_slots,
+            "removed": len(removed),
+            "kept": len(kept),
+            "removed_top": removed[:5],
+            "exceptions_kept": exceptions,
+        },
+    )
+    return kept
 
 
 def score_joint_orders_in_context(
@@ -613,6 +777,12 @@ class _Context:
     # Strategic non-damage threat (TR/Tailwind/setup/redirection/denial) per opposing slot.
     opp_control_threat: list[float] = field(default_factory=lambda: [0.0, 0.0])
     opp_engine_enabler_slots: frozenset[int] = frozenset()
+    # Best known attack from each opposing slot onto each of our slots,
+    # `threat_matrix[our_slot][opp_slot]` (None when that foe is absent). `threat_on_us` keeps
+    # only the maximum; the repeat-Protect rule needs every foe's own threat.
+    threat_matrix: list[list[_ThreatInfo | None]] = field(
+        default_factory=lambda: [[None, None], [None, None]]
+    )
     preview_plan: object | None = None
     endgame: bool = False
     # Complete observable state. The smaller lists above remain the current evaluator's
@@ -875,6 +1045,7 @@ def build_context(
 
     threat_on_us = [_ThreatInfo(), _ThreatInfo()]
     double_target_threat = [0.0, 0.0]
+    threat_matrix: list[list[_ThreatInfo | None]] = [[None, None], [None, None]]
     opp_threat_score = [0.0, 0.0]
     for our_idx in (0, 1):
         our_state = our_states[our_idx]
@@ -900,6 +1071,9 @@ def build_context(
                 config.model_move_accuracy,
             )
             threats_from_each_opp.append(pct)
+            threat_matrix[our_idx][opp_idx] = _ThreatInfo(
+                percent=pct, move_id=move_id, priority=priority, source_slot=opp_idx
+            )
             if pct > threat_on_us[our_idx].percent:
                 threat_on_us[our_idx] = _ThreatInfo(
                     percent=pct, move_id=move_id, priority=priority, source_slot=opp_idx
@@ -1078,6 +1252,7 @@ def build_context(
         our_speed=our_speed,
         opp_speed=opp_speed,
         threat_on_us=threat_on_us,
+        threat_matrix=threat_matrix,
         opp_threat_score=opp_threat_score,
         opp_protect_prob=opp_protect_prob,
         opp_switch_prob=opp_switch_prob,
