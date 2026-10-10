@@ -521,11 +521,22 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 			}
 		}
 		pokemon.species = species;
+		if (opts.megaStats && species.isMega && !snapshot.transformed) {
+			// Mega Evolution is a PERMANENT forme change: Showdown also moves `baseSpecies`, so
+			// a Mega that switches out keeps its Mega forme. Left at the base species it reverted
+			// on the first switch-out, and the protocol `details` kept naming the base forme.
+			pokemon.baseSpecies = species;
+			if (!pokemon.illusion) pokemon.details = pokemon.getUpdatedDetails();
+		}
 		pokemon.types = snapshot.types.length ? snapshot.types.map(
 			(type) => showdownTypeName(battle, type)
 		) : species.types.slice();
 	}
-	if (opts.hpScale && snapshot.current_hp !== null && snapshot.max_hp) {
+	if (opts.hpScale && Number.isInteger(hidden.hp) && snapshot.current_hp !== null) {
+		// Offline oracle only (offline/audit_mirror_fidelity.py): the TRUE absolute HP of a foe.
+		// Live play never supplies it; a foe's HP is public only as a percent.
+		pokemon.hp = Math.min(pokemon.maxhp, hidden.hp);
+	} else if (opts.hpScale && snapshot.current_hp !== null && snapshot.max_hp) {
 		// A foe's HP is a public PERCENT. Keep the mirror set's calculated max HP and
 		// convert, instead of declaring a 186-HP Pokemon to have 100 max HP.
 		const fraction = snapshot.current_hp / snapshot.max_hp;
@@ -537,6 +548,14 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 		pokemon.maxhp = snapshot.max_hp === null ? pokemon.maxhp : snapshot.max_hp;
 	}
 	pokemon.fainted = Boolean(snapshot.fainted);
+	if (opts.gender && !pokemon.illusion) {
+		// Gender is public (the `|switch|` details) but the rebuilt Pokemon rolled a random one.
+		const gender = { male: 'M', female: 'F', neutral: '' }[snapshot.gender];
+		if (gender !== undefined) {
+			pokemon.gender = gender;
+			pokemon.details = pokemon.getUpdatedDetails();
+		}
+	}
 	const publicStats = Object.fromEntries(snapshot.stats);
 	for (const stat of ['atk', 'def', 'spa', 'spd', 'spe']) {
 		if (Number.isInteger(publicStats[stat])) {
@@ -602,28 +621,48 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 		}
 	}
 	if (snapshot.must_recharge && !pokemon.volatiles.mustrecharge) {
-		pokemon.volatiles.mustrecharge = { id: 'mustrecharge', target: pokemon };
+		// `mustrecharge` lasts 2 turns and has ticked once by the next decision; with no
+		// duration it never expired and the Pokemon recharged on every turn of every branch.
+		pokemon.volatiles.mustrecharge = {
+			id: 'mustrecharge', target: pokemon, ...(opts.volatileTimers ? { duration: 1 } : {}),
+		};
 	}
 	if (snapshot.preparing && snapshot.preparing_move_id && !pokemon.volatiles.twoturnmove) {
 		pokemon.volatiles.twoturnmove = {
 			id: 'twoturnmove',
 			target: pokemon,
 			move: snapshot.preparing_move_id,
+			...(opts.volatileTimers ? { duration: 1 } : {}),
 		};
+		const moveCondition = battle.dex.conditions.get(snapshot.preparing_move_id);
+		if (opts.volatileTimers && moveCondition.exists && moveCondition.duration &&
+			!pokemon.volatiles[snapshot.preparing_move_id]) {
+			// The charging move's own volatile is what makes the user semi-invulnerable
+			// (Dig, Fly, Bounce, Dive, Phantom/Shadow Force): `twoturnmove.onStart` adds it.
+			pokemon.volatiles[snapshot.preparing_move_id] = {
+				id: snapshot.preparing_move_id, target: pokemon, duration: 1,
+				targetLoc: Number.isInteger(snapshot.preparing_target) ? snapshot.preparing_target : 1,
+			};
+		}
 	}
 	if (snapshot.protect_counter > 0) {
 		// poke-env counts consecutive successful Protects; Showdown's stall condition stores
 		// the odds denominator instead (3 after one Protect, x3 per repeat, capped at 729).
 		const stall = battle.dex.conditions.get('stall');
 		pokemon.volatiles.stall = {
-			id: 'stall', target: pokemon, duration: 2,
+			id: 'stall', target: pokemon, duration: opts.stallDuration ? 1 : 2,
 			counter: Math.min(stall.counterMax || 729, 3 ** snapshot.protect_counter),
 		};
 	}
 	pokemon.trapped = false;
 	pokemon.maybeTrapped = false;
 	pokemon.transformed = Boolean(snapshot.transformed);
-	pokemon.activeTurns = snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1);
+	// At any move decision Showdown has already ticked `activeTurns` at the turn start, so a
+	// Pokemon that has not acted yet (a lead on turn 1, or one switched in last turn) holds 1,
+	// never 0 (Speed Boost, Slow Start and the Truant family key on it being non-zero).
+	pokemon.activeTurns = opts.bookkeeping
+		? Math.max(1, pokemon.activeTurns || 0)
+		: (snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1));
 	if (opts.restoreState) {
 		// Champions' Fake Out / First Impression are disabled once `activeMoveActions` is
 		// non-zero. A rebuilt Pokemon starts at 0, so a foe could Fake Out again on every
@@ -671,6 +710,16 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 			? enabled[0]
 			: pokemon.moveSlots.find((slot) => pokemon.lastMove && slot.id === pokemon.lastMove.id);
 		if (locked) pokemon.volatiles.encore.move = locked.id;
+	}
+	if (opts.faintedState && snapshot.fainted) {
+		// A fainted Pokemon is wiped by Showdown (boosts, volatiles, 0 HP).
+		// poke-env keeps the stat stages and effects it had when it fainted, which then
+		// scored as a live boost on a Pokemon that cannot act.
+		pokemon.hp = 0;
+		pokemon.boosts = Object.fromEntries(Object.keys(pokemon.boosts).map((stat) => [stat, 0]));
+		pokemon.volatiles = {};
+		pokemon.trapped = false;
+		pokemon.maybeTrapped = false;
 	}
 }
 
@@ -724,14 +773,24 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		if (!pokemon) {
 			throw new Error(`cannot activate ${speciesId} on ${side.id}`);
 		}
-		pokemon.isActive = true;
+		// Showdown clears `isActive` on faint and leaves the husk in its slot until a
+		// replacement arrives (a bench-less slot keeps it for the rest of the game).
+		pokemon.isActive = !(opts.faintedState && pokemon.fainted);
 		return pokemon;
 	});
 	const activePokemon = side.active.filter(Boolean);
-	side.pokemon = [
-		...activePokemon,
-		...side.pokemon.filter((pokemon) => !activePokemon.includes(pokemon)),
-	];
+	let bench = side.pokemon.filter((pokemon) => !activePokemon.includes(pokemon));
+	if (Array.isArray(opts.ownOrder) && opts.ownOrder.length) {
+		// Our request lists the simulator's real side order; keep the bench in it.
+		const rank = (pokemon) => {
+			const at = opts.ownOrder.indexOf(pokemon.name);
+			return at < 0 ? opts.ownOrder.length : at;
+		};
+		bench = bench.map((pokemon, at) => [pokemon, at])
+			.sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+			.map(([pokemon]) => pokemon);
+	}
+	side.pokemon = [...activePokemon, ...bench];
 	for (let index = 0; index < side.pokemon.length; index++) {
 		side.pokemon[index].position = index;
 	}
@@ -758,6 +817,10 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		}
 	}
 	side.pokemonLeft = side.pokemon.filter((pokemon) => pokemon.hp > 0 && !pokemon.fainted).length;
+	if (opts.bookkeeping) {
+		// Last Respects / Supreme Overlord count the Pokemon this side has lost.
+		side.totalFainted = side.pokemon.filter((pokemon) => pokemon.fainted).length;
+	}
 	side.sideConditions = {};
 	for (const effect of snapshot.side_conditions) {
 		side.sideConditions[effect.id] = effectState(effect.id, side, effect, battle);
@@ -821,8 +884,16 @@ async function handlePatchPublic(msg) {
 	const shared = {
 		megaStats: Boolean(options.megaStats),
 		restoreState: Boolean(options.restoreState),
+		gender: Boolean(options.gender),
+		stallDuration: Boolean(options.stallDuration),
+		faintedState: Boolean(options.faintedState),
+		volatileTimers: Boolean(options.volatileTimers),
+		bookkeeping: Boolean(options.bookkeeping),
 	};
-	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {}, shared);
+	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {}, {
+		...shared,
+		ownOrder: hidden.ownOrder,
+	});
 	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {}, {
 		...shared,
 		opponentMega: Boolean(msg.opponentMega),

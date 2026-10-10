@@ -249,7 +249,8 @@ def _clean(value: Any, drop: frozenset[str] = frozenset()) -> Any:
 
 # keys of an effect state that are bookkeeping rather than battle state
 _EFFECT_DROP = frozenset(
-    {"effectOrder", "id", "name", "target", "source", "sourceEffect", "isSlotCondition", "m"}
+    {"effectOrder", "id", "name", "target", "source", "sourceEffect", "isSlotCondition", "m",
+     "publicValue"}
 )
 
 
@@ -314,8 +315,8 @@ def mon_view(p: dict[str, Any]) -> dict[str, Any]:
         "force_switch_flag": bool(p.get("forceSwitchFlag")),
         "newly_switched": bool(p.get("newlySwitched")),
         "previously_switched_in": int(p.get("previouslySwitchedIn") or 0),
-        "active_turns": int(p.get("activeTurns") or 0),
-        "active_move_actions": int(p.get("activeMoveActions") or 0),
+        "active_turns": min(1, int(p.get("activeTurns") or 0)),  # only zero vs non-zero is read
+        "active_move_actions": min(1, int(p.get("activeMoveActions") or 0)),
         "truant_turn": bool(p.get("truantTurn")),
         "trapped": p.get("trapped"),
         "maybe_trapped": bool(p.get("maybeTrapped")),
@@ -391,6 +392,9 @@ def _flatten(prefix: str, value: Any, out: dict[str, Any]) -> None:
     if isinstance(value, dict) and value:
         for key, inner in value.items():
             _flatten(f"{prefix}.{key}" if prefix else str(key), inner, out)
+    elif isinstance(value, list) and value and any(isinstance(v, (dict, list)) for v in value):
+        for index, inner in enumerate(value):
+            _flatten(f"{prefix}[{index}]", inner, out)
     else:
         out[prefix] = value
 
@@ -479,7 +483,12 @@ def compare_mon(
     bot's `PokemonMechanicsState` for it (what is publicly known)."""
 
     key = f"{label}:{t['name']}"
+    both_fainted = t["fainted"] and m["fainted"]
     for f in STRICT_BOTH:
+        if both_fainted and f in ("status", "boosts", "types", "added_type", "gender"):
+            continue  # a fainted Pokemon's leftovers are not state
+        if f == "gender" and label == "foe" and not getattr(snap_mon, "revealed", False):
+            continue  # an unrevealed foe's gender is hidden
         if t[f] != m[f]:
             for path, a, b in leaf_diffs(t[f], m[f], f):
                 out.add("public", path, key, a, b)
@@ -720,6 +729,9 @@ def _shared_worker(worker: SimWorker):
         _live_mirror.SimWorker = original  # type: ignore[assignment]
 
 
+TRACE = ""  # regex on group names: print matching findings as they happen (--trace)
+
+
 def _zero_pair() -> list[int]:
     return [0, 0]
 
@@ -794,7 +806,7 @@ class Ctx:
 
 
 def _group(mode: str, f: dict[str, Any]) -> str:
-    return f"{mode}/{f['category']}:{f['path']}"
+    return f"{mode}/{f['category']}:{re.sub(r'\[\d+\]', '', f['path'])}"
 
 
 def record(
@@ -805,6 +817,18 @@ def record(
     for f in findings:
         group = _group(mode, f)
         groups.append(group)
+        if TRACE and re.search(TRACE, group):
+            print(
+                f"[trace] {meta['battle']} turn {meta.get('turn')} seat {meta['seat']} {group} "
+                f"mon={f['mon']} truth={json.dumps(f['truth'], default=str)[:200]} "
+                f"mirror={json.dumps(f['mirror'], default=str)[:200]} "
+                f"choices={meta.get('choices')}"
+            )
+            all_lines = meta.get("lines") or []
+            name = str(f["mon"]).split(":", 1)[-1].strip()
+            touching = [ln for ln in all_lines if name and name in ln] if name != "-" else []
+            for line in (touching[-40:] if touching else all_lines[-8:]):
+                print("      |", line[:140])
         acc["observations"][group] += 1
         ep = (meta["battle"], meta["seat"], f["mon"], group)
         if ep in episodes:
@@ -820,7 +844,10 @@ def record(
                     "mirror": f["mirror"],
                     "extra": {k: v for k, v in f.items()
                               if k not in ("category", "path", "mon", "truth", "mirror")},
-                    "lines": (meta.get("lines") or [])[-6:],
+                    "lines": [
+                        ln for ln in (meta.get("lines") or [])
+                        if str(f["mon"]).split(":", 1)[-1].strip() in ln
+                    ][-8:] or (meta.get("lines") or [])[-6:],
                 }
             )  # fmt: skip
     return groups
@@ -1020,7 +1047,7 @@ def audit_normal_point(
                     request_from_lines(root.last_lines[seat]), name_map, ctx.species
                 )
                 for path, a, b in leaf_diffs(real_req, mirror_req, "request"):
-                    findings.add("request", re.sub(r"\[\d+\]", "", path), "own", a, b)
+                    findings.add("request", path, "own", a, b)
                 _reclassify_timers(findings.items)
                 record(acc, "normal", findings.items, {**meta, "branch": index}, episodes)
                 if first:
@@ -1045,6 +1072,8 @@ def true_timer_payload(truth_state: dict[str, Any], seat: str, snapshot: Any) ->
             if tm is None or tm["fainted"]:
                 continue
             entry: dict[str, int] = {}
+            if key == "opponent":
+                entry["hp"] = int(tm["hp"])  # oracle only: the foe's true absolute HP
             if tm["status"] == "slp" and tm["status_state"].get("time") is not None:
                 entry["sleepTime"] = int(tm["status_state"]["time"])
             conf = tm["volatiles"].get("confusion")
@@ -1079,6 +1108,7 @@ def oracle_hypothesis(
             "moves": [to_id(mv) for mv in s.get("moves") or []],
             "item": to_id(s.get("item")) or None,
             "ability": to_id(s.get("ability")) or None,
+            "gender": p.get("gender") or "N",
             "source": "oracle",
         }
         brought.append(base)
@@ -1200,7 +1230,7 @@ def audit_oracle_point(
                 normalize_request(mirror_req, name_map, ctx.species),
                 "request",
             ):
-                findings.add("request", re.sub(r"\[\d+\]", "", path), f"{req_seat}", a, b)
+                findings.add("request", path, f"{req_seat}", a, b)
         _reclassify_timers(findings.items)
         record(acc, "oracle_state", findings.items, meta, episodes)
 
@@ -1285,7 +1315,7 @@ def _compare_outcomes(
         if diff is None:
             for path, a, b in leaf_diffs(t_req, m_req, "request"):
                 ok = False
-                findings.add("request_after", re.sub(r"\[\d+\]", "", path), s, a, b)
+                findings.add("request_after", path, s, a, b)
     if (t_res.ended, t_res.winner is None) != (m_res.ended, m_res.winner is None):
         ok = False
         findings.add("protocol", "ended", "-", t_res.ended, m_res.ended)
@@ -1337,7 +1367,7 @@ def audit_battle(
             agents[s].observe(battle_id, lines[s])
             memories[s].observe_protocol([ln.split("|") for ln in lines[s]])
             recent[s].extend(ln for ln in lines[s] if not ln.startswith("|request"))
-            recent[s][:] = recent[s][-30:]
+            recent[s][:] = recent[s][-400:]
             for ln in lines[s]:
                 split = ln.split("|")
                 if len(split) > 3 and split[1] == "move" and split[2].startswith(
@@ -1412,6 +1442,8 @@ def make_config(job: dict[str, Any]) -> PolicyConfig:
 
 
 def worker_main(job: dict[str, Any]) -> dict[str, Any]:
+    global TRACE
+    TRACE = job.get("trace_pattern") or ""
     acc = _new_acc()
     builder = TeamBuilder()
     pool = job["pool_teams"]
@@ -1517,6 +1549,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--fail-on-unexplained", action="store_true")
     parser.add_argument("--examples", type=int, default=0, help="print N examples per defect group")
+    parser.add_argument("--only", type=int, default=None, help="run only this battle index")
+    parser.add_argument("--trace", default="", help="regex on group names to print as found")
     args = parser.parse_args(argv)
 
     overrides: dict[str, Any] = {}
@@ -1535,11 +1569,16 @@ def main(argv: list[str] | None = None) -> int:
         "oracle": not args.no_oracle,
         "normal": not args.no_normal,
         "config": overrides,
+        "trace_pattern": args.trace,
     }
-    workers = max(1, min(args.workers, args.battles))
-    jobs = [
-        {**base, "indices": list(range(w, args.battles, workers))} for w in range(workers)
-    ]
+    if args.only is not None:
+        jobs = [{**base, "indices": [args.only]}]
+        workers = 1
+    else:
+        workers = max(1, min(args.workers, args.battles))
+        jobs = [
+            {**base, "indices": list(range(w, args.battles, workers))} for w in range(workers)
+        ]
     started = time.time()
     total = _new_acc()
     ctx = multiprocessing.get_context("spawn")

@@ -18,7 +18,7 @@ from typing import Any, Iterable, Mapping
 
 from vgc.condition_clock import elapsed_ticks
 from vgc.damage import to_id
-from vgc.data import load_species
+from vgc.data import load_moves, load_species
 from vgc.poke_env_compat import fix_enabled
 from vgc.sets import normalize_item, normalize_status
 
@@ -157,7 +157,30 @@ class MoveSnapshot:
     last_used: bool
 
 
-def _move_snapshot(move_id: Any, move: Any, *, unavailable: bool = False) -> MoveSnapshot:
+def champions_max_pp(move_id: str) -> int | None:
+    """Max PP of a move in the Champions mod: ``(base pp / 5 + 1) * 4``.
+
+    `data/mods/champions/scripts.ts` caps base PP at 20 (already applied in the exported
+    ``pp``) and replaces ``calculatePP``: Protect 5 -> 8, Shadow Ball 15 -> 16, a 20-PP move
+    stays 20. poke-env's ``Move.max_pp`` is the vanilla ``pp * 8 // 5`` (Protect 8, Shadow
+    Ball 24), so its PP bookkeeping is wrong for every move whose base PP is not 5 or 20.
+    """
+
+    base = (load_moves().get(move_id) or {}).get("pp")
+    if not isinstance(base, (int, float)) or isinstance(base, bool):
+        return None
+    return int((min(base, 20) / 5 + 1) * 4)
+
+
+def _move_snapshot(
+    move_id: Any,
+    move: Any,
+    *,
+    unavailable: bool = False,
+    champions_pp: bool = False,
+    request_pp: Mapping[str, tuple[int, int]] | None = None,
+    transformed: bool = False,
+) -> MoveSnapshot:
     entry = getattr(move, "entry", None) or {}
     disabled = bool(
         unavailable or getattr(move, "disabled", False) or entry.get("disabled", False)
@@ -168,10 +191,21 @@ def _move_snapshot(move_id: Any, move: Any, *, unavailable: bool = False) -> Mov
         # PP exhaustion, recharge...). The reason is deliberately generic: the
         # request is the authority that it is unavailable, not why.
         reason = "request"
+    current_pp = _optional_int(getattr(move, "current_pp", None))
+    max_pp = _optional_int(getattr(move, "max_pp", None))
+    resolved_id = to_id(getattr(move, "id", None) or move_id)
+    if champions_pp and not transformed:
+        true_max = champions_max_pp(resolved_id)
+        if true_max is not None and current_pp is not None and max_pp is not None:
+            # poke-env counts uses down from ITS max; keep the uses, change the max.
+            current_pp = max(0, true_max - max(0, max_pp - current_pp))
+            max_pp = true_max
+        if request_pp and resolved_id in request_pp:
+            current_pp, max_pp = request_pp[resolved_id]  # our own request is exact
     return MoveSnapshot(
-        id=to_id(getattr(move, "id", None) or move_id),
-        current_pp=_optional_int(getattr(move, "current_pp", None)),
-        max_pp=_optional_int(getattr(move, "max_pp", None)),
+        id=resolved_id,
+        current_pp=current_pp,
+        max_pp=max_pp,
         disabled=disabled,
         disabled_reason=str(reason) if reason else None,
         last_used=bool(getattr(move, "is_last_used", False)),
@@ -368,6 +402,8 @@ def snapshot_pokemon(
     revealed_items: Mapping[str, str] | None = None,
     available_move_ids: tuple[str, ...] | None = None,
     item_lost_this_stint: bool | None = None,
+    champions_pp: bool = False,
+    request_pp: Mapping[str, tuple[int, int]] | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -474,6 +510,9 @@ def snapshot_pokemon(
                             available_move_ids is not None
                             and to_id(key) not in set(available_move_ids)
                         ),
+                        champions_pp=champions_pp,
+                        request_pp=request_pp,
+                        transformed=bool(getattr(pokemon, "transformed", False)),
                     )
                     for key, move in move_entries
                 ),
@@ -556,6 +595,28 @@ def _slot_available_move_ids(
     return available_move_ids[slot]
 
 
+def _slot_request_pp(
+    battle: Any, active: list[Any], pokemon: Any
+) -> dict[str, tuple[int, int]] | None:
+    """``{move id: (pp, maxpp)}`` from our request for an ACTIVE slot (None otherwise)."""
+
+    slot = _active_index(active, pokemon)
+    if slot is None:
+        return None
+    request = getattr(battle, "last_request", None)
+    if not isinstance(request, Mapping):
+        return None
+    actives = request.get("active") or []
+    if slot >= len(actives) or not isinstance(actives[slot], Mapping):
+        return None
+    result: dict[str, tuple[int, int]] = {}
+    for move in actives[slot].get("moves") or []:
+        pp, maxpp = move.get("pp"), move.get("maxpp")
+        if isinstance(pp, int) and isinstance(maxpp, int) and move.get("id"):
+            result[to_id(move["id"])] = (pp, maxpp)
+    return result or None
+
+
 def _side_role(battle: Any, *, opponent: bool) -> str | None:
     role = getattr(battle, "player_role", None)
     if role not in ("p1", "p2"):
@@ -569,6 +630,7 @@ def _side_snapshot(
     opponent: bool,
     available_move_ids: tuple[tuple[str, ...], ...] = (),
     opponent_mega_unknown: bool = False,
+    champions_pp: bool = False,
 ) -> SideMechanicsState:
     prefix = "opponent_" if opponent else ""
     team = getattr(battle, f"{prefix}team", None) or {}
@@ -596,6 +658,12 @@ def _side_snapshot(
                 active=active,
                 pokemon=mon,
                 available_move_ids=available_move_ids,
+            ),
+            champions_pp=champions_pp,
+            request_pp=(
+                None
+                if opponent or not champions_pp
+                else _slot_request_pp(battle, active, mon)
             ),
         )
         for mon in pokemon_values
@@ -666,12 +734,16 @@ class BattleMechanicsState:
     opponent_side: SideMechanicsState
 
 
-def snapshot_battle(battle: Any, *, opponent_mega_unknown: bool = False) -> BattleMechanicsState:
+def snapshot_battle(
+    battle: Any, *, opponent_mega_unknown: bool = False, champions_pp: bool = False
+) -> BattleMechanicsState:
     """Copy every observable mechanics field from a poke-env battle object.
 
     ``opponent_mega_unknown`` reports the opponent's ``can_mega_evolve`` as ``None`` (not
     observable) until it has used its Mega, instead of the poke-env default of False. Only
     the live mirror asks for it; the default keeps every stored/encoded snapshot unchanged.
+    ``champions_pp`` corrects every move's PP to the Champions formula (`champions_max_pp`);
+    likewise only the live mirror asks for it.
     """
 
     try:
@@ -741,9 +813,12 @@ def snapshot_battle(battle: Any, *, opponent_mega_unknown: bool = False) -> Batt
             for mon in (getattr(battle, "teampreview_opponent_team", None) or ())
         ),
         our_side=_side_snapshot(
-            battle, opponent=False, available_move_ids=available_moves
+            battle, opponent=False, available_move_ids=available_moves, champions_pp=champions_pp
         ),
         opponent_side=_side_snapshot(
-            battle, opponent=True, opponent_mega_unknown=opponent_mega_unknown
+            battle,
+            opponent=True,
+            opponent_mega_unknown=opponent_mega_unknown,
+            champions_pp=champions_pp,
         ),
     )
