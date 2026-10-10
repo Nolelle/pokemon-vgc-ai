@@ -70,3 +70,22 @@ def psychic_terrain_blocks(
     if effective_priority(move_data, attacker.ability, at_full_hp) <= 0:
         return False
     return _is_grounded(defender)
+
+
+def action_priority(
+    move_data: dict,
+    ability: str | None,
+    at_full_hp: bool,
+    terrain: str | None = None,
+    *,
+    effective: bool = True,
+) -> int:
+    """Priority bracket the engine will use for this action (what turn-order maths must read).
+
+    ``effective=False`` is the legacy behaviour (the move's printed priority only), kept as the
+    control for `PolicyConfig.effective_move_priority`.
+    """
+
+    if not effective:
+        return int(move_data.get("priority", 0))
+    return effective_priority(move_data, ability, at_full_hp)

@@ -146,6 +146,10 @@ function applyState(battle, mon, st) {
 	if (st.hpFrac !== undefined && st.hpFrac !== null) {
 		mon.hp = Math.max(1, Math.floor(mon.maxhp * st.hpFrac));
 	}
+	if (st.faint) {
+		mon.faint();
+		return;
+	}
 	if (st.noItem) {
 		mon.lastItem = mon.item;
 		mon.item = "";
@@ -173,7 +177,7 @@ function applyField(battle, field, sources) {
 	for (const id of field.p2side || []) battle.sides[1].addSideCondition(id, sources.p2a);
 }
 
-function choiceFor(battle, mon, moveId, target) {
+function choiceFor(battle, mon, moveId, target, mega) {
 	// The sets used by the sweep carry the tested move first and Splash second, so the move
 	// index is looked up by id (a charge turn or lock-in offers a single move).
 	const request = mon.getMoveRequestData();
@@ -187,6 +191,7 @@ function choiceFor(battle, mon, moveId, target) {
 	if (NEEDS_TARGET.has(dexMove.target) && battle.activePerHalf === 2) {
 		text += ` ${target ?? 1}`;
 	}
+	if (mega) text += " mega";
 	return text;
 }
 
@@ -207,10 +212,16 @@ function run(req, seed) {
 	}
 	for (const slot of SLOTS) applyState(battle, mons[slot], (req.state || {})[slot]);
 	applyField(battle, req.field, mons);
+	battle.faintMessages();
 	// A fresh request after the manual changes, so the choice parser sees the final state.
 	battle.clearRequest();
 	battle.makeRequest("move");
 	const logStart = battle.log.length;
+	const stats = {};
+	for (const slot of SLOTS) {
+		const mon = mons[slot];
+		stats[slot] = { hp: mon.maxhp, ...mon.storedStats, spe_now: mon.getStat("spe"), speed_action: mon.getActionSpeed() };
+	}
 	const order = [];
 	let err = null;
 	const turns = req.turns || 1;
@@ -220,9 +231,13 @@ function run(req, seed) {
 		try {
 			const choices = { p1: [], p2: [] };
 			for (const slot of SLOTS) {
+				if (mons[slot].fainted) {
+					choices[slot.slice(0, 2)].push("pass");
+					continue;
+				}
 				const moveId = (req.moves || {})[slot] || "splash";
 				const target = (req.targets || {})[slot];
-				choices[slot.slice(0, 2)].push(choiceFor(battle, mons[slot], moveId, target));
+				choices[slot.slice(0, 2)].push(choiceFor(battle, mons[slot], moveId, target, turn === 0 && ((req.mega || {})[slot])));
 			}
 			battle.makeChoices(choices.p1.join(", "), choices.p2.join(", "));
 		} catch (e) {
@@ -244,6 +259,7 @@ function run(req, seed) {
 		seed,
 		calls: rec.calls,
 		accuracy: rec.accuracy,
+		stats,
 		order,
 		err,
 		turnsRun,
