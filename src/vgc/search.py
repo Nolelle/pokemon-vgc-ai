@@ -89,7 +89,8 @@ before it).
 - **This is not a complete Showdown mechanics engine.** Existing sleep and newly caused
   sleep now reduce action probability using the Champions mod's custom duration, base
   accuracy, common immunities, berries, terrain, and Protect. The forecast still omits
-  damaging-move accuracy, most secondary effects and residual damage, flinch/Fake Out
+  damaging-move accuracy (except the weather-dependent Thunder/Hurricane/Blizzard, see
+  ``PolicyConfig.weather_accuracy_modifiers``), most secondary effects and residual damage, flinch/Fake Out
   action cancellation, paralysis/freeze action denial, side-wide guards, exact setup
   stage changes, Focus Sash/Sturdy survival, and many item/ability effects. The current
   coverage and ladder-team priorities are tracked in ``docs/mechanics_coverage.md``.
@@ -99,6 +100,7 @@ from __future__ import annotations
 
 import math
 import time
+from types import SimpleNamespace
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cmp_to_key, partial
@@ -125,7 +127,6 @@ from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.field_setters import ability_condition, move_condition
 from vgc.evaluator import (
-    _ABILITY_WEATHER,
     _PROTECT_MOVES,
     _SELF_PROTECT_MOVES,
     _SINGLE_TARGETS,
@@ -133,6 +134,7 @@ from vgc.evaluator import (
     _SPREAD_TARGETS_HITTING_ALLY,
     _TERRAIN_TO_STR,
     _Context,
+    _ability_weather,
     _best_attacking_move,
     _our_pokemon_state,
     _resolve_targets,
@@ -153,7 +155,10 @@ from vgc.sets import (
     pre_mega_species_id,
     usage_spreads_for,
 )
+from vgc.accuracy import hit_probability
+from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
+from vgc.weather_abilities import weather_adjusted_accuracy
 from vgc.action_sanity import choice_locked_status_slots
 
 # --- opponent response candidates ---------------------------------------------------------
@@ -312,7 +317,9 @@ def _describe_opp_slot_action(action: _OppSlotAction) -> str:
     return f"{action.move_id}{target}{mega}"
 
 
-def _our_pressure_on_opp_slot(ctx: _Context, opp_idx: int) -> float:
+def _our_pressure_on_opp_slot(
+    ctx: _Context, opp_idx: int, config: PolicyConfig | None = None
+) -> float:
     """Our best expected % onto `opp_idx` from either of our alive actives.
 
     Mirrors `vgc.evaluator.build_context`'s own (locally-scoped, not exported)
@@ -332,7 +339,16 @@ def _our_pressure_on_opp_slot(ctx: _Context, opp_idx: int) -> float:
         if our_state is None or our_mon is None:
             continue
         our_move_ids = list(our_mon.moves.keys()) if our_mon.moves else []
-        pct, _, _ = _best_attacking_move(our_state, our_move_ids, opp_state, field_vs_opp)
+        if config is not None:
+            our_move_ids = usable_move_ids(our_move_ids, our_mon, config.first_turn_moves_restricted)
+        pct, _, _ = _best_attacking_move(
+            our_state,
+            our_move_ids,
+            opp_state,
+            field_vs_opp,
+            False,
+            config is not None and config.model_move_accuracy,
+        )
         best = max(best, pct)
     return best
 
@@ -449,6 +465,16 @@ def _move_value_into_us(attacker: PokemonState, action: _OppSlotAction, ctx: _Co
     return total if supported else None
 
 
+def _enum_hit_probability(
+    move_data: dict, attacker: PokemonState, defender: PokemonState, ctx: _Context, config: PolicyConfig
+) -> float:
+    """Hit chance used only to rank opponent candidate moves (1.0 with the knob off)."""
+
+    if not config.model_move_accuracy:
+        return 1.0
+    return hit_probability(move_data, attacker, defender, ctx.weather)
+
+
 def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> list[_OppSlotAction]:
     """Candidate actions for one opponent slot: the top `search_opp_moves_per_slot`
     known damaging (move, target) pairs by expected damage, plus an always-included
@@ -459,7 +485,11 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     if opp_mon is None or opp_state is None or opp_idx not in ctx.opp_alive():
         return [_OppSlotAction(kind="none")]
 
-    move_ids = opponent_move_ids(opp_mon, priors=ctx.priors, config=config)
+    move_ids = usable_move_ids(
+        opponent_move_ids(opp_mon, priors=ctx.priors, config=config),
+        opp_mon,
+        config.first_turn_moves_restricted,
+    )
     our_alive = ctx.our_alive()
     field_vs_us_single = ctx.field_state(defender_is_ours=True, num_targets=1)
     field_vs_us_spread = ctx.field_state(defender_is_ours=True, num_targets=max(1, len(our_alive)))
@@ -481,7 +511,9 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
                 result = damage_range(opp_state, our_state, move_id, field_vs_us_spread)
                 if result.breakdown["move_supported"] and not result.breakdown["immune"]:
                     supported = True
-                total_pct += result.expected_percent
+                total_pct += result.expected_percent * _enum_hit_probability(
+                    move_data, opp_state, our_state, ctx, config
+                )
             if supported:
                 scored.append(
                     (total_pct, _OppSlotAction(kind="move", move_id=move_id, value=total_pct))
@@ -494,14 +526,17 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
                 result = damage_range(opp_state, our_state, move_id, field_vs_us_single)
                 if not result.breakdown["move_supported"] or result.breakdown["immune"]:
                     continue
+                expected = result.expected_percent * _enum_hit_probability(
+                    move_data, opp_state, our_state, ctx, config
+                )
                 scored.append(
                     (
-                        result.expected_percent,
+                        expected,
                         _OppSlotAction(
                             kind="move",
                             move_id=move_id,
                             target_our_slot=our_idx,
-                            value=result.expected_percent,
+                            value=expected,
                         ),
                     )
                 )
@@ -514,7 +549,7 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
     protect_move_id = next(iter(sorted(set(move_ids) & _SELF_PROTECT_MOVES)), None)
     protect_counter = getattr(opp_mon, "protect_counter", 0)
     if protect_move_id is not None and protect_counter == 0:
-        protect_value = _our_pressure_on_opp_slot(ctx, opp_idx) * config.protect_threat_weight
+        protect_value = _our_pressure_on_opp_slot(ctx, opp_idx, config) * config.protect_threat_weight
         candidates.append(
             _OppSlotAction(kind="protect", move_id=protect_move_id, value=protect_value)
         )
@@ -597,9 +632,15 @@ def _opp_slot_candidates(opp_idx: int, ctx: _Context, config: PolicyConfig) -> l
                 continue
             pct, _, _ = _best_attacking_move(
                 our_state,
-                list(our_mon.moves.keys()) if our_mon.moves else [],
+                usable_move_ids(
+                    list(our_mon.moves.keys()) if our_mon.moves else [],
+                    our_mon,
+                    config.first_turn_moves_restricted,
+                ),
                 bench_state,
                 ctx.field_state(defender_is_ours=False, num_targets=1),
+                False,
+                config.model_move_accuracy,
             )
             worst_incoming = max(worst_incoming, pct)
         switch_value = max(0.0, 100.0 - worst_incoming)
@@ -718,6 +759,22 @@ class ExchangeResult:
     # while the exchange resolves (a setter move or switch-in changes them for the actions
     # after it) and `terrain` is read by the forecast even without condition expiry.
     field_setters: bool = False
+    # `PolicyConfig.weather_accuracy_modifiers`: Thunder/Hurricane/Blizzard hit with their
+    # weather-dependent probability (see `vgc.weather_abilities.weather_adjusted_accuracy`).
+    weather_accuracy: bool = False
+    # `PolicyConfig.psychic_terrain_blocks_priority` / `spread_recount_targets` /
+    # `model_move_accuracy` (per-target hit chance scales HP lost and faints in expectation).
+    psychic_terrain_priority: bool = False
+    spread_recount: bool = False
+    # With `move_accuracy`, a hit that may miss splits the target into "fainted" and "still
+    # up". `*_alive` is the probability each slot is still on the board; a slot's `current_hp`
+    # during the exchange is its HP GIVEN it is alive (a lethal hit lowers the alive mass and
+    # leaves HP alone, a non-lethal hit lowers expected HP by hit-chance x damage). Faints are
+    # the alive mass that was removed, so they can never exceed 1 per Pokemon, and a slot's
+    # later actions are scaled by its alive probability when it acts.
+    move_accuracy: bool = False
+    our_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
+    opp_alive: list[float] = field(default_factory=lambda: [1.0, 1.0])
 
 
 @dataclass(frozen=True)
@@ -810,6 +867,31 @@ class _Action:
     boost_plan: SetupBoost | None = None
 
 
+_TERRAIN_SEEDS = {
+    "electricseed": "electric",
+    "grassyseed": "grassy",
+    "psychicseed": "psychic",
+    "mistyseed": "misty",
+}
+
+
+def _consume_terrain_seeds(states: list[PokemonState | None], terrain: str | None) -> None:
+    """A terrain seed is eaten the moment its terrain is up. For an Unburden holder (Sneasler
+    with a Psychic Seed) that consumption doubles its Speed, so apply it before the turn's
+    move order is fixed. Other holders are left alone: the seed's stat boost is not modelled."""
+
+    if terrain is None:
+        return
+    for state in states:
+        if (
+            state is not None
+            and state.ability == "unburden"
+            and _TERRAIN_SEEDS.get(state.item or "") == terrain
+        ):
+            state.item = None
+            state.item_lost = True
+
+
 def _copy_state(state: PokemonState | None) -> PokemonState | None:
     """A `dataclasses.replace` copy with its OWN `boosts` dict (never share the mutable
     dict with `_Context`'s original -- see module docstring point 4's "never mutate ctx"
@@ -853,8 +935,9 @@ def _build_our_actions(
             state = our_states[slot]
             if state is not None:
                 our_states[slot] = mega_evolved_state(state)
-                if our_states[slot].ability in _ABILITY_WEATHER:
-                    weather_override = _ABILITY_WEATHER[our_states[slot].ability]
+                mega_weather = _ability_weather(our_states[slot].ability, config)
+                if mega_weather is not None:
+                    weather_override = mega_weather
         if move_data["category"] == "Status":
             if move_id in _PROTECT_MOVES:
                 pokemon = ctx.our_pokemon[slot]
@@ -1266,6 +1349,11 @@ def _apply_action(
     terrain_now = result.terrain if result.field_setters else ctx.terrain
     can_act = our_can_act if action.side == "our" else opp_can_act
     actor_probability = action.action_probability * can_act[action.slot]
+    if result.move_accuracy:
+        # A Pokemon that may already have fainted this turn acts only on the surviving mass.
+        actor_probability *= (result.our_alive if action.side == "our" else result.opp_alive)[
+            action.slot
+        ]
     if actor_probability <= 0.0:
         return
 
@@ -1285,6 +1373,21 @@ def _apply_action(
             if actor_probability >= 0.5:  # modal-branch convention, as for Tailwind below
                 _set_field_condition(result, *setter)
             return
+        if result.psychic_terrain_priority and action.targets:
+            # A priority status move (Prankster Taunt, sleep, Thunder Wave, ...) aimed only at
+            # grounded foes is stopped by Psychic Terrain like a damaging one.
+            foe_states = [
+                (our_states if target_side == "our" else opp_states)[target_idx]
+                for target_side, target_idx, _ally in action.targets
+                if target_side != action.side
+            ]
+            action_data = load_moves().get(action.move_id) or {}
+            if foe_states and all(
+                state is not None
+                and psychic_terrain_blocks(action_data, actor_state, state, terrain_now)
+                for state in foe_states
+            ):
+                return
         # The flat utility proxy is signed by WHO it finally lands on: a foe-directed
         # effect (sleep, Taunt, Thunder Wave, ...) on the actor's own ally is a cost, not
         # the benefit it would be against a foe. Before this, a Sleep Powder on our own
@@ -1315,12 +1418,12 @@ def _apply_action(
                 if target_state is None or target_state.hp_or_max() <= 0:
                     continue
                 protected = our_protected if side == "our" else opp_protected
-                hit_probability = (
+                sleep_hit = (
                     actor_probability
                     * _move_accuracy(action.move_id)
                     * (1.0 - protected[idx])
                 )
-                if hit_probability <= 0.0 or _sleep_is_blocked(
+                if sleep_hit <= 0.0 or _sleep_is_blocked(
                     target_state,
                     target_states,
                     opp_states if side == "our" else our_states,
@@ -1342,16 +1445,16 @@ def _apply_action(
                 # distribution it therefore wakes immediately on the short (1/3)
                 # branch but still loses the action on the long (2/3) branch.
                 denial_given_hit = 2.0 / 3.0 if target_state.ability == "earlybird" else 1.0
-                target_can_act[idx] *= 1.0 - hit_probability * denial_given_hit
+                target_can_act[idx] *= 1.0 - sleep_hit * denial_given_hit
                 # The rolling forecast has no probabilistic-status field yet. All legal
                 # sleep moves hit more often than not, so retaining the modal post-turn
                 # state is a conservative representation of the following turn.
-                if hit_probability >= 0.5:
+                if sleep_hit >= 0.5:
                     target_state.status = "slp"
                 if side == action.side:
-                    own_hit = max(own_hit, hit_probability)
+                    own_hit = max(own_hit, sleep_hit)
                 else:
-                    foe_hit = max(foe_hit, hit_probability)
+                    foe_hit = max(foe_hit, sleep_hit)
             # No ally ability benefits from sleep, so an own-side hit is always a cost.
             realized_probability = foe_hit - own_hit
         if action.side == "our":
@@ -1395,6 +1498,16 @@ def _apply_action(
         return
 
     num_targets = len(action.targets)
+    if result.spread_recount and action.spread:
+        # The engine reads the spread modifier off the targets present when the move
+        # executes, so a target KO'd earlier this turn no longer counts (a Protecting or
+        # terrain-blocked target still does: both filters run after the count).
+        num_targets = sum(
+            1
+            for target_side, target_idx, _ally in action.targets
+            if (our_states if target_side == "our" else opp_states)[target_idx] is not None
+            and (our_states if target_side == "our" else opp_states)[target_idx].hp_or_max() > 0
+        )
     field_vs_us = FieldState(
         weather=weather_for_exchange,
         terrain=terrain_now,
@@ -1411,6 +1524,11 @@ def _apply_action(
         is_doubles=True,
         num_targets=num_targets,
     )
+    if result.weather_accuracy and not result.move_accuracy:
+        narrow_accuracy = weather_adjusted_accuracy(action.move_id, weather_for_exchange)
+        if narrow_accuracy is not None:
+            actor_probability *= narrow_accuracy
+    action_move_data = load_moves().get(action.move_id) or {}
     for side, original_idx, _is_ally in action.targets:
         idx = original_idx
         if not action.spread and side != action.side:
@@ -1421,6 +1539,14 @@ def _apply_action(
         defender_state = defender_states[idx]
         if defender_state is None or defender_state.hp_or_max() <= 0:
             continue  # already fainted earlier this exchange -- no damage to deal
+        if (
+            result.psychic_terrain_priority
+            and side != action.side
+            and psychic_terrain_blocks(
+                load_moves().get(action.move_id) or {}, actor_state, defender_state, terrain_now
+            )
+        ):
+            continue  # Psychic Terrain stops priority moves onto grounded foes.
         protected = our_protected if side == "our" else opp_protected
         protect_success_prob = protected[idx]
         if protect_success_prob >= 1.0:
@@ -1431,14 +1557,44 @@ def _apply_action(
         failure_prob = 1.0 - protect_success_prob
         field = field_vs_us if side == "our" else field_vs_opp
         damage_result = damage_range(actor_state, defender_state, action.move_id, field)
+        # Per-target hit chance (a spread move rolls accuracy for each target): folded into the
+        # action probability, so a miss is an expectation weight, not a separate branch.
+        target_probability = actor_probability
+        if result.move_accuracy:
+            target_probability *= hit_probability(
+                action_move_data, actor_state, defender_state, weather_for_exchange
+            )
         before = defender_state.hp_or_max()
         actual_loss = min(damage_result.expected_damage, before)
-        probabilistic_action = actor_probability < 1.0
-        applied_loss = actual_loss * actor_probability if probabilistic_action else actual_loss
-        defender_state.current_hp = max(0.0, before - applied_loss)
         max_hp = defender_state.max_hp()
+        if result.move_accuracy:
+            alive = result.our_alive if side == "our" else result.opp_alive
+            hit_mass = alive[idx] * target_probability  # P(still up AND the hit lands)
+            if actual_loss >= before:
+                # Lethal when it lands: remove that much of the alive mass, leave HP-given-alive.
+                removed = hit_mass
+                alive[idx] -= removed
+                if alive[idx] <= 0.0:
+                    alive[idx] = 0.0
+                    defender_state.current_hp = 0.0
+            else:
+                removed = 0.0
+                defender_state.current_hp = max(0.0, before - actual_loss * target_probability)
+            loss_pct = (
+                actual_loss / max_hp * 100.0 * failure_prob * hit_mass if max_hp else 0.0
+            )
+            if side == "our":
+                result.our_hp_lost_pct += loss_pct
+                result.our_faints += failure_prob * removed
+            else:
+                result.opp_hp_lost_pct += loss_pct
+                result.opp_faints += failure_prob * removed
+            continue
+        probabilistic_action = target_probability < 1.0
+        applied_loss = actual_loss * target_probability if probabilistic_action else actual_loss
+        defender_state.current_hp = max(0.0, before - applied_loss)
         loss_pct = (
-            actual_loss / max_hp * 100.0 * failure_prob * actor_probability
+            actual_loss / max_hp * 100.0 * failure_prob * target_probability
             if max_hp
             else 0.0
         )
@@ -1446,11 +1602,11 @@ def _apply_action(
         if side == "our":
             result.our_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.our_faints += failure_prob * actor_probability
+                result.our_faints += failure_prob * target_probability
         else:
             result.opp_hp_lost_pct += loss_pct
             if newly_fainted:
-                result.opp_faints += failure_prob * actor_probability
+                result.opp_faints += failure_prob * target_probability
 
 
 def resolve_exchange(
@@ -1476,7 +1632,7 @@ def resolve_exchange(
         elif slot_action.mega_state is not None:
             # Mega Evolution resolves before any move, like ours in `_build_our_actions`.
             opp_states[slot] = _copy_state(slot_action.mega_state)
-            mega_weather = _ABILITY_WEATHER.get(slot_action.mega_state.ability)
+            mega_weather = _ability_weather(slot_action.mega_state.ability, config)
             if mega_weather is not None and weather_override is None:
                 weather_for_exchange = mega_weather
     terrain_for_exchange = ctx.terrain
@@ -1488,6 +1644,9 @@ def resolve_exchange(
                 weather_for_exchange = value
             else:
                 terrain_for_exchange = value
+    if config.model_unburden:
+        _consume_terrain_seeds(our_states, terrain_for_exchange)
+        _consume_terrain_seeds(opp_states, terrain_for_exchange)
     opp_actions = _build_opp_actions(opp_response, ctx)
     if config.search_apply_setup_boosts:
         _attach_setup_boosts(our_actions + opp_actions, config)
@@ -1548,6 +1707,10 @@ def resolve_exchange(
         result.trick_room_last = remaining["trick_room"]
         result.our_tailwind_last = remaining["our_tailwind"]
         result.opp_tailwind_last = remaining["opp_tailwind"]
+    result.weather_accuracy = config.weather_accuracy_modifiers
+    result.psychic_terrain_priority = config.psychic_terrain_blocks_priority
+    result.spread_recount = config.spread_recount_targets
+    result.move_accuracy = config.model_move_accuracy
     if config.search_model_field_setters:
         result.field_setters = True
         result.weather = weather_for_exchange
@@ -1598,6 +1761,14 @@ def resolve_exchange(
                 )
             pending.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
 
+    if result.move_accuracy:
+        # Expose EXPECTED HP (alive probability x HP given alive) to the value model; slots
+        # that are certainly down already read 0.
+        for states, alive in ((our_states, result.our_alive), (opp_states, result.opp_alive)):
+            for slot, mass in enumerate(alive):
+                state = states[slot]
+                if state is not None and 0.0 < mass < 1.0:
+                    state.current_hp = mass * state.hp_or_max()
     # `_apply_action` keeps each partially protected slot in the Protect-failure branch
     # so multiple incoming hits remain correlated. Convert that branch to expected HP
     # before exposing the post-exchange snapshot to the value model.
@@ -1738,12 +1909,28 @@ def _move_ids_for_state(
         mons = [mon for mon in ctx.our_pokemon if mon is not None]
         mons += list((getattr(ctx.battle, "team", None) or {}).values())
         mon = _matching_mon(state, mons)
-        return list(mon.moves.keys()) if mon is not None and mon.moves else []
+        ids = list(mon.moves.keys()) if mon is not None and mon.moves else []
+        return _drop_spent_first_turn_moves(ids, mon, ctx.our_pokemon, config)
     preview = list(getattr(ctx.battle, "teampreview_opponent_team", None) or [])
     known = list((getattr(ctx.battle, "opponent_team", None) or {}).values())
     active = [mon for mon in ctx.opp_pokemon if mon is not None]
     mon = _matching_mon(state, active + known + preview)
-    return opponent_move_ids(mon, priors=ctx.priors, config=config) if mon is not None else []
+    if mon is None:
+        return []
+    ids = opponent_move_ids(mon, priors=ctx.priors, config=config)
+    return _drop_spent_first_turn_moves(ids, mon, ctx.opp_pokemon, config)
+
+
+def _drop_spent_first_turn_moves(
+    move_ids: list[str], mon, actives: list, config: PolicyConfig
+) -> list[str]:
+    """Projected turns come after this exchange, so a Pokemon already on the board has spent
+    its first turn out (Fake Out / First Impression are over). A bench Pokemon that may switch
+    in during the exchange keeps them."""
+
+    if mon is None or not any(mon is active for active in actives):
+        return move_ids
+    return usable_move_ids(move_ids, SimpleNamespace(first_turn=False), config.first_turn_moves_restricted)
 
 
 def _forecast_field(

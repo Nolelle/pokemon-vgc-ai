@@ -94,6 +94,37 @@ def judge_config(config: PolicyConfig, n_candidates: int) -> PolicyConfig:
     )
 
 
+def with_exact_timers(judge_cfg: PolicyConfig, battle: Any, config: PolicyConfig) -> PolicyConfig:
+    """``judge_cfg`` widened so every hidden-timer branch of ``battle`` is searched.
+
+    The judge runs with one hypothesis, which kept only the most likely remaining sleep
+    (3 action opportunities, p=2/3) and discarded the shorter one (p=1/3), so a real wake
+    chance read as zero. Timers are the only axis widened (spread/set/bring stay at one
+    hypothesis), so the root count is just the number of consistent timer assignments,
+    capped by ``exact_search_state_hypotheses``. Positions with nobody asleep or confused
+    are unchanged. Costs one extra search per extra branch on those positions only.
+    """
+
+    if not config.exact_judge_exact_timers:
+        return judge_cfg
+    from vgc.mechanics_state import snapshot_battle
+    from vgc.rl.hidden_state import enumerate_hidden_state_hypotheses
+
+    cap = max(1, int(config.exact_search_state_hypotheses))
+    branches = len(
+        enumerate_hidden_state_hypotheses(
+            snapshot_battle(battle), replace(config, exact_search_state_hypotheses=cap)
+        )
+    )
+    if branches <= 1:
+        return judge_cfg
+    return replace(
+        judge_cfg,
+        exact_search_state_hypotheses=cap,
+        exact_search_total_hypotheses=max(judge_cfg.exact_search_total_hypotheses, branches),
+    )
+
+
 def judge_budget_s(config: PolicyConfig) -> float:
     """Seconds this decision may spend judging: the cap, or what the clock guard leaves."""
 
@@ -298,7 +329,12 @@ class ExactJudge:
 
         wanted = frozenset(e.order.message for e in judged)
         values = self._run_bounded(
-            battle, memory, judge_config(config, len(wanted)), wanted, budget, report
+            battle,
+            memory,
+            with_exact_timers(judge_config(config, len(wanted)), battle, config),
+            wanted,
+            budget,
+            report,
         )
         if values is None:
             return scored

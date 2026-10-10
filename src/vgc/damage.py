@@ -41,6 +41,10 @@ apply verbatim.
    (level is always 50 in this format -- see `vgc.stats.FORMAT_LEVEL`).
 6. Spread modifier (0.75x, only for `allAdjacent`/`allAdjacentFoes`-target moves
    actually hitting >=2 targets this turn -- `field.num_targets >= 2`).
+6b. Weather defence boosts, applied to the (staged) defending stat before the base formula,
+   exactly where the real engine's ModifySpD/ModifyDef events run: Sandstorm gives Rock-type
+   defenders 1.5x Sp. Def, Snow gives Ice-type defenders 1.5x Def (ground-truth tested in
+   `tests/test_damage_ground_truth.py`).
 7. Weather (sun/rain boost-or-cut Fire/Water 1.5x/0.5x) and terrain (Electric/Grassy/
    Psychic terrain 1.3x their type for a grounded attacker; Misty Terrain halves Dragon
    moves against a grounded defender; Grassy Terrain also halves Earthquake/Bulldoze/
@@ -124,6 +128,7 @@ class PokemonState:
     :param ability: ability id (or display name), or None.
     :param current_hp: current HP in absolute points. `None` means "at full HP" (the
         only place this matters here is Multiscale).
+    :param item_lost: the holder's item was consumed/removed this stint (Unburden trigger).
     """
 
     species_id: str
@@ -134,6 +139,10 @@ class PokemonState:
     item: str | None = None
     ability: str | None = None
     current_hp: int | None = None
+    # True once the holder has lost or consumed its item this stint on the field, so an
+    # Unburden holder has its Speed doubled (data/abilities.ts unburden). Set only by the
+    # state builders when `PolicyConfig.model_unburden` is on; inert for every other ability.
+    item_lost: bool = False
 
     def __post_init__(self) -> None:
         self.item = to_id(self.item) or None
@@ -169,10 +178,9 @@ class PokemonState:
 class FieldState:
     """Battle-field context shared by both sides for one `damage_range` call.
 
-    :param weather: `"sun"` | `"rain"` | None. (Sand/snow are accepted as values too for
-        callers that want to carry them through, but neither has a damage-formula effect
-        implemented here -- sand/snow's real effects are Sp.Def/Def boosts, not damage
-        multipliers, so they're out of scope for a damage *calculator*.)
+    :param weather: `"sun"` | `"rain"` | `"sand"` | `"snow"` | None. Sun/rain scale Fire/Water
+        damage; sand raises Rock-type defenders' Sp. Def and snow raises Ice-type defenders'
+        Def by 1.5x (see `_weather_defense_value`). Cloud Nine/Air Lock are not modelled.
     :param terrain: `"electric"` | `"grassy"` | `"psychic"` | `"misty"` | None.
     :param screens: side conditions active on the DEFENDER's side, subset of
         `{"reflect", "lightscreen", "auroraveil"}`.
@@ -248,8 +256,50 @@ ABILITY_TYPE_IMMUNITY: dict[str, str] = {
     "lightningrod": "Electric",
 }
 
+# "-ate" abilities: Normal-type moves become the ability's type and get x4915/4096 base power
+# (data/abilities.ts aerilate/pixilate/refrigerate/galvanize/dragonize; the Champions mod
+# only un-hides Dragonize). Applied in ModifyType (before immunity/effectiveness/STAB), so
+# the changed type is the move's type for the rest of the pipeline. The excluded moves keep
+# their Normal type (data/abilities.ts `noModifyType`).
+_ATE_ABILITY_TYPE: dict[str, str] = {
+    "aerilate": "Flying",
+    "pixilate": "Fairy",
+    "refrigerate": "Ice",
+    "galvanize": "Electric",
+    "dragonize": "Dragon",
+}
+_ATE_EXCLUDED_MOVES = frozenset(
+    {
+        "judgment",
+        "multiattack",
+        "naturalgift",
+        "revelationdance",
+        "technoblast",
+        "terrainpulse",
+        "weatherball",
+    }
+)
+# Liquid Voice: sound moves become Water (no power boost).
+_LIQUID_VOICE_TYPE = "Water"
+_ATE_POWER_MODIFIER = 4915  # of 4096
+
+# Moves that read another stat than their category's default (data/moves.ts override*
+# fields; the data export does not carry them). Body Press attacks with the USER's Defense
+# (and Defense stage); Foul Play with the TARGET's Attack (and the target's Attack stage);
+# Psyshock/Psystrike/Secret Sword are Special attacks aimed at the target's Defense.
+# Wonder Room swaps are not modelled.
+_OFFENSIVE_STAT_OVERRIDE: dict[str, StatId] = {"bodypress": "def"}
+_OFFENSIVE_FROM_TARGET = frozenset({"foulplay"})
+_DEFENSIVE_STAT_OVERRIDE: dict[str, StatId] = {
+    "psyshock": "def",
+    "psystrike": "def",
+    "secretsword": "def",
+}
+
 ABILITY_WHITELIST: frozenset[str] = frozenset(
     {
+        *_ATE_ABILITY_TYPE,
+        "liquidvoice",
         "guts",
         "hugepower",
         "purepower",
@@ -372,6 +422,23 @@ def _weather_modifier(field: FieldState, move_type: str) -> float:
     return 1.0
 
 
+def _weather_defense_value(
+    defense_value: int, field: FieldState, defender: PokemonState, defense_stat_id: str
+) -> int:
+    """Sandstorm: Rock-type Sp. Def x1.5; Snow: Ice-type Def x1.5 (data/conditions.ts).
+
+    The engine applies it with ``battle.modify(stat, 1.5)`` -- 4096-based fixed point whose
+    rounding sends exact halves DOWN, hence ``(v * 6144 + 2047) // 4096`` rather than ``v * 3 // 2``
+    rounded up. Runs on the already-staged stat, before the base formula.
+    """
+
+    if field.weather == "sand" and defense_stat_id == "spd" and "Rock" in defender.types():
+        return (defense_value * 6144 + 2047) // 4096
+    if field.weather == "snow" and defense_stat_id == "def" and "Ice" in defender.types():
+        return (defense_value * 6144 + 2047) // 4096
+    return defense_value
+
+
 def _screen_modifier(field: FieldState, category: str) -> float:
     per_side_multiplier = _SCREEN_MULTIPLIER_DOUBLES if field.is_doubles else _SCREEN_MULTIPLIER_SINGLES
     has_reflect = "reflect" in field.screens and category == "Physical"
@@ -399,6 +466,8 @@ def _empty_breakdown() -> dict[str, object]:
         "burn_modifier": 1.0,
         "final_multiplier": 1.0,
         "base_power": None,
+        "move_type": None,
+        "type_changed_from": None,
         "attack_stat": None,
         "defense_stat": None,
         "attack_value": None,
@@ -424,10 +493,9 @@ def _zero_result(breakdown: dict[str, object]) -> DamageResult:
 
 # Weather -> the type Weather Ball becomes (data/moves.ts weatherball.onModifyType); BP
 # doubles (50 -> 100, onModifyMove) for every one of these four cases identically. Sand/
-# snow have no *damage-multiplier* effect elsewhere in this module (real gen9 Sandstorm/
-# Snow are Def/SpD boosts for Rock/Ice types, not a Fire/Water-style damage modifier --
-# see `FieldState`'s docstring), but they still drive Weather Ball's type/power exactly
-# like sun/rain do.
+# snow have no *damage-multiplier* effect (real gen9 Sandstorm/Snow are Def/SpD boosts for
+# Rock/Ice defenders, see `_weather_defense_value`), but they drive Weather Ball's type/power
+# exactly like sun/rain do.
 _WEATHER_BALL_TYPE: dict[str, str] = {"sun": "Fire", "rain": "Water", "sand": "Rock", "snow": "Ice"}
 
 # data/moves.ts grassknot/lowkick vs. heavyslam/heatcrash basePowerCallback -- both pairs
@@ -495,6 +563,8 @@ def _effective_speed_for_ratio(state: PokemonState) -> float:
         speed *= 1.5
     if state.status == "par":
         speed *= 0.5
+    if state.item_lost and state.ability == "unburden":
+        speed *= 2.0
     return speed
 
 
@@ -603,6 +673,17 @@ def damage_range(
     category = move["category"]
     is_physical = category == "Physical"
 
+    original_type = move_type
+    ate_type = _ATE_ABILITY_TYPE.get(attacker.ability or "")
+    ate_boosted = False
+    if ate_type is not None and move_type == "Normal" and move_id not in _ATE_EXCLUDED_MOVES:
+        move_type = ate_type
+        ate_boosted = True
+    elif attacker.ability == "liquidvoice" and (move.get("flags") or {}).get("sound"):
+        move_type = _LIQUID_VOICE_TYPE
+    breakdown["move_type"] = move_type
+    breakdown["type_changed_from"] = original_type if move_type != original_type else None
+
     defender_types = defender.types()
     type_mult = _type_effectiveness(move_type, defender_types)
     breakdown["type_effectiveness"] = type_mult
@@ -626,11 +707,23 @@ def damage_range(
 
     attacker_stats = attacker.stats()
     defender_stats = defender.stats()
-    attack_stat_id: StatId = "atk" if is_physical else "spa"
-    defense_stat_id: StatId = "def" if is_physical else "spd"
+    attack_stat_id: StatId = _OFFENSIVE_STAT_OVERRIDE.get(move_id) or (
+        "atk" if is_physical else "spa"
+    )
+    defense_stat_id: StatId = _DEFENSIVE_STAT_OVERRIDE.get(move_id) or (
+        "def" if is_physical else "spd"
+    )
+    # Foul Play reads the target's Attack and the target's Attack stage; every other attack
+    # reads the user's. The user's ModifyAtk abilities/items still apply below.
+    from_target = move_id in _OFFENSIVE_FROM_TARGET
+    offensive_mon = defender if from_target else attacker
+    offensive_stats = defender_stats if from_target else attacker_stats
 
-    attack_value = _apply_stage(attacker_stats[attack_stat_id], attacker.boost_stage(attack_stat_id))
+    attack_value = _apply_stage(
+        offensive_stats[attack_stat_id], offensive_mon.boost_stage(attack_stat_id)
+    )
     defense_value = _apply_stage(defender_stats[defense_stat_id], defender.boost_stage(defense_stat_id))
+    defense_value = _weather_defense_value(defense_value, field, defender, defense_stat_id)
 
     # Raw-stat abilities/items (applied to the boosted stat, before the base formula).
     if attacker.ability in _HUGE_POWER_ABILITIES:
@@ -643,6 +736,8 @@ def damage_range(
     # Base-power-stage modifiers.
     if attacker.ability == "technician" and base_power <= 60:
         base_power = int(base_power * 1.5)
+    if ate_boosted:  # after Technician's <=60 check, which reads the unboosted power
+        base_power = (base_power * _ATE_POWER_MODIFIER + 2047) // 4096
     type_boost_type = ITEM_TYPE_BOOST.get(attacker.item or "")
     if type_boost_type == move_type:
         base_power = int(base_power * _ITEM_TYPE_BOOST_MULTIPLIER)

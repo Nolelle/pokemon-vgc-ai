@@ -114,6 +114,7 @@ from vgc.principles import (
     utility_kind,
 )
 from vgc.sets import (
+    item_was_lost,
     live_form,
     mega_species_id,
     set_priors_for,
@@ -124,7 +125,10 @@ from vgc.sets import (
     opponent_signal_team,
     opponent_state,
 )
+from vgc.accuracy import hit_probability
+from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
 from vgc.stats import STAT_IDS
+from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
 # --- pure building blocks (unit tested directly against hand-built PokemonStates) ------
 
@@ -133,12 +137,13 @@ from vgc.stats import STAT_IDS
 _UNSET = object()
 
 _PARALYSIS_SPEED_MULTIPLIER = 0.5
+_UNBURDEN_SPEED_MULTIPLIER = 2.0  # data/abilities.ts unburden volatile onModifySpe
 _CHOICE_SCARF_SPEED_MULTIPLIER = 1.5
 
 
 def effective_speed(state: PokemonState) -> float:
     """Effective Speed stat for turn-order purposes: boost stage, then Choice Scarf
-    (1.5x) and paralysis (0.5x). A float estimate (not the engine's exact 4096ths-chain
+    (1.5x), paralysis (0.5x) and Unburden once the holder's item is gone (2x). A float estimate (not the engine's exact 4096ths-chain
     integer math) -- fine for comparing two Pokemon's turn order, which is all this is
     used for; nothing here feeds back into `vgc.damage`'s own (exact) calculations.
     """
@@ -149,6 +154,8 @@ def effective_speed(state: PokemonState) -> float:
         speed *= _CHOICE_SCARF_SPEED_MULTIPLIER
     if state.status == "par":
         speed *= _PARALYSIS_SPEED_MULTIPLIER
+    if state.item_lost and state.ability == "unburden":
+        speed *= _UNBURDEN_SPEED_MULTIPLIER
     return speed
 
 
@@ -325,7 +332,71 @@ _SIDE_CONDITION_TO_SCREEN = {
 # so a mega order that evolves into one of these abilities needs its own moves (including
 # the mega's own turn) scored against the NEW weather, not the stale pre-mega one -- see
 # `_score_attack_order`'s `weather_for_this_order` computation.
+#
+# This is the LEGACY table (Drought/Drizzle only); `_ability_weather` picks the complete
+# `vgc.weather_abilities.SETTER_ABILITY_WEATHER` (adds Sand Stream, Snow Warning, ...) when
+# `PolicyConfig.weather_abilities_complete` is on.
 _ABILITY_WEATHER = {"drought": "sun", "drizzle": "rain"}
+# Tie-break nudge toward the Mega twin when holding has no value (same magnitude as the
+# `mega_evolve_asap` nudge); far below any scoring weight.
+_MEGA_TIEBREAK = 1e-3
+
+
+def _ability_weather(ability: str | None, config: PolicyConfig) -> str | None:
+    """Weather an ability sets on entering/evolving, per ``config.weather_abilities_complete``."""
+
+    table = SETTER_ABILITY_WEATHER if config.weather_abilities_complete else _ABILITY_WEATHER
+    return table.get(ability or "")
+
+
+def _our_team_mons(ctx: _Context) -> list:
+    """Our remaining Pokemon (bench included) as poke-env objects; the actives only when the
+    battle stub has no ``team`` (unit-test contexts)."""
+
+    team = getattr(ctx.battle, "team", None)
+    if team:
+        return list(team.values())
+    return [mon for mon in ctx.our_pokemon if mon is not None]
+
+
+def _mega_weather_effect(
+    mega_ability: str | None, ctx: _Context, config: PolicyConfig
+) -> tuple[str | None, bool, bool]:
+    """``(new_weather, changes, harmful)`` for a Mega that evolves into ``mega_ability``.
+
+    ``changes``: it sets a weather that is not the one now up. ``harmful`` (only with
+    ``mega_weather_signed``): our team gains from the weather it would replace strictly more
+    than from the one it brings, so the swap hurts us and must not count as material.
+    """
+
+    new_weather = _ability_weather(mega_ability, config)
+    changes = new_weather is not None and new_weather != ctx.weather
+    harmful = False
+    if changes and config.mega_weather_signed:
+        scores = team_weather_scores(_our_team_mons(ctx))
+        harmful = scores.get(new_weather, 0) < scores.get(ctx.weather or "", 0)
+    return new_weather, changes, harmful
+
+
+def _mega_hold_has_no_value(mega_ability: str | None, ctx: _Context, config: PolicyConfig) -> bool:
+    """True when ``mega_single_stone_no_hold`` applies: our living team holds exactly one
+    usable Mega stone (nothing to preserve for a better target) and evolving is not merely a
+    re-summon of the Mega's own weather that is already up (that case keeps the option of a
+    later re-summon, so holding still has value)."""
+
+    if not config.mega_single_stone_no_hold:
+        return False
+    stones = sum(
+        1
+        for mon in _our_team_mons(ctx)
+        if not getattr(mon, "fainted", False)
+        and mega_species_id(to_id(getattr(mon, "species", None)), to_id(getattr(mon, "item", None)))
+        is not None
+    )
+    if stones != 1:
+        return False
+    own_weather = _ability_weather(mega_ability, config)
+    return not (own_weather is not None and own_weather == ctx.weather)
 _WEATHER_SPEED_ABILITY = {
     "sun": "chlorophyll",
     "rain": "swiftswim",
@@ -575,7 +646,12 @@ def _screens_from(side_conditions) -> frozenset[str]:
     )
 
 
-def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonState:
+def _our_pokemon_state(
+    pokemon: Pokemon,
+    evolved_form: bool = True,
+    unburden: bool = False,
+    stint_lost: bool | None = None,
+) -> PokemonState:
     """Build a PokemonState for one of OUR OWN Pokemon. Unlike `vgc.sets.opponent_state`,
     our own Stat Points/nature are genuinely known (poke-env parses them straight from
     the Teambuilder team we supplied, see `Pokemon.evs`/`Pokemon.nature`'s docstrings) --
@@ -597,7 +673,7 @@ def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonSt
     boosts = {
         stat: value
         for stat, value in (pokemon.boosts or {}).items()
-        if stat in ("atk", "def", "spa", "spd", "spe") and value
+        if stat in ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion") and value
     }
     state = PokemonState(
         species_id=species_id,
@@ -607,6 +683,7 @@ def _our_pokemon_state(pokemon: Pokemon, evolved_form: bool = True) -> PokemonSt
         status=normalize_status(pokemon.status),
         item=item,
         ability=ability,
+        item_lost=unburden and item_was_lost(pokemon.item) and stint_lost is not False,
     )
     if sp_spread is None or nature is None:
         from vgc.stats import default_opponent_nature, default_opponent_spread
@@ -641,10 +718,20 @@ def _with_revealed_sets(preview_mons: Sequence, battle) -> list:
 
 
 def _best_attacking_move(
-    attacker: PokemonState, move_ids: list[str], defender: PokemonState, field_state: FieldState
+    attacker: PokemonState,
+    move_ids: list[str],
+    defender: PokemonState,
+    field_state: FieldState,
+    block_psychic_priority: bool = False,
+    model_accuracy: bool = False,
 ) -> tuple[float, str | None, int]:
     """The attacker's single best (highest expected %) supported, non-immune attacking
     move against `defender` from `move_ids`. Returns (0.0, None, 0) if none qualify.
+
+    ``block_psychic_priority`` (``PolicyConfig.psychic_terrain_blocks_priority``) drops
+    priority moves Psychic Terrain would stop from hitting a grounded `defender`.
+    ``model_accuracy`` (``PolicyConfig.model_move_accuracy``) ranks and reports moves by
+    expected damage including the hit chance.
     """
     moves_data = load_moves()
     best_pct, best_move_id, best_priority = 0.0, None, 0
@@ -653,11 +740,18 @@ def _best_attacking_move(
         data = moves_data.get(move_id)
         if data is None or data["category"] == "Status":
             continue
+        if block_psychic_priority and psychic_terrain_blocks(
+            data, attacker, defender, field_state.terrain
+        ):
+            continue
         result = damage_range(attacker, defender, move_id, field_state)
         if not result.breakdown["move_supported"] or result.breakdown["immune"]:
             continue
-        if result.expected_percent > best_pct:
-            best_pct = result.expected_percent
+        expected = result.expected_percent
+        if model_accuracy:
+            expected *= hit_probability(data, attacker, defender, field_state.weather)
+        if expected > best_pct:
+            best_pct = expected
             best_move_id = move_id
             best_priority = int(data.get("priority", 0))
     return best_pct, best_move_id, best_priority
@@ -692,8 +786,20 @@ def build_context(
         opp_pokemon.append(None)
 
     evolved_form = config.mega_state_uses_evolved_form
+    unburden = config.model_unburden
+    memory = getattr(battle, "_vgc_battle_memory", None)
+
+    def stint_lost(mon, opponent: bool) -> bool | None:
+        """Public-protocol fact: did `mon` lose its item since it last switched in (Unburden)?"""
+        if memory is None or not unburden:
+            return None
+        role = memory.opponent_role if opponent else memory.our_role
+        return memory.item_lost_this_stint(role, getattr(mon, "species", None))
+
     our_states = [
-        _our_pokemon_state(mon, evolved_form) if mon is not None and not mon.fainted else None
+        _our_pokemon_state(mon, evolved_form, unburden, stint_lost(mon, False))
+        if mon is not None and not mon.fainted
+        else None
         for mon in our_pokemon
     ]
     opp_states: list[PokemonState | None] = []
@@ -707,6 +813,8 @@ def build_context(
                 usage=usage,
                 nature_override=known_nature(meta_team, mon),
                 evolved_form=evolved_form,
+                unburden=unburden,
+                stint_lost=stint_lost(mon, True),
             )
             if mon is not None and not mon.fainted
             else None
@@ -758,9 +866,18 @@ def build_context(
             opp_mon = opp_pokemon[opp_idx]
             if opp_state is None or opp_mon is None:
                 continue
-            move_ids = opponent_move_ids(opp_mon, priors=priors, config=config)
+            move_ids = usable_move_ids(
+                opponent_move_ids(opp_mon, priors=priors, config=config),
+                opp_mon,
+                config.first_turn_moves_restricted,
+            )
             pct, move_id, priority = _best_attacking_move(
-                opp_state, move_ids, our_state, field_vs_us
+                opp_state,
+                move_ids,
+                our_state,
+                field_vs_us,
+                config.psychic_terrain_blocks_priority,
+                config.model_move_accuracy,
             )
             threats_from_each_opp.append(pct)
             if pct > threat_on_us[our_idx].percent:
@@ -782,8 +899,19 @@ def build_context(
             our_mon = our_pokemon[our_idx]
             if our_state is None or our_mon is None:
                 continue
-            our_move_ids = list(our_mon.moves.keys()) if our_mon.moves else []
-            pct, _, _ = _best_attacking_move(our_state, our_move_ids, opp_state, field_vs_opp)
+            our_move_ids = usable_move_ids(
+                list(our_mon.moves.keys()) if our_mon.moves else [],
+                our_mon,
+                config.first_turn_moves_restricted,
+            )
+            pct, _, _ = _best_attacking_move(
+                our_state,
+                our_move_ids,
+                opp_state,
+                field_vs_opp,
+                config.psychic_terrain_blocks_priority,
+                config.model_move_accuracy,
+            )
             pressure_on_opp[opp_idx] = max(pressure_on_opp[opp_idx], pct)
 
     opp_protect_prob = [0.0, 0.0]
@@ -1002,6 +1130,21 @@ def _score_single(
     return info
 
 
+def _hit_probability(
+    move_data: dict,
+    attacker: PokemonState,
+    defender: PokemonState,
+    weather: str | None,
+    config: PolicyConfig,
+) -> float:
+    """Chance ``attacker``'s damaging move connects (1.0 with ``model_move_accuracy`` off).
+    Zoom Lens is not modelled here: it needs the move order, which scoring settles later."""
+
+    if not config.model_move_accuracy:
+        return 1.0
+    return hit_probability(move_data, attacker, defender, weather)
+
+
 def _score_status_mega(
     actor_slot: int, ctx: _Context, config: PolicyConfig
 ) -> tuple[float, dict[str, object]]:
@@ -1011,13 +1154,22 @@ def _score_status_mega(
     if base_state is None:
         return -config.mega_unnecessary_penalty, {"mega_material": False}
     mega_state = mega_evolved_state(base_state)
-    weather_change = _ABILITY_WEATHER.get(mega_state.ability, ctx.weather) != ctx.weather
+    _new_weather, weather_change, harmful_weather = _mega_weather_effect(
+        mega_state.ability, ctx, config
+    )
     speed_flip = any(
         effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(mega_state)
         for idx in ctx.opp_alive()
     )
-    material = weather_change or speed_flip
-    score = 0.0 if material else -config.mega_unnecessary_penalty
+    material = (weather_change and not harmful_weather) or speed_flip
+    score = 0.0
+    if harmful_weather:
+        score -= config.mega_harmful_weather_penalty
+    if not material:
+        if _mega_hold_has_no_value(mega_state.ability, ctx, config):
+            score += _MEGA_TIEBREAK
+        else:
+            score -= config.mega_unnecessary_penalty
     planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
     actor_species = to_id(getattr(actor_mon, "species", None))
     if planned_mega is not None:
@@ -1029,6 +1181,7 @@ def _score_status_mega(
     return score, {
         "mega_material": material,
         "mega_weather_change": weather_change,
+        "mega_harmful_weather": harmful_weather,
         "mega_speed_flip": speed_flip,
     }
 
@@ -1090,13 +1243,26 @@ def _score_attack_order(
     num_hit = len(opp_targets) + len(ally_targets)
     actor_priority = int(move_data.get("priority", 0))
     actor_mon = ctx.our_pokemon[actor_slot]
+    if config.psychic_terrain_blocks_priority and ctx.terrain == "psychic":
+        # Blocked foes still count toward the spread modifier (`num_hit` above): the engine
+        # decides spread from the target list BEFORE the terrain's TryHit filter.
+        opp_targets = [
+            idx
+            for idx in opp_targets
+            if ctx.opp_states[idx] is None
+            or not psychic_terrain_blocks(
+                move_data, attacker_state, ctx.opp_states[idx], ctx.terrain
+            )
+        ]
 
     # A mega evolution that grants a weather-setting ability (Drought/Drizzle) takes
     # effect before this turn's moves resolve in the real engine -- score THIS order's
     # own damage against that new weather, not the pre-mega snapshot in ctx.weather.
     weather_for_this_order = ctx.weather
     if getattr(single, "mega", False):
-        weather_for_this_order = _ABILITY_WEATHER.get(attacker_state.ability, ctx.weather)
+        weather_for_this_order = (
+            _ability_weather(attacker_state.ability, config) or ctx.weather
+        )
 
     score = 0.0
     raw_damage_score = 0.0
@@ -1114,6 +1280,7 @@ def _score_attack_order(
     resolves_threat_before_it_lands = False
     speed_drop_targets: list[int] = []
     flinch_targets: list[int] = []
+    hit_probability_by_target: dict[int, float] = {}
     field_vs_opp = ctx.field_state(
         defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
     )
@@ -1122,11 +1289,16 @@ def _score_attack_order(
         if defender_state is None:
             continue
         result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        # Hit chance for THIS target (spread moves roll accuracy per target). Damage, KO
+        # credit, flinch and speed-drop value below are scaled by it; the *_by_target maps
+        # keep the damage-if-it-lands numbers the cross-slot focus-fire logic compares to HP.
+        hit_p = _hit_probability(move_data, attacker_state, defender_state, weather_for_this_order, config)
+        hit_probability_by_target[idx] = hit_p
         expected_percent_by_target[idx] = result.expected_percent
         current_hp_percent_by_target[idx] = (
             100.0 * defender_state.hp_or_max() / defender_state.max_hp()
         )
-        base_damage = result.expected_percent * config.damage_percent_weight
+        base_damage = result.expected_percent * config.damage_percent_weight * hit_p
         raw_damage_score += base_damage
 
         target_hp = defender_state.hp_or_max()
@@ -1140,6 +1312,8 @@ def _score_attack_order(
         elif is_likely:
             ko_slots.append(idx)
             ko_bonus += config.likely_ko_bonus
+        # A "guaranteed" KO with a 90% move is a 90% KO: credit it in expectation.
+        ko_bonus *= hit_p
 
         damage_term = base_damage
         threat = ctx.threat_on_us[actor_slot]
@@ -1163,8 +1337,10 @@ def _score_attack_order(
                 ctx.trick_room,
             )
         if we_move_first and (is_guaranteed or is_likely):
-            ko_bonus += config.outspeed_ko_bonus
-            resolves_threat_before_it_lands = True
+            ko_bonus += config.outspeed_ko_bonus * hit_p
+            # Boolean flag: "the KO more likely than not lands before the threat" (the same
+            # modal-branch convention the search uses for probabilistic effects).
+            resolves_threat_before_it_lands = resolves_threat_before_it_lands or hit_p > 0.5
 
         # An opponent pivoting out under heavy pressure with weak own output still eats
         # our damage on the replacement, but any KO-dependent bonus evaporates -- only the
@@ -1204,7 +1380,7 @@ def _score_attack_order(
             speed_value = config.speed_drop_target_value * (1.0 + ctx.opp_threat_score[idx] / 100.0)
             if flips_order:
                 speed_value += config.speed_control_immediate_ko_bonus * 0.5
-            contribution += speed_value
+            contribution += speed_value * hit_p
             speed_drop_targets.append(idx)
 
         secondary = move_data.get("secondary") or {}
@@ -1217,6 +1393,7 @@ def _score_attack_order(
             flinch_chance = float(secondary.get("chance", 0.0)) / 100.0
             contribution += (
                 flinch_chance
+                * hit_p
                 * config.generic_flinch_weight
                 * (1.0 + ctx.opp_threat_score[idx] / 100.0)
             )
@@ -1250,8 +1427,12 @@ def _score_attack_order(
             continue
         result = damage_range(attacker_state, ally_state, move_id, field_vs_us)
         ally_expected_percent_by_target[idx] = result.expected_percent
+        ally_hit_p = _hit_probability(
+            move_data, attacker_state, ally_state, weather_for_this_order, config
+        )
         score -= (
             result.expected_percent
+            * ally_hit_p
             * config.damage_percent_weight
             * config.ally_damage_penalty_weight
         )
@@ -1266,20 +1447,33 @@ def _score_attack_order(
             for idx in opp_targets:
                 defender_state = ctx.opp_states[idx]
                 if defender_state is not None:
-                    base_expected += damage_range(
-                        base_state, defender_state, move_id, base_field
-                    ).expected_percent
+                    base_expected += (
+                        damage_range(base_state, defender_state, move_id, base_field).expected_percent
+                        * _hit_probability(
+                            move_data, base_state, defender_state, ctx.weather, config
+                        )
+                    )
             mega_gain = raw_damage_score - base_expected * config.damage_percent_weight
             speed_flip = any(
                 effective_speed(base_state) <= ctx.opp_speed[idx] < effective_speed(attacker_state)
                 for idx in opp_targets
             )
             weather_change = weather_for_this_order != ctx.weather
-            mega_material = (
-                mega_gain >= config.mega_material_gain_floor or speed_flip or weather_change
+            _new_weather, _changes, harmful_weather = _mega_weather_effect(
+                attacker_state.ability, ctx, config
             )
+            mega_material = (
+                mega_gain >= config.mega_material_gain_floor
+                or speed_flip
+                or (weather_change and not harmful_weather)
+            )
+            if harmful_weather:
+                score -= config.mega_harmful_weather_penalty
             if not mega_material:
-                score -= config.mega_unnecessary_penalty
+                if _mega_hold_has_no_value(attacker_state.ability, ctx, config):
+                    score += _MEGA_TIEBREAK
+                else:
+                    score -= config.mega_unnecessary_penalty
         planned_mega = getattr(ctx.preview_plan, "default_mega_species", None)
         actor_species = to_id(getattr(actor_mon, "species", None))
         if planned_mega is not None:
@@ -1357,6 +1551,7 @@ def _score_attack_order(
         {
             "single_target_slot": single_target_slot,
             "expected_percent_by_target": expected_percent_by_target,
+            "hit_probability_by_target": hit_probability_by_target,
             "current_hp_percent_by_target": current_hp_percent_by_target,
             "guaranteed_ko_slots": guaranteed_ko_slots,
             "ko_slots": ko_slots,
@@ -1409,6 +1604,21 @@ def _score_status_move(
                 "target_slot": ally_idx,
             }
         return 0.0, {"reason": "ally_target_unmodeled", "target_slot": ally_idx}
+    if (
+        config.psychic_terrain_blocks_priority
+        and ctx.terrain == "psychic"
+        and targets
+        and ctx.our_states[actor_slot] is not None
+    ):
+        # Priority status moves (Prankster Taunt/Thunder Wave/sleep, ...) are stopped by
+        # Psychic Terrain on grounded foes just like damaging ones.
+        foe_states = [ctx.opp_states[idx] for idx, is_ally in targets if not is_ally]
+        if foe_states and all(
+            state is not None
+            and psychic_terrain_blocks(move_data, ctx.our_states[actor_slot], state, ctx.terrain)
+            for state in foe_states
+        ):
+            return 0.0, {"reason": "psychic_terrain_blocks_priority"}
     if move_id == "trickroom":
         return _score_trick_room(ctx, config)
     if move_id in SLEEP_MOVES:
@@ -1544,12 +1754,14 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     available_switches = getattr(ctx.battle, "available_switches", None) or [[], []]
     has_reposition = actor_slot < len(available_switches) and bool(available_switches[actor_slot])
     reposition_value = config.protect_reposition_bonus if has_reposition else 0.0
-    score += information_value + stall_value + reposition_value
+    bonus_scale = success_prob if config.protect_bonuses_scale_with_odds else 1.0
+    score += (information_value + stall_value + reposition_value) * bonus_scale
     return score, {
         "threat_percent": threat.percent,
         "combined_threat_percent": combined_threat,
         "protect_counter": protect_counter,
         "success_prob": success_prob,
+        "bonus_scale": bonus_scale,
         "information_value": information_value,
         "stall_value": stall_value,
         "reposition_value": reposition_value,

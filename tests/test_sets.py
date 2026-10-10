@@ -72,7 +72,8 @@ def test_curated_nature_override_wins_over_usage_guess() -> None:
 def test_boosts_filtered_to_damage_relevant_stats() -> None:
     fake = _FakePokemon(species="garchomp", boosts={"atk": 2, "accuracy": 1, "evasion": -1, "def": 0})
     state = opponent_state(fake, usage={})
-    assert state.boosts == {"atk": 2}  # accuracy/evasion/zero-value dropped
+    # Stat stages that matter for damage, speed and hit chance survive; zero-value ones drop.
+    assert state.boosts == {"atk": 2, "accuracy": 1, "evasion": -1}
 
 
 def test_status_normalized_from_status_like_object() -> None:

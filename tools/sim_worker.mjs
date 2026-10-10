@@ -239,6 +239,89 @@ async function handleStart(msg) {
 	return respond(msg, entry);
 }
 
+// ## Forced Protect-family rolls (exact stall odds)
+//
+// Showdown's `stall` condition (data/conditions.ts) rolls `randomChance(1, counter)` in
+// `onStallMove` every time a Pokemon that still holds the `stall` volatile uses a
+// protect-family move (Protect, Detect, Spiky Shield, King's Shield, Baneful Bunker,
+// Burning Bulwark, Silk Trap, Obstruct, Endure, Max Guard). Wide Guard / Quick Guard
+// add the volatile but never roll. A clone may therefore pin that one roll:
+// `{"cmd":"clone",...,"stallForce":{"p1a":true,"p2b":false}}`.
+//
+// The dex (and so the `stall` condition) is frozen and shared by every battle, so the
+// pin is applied per battle: it is stored on the holder's `stall` volatile state
+// (stamped with the battle turn, so a pin that was never consumed cannot leak into a
+// later turn) and consulted by a wrapper installed on THIS battle's `randomChance`. The
+// wrapper only acts on the call made while the stall condition's `StallMove` handler is
+// running for the pinned volatile; it always makes the stock draw first, so a forced
+// success and a forced failure consume the same PRNG value and share the rest of the
+// random stream. Every other `randomChance` call, and any stall roll without a pin,
+// behaves exactly as stock (the stock handler still deletes the volatile on failure).
+//
+// Moves whose `onPrepareHit` runs `runEvent('StallMove')` in data/moves.ts are the only
+// ones that roll the stall odds; Wide Guard, Quick Guard and Mat Block add the volatile
+// without rolling. tests/test_exact_stall_odds.py checks this list against moves.ts.
+const STALL_ROLL_MOVES = new Set([
+	'protect', 'detect', 'spikyshield', 'kingsshield', 'banefulbunker', 'burningbulwark',
+	'silktrap', 'obstruct', 'endure', 'maxguard',
+]);
+
+function patchStallForce(battle) {
+	if (Object.prototype.hasOwnProperty.call(battle, 'randomChance')) return;
+	const stock = battle.randomChance;
+	battle.randomChance = function (numerator, denominator) {
+		const drawn = stock.call(this, numerator, denominator);
+		const state = this.effectState;
+		if (this.effect && this.effect.id === 'stall' && this.event && this.event.id === 'StallMove' &&
+			state && state.vgcForce) {
+			const force = state.vgcForce;
+			delete state.vgcForce;
+			if (force.turn === this.turn) return force.success;
+		}
+		return drawn;
+	};
+}
+
+function applyStallForce(battle, stallForce) {
+	for (const [key, success] of Object.entries(stallForce || {})) {
+		const match = /^(p[12])([a-c])$/.exec(key);
+		if (!match) throw new Error(`bad stallForce key ${JSON.stringify(key)}`);
+		const side = battle.sides[Number(match[1][1]) - 1];
+		const pokemon = side && side.active[match[2].charCodeAt(0) - 97];
+		const stall = pokemon && pokemon.volatiles && pokemon.volatiles.stall;
+		if (!stall) throw new Error(`stallForce ${key}: no stall volatile to force`);
+		stall.vgcForce = { success: Boolean(success), turn: battle.turn };
+	}
+}
+
+// Active Pokemon that currently hold a stall volatile (so their next protect-family use
+// is a roll), with the odds denominator and each legal move id in request order, so the
+// caller can tell from a choice string whether the roll will happen.
+function handleStallInfo(msg) {
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	const battle = entry.stream.battle;
+	if (!battle) throw new Error(`battle ${msg.id} has not started`);
+	const stallers = [];
+	for (const side of battle.sides) {
+		side.active.forEach((pokemon, position) => {
+			const stall = pokemon && !pokemon.fainted && pokemon.volatiles.stall;
+			if (!stall) return;
+			const request = pokemon.getMoveRequestData();
+			stallers.push({
+				side: side.id,
+				position: String.fromCharCode(97 + position),
+				species: pokemon.species.id,
+				counter: stall.counter || 1,
+				moves: request.moves.map((move) => move.id),
+				disabled: request.moves.map((move) => Boolean(move.disabled)),
+				rolls: request.moves.map((move) => STALL_ROLL_MOVES.has(move.id)),
+			});
+		});
+	}
+	return { id: msg.id, stallers };
+}
+
 async function handleClone(msg) {
 	if (battles.has(msg.id)) throw new Error(`battle id ${msg.id} already exists`);
 	const source = battles.get(msg.source);
@@ -278,6 +361,8 @@ async function handleClone(msg) {
 		// user-visible "RNG was reset" protocol line to an otherwise exact clone.
 		stream.battle.prng = new PRNG(msg.seed);
 	}
+	patchStallForce(stream.battle);
+	if (msg.stallForce) applyStallForce(stream.battle, msg.stallForce);
 	entry.ended = Boolean(stream.battle.ended);
 	entry.winner = entry.ended ? source.winner : null;
 	battles.set(msg.id, entry);
@@ -398,16 +483,59 @@ function showdownTypeName(battle, type) {
 	return info.name;
 }
 
-function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
+// True when `itemId` is a Mega stone THIS Pokemon's base species can use. The snapshot has
+// no item for a foe whose item is hidden, so patchPokemon would blank the stone the mirror
+// was built around (the belief or prior item), and a foe without its stone can never Mega.
+function isMegaStoneFor(battle, pokemon, itemId) {
+	if (!itemId) return false;
+	const item = battle.dex.items.get(itemId);
+	return Boolean(item.exists && item.megaStone && item.megaStone[pokemon.baseSpecies.name]);
+}
+
+// Showdown (Champions) shows a foe's HP as `floor(100 * hp / maxhp) || 1` percent. Of the
+// absolute HP values that display as `percent`, pick the middle one: it is the unbiased
+// guess for how much HP is really left. 100% is exact (only hp === maxhp shows 100), and
+// anything alive shows at least 1 HP.
+function hpForPublicPercent(percent, maxhp) {
+	if (percent <= 0) return 0;
+	if (percent >= 100) return maxhp;
+	const low = Math.max(1, Math.ceil(percent * maxhp / 100));
+	const high = Math.max(low, Math.min(maxhp - 1, Math.ceil((percent + 1) * maxhp / 100) - 1));
+	return Math.floor((low + high) / 2);
+}
+
+function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 	const species = battle.dex.species.get(snapshot.species_id);
+	// The set the battle was BUILT from still names the item the Pokemon started with.
+	const originalItem = pokemon.set && pokemon.set.item;
 	if (species.exists) {
+		// A foe that already Mega Evolved arrives as the Mega species with BASE-forme
+		// stats: its numeric stats are never public. Recompute them the way Showdown's
+		// setSpecies does, from the new forme's base stats and this Pokemon's own set.
+		if (opts.megaStats && species.isMega && pokemon.species.id !== species.id &&
+			!snapshot.transformed) {
+			const formeStats = battle.spreadModify(species.baseStats, pokemon.set);
+			for (const stat of ['atk', 'def', 'spa', 'spd', 'spe']) {
+				pokemon.storedStats[stat] = formeStats[stat];
+				pokemon.baseStoredStats[stat] = formeStats[stat];
+			}
+		}
 		pokemon.species = species;
 		pokemon.types = snapshot.types.length ? snapshot.types.map(
 			(type) => showdownTypeName(battle, type)
 		) : species.types.slice();
 	}
-	pokemon.hp = snapshot.current_hp === null ? pokemon.hp : snapshot.current_hp;
-	pokemon.maxhp = snapshot.max_hp === null ? pokemon.maxhp : snapshot.max_hp;
+	if (opts.hpScale && snapshot.current_hp !== null && snapshot.max_hp) {
+		// A foe's HP is a public PERCENT. Keep the mirror set's calculated max HP and
+		// convert, instead of declaring a 186-HP Pokemon to have 100 max HP.
+		const fraction = snapshot.current_hp / snapshot.max_hp;
+		pokemon.hp = snapshot.max_hp === 100
+			? hpForPublicPercent(snapshot.current_hp, pokemon.maxhp)
+			: Math.min(pokemon.maxhp, Math.max(fraction > 0 ? 1 : 0, Math.round(fraction * pokemon.maxhp)));
+	} else {
+		pokemon.hp = snapshot.current_hp === null ? pokemon.hp : snapshot.current_hp;
+		pokemon.maxhp = snapshot.max_hp === null ? pokemon.maxhp : snapshot.max_hp;
+	}
 	pokemon.fainted = Boolean(snapshot.fainted);
 	const publicStats = Object.fromEntries(snapshot.stats);
 	for (const stat of ['atk', 'def', 'spa', 'spd', 'spe']) {
@@ -419,6 +547,11 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 	pokemon.speed = pokemon.storedStats.spe;
 	pokemon.status = snapshot.status || '';
 	pokemon.statusState = { id: pokemon.status, target: pokemon };
+	if (opts.restoreState && pokemon.status === 'tox') {
+		// Showdown's Toxic damage is stage/16 of max HP and it counts residual ticks since
+		// switch-in; poke-env counts the same ticks. Without it Toxic did 0 damage.
+		pokemon.statusState.stage = Math.min(15, Math.max(0, Number(snapshot.status_counter || 0)));
+	}
 	if (pokemon.status === 'slp' || pokemon.status === 'frz') {
 		const defaultRemaining = Math.max(1, 3 - Number(snapshot.status_counter || 0));
 		const remaining = pokemon.status === 'slp' && Number.isInteger(hidden.sleepTime)
@@ -427,7 +560,14 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 		pokemon.statusState.time = remaining;
 	}
 	pokemon.boosts = Object.fromEntries(snapshot.boosts);
-	pokemon.item = snapshot.item_id || '';
+	// An unrevealed foe item is the mirror's belief, not a public fact: keep it. It is
+	// cleared only when the snapshot says the item is known, or is publicly gone
+	// (`consumed`).
+	const keepGuess = snapshot.item_state === 'unknown' && pokemon.item &&
+		(opts.keepHiddenItems || (opts.opponentMega && isMegaStoneFor(battle, pokemon, pokemon.item)));
+	if (!keepGuess) {
+		pokemon.item = snapshot.item_id || '';
+	}
 	pokemon.itemState = { id: pokemon.item, target: pokemon };
 	pokemon.baseAbility = snapshot.base_ability_id || pokemon.baseAbility;
 	pokemon.ability = snapshot.temporary_ability_id || snapshot.ability_id || pokemon.ability;
@@ -437,6 +577,28 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 		pokemon.volatiles[effect.id] = effectState(effect.id, pokemon, effect, battle, hidden);
 		if (effect.id === 'substitute' && pokemon.volatiles[effect.id].hp === undefined) {
 			pokemon.volatiles[effect.id].hp = Math.max(1, Math.floor(pokemon.maxhp / 4));
+		}
+	}
+	if (opts.restoreState) {
+		// Unburden has no `-start` line, so poke-env never lists its volatile: a mon that
+		// lost its item (consumed, knocked off) came back without the doubled Speed.
+		// Own side: the packed team gave it an item and the request now shows none.
+		// Foe: the item is publicly known to be gone.
+		// Showdown ends Unburden on switch-out and a return without the item does not bring
+		// it back, so the public protocol's "lost it DURING THIS STINT" fact decides when the
+		// battle memory supplied it; only without memory fall back to "the item is gone".
+		const itemGone = snapshot.item_lost_this_stint ??
+			(snapshot.item_state === 'consumed' ||
+				(snapshot.item_state === 'none' && Boolean(originalItem)));
+		if (pokemon.ability === 'unburden' && !pokemon.item && itemGone &&
+			!pokemon.volatiles.unburden) {
+			pokemon.volatiles.unburden = { id: 'unburden', target: pokemon };
+		}
+		// Disable's target move is only in the `-start` line; poke-env drops it. The
+		// caller recovers it from the protocol history. Without it the volatile is inert.
+		const disabledMove = hidden.disabledMove;
+		if (pokemon.volatiles.disable && disabledMove && !pokemon.volatiles.disable.move) {
+			pokemon.volatiles.disable.move = disabledMove;
 		}
 	}
 	if (snapshot.must_recharge && !pokemon.volatiles.mustrecharge) {
@@ -462,6 +624,13 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 	pokemon.maybeTrapped = false;
 	pokemon.transformed = Boolean(snapshot.transformed);
 	pokemon.activeTurns = snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1);
+	if (opts.restoreState) {
+		// Champions' Fake Out / First Impression are disabled once `activeMoveActions` is
+		// non-zero. A rebuilt Pokemon starts at 0, so a foe could Fake Out again on every
+		// turn of every branch. poke-env's `first_turn` is exactly "has not acted since
+		// switching in": any later turn means at least one move action.
+		pokemon.activeMoveActions = snapshot.first_turn ? 0 : Math.max(1, pokemon.activeMoveActions || 1);
+	}
 	pokemon.weighthg = snapshot.weight === null ? pokemon.weighthg : Math.round(snapshot.weight * 10);
 	pokemon.lastMove = snapshot.last_move_id ? battle.dex.moves.get(snapshot.last_move_id) : null;
 	pokemon.lastMoveUsed = pokemon.lastMove;
@@ -479,6 +648,19 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 			disabledSource: publicMove.disabled_reason || '',
 		};
 	});
+	if (opts.restoreState && snapshot.item_state !== 'unknown' && !snapshot.first_turn &&
+		snapshot.last_move_id && pokemon.item && !pokemon.volatiles.choicelock) {
+		// Choice lock: a PUBLICLY KNOWN Choice item and a move used since switching in. The
+		// lock volatile stores the locked move; the DisableMove pass in handlePatchPublic
+		// then disables every other move exactly as Showdown's own turn start does.
+		const item = battle.dex.items.get(pokemon.item);
+		const locked = pokemon.moveSlots.find((slot) => slot.id === snapshot.last_move_id);
+		if (item.isChoice && locked) {
+			pokemon.volatiles.choicelock = {
+				id: 'choicelock', target: pokemon, move: locked.id, sourceEffect: item,
+			};
+		}
+	}
 	if (pokemon.volatiles.encore && !pokemon.volatiles.encore.move) {
 		// A patched Encore arrives without the engine's `move` field (the snapshot
 		// carries durations, not locked-move ids). Branching with it crashes the
@@ -492,7 +674,8 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}) {
 	}
 }
 
-function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
+function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
+	const opponentMega = Boolean(opts.opponentMega);
 	const used = new Set();
 	const bySpecies = new Map();
 	for (const pokemonSnapshot of snapshot.pokemon) {
@@ -506,6 +689,7 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 			pokemon,
 			pokemonSnapshot,
 			hiddenBySpecies[pokemonSnapshot.species_id] || {},
+			opts,
 		);
 		bySpecies.set(pokemonSnapshot.species_id, pokemon);
 		if (pokemonSnapshot.base_species_id) {
@@ -552,6 +736,17 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}) {
 		side.pokemon[index].position = index;
 	}
 	side.slotConditions = side.active.map(() => ({}));
+	// A null `can_mega_evolve` slot means the Mega ability is not observable (the foe's
+	// request is private). Showdown's constructor computed it from the item the Pokemon
+	// was BUILT with, and the patches above may have changed item or species since, so ask
+	// the engine again for every Pokemon on this side. A side that has spent its Mega gets
+	// null everywhere below.
+	if (opponentMega && !snapshot.used_mega_evolution &&
+		snapshot.can_mega_evolve.some((value) => value === null || value === undefined)) {
+		for (const pokemon of side.pokemon) {
+			pokemon.canMegaEvo = battle.actions.canMegaEvo(pokemon);
+		}
+	}
 	for (let index = 0; index < side.active.length; index++) {
 		if (!side.active[index]) continue;
 		side.active[index].switchFlag = snapshot.force_switch[index] ? true : false;
@@ -621,9 +816,40 @@ async function handlePatchPublic(msg) {
 	const perspective = msg.perspective || 'p1';
 	const ownIndex = perspective === 'p1' ? 0 : 1;
 	const hidden = msg.hidden || {};
-	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {});
-	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {});
+	const options = msg.options || {};
+	// Both sides: state the public snapshot carries but the parser's rebuild used to drop.
+	const shared = {
+		megaStats: Boolean(options.megaStats),
+		restoreState: Boolean(options.restoreState),
+	};
+	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {}, shared);
+	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {}, {
+		...shared,
+		opponentMega: Boolean(msg.opponentMega),
+		hpScale: Boolean(options.hpScale),
+		keepHiddenItems: Boolean(options.keepHiddenItems),
+	});
 	fillVolatileSources(battle);
+	if (options.restoreState) {
+		// Showdown computes which moves are unavailable (Choice lock, Disable, Fake Out
+		// after the first turn, ...) at turn start. The patch restored the state those
+		// rules read, so run the same DisableMove pass. It only ADDS disabled moves: the
+		// flags our own request already reported are kept.
+		for (const side of battle.sides) {
+			for (const pokemon of side.active) {
+				if (!pokemon || pokemon.fainted || !pokemon.hp) continue;
+				battle.runEvent('DisableMove', pokemon);
+				for (const moveSlot of pokemon.moveSlots) {
+					const activeMove = battle.dex.getActiveMove(moveSlot.id);
+					battle.singleEvent('DisableMove', activeMove, null, pokemon);
+					if (activeMove.flags['cantusetwice'] && pokemon.lastMove &&
+						pokemon.lastMove.id === moveSlot.id) {
+						pokemon.disableMove(pokemon.lastMove.id);
+					}
+				}
+			}
+		}
+	}
 	battle.field.weather = state.weather.length ? state.weather[0].id : '';
 	battle.field.weatherState = effectState(
 		battle.field.weather,
@@ -753,6 +979,8 @@ async function dispatch(msg) {
 			return handleInspect(msg);
 		case "dump":
 			return handleDump(msg);
+		case "stallInfo":
+			return handleStallInfo(msg);
 		case "patchPublic":
 			return handlePatchPublic(msg);
 		case "close":

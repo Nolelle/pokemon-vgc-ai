@@ -187,6 +187,16 @@ class PolicyConfig:
     # -- that one stays a flat multiplier rather than switching to this exact formula
     # since it only ever applies once, not compounding across a whole streak).
     protect_success_decay: float = 1.0 / 3.0
+    # A Protect that FAILS (probability 1 - `protect_success_decay ** protect_counter`)
+    # buys none of the scouting, stalling or repositioning value `_score_protect` adds on
+    # top of the threat term, yet those three used to be added at full value even on a
+    # 1/3 or 1/9 repeat. True scales information, field-stall and reposition bonuses by the
+    # same success probability as the threat term; the low-threat penalty stays unscaled
+    # (it is the cost of spending the turn, whether or not Protect works). False = the
+    # legacy full-value bonuses, kept as the control for same-session A/Bs. Ladder
+    # evidence (46 games): 25 back-to-back Protects, ~2/3 failed; losses averaged 2.6
+    # Protects per game vs 1.5 in wins.
+    protect_bonuses_scale_with_odds: bool = True
     # Flat penalty for choosing Protect when the estimated incoming threat on this slot is
     # below this many HP percent -- keeps the evaluator from reflexively protecting both
     # slots when neither is actually in danger this turn.
@@ -339,6 +349,75 @@ class PolicyConfig:
     # alternate Megas remain legal but need a real current-turn gain to overcome it.
     default_mega_bonus: float = 6.0
     alternate_mega_penalty: float = 8.0
+    # Which abilities count as "the Mega sets weather" for the quick scorer and the fast
+    # search (`vgc.evaluator._ability_weather`). The legacy table held only Drought and
+    # Drizzle, so Mega Tyranitar (Sand Stream), Mega Abomasnow and Mega Froslass (Snow
+    # Warning) looked weatherless: their damage was scored in the stale pre-Mega weather and
+    # their weather change never made the Mega "material". True uses
+    # `vgc.field_setters.ABILITY_CONDITIONS` filtered to weather; False is the legacy
+    # control (Drought/Drizzle only).
+    weather_abilities_complete: bool = True
+    # Weather-dependent accuracy in the fast search's damage forecast: Thunder and
+    # Hurricane never miss in rain and are 50% accurate in sun, Blizzard never misses in snow
+    # (data/moves.ts onModifyMove; the Champions mod does not override them). The forecast
+    # otherwise ignores damaging-move accuracy, so only these weather-dependent moves are
+    # discounted (70% base elsewhere). False is the legacy control: they always connect.
+    weather_accuracy_modifiers: bool = True
+    # Sign the weather change a Mega Evolution causes. A Mega whose ability REPLACES a weather
+    # our own team gains from (setters, Chlorophyll/Swift Swim/Sand Rush/Slush Rush and the
+    # other weather-benefit abilities of our remaining Pokemon, including Mega forms) with one
+    # it gains less from is not "material" and pays `mega_harmful_weather_penalty`; a change
+    # to a weather our team gains from still counts as material. False is the legacy control:
+    # any weather change is material.
+    mega_weather_signed: bool = True
+    # Score cost for a Mega Evolution that replaces a weather our team prefers with a worse
+    # one. Set just above `mega_material_gain_floor` (10): the Mega must clearly out-damage
+    # its non-Mega twin before it is worth taking our own weather off the board. It stacks
+    # with `mega_unnecessary_penalty` when the Mega is also not otherwise material.
+    mega_harmful_weather_penalty: float = 12.0
+    # When our living team holds exactly ONE usable Mega stone there is no once-per-battle
+    # resource to preserve against a better target, so skip `mega_unnecessary_penalty` (and
+    # prefer the Mega twin by a tiny tie-break so the exact judge, which keeps fast-search
+    # order on equal values, evolves). Exception: a Mega whose own weather is ALREADY up gains
+    # nothing weather-wise now, and holding keeps the evolution available to re-summon it after
+    # an opposing setter replaces it, so the penalty stays. False is the legacy control.
+    mega_single_stone_no_hold: bool = True
+    # Psychic Terrain stops moves of effective priority above 0 (Fake Out, Sucker Punch,
+    # Extreme Speed, Aqua Jet, Prankster/Gale Wings/Triage-boosted moves, ...) from hitting a
+    # grounded foe, for both sides (data/conditions.ts psychicterrain onTryHit; allies and
+    # self-targeting moves are unaffected). The evaluator and the fast search scored such
+    # moves at full damage. False is the legacy control.
+    psychic_terrain_blocks_priority: bool = True
+    # Unburden: Speed doubles once the holder's item is consumed or lost, until it switches
+    # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
+    # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's
+    # Psychic Seed) when the terrain is up, so the Speed doubling shows up in the same turn's
+    # move order. Unburden ends on switch-out, so the builders also require the item to have been
+    # lost DURING THE CURRENT STINT (`BattleMemory.item_lost_this_stint`, from `-enditem`
+    # while active); without a battle memory they fall back to "the item is gone".
+    # False is the legacy control.
+    model_unburden: bool = True
+    # Spread-move damage modifier (x0.75) is decided by the targets the move actually has when
+    # it executes (data: sim/battle-actions.ts trySpreadMoveHit), so a target KO'd earlier in
+    # the same turn no longer counts. False is the legacy control (target count fixed when the
+    # turn's actions are built).
+    spread_recount_targets: bool = True
+    # Damaging-move accuracy (data/champions/moves.json; `accuracy: true` never misses) in the
+    # quick scorer and the fast search, including the weather rules (Thunder/Hurricane/Blizzard),
+    # accuracy/evasion stages, Compound Eyes, Hustle, No Guard, Sand Veil/Snow Cloak, Wide Lens,
+    # Zoom Lens and Bright Powder (`vgc.accuracy.hit_probability`). Treated as an EXPECTATION,
+    # never as a separate branch: damage, KO credit, flinch and speed-drop value are scaled by
+    # the hit chance per target (spread moves roll per target), and the search weights HP lost and
+    # faints by it. So a miss is neither impossible nor certain inside the search's per-reply
+    # worst-case (min over opponent replies) term. False is the legacy control: every damaging
+    # move hits (only `weather_accuracy_modifiers` then discounts Thunder/Hurricane/Blizzard).
+    model_move_accuracy: bool = True
+    # Fake Out and First Impression only work on the user's first move after switching in (the
+    # Champions mod disables them once `activeMoveActions` is non-zero). The fast search offered
+    # them to the opponent on every turn and counted them in pressure/threat estimates and
+    # projected turns. True drops them unless poke-env's `first_turn` says the Pokemon is on its
+    # first turn out. False is the legacy control.
+    first_turn_moves_restricted: bool = True
 
     # -- Tracing -----------------------------------------------------------------------
     # How many top-scoring candidate orders decision_trace.py records per turn when
@@ -445,6 +524,17 @@ class PolicyConfig:
     # effects, and Speed ties are averaged across four real simulator branches instead
     # of being replaced by hand-written expected-value shortcuts.
     exact_search_future_samples: int = 4
+    # Protect-family moves (Protect, Detect, Spiky Shield, King's Shield, Baneful Bunker,
+    # Burning Bulwark, Silk Trap, Obstruct, Endure) succeed with probability 1/counter once
+    # the user's stall counter is above 1 (1/3 after one use, 1/9 after two). That roll is
+    # one draw from the sampled random stream, so with only a few future samples a 1/3
+    # Protect shows up as 0, 1 or 2 successes out of 2. True: for every branch where an
+    # active Pokemon (either side) repeats such a move, run BOTH forced outcomes (and every
+    # combination when several Pokemon repeat) for each future sample and weight them by
+    # the true odds. The forced roll still consumes its PRNG draw, so both outcomes share
+    # the rest of the random stream (common random numbers). Costs one extra clone per
+    # repeat-staller combination. False = legacy sampling.
+    exact_search_exact_stall_odds: bool = True
     # Number of current-state belief branches used for hidden timers such as the
     # Champions 2-or-3-action sleep duration. These are facts no player is told; each
     # branch is a legal Showdown state rather than a made-up deterministic duration.
@@ -494,6 +584,46 @@ class PolicyConfig:
     # finished game with no winner scores 0. Each was verified on a real direct battle.
     # False is the exact legacy scorecard, kept only for same-session A/Bs.
     exact_search_consistent_accounting: bool = True
+    # Let the OPPONENT Mega Evolve inside live-mirror branches (2026-10-09). poke-env has no
+    # `opponent_can_mega_evolve`, so the public snapshot said "cannot Mega" for the foe's
+    # whole side, the worker nulled `canMegaEvo` on its active slots, and Showdown never
+    # offered an opponent Mega in any simulated turn -- the judge searched every foe as a
+    # non-Megaing Pokemon. True: the snapshot reports the foe's Mega ability as UNKNOWN until
+    # the foe has used its one Mega (then none), the worker recomputes `canMegaEvo` from each
+    # foe's current item (the belief/prior stone) and species, an unrevealed stone belief
+    # survives the public patch, and an already-Mega'd foe holds the stone its forme
+    # requires. False is the exact legacy control (the foe never Megas in the mirror).
+    exact_mirror_opponent_mega: bool = True
+    # Live-mirror reconstruction fixes (2026-10-09, from a read-only Codex audit). Each is
+    # True = fixed, False = the exact legacy reconstruction, kept for same-session A/Bs.
+    # HP scale: a foe's public HP is a PERCENT (100/100), and the patch copied it into
+    # Showdown's absolute hp/maxhp, so a 186-HP foe was simulated with 100 max HP and died
+    # to about half the real damage. True keeps the mirror set's calculated max HP and
+    # converts the percent to the HP Champions would have displayed it as.
+    exact_mirror_hp_scale: bool = True
+    # Hidden foe items: an unrevealed foe's guessed (belief / prior) item was blanked by
+    # the public patch on ACTIVE foes (benched foes kept it). True keeps the guess until
+    # the item is publicly consumed/removed or revealed to be something else.
+    exact_mirror_keep_hidden_items: bool = True
+    # A foe that already Mega Evolved had its species and types patched but kept the BASE
+    # forme's stats (a foe's numeric stats are never public). True recalculates them from
+    # the Mega forme's base stats and the mirror set's own spread, as Showdown does.
+    exact_mirror_mega_stats: bool = True
+    # State the public patch used to drop: moves used since switch-in (Fake Out / First
+    # Impression could be used again in every branch), the Choice lock on a revealed
+    # Choice item, the Toxic stage (Toxic did 0 damage), the Disable target move, and an
+    # activated Unburden. True restores them for both sides.
+    exact_mirror_restore_state: bool = True
+    # Exact live-judge timers: with one hypothesis the judge kept only the most likely
+    # remaining sleep and dropped the 1/3 shorter one (a real wake chance became 0).
+    # True searches every remaining-duration branch (up to exact_search_state_hypotheses)
+    # and weights them by the real sampling prior. False is the single-branch legacy.
+    exact_judge_exact_timers: bool = True
+    # Opponent reply shortlist: a Mega and a non-Mega version of the same move plan are
+    # two orders to the evaluator, so in a Mega position every one of the top N replies
+    # could be the same two plans twice. True keeps only the higher-scored twin so N slots
+    # hold N distinct plans. False is the legacy top-N.
+    exact_search_dedupe_mega_replies: bool = True
     # Points per Pokemon still standing (brought and not fainted, unseen opponent
     # reserves included), on top of its HP. Without it a KO was worth only the target's
     # last HP: finishing a 10% foe scored +10 while chipping a healthy one scored +30,

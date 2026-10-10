@@ -61,7 +61,7 @@ import copy
 from dataclasses import asdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.player.battle_order import DoubleBattleOrder
@@ -419,6 +419,7 @@ class DirectBattle:
         battle_id: str,
         *,
         seed: Sequence[int] | None = None,
+        stall_force: Mapping[str, bool] | None = None,
     ) -> DirectBattle:
         """Return an exact simulator clone with an independent future.
 
@@ -430,6 +431,11 @@ class DirectBattle:
 
         Each player's poke-env view is rebuilt from that side's fogged protocol
         transcript. Omniscient simulator state is never fed into either observation.
+
+        ``stall_force`` maps an active slot (``"p1a"``, ``"p2b"``) that currently holds
+        Showdown's ``stall`` volatile to the forced result of its next protect-family
+        roll (True = the move works). The roll still draws from the PRNG, so a forced
+        success and a forced failure share the rest of the random stream.
         """
 
         clone = DirectBattle(
@@ -455,12 +461,22 @@ class DirectBattle:
             payload["omitTranscript"] = True
         if seed is not None:
             payload["seed"] = list(seed)
+        if stall_force:
+            payload["stallForce"] = {key: bool(value) for key, value in stall_force.items()}
         clone._apply(self.worker.request(payload))
         # The source knows which sides the simulator is waiting on. A transcript rebuild
         # cannot: after a hidden-trap rejection only the rejected side got a new request,
         # but replaying the transcript leaves the other side's last request open too.
         clone._waiting = dict(self._waiting)
         return clone
+
+    def stall_info(self) -> list[dict[str, Any]]:
+        """Active Pokemon holding a ``stall`` volatile: side, position, odds denominator
+        (``counter``; a protect-family move succeeds with probability 1/counter), and the
+        move ids of their current move request. Omniscient: for exact-search bookkeeping
+        only, never an observation."""
+
+        return list(self.worker.request({"cmd": "stallInfo", "id": self.battle_id})["stallers"])
 
     def patch_public_state(
         self,
@@ -469,8 +485,16 @@ class DirectBattle:
         perspective: str = "p1",
         observation_battle: DoubleBattle | None = None,
         hidden_hypothesis: dict[str, object] | None = None,
+        opponent_mega: bool = False,
+        options: dict[str, bool] | None = None,
     ) -> StepResult:
         """Rebase a fresh simulator template onto one public live observation.
+
+        ``opponent_mega`` lets the patch keep an unrevealed Mega stone on the foe and
+        recompute its Mega ability from its current item when the snapshot reports that
+        ability as unknown (``can_mega_evolve`` None); see ``exact_mirror_opponent_mega``.
+        ``options`` switches the other reconstruction fixes (``hpScale``,
+        ``keepHiddenItems``, ``megaStats``, ``restoreState``); omitted = the legacy patch.
 
         The Node worker mutates only mechanics fields in its private Showdown battle.
         When ``observation_battle`` is supplied, exact branches begin their player-side
@@ -487,6 +511,8 @@ class DirectBattle:
                 "perspective": perspective,
                 "state": asdict(state),
                 "hidden": hidden_hypothesis or {},
+                "opponentMega": bool(opponent_mega),
+                "options": dict(options or {}),
             }
         )
         result = self._apply(response)

@@ -674,7 +674,9 @@ def test_mirror_branches_keep_typeless_and_sourced_volatiles() -> None:
             mirror = LiveExactMirror(ours, COMPACT_CONFIG)
             root = mirror.build(ours_now)
             result = root.clone("live-mirror-volatile-source-branch").step(
-                {"p1": "move protect, move protect", "p2": "move moonblast 1, move protect"}
+                # Our Imprison (still up on the root) now disables the foe's Moonblast and
+                # Protect exactly as the real request would, so the foe leads Follow Me.
+                {"p1": "move protect, move protect", "p2": "move followme, move dragonclaw 2"}
             )
             lines = "\n".join(result.lines["p1"])
             assert "|turn|" in lines, "the branch must reach the next turn's type refresh"
