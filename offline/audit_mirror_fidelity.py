@@ -763,6 +763,7 @@ def _new_acc() -> dict[str, Any]:
         "oracle_pairs": 0,
         "oracle_pass": 0,
         "oracle_fail": 0,
+        "oracle_gap": 0,
         "observations": Counter(),
         "episodes": Counter(),
         "examples": defaultdict(list),
@@ -778,7 +779,7 @@ def _new_acc() -> dict[str, Any]:
 
 def merge_acc(into: dict[str, Any], part: dict[str, Any]) -> None:
     for key in ("battles", "steps", "points", "oracle_points", "oracle_pairs", "oracle_pass",
-                "oracle_fail"):  # fmt: skip
+                "oracle_fail", "oracle_gap"):  # fmt: skip
         into[key] += part[key]
     for key in ("observations", "episodes", "coverage", "winners", "agents", "seconds"):
         into[key].update(part[key])
@@ -1252,6 +1253,12 @@ def audit_oracle_point(
                 findings.add("request", path, f"{req_seat}", a, b)
         _reclassify_timers(findings.items)
         record(acc, "oracle_state", findings.items, meta, episodes)
+        meta = {
+            **meta,
+            "root_gap": any(
+                classify_group(_group("oracle_state", f))[0] == "gap" for f in findings.items
+            ),
+        }
 
         # --- same choices, same seed ---------------------------------------------------
         orders = {s: enumerate_joint_orders(d.battles[s]) for s in d.sides_to_move()}
@@ -1280,13 +1287,18 @@ def audit_oracle_point(
                 except Exception as exc:  # noqa: BLE001 - recorded
                     outcome[name] = ("crash", clone, f"{type(exc).__name__}: {str(exc)[:200]}")
             try:
-                ok = _compare_outcomes(
+                ok, unexplained_in_step = _compare_outcomes(
                     ctx, acc, outcome, pair_meta, episodes, seat, snapshot, name_map
                 )
             finally:
                 for _kind, clone, _payload in outcome.values():
                     clone.close()
-            acc["oracle_pass" if ok else "oracle_fail"] += 1
+            if ok:
+                acc["oracle_pass"] += 1
+            elif meta.get("root_gap") and not unexplained_in_step:
+                acc["oracle_gap"] += 1
+            else:
+                acc["oracle_fail"] += 1
     finally:
         root.close()
         acc["seconds"]["oracle"] += time.perf_counter() - started
@@ -1296,7 +1308,9 @@ def audit_oracle_point(
 def _compare_outcomes(
     ctx: Ctx, acc: dict[str, Any], outcome: dict[str, tuple], meta: dict[str, Any],
     episodes: set[tuple], seat: str, snapshot: Any, name_map: dict[str, str],
-) -> bool:
+) -> tuple[bool, bool]:
+    """(identical?, unexplained difference?)"""
+
     t_kind, t_clone, t_res = outcome["truth"]
     m_kind, m_clone, m_res = outcome["mirror"]
     findings = Findings()
@@ -1304,11 +1318,11 @@ def _compare_outcomes(
         # the true battle rejected its own legal order: not a mirror defect
         findings.add("harness", f"truth_{t_kind}", "-", t_res, None)
         record(acc, "oracle_step", findings.items, meta, episodes)
-        return True
+        return True, False
     if m_kind != "ok":
         findings.add("legality", f"mirror_{m_kind}", "-", "ok", m_res)
         record(acc, "oracle_step", findings.items, meta, episodes)
-        return False
+        return False, True
     ok = True
     t_name_map = name_map
     for s in SIDES:
@@ -1354,13 +1368,17 @@ def _compare_outcomes(
                         for path, a, b in leaf_diffs(t[f], m[f], f):
                             post.add("oracle_hidden", path, f"{s}:{t['name']}", a, b)
         _reclassify_timers(post.items)
-        if post.items:
+        post_items = [{**f, "category": "state_after_" + f["category"]} for f in post.items]
+        findings.items.extend(post_items)
+        # next-state differences that are documented gaps / noise do not fail the pair
+        if any(classify_group(_group("oracle_step", f))[0] == "unexplained" for f in post_items):
             ok = False
-            findings.items.extend(
-                {**f, "category": "state_after_" + f["category"]} for f in post.items
-            )
-    record(acc, "oracle_step", findings.items, meta, episodes)
-    return ok
+    mode = "oracle_step_gap" if meta.get("root_gap") else "oracle_step"
+    unexplained = any(
+        classify_group(_group(mode, f))[0] == "unexplained" for f in findings.items
+    )
+    record(acc, mode, findings.items, meta, episodes)
+    return ok, unexplained
 
 
 # --- the audited battle -------------------------------------------------------------------
@@ -1506,10 +1524,59 @@ def worker_main(job: dict[str, Any]) -> dict[str, Any]:
 # guess, not a defect); "gap" = a real, documented divergence with its reason; "noise" = a
 # field with no effect on any decision. A group matching none of these is UNEXPLAINED.
 
-CLASSIFICATION: list[tuple[str, str, str]] = []
+CLASSIFICATION: list[tuple[str, str, str]] = [
+    # --- hidden information: guesses, not defects -------------------------------------------
+    (r"^normal/bring:unmatched", "hidden", "which Pokemon the foe brought is a guess"),
+    (r"^normal/timer:", "hidden", "sleep/confusion timers are branched (support is measured)"),
+    (r"^normal/volatile_missing:choicelock$", "hidden",
+     "a foe's Choice lock is invisible until its Choice item is revealed"),
+    (r"^normal/volatile_missing:unburden$", "hidden",
+     "a foe's Unburden is invisible until its item loss is seen"),
+    (r"^normal/bookkeeping:trapped$", "hidden", "trapping is only learned by trying to switch"),
+    (r"^normal/volatile_missing:(trapper|trapped)$", "hidden",
+     "Mean Look / Block / Shadow Tag trapping is hidden"),
+    # --- no decision effect --------------------------------------------------------------
+    (r"sourceSlot$", "noise",
+     "who applied a volatile/condition; read only by Leech Seed and the trap family, which "
+     "the patch fills explicitly"),
+    (r"side_value:stealthrock\.layers", "noise", "Stealth Rock has no layers"),
+    (r"bookkeeping:last_move(_used)?$", "noise", "per-Pokemon last move; the patch sets it"),
+    (r"oracle_hidden:(ability|base_ability|item|stored_stats|base_stored_stats|move_slots)", "gap",
+     "Skill Swap / Entrainment / Trick results on a foe are not visible to the snapshot"),
+    # --- documented gaps (public information the rebuild does not carry) -------------------
+    (r"bookkeeping:times_attacked", "gap", "Rage Fist power (Annihilape/Primeape only)"),
+    (r"bookkeeping:move_last_turn_failed", "gap",
+     "Stomping Tantrum / Temper Flare doubling after a failed move"),
+    (r"bookkeeping:ate_berry|public:last_item", "gap", "Belch / Recycle / Pickup / Cud Chew"),
+    (r"volatile_missing:metronome", "gap", "Metronome item's consecutive-use counter"),
+    (r"volatile_value:substitute\.hp", "gap", "Substitute HP is rebuilt at 1/4 max (known)"),
+    (r"side_value:slot_conditions", "gap", "pending Future Sight / Doom Desire / Healing Wish"),
+    (r"volatile_value:(taunt|encore|disable|yawn|partiallytrapped)\.duration", "gap",
+     "remaining turns are off by one when the target had already moved (not in the protocol)"),
+    (r"volatile_value:\w+\.targetLoc|volatile_missing:(skyattack|solarbeam|electroshot|"
+     r"lockedmove|allyswitch)", "gap",
+     "target slot of a charging / locked move is only known to its user"),
+    (r"volatile_value:dragoncheer\.hasDragonType", "gap", "Dragon Cheer crit stage type flag"),
+    (r"can_mega_evo|request:request\.active\.canMegaEvo", "gap",
+     "a recharging/locked Pokemon is offered no Mega in the request; the mirror follows the request"),
+    (r"request:request\.active\.(trapped|moves\.disabled)", "gap",
+     "request flags for hidden/locked states (see above)"),
+    (r"request:request\.side\.pokemon\.(ability|baseAbility|item|stats|details|condition|"
+     r"ident|_key|active|moves)", "gap",
+     "Skill Swap/Trace/Illusion/Ally Switch residue the parse audit lists as limitations"),
+    (r"bookkeeping:own_side_order", "gap", "Ally Switch / drag residue in the bench order"),
+    (r"bookkeeping:(active_turns|active_move_actions)", "gap",
+     "poke-env lost a switch-in (Ally Switch); counters follow the slot"),
+    (r"public:(boosts|is_active|base_species|move_slots\.pp)", "gap",
+     "Ally Switch / duplicate-name residue"),
+    (r"^(normal|oracle_state)/(field_value|side_value):\w+\.duration", "gap",
+     "a screen/weather duration shifted by an unrevealed extender (Light Clay, Damp Rock)"),
+    (r"^oracle_step_gap/", "gap", "downstream of a documented gap in the root state"),
+]
 
 
 def classify_group(group: str) -> tuple[str, str]:
+    group = group.replace(":state_after_", ":").replace("/state_after_", "/")
     for pattern, kind, reason in CLASSIFICATION:
         if re.search(pattern, group):
             return kind, reason
@@ -1524,7 +1591,7 @@ def report_text(acc: dict[str, Any], elapsed: float) -> str:
     lines = [
         f"battles={acc['battles']} steps={acc['steps']} points={acc['points']} "
         f"oracle_points={acc['oracle_points']} oracle_pairs={acc['oracle_pairs']} "
-        f"pass={acc['oracle_pass']} fail={acc['oracle_fail']} errors={len(acc['errors'])} "
+        f"pass={acc['oracle_pass']} gap-explained={acc['oracle_gap']} fail={acc['oracle_fail']} errors={len(acc['errors'])} "
         f"elapsed={elapsed:.0f}s",
         f"agents={dict(acc['agents'])}",
     ]
@@ -1621,6 +1688,7 @@ def main(argv: list[str] | None = None) -> int:
         "oracle_pairs": total["oracle_pairs"],
         "oracle_pass": total["oracle_pass"],
         "oracle_fail": total["oracle_fail"],
+        "oracle_gap": total["oracle_gap"],
         "elapsed_seconds": round(elapsed, 1),
         "seed": args.seed,
         "episodes": dict(total["episodes"]),
