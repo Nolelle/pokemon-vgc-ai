@@ -767,8 +767,19 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		forcedSlotSpecies[index] = faintedActive.species_id;
 		usedForcedSpecies.add(faintedActive.species_id);
 	}
-	side.active = forcedSlotSpecies.map((speciesId) => {
-		if (!speciesId) return null;
+	// A slot poke-env cannot name (it never saw that Pokemon switch in, or lost track of it)
+	// would leave Showdown with a null active mid-battle and a request with a null slot
+	// that poke-env itself then crashes on. Keep the Pokemon the mirror already had there.
+	const previousActive = side.active.slice();
+	side.active = forcedSlotSpecies.map((speciesId, slotIndex) => {
+		if (!speciesId) {
+			const previous = previousActive[slotIndex];
+			const taken = forcedSlotSpecies.some((id) => id && (
+				id === previous?.species.id || id === previous?.baseSpecies.id));
+			return (previous && !previous.fainted && !taken && !snapshot.force_switch[slotIndex])
+				? (previous.isActive = true, previous)
+				: null;
+		}
 		const pokemon = bySpecies.get(speciesId) || side.pokemon.find(
 			(candidate) => candidate.species.id === speciesId || candidate.baseSpecies.id === speciesId
 		);
@@ -856,6 +867,18 @@ function fillVolatileSources(battle) {
 		for (const pokemon of side.pokemon) {
 			for (const [id, state] of Object.entries(pokemon.volatiles)) {
 				if (state.source) continue;
+				if (id === 'partiallytrapped') {
+					// poke-env aliases Wrap/Bind/Fire Spin/... to one effect. The residual reads
+					// `sourceEffect.id` (a missing one threw and killed the branch) and the
+					// binder (a foe of the holder) to end the trap when it leaves.
+					state.sourceEffect = state.sourceEffect || battle.dex.getActiveMove('wrap');
+					state.boundDivisor = state.boundDivisor || 8;
+					if (foe) {
+						state.source = foe;
+						state.sourceSlot = foe.getSlot();
+					}
+					continue;
+				}
 				const move = battle.dex.moves.get(id);
 				if (!(move.exists && FOE_TARGETS.has(move.target))) {
 					state.source = pokemon;

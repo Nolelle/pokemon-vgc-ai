@@ -137,6 +137,9 @@ class BattleMemory:
     # stint (cleared on the next switch-in) makes it active. Public protocol only.
     _lost_item_this_stint: set[tuple[str, str]] = field(default_factory=set, repr=False)
     _stint_ident_species: dict[str, str] = field(default_factory=dict, repr=False)
+    # (role, species) whose `-mustrecharge` has not yet been spent by `cant|recharge` or ended
+    # by a switch. poke-env never clears its `must_recharge` flag on `cant|X|recharge`.
+    _recharging: set[tuple[str, str]] = field(default_factory=set, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -201,6 +204,16 @@ class BattleMemory:
                         to_id(message[3]) or "unknown"
                     )
                 continue
+            if kind == "-mustrecharge" and len(message) > 2:
+                role = _side(message[2])
+                if role:
+                    self._recharging.add((role, self._stint_species(message[2])))
+                continue
+            if kind == "cant" and len(message) > 3 and to_id(message[3]) == "recharge":
+                role = _side(message[2])
+                if role:
+                    self._recharging.discard((role, self._stint_species(message[2])))
+                continue
             if kind == "-enditem" and len(message) > 3:
                 stint_role = _side(message[2])
                 if stint_role:
@@ -237,11 +250,17 @@ class BattleMemory:
                     self._stint_ident_species[str(message[2])] = stint_species
                     # A fresh stint: the previous one's Unburden volatile is gone.
                     self._lost_item_this_stint.discard((stint_role, stint_species))
+                    self._recharging.discard((stint_role, stint_species))
                 if _side(message[2]) == self.opponent_role:
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def recharge_pending(self, role: str | None, species_id: str | None) -> bool:
+        """Is ``role``'s ``species_id`` still owing the recharge turn of a Hyper Beam-style move?"""
+
+        return bool(role) and (role, to_id(species_id)) in self._recharging
 
     def _stint_species(self, token: object) -> str:
         raw = str(token or "")

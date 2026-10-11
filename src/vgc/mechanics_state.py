@@ -404,6 +404,7 @@ def snapshot_pokemon(
     item_lost_this_stint: bool | None = None,
     champions_pp: bool = False,
     request_pp: Mapping[str, tuple[int, int]] | None = None,
+    recharge_pending: bool | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -532,7 +533,7 @@ def snapshot_pokemon(
             opponent=opponent,
             must_recharge=bool(getattr(pokemon, "must_recharge", False)),
             available_move_ids=available_move_ids,
-        ),
+        ) and recharge_pending is not False,
         protect_counter=int(getattr(pokemon, "protect_counter", 0) or 0),
         first_turn=bool(getattr(pokemon, "first_turn", False)),
         transformed=bool(getattr(pokemon, "transformed", False)),
@@ -660,6 +661,11 @@ def _side_snapshot(
                 available_move_ids=available_move_ids,
             ),
             champions_pp=champions_pp,
+            recharge_pending=(
+                memory.recharge_pending(memory_role, getattr(mon, "species", None))
+                if (memory is not None and opponent and champions_pp)
+                else None
+            ),
             request_pp=(
                 None
                 if opponent or not champions_pp

@@ -56,7 +56,9 @@ def _set_species_id(mon, base_id: str) -> str:
     forme_id = to_id(getattr(mon, "species", None))
     data = load_species().get(forme_id)
     if not data or data.get("isMega") or data.get("battleOnly"):
-        return base_id
+        # The forme it changes FROM (Floette-Mega <- Floette-Eternal), else the base species.
+        parent = to_id(data.get("changesFrom")) if data else ""
+        return parent if parent in load_species() else base_id
     return forme_id
 
 
@@ -291,6 +293,16 @@ def _opponent_sets(
             )
             if move_id in _learnset(set_species, species_id)
         ][:4]
+        if config.exact_mirror_keep_revealed_moves:
+            # Every move the foe has shown must exist in its mirror set, whatever a belief
+            # or the learnset filter says: Showdown's request offers it (a locked Solar Beam)
+            # and the parser rejects a request for a move the Pokemon does not know.
+            revealed = [
+                move_id
+                for move_id in (to_id(raw) for raw in (getattr(mon, "moves", None) or {}))
+                if move_id
+            ]
+            moves = (revealed + [m for m in moves if m not in revealed])[:4]
         if not moves:
             moves = _fallback_moves(set_species, species_id)
         item = normalize_item(getattr(mon, "item", None)) or normalize_item(

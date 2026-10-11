@@ -672,6 +672,10 @@ class PolicyConfig:
     # turns active (Speed Boost never fired on a lead), fainted-teammates count (Last
     # Respects, Supreme Overlord).
     exact_mirror_public_bookkeeping: bool = True
+    # A foe's revealed moves were dropped from its mirror set when a belief's moves, the
+    # learnset filter or the 4-move cap left them out, which crashed the branch's parser
+    # when Showdown's request offered the missing move (e.g. a locked Solar Beam).
+    exact_mirror_keep_revealed_moves: bool = True
     # Exact live-judge timers: with one hypothesis the judge kept only the most likely
     # remaining sleep and dropped the 1/3 shorter one (a real wake chance became 0).
     # True searches every remaining-duration branch (up to exact_search_state_hypotheses)
