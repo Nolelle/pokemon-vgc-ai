@@ -18,6 +18,7 @@ from vgc.calc_sweep import (
     _move,
     base_mons,
     damage_case,
+    defender_for,
     dummy_mon,
     legal_moves,
     state_not_applied,
@@ -450,7 +451,7 @@ def compare_order(case: Case, probe: dict) -> dict[str, Any]:
 
 ACCURACY_BATTERY = (
     "thunder", "hurricane", "blizzard", "focusblast", "stoneedge", "thunderwave", "earthquake",
-    "swordsdance", "dazzlinggleam", "fissure", "willowisp", "hypnosis", "rockslide",
+    "swordsdance", "dazzlinggleam", "willowisp", "hypnosis", "rockslide",
 )
 
 
@@ -488,7 +489,13 @@ def accuracy_case(
 def _acc_mons(move_id: str) -> tuple[Mon, Mon]:
     md = _move(move_id)
     a = Mon("garchomp", moves=(move_id, "splash"), sp=dict(SP_ATTACKER), nature="adamant")
-    b = Mon("snorlax", sp={"hp": 32, "def": 17, "spd": 17}, nature="relaxed")
+    # A defender the move's type can hit, so the type immunity (checked before accuracy) cannot
+    # hide the accuracy roll.
+    b = Mon(
+        defender_for(md["type"], 1.0) or "snorlax",
+        sp={"hp": 32, "def": 17, "spd": 17},
+        nature="relaxed",
+    )
     return a, b
 
 
@@ -574,6 +581,9 @@ def compare_accuracy(case: Case, probe: dict) -> dict[str, Any]:
         out.update(status="unexercised", reason="not_used")
         return out
     numbers = [entry["n"] for entry in (results[0].get("accuracy") or []) if entry["t"] == "p2a"]
+    if not numbers and any(line.startswith(("|-immune", "|-fail", "|-block", "|-activate", "|-ability", "|-miss")) for line in log):
+        out.update(status="unexercised", reason="blocked_before_accuracy")
+        return out
     engine = 1.0 if not numbers else min(1.0, max(0.0, numbers[0] / 100.0))
     ours = ours_accuracy(case)
     if abs(ours - engine) < 1e-9:

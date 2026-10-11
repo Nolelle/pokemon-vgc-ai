@@ -721,6 +721,10 @@ def compare_damage(
         return out
     engine_rolls = engine["rolls"]
     if not ours["supported"]:
+        if control is not None and not ours_damage(control)["supported"]:
+            # The move itself is unsupported with or without the entry: not the entry's doing.
+            out.update(status="unexercised", reason="move_unsupported_baseline")
+            return out
         out.update(status="mismatch", reason="ours_unsupported", abs_diff=999, rel_err=1.0)
         return out
     if not ours["delivers"]:
