@@ -212,6 +212,82 @@ def _trace_mega(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
 
 
 @register(
+    id="illusion_episode_within_one_step",
+    key=r"(foe_moves|status|hp|ability|item|active_flag)/.*",
+    kind="hidden",
+    reason=(
+        "a Zoroark that switched in disguised and broke in the SAME step is a disguise at neither "
+        "end of it, so what it showed under the disguise's name cannot be attributed to it"
+    ),
+)
+def _illusion_episode_within_one_step(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    hit = bool(
+        know
+        and cx.get("label") == "foe"
+        and f"illusion_break:{cx.get('role')}" in know.step_flags
+    )
+    if hit and cx.get("deceived") is not None and cx.get("name"):
+        cx["deceived"][cx["role"]].add(cx["name"])  # the polluted record stays polluted
+    return hit
+
+
+@register(
+    id="transformed_reveal_not_kept",
+    key=r"ability/foe_revealed_but_unknown/.*",
+    kind="limitation",
+    reason=(
+        "a transformed Pokemon shows its TARGET's ability; poke-env keeps it only as a temporary "
+        "ability that the snapshot reads back as unknown. Follow-up, not repaired"
+    ),
+)
+def _transformed_reveal(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    return bool(
+        know
+        and (
+            know.has_event(cx["role"], cx["name"], "transformed")
+            or know.has_event(cx["role"], cx["name"], "transform_target")
+        )
+    )
+
+
+@register(
+    id="called_protect_counter",
+    key=r"protect_counter/mismatch",
+    kind="limitation",
+    reason=(
+        "a Protect-family move CALLED by Copycat / Instruct / Sleep Talk advances Showdown's stall "
+        "counter in ways the bot's per-move counter does not model; follow-up, not repaired"
+    ),
+)
+def _called_protect(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    return bool(know and know.has_event(cx["role"], cx["name"], "called_protect"))
+
+
+@register(
+    id="psych_up_from_disguise",
+    key=r"boosts/mismatch/.*",
+    kind="hidden",
+    reason=(
+        "Psych Up copies the boosts of the Pokemon it really hit; when that is a disguised "
+        "Zoroark the client attributed them to the disguise's name, not to the Zoroark"
+    ),
+)
+def _psych_up_from_disguise(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    if not any("-copyboost" in ln for ln in cx.get("lines", [])):
+        return False
+    prev = cx.get("prev_truth") or {}
+    for side in (prev.get("sides") or {}).values():
+        for tm in side["mons"].values():
+            disguise = tm.get("illusion_name")
+            if disguise and any(f": {disguise}" in ln for ln in cx["lines"] if "-copyboost" in ln):
+                return True
+    return False
+
+
+@register(
     id="hidden_ally_skill_swap",
     key=r"ability/(foe_wrong|foe_known_but_unrevealed|foe_revealed_but_unknown)/.*",
     kind="hidden",

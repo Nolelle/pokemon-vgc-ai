@@ -1072,7 +1072,10 @@ def audit_battle(
                 battle.battles[side]._vgc_direct_root = battle
                 battle.battles[side]._vgc_direct_side = side
             choices = {side: agents[side].choose(battle.battles[side]) for side in to_move}
-            result = battle.step(choices)
+            try:
+                result = battle.step(choices)
+            except Exception as exc:
+                raise type(exc)(f"{exc} [choices sent: {choices}]") from exc
             step += 1
             acc["steps"] += 1
             if trace:

@@ -35,6 +35,10 @@ def to_id(value: Any) -> str:
     return _ID.sub("", str(value or "").lower())
 
 
+_PROTECT_FAMILY = frozenset(
+    "protect detect kingsshield spikyshield banefulbunker obstruct silktrap burningbulwark "
+    "quickguard wideguard matblock craftyguard endure".split()
+)
 _IDENT = re.compile(r"^(p[1-4])([a-z]?): (.*)$")
 _FROM = re.compile(r"^\[from\] ?(ability|item|move): ?(.*)$")
 _OF = re.compile(r"^\[of\] (.*)$")
@@ -96,6 +100,7 @@ class ProtocolKnowledge:
         self.episode_log: dict[tuple[str, str], list[tuple[str, str, Any]]] = {}
         self.break_pos: dict[str, int] = {}  # role -> first Illusion-break line index this step
         self.pos = 0
+        self.cud_chewing: set[tuple[str, str]] = set()
         self.last_step_idents: set[tuple[str, str]] = set()
 
     # -- ingest ---------------------------------------------------------------------------
@@ -220,6 +225,9 @@ class ProtocolKnowledge:
                 self.mons[mon].item_gone = False
         elif tag == "-enditem" and len(split) > 3:
             mon = self._mon(split[2])
+            if mon and mon in self.cud_chewing:
+                self.cud_chewing.discard(mon)  # Cud Chew re-eats an EARLIER berry, not the held item
+                mon = None
             if mon:
                 self._add("item", split[3], (mon,), "-enditem", True)
                 self._add("item_gone", split[3], (mon,), "-enditem", True)
@@ -258,7 +266,18 @@ class ProtocolKnowledge:
             self.events_for(split[2]).add("yawned")
         if tag == "-end" and len(split) > 3 and split[3] == "move: Yawn":
             self.events_for(split[2]).discard("yawned")
+        if tag == "move" and from_kind == "move" and to_id(from_name) in (
+            "copycat", "instruct", "sleeptalk"
+        ) and to_id(split[3]) in _PROTECT_FAMILY:
+            self.events_for(split[2]).add("called_protect")
+        if tag == "-activate" and len(split) > 3 and split[3] == "ability: Cud Chew":
+            mon = self._mon(split[2])
+            if mon:
+                self.cud_chewing.add(mon)
+        if tag == "-singleturn" and len(split) > 3 and split[3] == "move: Instruct":
+            self.events_for(split[2]).add("called_protect")
         if tag == "-transform" and len(split) > 3:
+            self.events_for(split[3]).add("transform_target")
             self.events_for(split[2]).add("transformed")
             holders = self._holders(split[2], split[3])
             if len(holders) == 2:

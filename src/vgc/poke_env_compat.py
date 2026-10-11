@@ -82,7 +82,6 @@ ALL_FIXES = (
     "fairy_lock_field",  # Fairy Lock arrives as -fieldactivate and was never recorded
     "lock_on_two_turns",  # Lock-On / Mind Reader were dropped at once or kept forever
     "forme_change_resets_types",  # a Mega Evolution kept Soak / Trick-or-Treat type changes
-    "copied_protect_counts",  # Protect copied by Copycat / Instruct did not advance the counter
     "gravity_aborts_charge",  # Gravity left a Fly / Bounce user 'preparing'
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
@@ -491,17 +490,7 @@ _PROTECT_FAMILY = frozenset(
 
 
 def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
-    if (
-        fix_enabled("copied_protect_counts")
-        and any(p in ("[from] move: Copycat", "[from] move: Instruct") for p in split[4:])
-        and _to_id(split[3]) in _PROTECT_FAMILY
-    ):
-        # A Protect copied by Copycat / Instruct is still a use of it: Showdown's stall counter
-        # advances, poke-env only counts the Pokemon's own choices.
-        def counted() -> None:
-            mon._protect_counter += 1
 
-        return counted
     """A move line whose `[from]` tag shows the Pokemon did not choose the move this turn
     (a reflected move, a Dancer copy) must not reset its Protect chain."""
     if not fix_enabled("confusion_resets_protect"):
