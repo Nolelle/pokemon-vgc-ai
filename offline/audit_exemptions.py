@@ -205,3 +205,41 @@ def _hidden_ally_skill_swap(finding: dict[str, Any], cx: dict[str, Any]) -> bool
     return bool(
         know and cx.get("label") == "foe" and know.has_event(cx["role"], cx["name"], "hidden_skillswap")
     )
+
+
+@register(
+    id="yawn_kept_through_rest",
+    key=r"volatile/missing/yawn",
+    kind="limitation",
+    reason=(
+        "Rest on a yawned Pokemon sends no `-end|Yawn`; Showdown keeps the (now inert) volatile "
+        "while poke-env ends it with the sleep, so only a sleeping Pokemon is exempt"
+    ),
+)
+def _yawn_kept(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    tm = cx.get("tm") or {}
+    return tm.get("status") == "slp"
+
+
+@register(
+    id="illusion_holder_fainted_same_step",
+    key=r"(fainted|active_flag|hp|active_slots|boosts|status)/.*",
+    kind="hidden",
+    reason=(
+        "a Zoroark that arrives disguised and faints in the SAME step (entry hazard, Memento) "
+        "was never visible as a disguise at either end of the step; its faint is announced under "
+        "the disguise's name"
+    ),
+)
+def _holder_fainted_same_step(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    if cx.get("label") != "foe":
+        return False
+    role = cx.get("role")
+    mons = cx["truth"]["sides"][role]["mons"]
+    fainted_illusion = [m for m in mons.values() if m["fainted"] and m["base_ability"] == "illusion"]
+    if not fainted_illusion:
+        return False
+    name = cx.get("name")
+    if finding["field"] == "active_slots":
+        return any("faint" in ln for ln in cx.get("lines", []))
+    return any(f"faint|{role}" in ln and f": {name}" in ln for ln in cx.get("lines", []))

@@ -72,6 +72,8 @@ ALL_FIXES = (
     "skill_swap_base_ability",  # a revealed Skill Swap shows both OLD abilities; the bases stayed unknown
     "temporary_forme_types",  # Castform-Rainy etc. kept the weather forme's types after switching out
     "extender_item_suppressed",  # Damp Rock / Light Clay were counted under Magic Room or Klutz
+    "gastro_acid_keeps_swapped",  # Gastro Acid forgot a Worry Seed / Skill Swap ability instead of suppressing it
+    "clock_setter_by_slot",  # a disguised own Zoroark's Damp Rock / Light Clay was looked up under the disguise's name
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -709,10 +711,15 @@ def _on_endability(battle: AbstractBattle, split: list[str]) -> Any:
     if not fix_enabled("gastro_acid"):
         return None
     mon = _find_mon(battle, split[2])
+    temporary_before = mon._temporary_ability if mon is not None else None
 
     def suppressed() -> None:
         if mon is not None:
             mon._effects.setdefault(Effect.GASTRO_ACID, 0)
+            if temporary_before is not None and fix_enabled("gastro_acid_keeps_swapped"):
+                # poke-env's `-endability` wipes a Worry Seed / Skill Swap ability; Showdown only
+                # suppresses it (the holder reverts to its real one when it switches out).
+                mon._temporary_ability = temporary_before
 
     return suppressed
 

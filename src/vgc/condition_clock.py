@@ -221,6 +221,15 @@ def _setter_holds_extender(battle: Any, effect_id: str, setter: str | None) -> b
     )
     # Team keys drop the slot letter: "p1a: Torkoal" -> "p1: Torkoal".
     mon = (team or {}).get(setter[:2] + setter[3:])
+    if setter[:2] == role and fix_enabled("clock_setter_by_slot"):
+        # Our own Zoroark is announced under its disguise's name; the slot says who it really is.
+        try:
+            active = list(battle.active_pokemon)
+            slot_mon = active["ab".index(setter[2])] if setter[2] in "ab" else None
+        except (AttributeError, ValueError, IndexError, RuntimeError):
+            slot_mon = None
+        if slot_mon is not None:
+            mon = slot_mon
     if mon is None or to_id(str(getattr(mon, "item", "") or "")) != item:
         return False
     if fix_enabled("extender_item_suppressed"):

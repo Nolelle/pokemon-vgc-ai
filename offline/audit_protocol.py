@@ -389,7 +389,7 @@ class ProtocolKnowledge:
                 mk.item_gone = True
             elif cand.kind == "move":
                 real_tm = truth_mons.get(disguised_holder or winner)
-                if not (real_tm and real_tm["transformed"]):
+                if cand.value == "transform" or not (real_tm and real_tm["transformed"]):
                     if log is not None:
                         log.append(("move", cand.value, cand.value in mk.moves))
                     mk.moves.add(cand.value)  # (a transformed Pokemon uses the TARGET's moves)
