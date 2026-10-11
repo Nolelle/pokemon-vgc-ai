@@ -631,6 +631,52 @@ by field and attributed to the protocol messages that touched the Pokemon.
   by regression tests (`tests/test_poke_env_repairs.py`, 44 cases, most also assert the bug
   reappears with the repair off).
 
+### Parsing audit, second pass (2026-10-10): the audit itself was made trustworthy
+
+A Codex review found blind spots in the first version; all were closed:
+
+- **Slots by exact position.** Active Pokemon are compared per slot (a left/right swap is a
+  defect), not as an unordered set of names.
+- **Illusion handled precisely.** The foe side is no longer skipped. While a disguise holds, the
+  audit compares what that client is shown (disguise name/species/types over the holder's real
+  HP, status, boosts, volatiles); only the deceptive identity (true name, item, ability, moves)
+  is exempt. After the break the true Pokemon is compared normally.
+- **No category exemptions.** `offline/audit_exemptions.py` holds predicates evaluated on the
+  specific finding (a named move/ability/protocol event in that Pokemon's history, a state of the
+  dump), each with a one-line reason and a unit test that near-misses are NOT exempt
+  (`tests/test_battle_parsing_audit.py`). Anything else is unexplained.
+- **Independent reveals.** `offline/audit_protocol.py` re-derives which abilities/items/moves a
+  client was shown from the raw lines and shares no code with `poke_env_compat`/`BattleMemory`
+  (the Showdown dump arbitrates ambiguous `[of]` holders). New checks: `*_shown_but_unknown`,
+  `*_known_but_unrevealed` (an information leak), per exact slot.
+- **Coverage.** `--coverage-report` lists which legal moves/abilities/items/volatiles/side and
+  field conditions/protocol tags were exercised; `--scenarios` adds 259 generated battles
+  (`offline/audit_scenarios.py`: every legal move selected, every ability and item on an active
+  Pokemon, Mega stones on their own species). The Mega-stone gap in `TeamBuilder` (it read the
+  null `megaEvolves`; the Champions export keeps the species in `itemUser`) is fixed.
+  Seed 99, 2400 random battles: moves 91.7% -> 99.6%, abilities present 94.1% -> 99.5%,
+  items present 61.4% -> 100%, items triggered 59.6% -> 88.6%. Not exercised: Trace as an
+  active ability in scenarios, Milk Drink / Shed Tail selection, hidden-information-only
+  messages (`-terastallize`, `-zpower`, `-candynamax`, ... do not exist in this format).
+- **Run it** (2 minutes): `.venv/bin/python offline/audit_battle_parsing.py --battles 2400
+  --workers 10 --seed 99 --scenarios --coverage-report --fail-on-unexplained`; seeds 99,
+  20261009, 777 all report 0 unexplained, 0 errors. The integration test
+  `tests/test_battle_parsing_audit.py` runs 40 seeded battles plus a slice of the scenarios.
+- **Real defects the stricter audit exposed and repaired** (`vgc.poke_env_compat`, each in
+  `ALL_FIXES` with a regression test in `tests/test_poke_env_repairs_pass2.py`): a broken foe
+  Illusion left its HP/moves/item on the disguise; our own Zoroark's boosts and one-turn
+  effects were filed on its disguise; item reveals via `[from] item:`/`-activate item:`,
+  Mega stones and Trick were ignored; `-block`, Trace and Role Play `[of]` ability reveals;
+  Trick-or-Treat third type; Castform-type reset; Transform copied species (not current) types;
+  Gastro Acid forgot a swapped ability; Gravity left Fly "preparing"; Lock-On/Fairy Lock
+  durations; Meganium/Yanmega were read as Mega formes (`"mega" in species_id`); Magic Room /
+  Klutz extenders; Receiver/Power of Alchemy memory; `adjacentAllyOrSelf` (Milk Drink) sent
+  without a target (`vgc.actions._fill_self_targets`).
+- **Remaining exemptions** are listed with reasons in `offline/audit_exemptions.py`. Open
+  follow-ups: Mega recognition for Trace Megas (recorded from `detailschange`), the stall
+  counter after a CALLED Protect (Copycat/Instruct/Sleep Talk), a transformed Pokemon's revealed
+  ability read back as unknown, Rest sleep counter off by one.
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public

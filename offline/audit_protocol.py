@@ -209,11 +209,20 @@ class ProtocolKnowledge:
             # (Rough Skin, Rocky Helmet, Drought), but the ATTACKER for an absorbing heal
             # (Water Absorb) and the thief's victim for Pickpocket; the dump arbitrates, with the
             # tag's usual holder tried first.
+            if from_kind == "item" and any(
+                key in to_id(from_name) for key in ("berry", "herb", "seed", "gem")
+            ):
+                # a consumable eaten / used here (Cud Chew, Fling, Bug Bite) is not the holder's
+                # held item: its `-enditem` carries what the holder really had
+                return_early = True
+            else:
+                return_early = False
             of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status", "-start") or (
                 tag == "-item" and to_id(from_name) == "frisk"
             )
             order = (of, subject) if of_first else (subject, of)
-            self._add(from_kind, from_name, self._holders(*order), f"{tag}[from {from_kind}]")
+            if not return_early:
+                self._add(from_kind, from_name, self._holders(*order), f"{tag}[from {from_kind}]")
         if from_kind == "move" and tag == "-heal" and to_id(from_name) == "healingwish":
             pass
 

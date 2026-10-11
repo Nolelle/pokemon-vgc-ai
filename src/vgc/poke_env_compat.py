@@ -83,6 +83,7 @@ ALL_FIXES = (
     "lock_on_two_turns",  # Lock-On / Mind Reader were dropped at once or kept forever
     "forme_change_resets_types",  # a Mega Evolution kept Soak / Trick-or-Treat type changes
     "gravity_aborts_charge",  # Gravity left a Fly / Bounce user 'preparing'
+    "gastro_blocks_regenerator",  # a Gastro Acid'd Regenerator holder was healed on switch-out
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -1022,7 +1023,10 @@ def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
     hp_after_protocol_heal = None
     if leaving is not None:
         _swapped(battle).discard(id(leaving))
-        if healed and id(leaving) in healed and fix_enabled("regenerator_double_heal"):
+        if Effect.GASTRO_ACID in leaving._effects and fix_enabled("gastro_blocks_regenerator"):
+            # a Gastro Acid'd Regenerator heals nothing on the way out
+            hp_after_protocol_heal = leaving._current_hp
+        elif healed and id(leaving) in healed and fix_enabled("regenerator_double_heal"):
             # The protocol already carried Regenerator's heal (`-heal ... [silent]`);
             # `Pokemon.switch_out` is about to add its own 1/3 on top.
             hp_after_protocol_heal = leaving._current_hp

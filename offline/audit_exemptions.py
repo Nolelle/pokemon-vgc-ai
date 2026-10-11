@@ -253,6 +253,25 @@ def _transformed_reveal(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
 
 
 @register(
+    id="bench_regenerator_heal",
+    key=r"hp/foe_percent",
+    kind="hidden",
+    reason=(
+        "Regenerator heals 1/3 on the way OUT without any protocol line (unless the ability was "
+        "shown), so a benched foe's percentage is unknown until it returns"
+    ),
+)
+def _bench_regenerator(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    tm = cx.get("tm") or {}
+    return bool(
+        cx.get("label") == "foe"
+        and not tm.get("active")
+        and "regenerator" in (tm.get("ability"), tm.get("base_ability"))
+        and finding["truth"] > finding["belief"]
+    )
+
+
+@register(
     id="called_protect_counter",
     key=r"protect_counter/mismatch",
     kind="limitation",
