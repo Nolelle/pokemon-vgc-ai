@@ -222,6 +222,7 @@ def _truth_mon(p: dict[str, Any]) -> dict[str, Any]:
         "position": p.get("position"),
         "fainted": bool(p.get("fainted")),
         "had_item": bool((p.get("set") or {}).get("item")),
+        "set_item": to_id((p.get("set") or {}).get("item")),
         "transformed": bool(p.get("transformed")),
         "illusion": bool(p.get("illusion")),
         "illusion_ref": str(p.get("illusion") or ""),

@@ -141,7 +141,9 @@ def _hidden_foe_extender(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
     foe_role = extra["foe_role"]
     truth_mons = cx["truth"]["sides"][foe_role]["mons"]
     holders = [
-        name for name, tm in truth_mons.items() if extender in (tm["item"], tm["last_item"])
+        name
+        for name, tm in truth_mons.items()
+        if extender in (tm["item"], tm["last_item"], tm["set_item"])
     ]
     if not holders:
         return False
@@ -240,6 +242,13 @@ def _holder_fainted_same_step(finding: dict[str, Any], cx: dict[str, Any]) -> bo
     if not fainted_illusion:
         return False
     name = cx.get("name")
+    if name in {m["name"] for m in fainted_illusion} and any(
+        f"faint|{role}" in ln for ln in cx.get("lines", [])
+    ):
+        # the holder itself: its faint was announced under some disguise's name
+        if cx.get("deceived") is not None:
+            cx["deceived"][role].add(name)
+        return True
     if finding["field"] == "active_slots":
         return any("faint" in ln for ln in cx.get("lines", []))
     hit = any(f"faint|{role}" in ln and f": {name}" in ln for ln in cx.get("lines", []))
