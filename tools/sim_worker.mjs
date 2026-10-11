@@ -991,6 +991,17 @@ async function handlePatchPublic(msg) {
 			}
 		}
 	}
+	if (options.volatileTimers) {
+		// Showdown recomputes who is trapped at the end of every turn (Wrap, Mean Look, Shadow
+		// Tag, Ingrain...). Our own flags came from the request; a FOE's are not public, so run
+		// the same event over its rebuilt state or a bound foe could switch in every branch.
+		const foeSide = battle.sides[1 - ownIndex];
+		for (const pokemon of foeSide.active) {
+			if (!pokemon || pokemon.fainted || !pokemon.hp) continue;
+			pokemon.trapped = pokemon.maybeTrapped = false;
+			battle.runEvent('TrapPokemon', pokemon);
+		}
+	}
 	battle.field.weather = state.weather.length ? state.weather[0].id : '';
 	battle.field.weatherState = effectState(
 		battle.field.weather,
