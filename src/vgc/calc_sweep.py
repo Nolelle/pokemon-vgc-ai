@@ -41,11 +41,9 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
-from vgc.accuracy import hit_probability
 from vgc.config import DATA_DIR, REPO_ROOT, SHOWDOWN_REPO
-from vgc.damage import FieldState, PokemonState, damage_range, to_id
+from vgc.damage import FieldState, PokemonState, damage_range
 from vgc.data import load_moves, load_species, load_typechart
-from vgc.evaluator import field_effective_speed, resolves_before
 from vgc.node import find_node
 from vgc.priority_rules import psychic_terrain_blocks
 

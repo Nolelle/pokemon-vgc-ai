@@ -157,7 +157,7 @@ from vgc.sets import (
     usage_spreads_for,
 )
 from vgc.accuracy import hit_probability
-from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
+from vgc.priority_rules import psychic_terrain_blocks, state_action_priority, usable_move_ids
 from vgc.setup_boosts import SETUP_BOOSTS, SetupBoost, apply_stages
 from vgc.weather_abilities import weather_adjusted_accuracy
 from vgc.action_sanity import CHOICE_ITEMS, CHOICE_LOCK_EXEMPT_MOVES, choice_locked_status_slots
@@ -1760,10 +1760,14 @@ def resolve_exchange(
         if state is not None and state.status == "slp" and action.action_probability >= 1.0:
             state.status = None
         action.speed = (
-            field_effective_speed(state, weather=weather_for_exchange, tailwind=our_tailwind)
+            field_effective_speed(
+                state, weather=weather_for_exchange, tailwind=our_tailwind, terrain=terrain_for_exchange
+            )
             if state is not None
             else 0.0
         )
+        if config.effective_move_priority and action.kind != "protect":
+            action.priority = state_action_priority(action.move_id, state, terrain_for_exchange)
     for action in opp_actions:
         state = opp_states[action.slot]
         action.action_probability = _sleep_action_probability(
@@ -1772,10 +1776,14 @@ def resolve_exchange(
         if state is not None and state.status == "slp" and action.action_probability >= 1.0:
             state.status = None
         action.speed = (
-            field_effective_speed(state, weather=weather_for_exchange, tailwind=opp_tailwind)
+            field_effective_speed(
+                state, weather=weather_for_exchange, tailwind=opp_tailwind, terrain=terrain_for_exchange
+            )
             if state is not None
             else 0.0
         )
+        if config.effective_move_priority and action.kind != "protect":
+            action.priority = state_action_priority(action.move_id, state, terrain_for_exchange)
 
     all_actions = our_actions + opp_actions
     all_actions.sort(key=cmp_to_key(partial(_action_order_cmp, trick_room=ctx.trick_room)))
@@ -2115,8 +2123,16 @@ def _forecast_options(
                     value *= hit_probability(data, state, defender, exchange.weather)
                 previous = best_by_target.get(target)
                 if previous is None or value > previous[0]:
-                    best_by_target[target] = (value, normalized, int(data.get("priority", 0)))
-        speed = field_effective_speed(state, weather=exchange.weather, tailwind=tailwind)
+                    best_by_target[target] = (
+                        value,
+                        normalized,
+                        state_action_priority(
+                            normalized, state, exchange.terrain, effective=config.effective_move_priority
+                        ),
+                    )
+        speed = field_effective_speed(
+            state, weather=exchange.weather, tailwind=tailwind, terrain=exchange.terrain
+        )
         options_by_slot.append(
             [
                 _ForecastAttack(side, slot, target, move_id, priority, speed)

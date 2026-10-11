@@ -79,13 +79,39 @@ def action_priority(
     terrain: str | None = None,
     *,
     effective: bool = True,
-) -> int:
+    grounded: bool = True,
+) -> float:
     """Priority bracket the engine will use for this action (what turn-order maths must read).
 
-    ``effective=False`` is the legacy behaviour (the move's printed priority only), kept as the
-    control for `PolicyConfig.effective_move_priority`.
+    On top of `effective_priority`: Grassy Glide gains +1 in Grassy Terrain for a grounded user,
+    and Stall acts last inside its bracket (a fractional -0.1). ``effective=False`` is the legacy
+    behaviour (the move's printed priority only), the control for
+    `PolicyConfig.effective_move_priority`.
     """
 
     if not effective:
         return int(move_data.get("priority", 0))
-    return effective_priority(move_data, ability, at_full_hp)
+    priority: float = effective_priority(move_data, ability, at_full_hp)
+    if terrain == "grassy" and grounded and to_id(move_data.get("id")) == "grassyglide":
+        priority += 1
+    if to_id(ability) == "stall":
+        priority -= 0.1
+    return priority
+
+
+def state_action_priority(
+    move_id: str | None, state: PokemonState | None, terrain: str | None, *, effective: bool = True
+) -> float:
+    """`action_priority` for a move id used by the Pokemon described by ``state``."""
+
+    from vgc.data import load_moves
+
+    data = load_moves().get(to_id(move_id) or "") if move_id else None
+    if data is None:
+        return 0
+    if state is None:
+        return int(data.get("priority", 0))
+    at_full = state.hp_or_max() >= state.max_hp()
+    return action_priority(
+        data, state.ability, at_full, terrain, effective=effective, grounded=_is_grounded(state)
+    )

@@ -388,6 +388,12 @@ class PolicyConfig:
     # self-targeting moves are unaffected). The evaluator and the fast search scored such
     # moves at full damage. False is the legacy control.
     psychic_terrain_blocks_priority: bool = True
+    # Turn order reads the EFFECTIVE priority bracket: Prankster (+1 status), Gale Wings (+1
+    # Flying at full HP), Triage (+3 healing), Grassy Glide (+1 in Grassy Terrain), and Stall
+    # (last inside its bracket), not just the move's printed priority. Found by
+    # `offline/sweep_calculator_vs_engine.py` (Prankster Tailwind/Thunder Wave were ordered as
+    # priority 0). False is the legacy control.
+    effective_move_priority: bool = True
     # Unburden: Speed doubles once the holder's item is consumed or lost, until it switches
     # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
     # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's
