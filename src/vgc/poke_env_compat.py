@@ -76,6 +76,7 @@ ALL_FIXES = (
     "clock_setter_by_slot",  # a disguised own Zoroark's Damp Rock / Light Clay was looked up under the disguise's name
     "reflected_move_not_a_sleep_turn",  # a sleeping Pokemon's Magic Bounce reflection advanced its sleep counter
     "transform_copies_current_types",  # Transform / Imposter copied the species' types, not the target's current ones
+    "own_slot_names_the_mon",  # effects announced under our Zoroark's disguise were filed on the disguise
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -207,6 +208,16 @@ if not getattr(Pokemon._update_from_pokedex, "_vgc_champions_abilities", False):
 def _find_mon(battle: AbstractBattle, ident: str) -> Pokemon | None:
     """The poke-env Pokemon for a protocol ident ("p1a: Name"), without creating one."""
     key = ident if len(ident) < 4 or ident[2] == ":" else ident[:2] + ident[3:]
+    if (
+        len(ident) > 3
+        and ident[2] in "ab"
+        and ident[:2] == battle.player_role
+        and fix_enabled("own_slot_names_the_mon")
+    ):
+        # Our own Zoroark is announced under its disguise's name, but the slot says who it is.
+        held = getattr(battle, "_active_pokemon", {}).get(ident[:3])
+        if held is not None:
+            return held
     for team in (battle.team, battle.opponent_team):
         mon = team.get(key)
         if mon is not None:
@@ -912,7 +923,12 @@ def _remember_bench_state(battle: AbstractBattle, split: list[str]) -> None:
     key = split[2][:2] + split[2][3:]
     mon = battle._opponent_team.get(key)
     store = vars(battle).setdefault("_vgc_bench_state", {})
-    store[key] = _bench_state(mon) if mon is not None else None
+    state = _bench_state(mon) if mon is not None else None
+    if state is not None:
+        # (a benched Pokemon holds no swapped / traced ability; if this very switch-in replaces
+        # the same ident, switch-out has not cleared it yet)
+        state["temporary_ability"] = None
+    store[key] = state
     vars(battle).setdefault("_vgc_episode_moves", {})[key] = set()
 
 
@@ -1164,13 +1180,19 @@ def _trick_item_before(battle: AbstractBattle, split: list[str]) -> Any:
     ):
         return None
     mon = _find_mon(battle, split[2])
-    return None if mon is None else (mon, _to_id(split[3]), True)
+    if mon is None:
+        return None
+    last = vars(battle).get("_vgc_last_enditem")
+    if last is not None and last[0] is mon and last[1] == _to_id(split[3]):
+        return None  # (a White Herb is logged as used up BEFORE it is received)
+    return mon, _to_id(split[3]), True
 
 
 _original_parse_message = AbstractBattle.parse_message
 
 
 def _parse_message_with_repairs(self: AbstractBattle, split_message: list[str]) -> None:
+    trick = _trick_item_before(self, split_message)
     after = _prepare_message(self, split_message)
     reveal = (
         _ability_before(self, split_message)
@@ -1178,7 +1200,6 @@ def _parse_message_with_repairs(self: AbstractBattle, split_message: list[str]) 
         else None
     )
     item_reveal = _item_before(self, split_message) if len(split_message) > 3 else None
-    trick = _trick_item_before(self, split_message)
     _original_parse_message(self, split_message)
     if after is not None:
         after()

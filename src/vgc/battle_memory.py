@@ -132,6 +132,8 @@ class BattleMemory:
     damage_observations: list[DamageObservation] = field(default_factory=list)
     opponent_items: dict[str, str] = field(default_factory=dict)
     opponent_abilities: dict[str, str] = field(default_factory=dict)
+    # Species currently transformed (Ditto): an ability shown meanwhile is the TARGET's.
+    _transformed_species: set[str] = field(default_factory=set)
     # (side, species or name) -> the move Disable shut off. poke-env keeps the Disable
     # effect but drops the move from `|-start|...|Disable|Move`; the exact mirror needs it.
     # Deliberately NOT in `summary()` (that feeds the search's randomness key).
@@ -193,8 +195,14 @@ class BattleMemory:
                         target = self._species_for_ident(message[4])
                         self.opponent_targets[target] += 1
                 continue
+            if kind == "-transform" and len(message) > 3:
+                self._transformed_species.add(self._species_for_ident(message[2]))
+                continue
             if kind in {"-ability", "ability"} and len(message) > 3:
-                if _side(message[2]) == self.opponent_role:
+                if (
+                    _side(message[2]) == self.opponent_role
+                    and self._species_for_ident(message[2]) not in self._transformed_species
+                ):
                     revealed = _revealed_base_ability(message)
                     if revealed:
                         self.opponent_abilities[self._species_for_ident(message[2])] = revealed
@@ -242,6 +250,7 @@ class BattleMemory:
                     # A fresh stint: the previous one's Unburden volatile is gone.
                     self._lost_item_this_stint.discard((stint_role, stint_species))
                 if _side(message[2]) == self.opponent_role:
+                    self._transformed_species.discard(self._species_for_ident(message[2]))
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species

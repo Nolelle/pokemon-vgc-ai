@@ -68,6 +68,7 @@ class Candidate:
     # berry eaten with Bug Bite), so it must match the dump.
     explicit: bool = False
     pos: int = 0  # index of the protocol line within its step
+    transformed: bool = False  # the mover was transformed when the line arrived
 
 
 @dataclass
@@ -132,9 +133,11 @@ class ProtocolKnowledge:
         explicit: bool = False,
     ) -> None:
         if value and holders:
+            first = self.mons.get(holders[0])
             self.pending.append(
                 Candidate(
-                    kind, to_id(value), holders, tag, self.step, explicit=explicit, pos=self.pos
+                    kind, to_id(value), holders, tag, self.step, explicit=explicit, pos=self.pos,
+                    transformed=bool(first and "transformed" in first.events),
                 )
             )
 
@@ -168,7 +171,9 @@ class ProtocolKnowledge:
             # `ability: X` as the effect name: the effect belongs to the subject (or the [of]
             # holder for -block, where the subject is the protected Pokemon)
             effect = split[3] if len(split) > 3 else ""
-            if effect.startswith("ability:"):
+            if effect.startswith("item:") and "[consumed]" in split:
+                pass  # a (stolen / flung) berry eaten: not the eater's own item
+            elif effect.startswith("ability:"):
                 ability_name = effect.split(":", 1)[1]
                 if tag == "-block":
                     # `-block|PROTECTED|ability: X|[of] HOLDER`: the holder is the [of] mon
@@ -199,7 +204,9 @@ class ProtocolKnowledge:
             # (Rough Skin, Rocky Helmet, Drought), but the ATTACKER for an absorbing heal
             # (Water Absorb) and the thief's victim for Pickpocket; the dump arbitrates, with the
             # tag's usual holder tried first.
-            of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status", "-start")
+            of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status", "-start") or (
+                tag == "-item" and to_id(from_name) == "frisk"
+            )
             order = (of, subject) if of_first else (subject, of)
             self._add(from_kind, from_name, self._holders(*order), f"{tag}[from {from_kind}]")
         if from_kind == "move" and tag == "-heal" and to_id(from_name) == "healingwish":
@@ -262,6 +269,7 @@ class ProtocolKnowledge:
             mon = self._mon(split[2])
             if mon:
                 self.mons[mon].events.discard("yawned")
+                self.mons[mon].events.discard("transformed")
         self.tag_counts[tag] += 1
 
     def events_for(self, ident: str | None) -> set[str]:
@@ -389,7 +397,9 @@ class ProtocolKnowledge:
                 mk.item_gone = True
             elif cand.kind == "move":
                 real_tm = truth_mons.get(disguised_holder or winner)
-                if cand.value == "transform" or not (real_tm and real_tm["transformed"]):
+                if cand.value == "transform" or not (
+                    cand.transformed or (real_tm and real_tm["transformed"])
+                ):
                     if log is not None:
                         log.append(("move", cand.value, cand.value in mk.moves))
                     mk.moves.add(cand.value)  # (a transformed Pokemon uses the TARGET's moves)
