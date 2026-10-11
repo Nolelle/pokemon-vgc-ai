@@ -79,6 +79,48 @@ SP_DUMMY = {"hp": 32, "def": 17, "spd": 17}
 
 STATUSES = ("brn", "par", "psn", "tox", "slp", "frz")
 
+# Why the entries that still disagree (or are not modelled) do so -- written by hand after reading
+# the engine's code, surfaced in the generated coverage documents.
+KNOWN_REASONS: dict[str, str] = {
+    "payback": "power doubles when the target already moved this turn; needs the move order",
+    "avalanche": "power doubles when the user was hit this turn; needs the turn history",
+    "assurance": "power doubles when the target was already hurt this turn; needs the turn history",
+    "ficklebeam": "30% chance per use to double its power (a random branch)",
+    "stompingtantrum": "power doubles after the user's previous move failed; needs move history",
+    "temperflare": "power doubles after the user's previous move failed; needs move history",
+    "lastrespects": "power scales with the number of fainted allies; not tracked",
+    "ragefist": "power scales with the times the user was hit; not tracked",
+    "beatup": "hits once per healthy party member; not modelled",
+    "spitup": "needs the Stockpile count",
+    "fling": "power and effect depend on the thrown item",
+    "counter": "reflects damage taken; needs the incoming hit",
+    "mirrorcoat": "reflects damage taken; needs the incoming hit",
+    "metalburst": "reflects damage taken; needs the incoming hit",
+    "comeuppance": "reflects damage taken; needs the incoming hit",
+    "endeavor": "damage is the HP gap between user and target; not modelled",
+    "finalgambit": "damage is the user's current HP; not modelled",
+    "petaldance": "multi-turn lock-in with confusion afterwards",
+    "uproar": "multi-turn lock-in",
+    "rivalry": "needs both Pokemon's genders; PokemonState does not carry gender",
+    "analytic": "boost depends on the user moving last; needs the turn order",
+    "mimicry": "the holder's type changes with the terrain; not modelled",
+    "supremeoverlord": "power scales with fainted allies; not tracked",
+    "stakeout": "doubles against a Pokemon that switched in; needs switch history",
+    "sniper": "only matters on a critical hit; crits are not modelled",
+    "merciless": "only matters on a critical hit; crits are not modelled",
+    "superluck": "only matters on a critical hit; crits are not modelled",
+    "plus": "needs a Minus partner; those partner abilities are not tracked",
+    "minus": "needs a Plus partner; those partner abilities are not tracked",
+    "disguise": "form change on the first hit; not modelled",
+    "iceface": "form change on the first physical hit; not modelled",
+    "zerotohero": "form change on switch-out; not modelled",
+    "stancechange": "form change on attacking; not modelled",
+    "shieldsdown": "form change below half HP; not modelled",
+    "forecast": "form change with the weather; not modelled",
+    "gulpmissile": "form change after Surf/Dive; not modelled",
+    "hungerswitch": "form change each turn; not modelled",
+}
+
 # Entries the scenario family cannot represent; reported as NOT_EXERCISED with the reason.
 UNTESTABLE: dict[str, str] = {
     "imposter": "transforms into the opposing Pokemon on switch-in (stats, moves, ability copied)",
