@@ -35,7 +35,7 @@ def test_variable_base_power_move_is_flagged_unsupported() -> None:
     # them.)
     attacker = PokemonState("garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant")
     defender = PokemonState("klefki", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold")
-    result = damage_range(attacker, defender, "flail", FieldState())
+    result = damage_range(attacker, defender, "beatup", FieldState())
     assert result.breakdown["move_supported"] is False
     assert result.min_damage == 0 and result.max_damage == 0
 
@@ -63,7 +63,7 @@ def test_unhandled_ability_is_flagged_but_causes_no_crash() -> None:
 
 def test_unhandled_item_is_flagged() -> None:
     attacker = PokemonState(
-        "garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant", item="leftovers"
+        "garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant", item="assaultvest"
     )
     defender = PokemonState("klefki", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold")
     result = damage_range(attacker, defender, "earthquake", FieldState(is_doubles=False))
