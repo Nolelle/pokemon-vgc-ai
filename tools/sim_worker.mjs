@@ -407,6 +407,7 @@ function handleDump(msg) {
 
 function effectElapsed(snapshot, battle) {
 	if (!snapshot || !Number.isInteger(snapshot.turns)) return null;
+	if (snapshot.counter_kind === 'perish_count') return null;  // duration set directly below
 	if (snapshot.counter_kind === 'start_turn' || snapshot.counter_kind === 'side_start_turn') {
 		// May be negative: vgc.condition_clock reports a known item-extended condition
 		// (8 turns) net of its extension, so base duration - elapsed is still right.
@@ -420,7 +421,9 @@ function effectState(id, target, snapshot, battle, hidden = {}) {
 	const state = { id, target };
 	const effect = battle.dex.conditions.get(id);
 	const elapsed = effectElapsed(snapshot, battle);
-	if (snapshot && snapshot.counter_kind === 'layers' && Number.isInteger(snapshot.turns)) {
+	if (snapshot && snapshot.counter_kind === 'perish_count' && Number.isInteger(snapshot.turns)) {
+		state.duration = Math.max(1, snapshot.turns);  // Perish Song: remaining turns == N
+	} else if (snapshot && snapshot.counter_kind === 'layers' && Number.isInteger(snapshot.turns)) {
 		state.layers = snapshot.turns;
 	} else if (Number.isInteger(effect.duration) && elapsed !== null) {
 		// poke-env exposes when an effect began (field/side/weather) or how many
@@ -551,6 +554,11 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 	} else {
 		pokemon.hp = snapshot.current_hp === null ? pokemon.hp : snapshot.current_hp;
 		pokemon.maxhp = snapshot.max_hp === null ? pokemon.maxhp : snapshot.max_hp;
+	}
+	if (opts.megaStats && !pokemon.illusion) {
+		// Showdown compares the real types with `apparentType` every turn start and prints a
+		// silent typechange when they differ; a rebuilt Mega would "change type" in every branch.
+		pokemon.apparentType = pokemon.getTypes(true).join('/');
 	}
 	pokemon.fainted = Boolean(snapshot.fainted);
 	if (opts.gender && !pokemon.illusion) {

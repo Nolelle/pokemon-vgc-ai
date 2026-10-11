@@ -1331,7 +1331,14 @@ def _compare_outcomes(
         record(acc, "oracle_step", findings.items, meta, episodes)
         return True, False
     if m_kind != "ok":
-        findings.add("legality", f"mirror_{m_kind}", "-", "ok", m_res)
+        text = str(m_res)
+        kind = (
+            "struggle" if "matching struggle" in text
+            else "no_such_move" if "doesn't have a move matching" in text
+            else "needs_target" if "needs a target" in text
+            else "other"
+        )  # fmt: skip
+        findings.add("legality", f"mirror_{m_kind}:{kind}", "-", "ok", m_res)
         record(acc, "oracle_step", findings.items, meta, episodes)
         return False, True
     ok = True
@@ -1619,6 +1626,14 @@ CLASSIFICATION: list[tuple[str, str, str]] = [
      "hidden-trap flags only exist for a foe that might have a trapping ability"),
     (r"^oracle_state/public:(species|types|stored_stats|move_slots\.ids)", "gap",
      "Transform copies / Forecast & Flower Gift formes are not carried"),
+    (r"legality:mirror_invalid:struggle", "gap",
+     "PP drifts by one in either direction (Pressure, Spite, Sleep Talk), so Struggle differs"),
+    (r"legality:mirror_invalid:(no_such_move|needs_target)", "gap",
+     "a Transformed/Mimicking Pokemon's copied moves are not in the rebuilt set"),
+    (r"normal/volatile_extra:choicelock|normal/public:weighthg", "gap",
+     "Choice lock kept after the item changed hands / weight after Transform"),
+    (r"^oracle_step/protocol:-ability", "gap", "Trace copies a foe ability the rebuild guesses"),
+    (r"^oracle_state/oracle_hidden:hp", "gap", "foe absolute HP after Substitute / Transform"),
     (r"^oracle_step_gap/", "gap", "downstream of a documented gap in the root state"),
 ]
 

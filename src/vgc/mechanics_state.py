@@ -106,10 +106,15 @@ def _effect_snapshots(
         entries = ((value, None) for value in values)
     result: list[EffectSnapshot] = []
     seen: set[str] = set()
+    perish_count: int | None = None
     for effect, raw in entries:
         effect_id = _effect_id(effect)
         if not effect_id:
             continue
+        if canonical_volatiles and effect_id[:6] == "perish" and effect_id[6:].isnumeric():
+            # `perishN` is Showdown's own count: Perish Song's remaining duration IS N.
+            number = int(effect_id[6:])
+            perish_count = number if perish_count is None else min(perish_count, number)
         if canonical_volatiles and fix_enabled("snapshot_effects"):
             if effect_id in _NON_VOLATILE_EFFECTS:
                 continue
@@ -144,6 +149,15 @@ def _effect_snapshots(
                 ),
             )
         )
+    if perish_count is not None:
+        result = [
+            EffectSnapshot(
+                id=e.id, turns=perish_count, raw_value=perish_count, counter_kind="perish_count"
+            )
+            if e.id == "perishsong"
+            else e
+            for e in result
+        ]
     return tuple(sorted(result, key=lambda effect: effect.id))
 
 
@@ -155,6 +169,10 @@ class MoveSnapshot:
     disabled: bool
     disabled_reason: str | None
     last_used: bool
+
+
+# `noPPBoosts` moves keep their base PP (the exported data does not carry the flag).
+_NO_PP_BOOST = frozenset({"revivalblessing", "struggle"})
 
 
 def champions_max_pp(move_id: str) -> int | None:
@@ -169,6 +187,8 @@ def champions_max_pp(move_id: str) -> int | None:
     base = (load_moves().get(move_id) or {}).get("pp")
     if not isinstance(base, (int, float)) or isinstance(base, bool):
         return None
+    if move_id in _NO_PP_BOOST:
+        return int(base)
     return int((min(base, 20) / 5 + 1) * 4)
 
 
