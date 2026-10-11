@@ -95,6 +95,22 @@ def _illusion_name_collision(finding: dict[str, Any], cx: dict[str, Any]) -> boo
     return cx.get("name") in names and finding["field"] in _COLLISION_FIELDS
 
 
+@register(
+    id="unrevealed_disguise_residue",
+    key=r"(foe_moves|ability|item)/.*",
+    kind="hidden",
+    reason=(
+        "while a Zoroark's Illusion is up, everything it shows is announced under the disguise's "
+        "name; if it then switches out WITHOUT the Illusion breaking, nothing ever tells the "
+        "client the moves / ability / item it recorded for that name were the Zoroark's"
+    ),
+)
+def _unrevealed_disguise_residue(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    return cx.get("label") == "foe" and cx.get("name") in (cx.get("deceived") or {}).get(
+        cx.get("role"), set()
+    )
+
+
 _COLLISION_FIELDS = frozenset(
     {"hp", "boosts", "status", "status_counter", "active_flag", "volatile", "protect_counter",
      "foe_moves", "preparing", "fainted"}

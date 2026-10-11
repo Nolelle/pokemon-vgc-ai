@@ -443,6 +443,7 @@ def compare_perspective(
     step_lines: list[str] | None = None,
     prev_truth: dict[str, Any] | None = None,
     collided: dict[str, set[str]] | None = None,
+    deceived: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
     foe_role = "p2" if me == "p1" else "p1"
     out = Findings(
@@ -452,6 +453,7 @@ def compare_perspective(
             "truth": truth,
             "prev_truth": prev_truth,
             "collided": collided or {},
+            "deceived": deceived or {},
             "know": know,
             "memory": memory,
             "lines": step_lines or [],
@@ -951,6 +953,7 @@ def audit_battle(
     knowledge = {s: ProtocolKnowledge(s) for s in SIDES}
     prev_truth: dict[str, Any] | None = None
     collided: dict[str, set[str]] = {s: set() for s in SIDES}
+    deceived: dict[str, set[str]] = {s: set() for s in SIDES}
     episodes: set[tuple] = set()
     acc["battles"] += 1
     for s in SIDES:
@@ -1001,11 +1004,20 @@ def audit_battle(
         state = worker.request({"cmd": "dump", "id": battle_id})["state"]
         truth = truth_view(state)
         _record_coverage(acc, [ln for s in SIDES for ln in lines[s]], state)
-        alias = illusion_alias(truth, prev_truth)
         for role, side in truth["sides"].items():
             for tm in side["visible"].values():
                 if tm.get("collision"):
                     collided[role] |= {tm["name"], tm["true_name"]}
+        # A disguise episode that ENDS without the Illusion breaking (the Zoroark just switched
+        # out, or the step carried no break line) leaves its moves / item / ability events filed
+        # under the disguise's name for good: nothing ever tells a client they were not its own.
+        now_disguised = illusion_alias(truth)
+        for (role, disguise), (_, holder) in illusion_alias(prev_truth).items():
+            if (role, disguise) in now_disguised:
+                continue
+            broke = any(f"illusion_break:{role}" in k.step_flags for k in knowledge.values())
+            if not broke:
+                deceived[role].add(disguise)
         truth_mons = {
             (role, name): tm
             for role, side in truth["sides"].items()
@@ -1020,9 +1032,9 @@ def audit_battle(
             snap = snapshot_battle(bt)
             acc["compares"] += 1
             know = knowledge[s]
-            unresolved = know.resolve(truth_mons, alias)
+            unresolved = know.resolve(truth_mons, illusion_alias(prev_truth), illusion_alias(truth))
             findings = compare_perspective(
-                s, snap, truth, memories[s], know, bt, lines[s], prev_truth, collided
+                s, snap, truth, memories[s], know, bt, lines[s], prev_truth, collided, deceived
             )
             for cand in unresolved:
                 # the tracker's own rule could not attribute this line; informational (the

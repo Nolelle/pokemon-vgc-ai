@@ -67,6 +67,7 @@ class Candidate:
     # (`[from] item: X`, `ability: X`) can be about a thing the Pokemon merely used (a stolen
     # berry eaten with Bug Bite), so it must match the dump.
     explicit: bool = False
+    pos: int = 0  # index of the protocol line within its step
 
 
 @dataclass
@@ -91,6 +92,9 @@ class ProtocolKnowledge:
         self.ever_item: dict[tuple[str, str], set[str]] = defaultdict(set)
         self.tag_counts: dict[str, int] = defaultdict(int)
         self.step_flags: set[str] = set()  # per-step facts (e.g. "illusion_break:p2")
+        self.episode_log: dict[tuple[str, str], list[tuple[str, str, Any]]] = {}
+        self.break_pos: dict[str, int] = {}  # role -> first Illusion-break line index this step
+        self.pos = 0
         self.last_step_idents: set[tuple[str, str]] = set()
 
     # -- ingest ---------------------------------------------------------------------------
@@ -102,11 +106,13 @@ class ProtocolKnowledge:
     def feed(self, lines: list[str]) -> None:
         self.step += 1
         self.step_flags = set()
+        self.break_pos = {}
         self.last_step_idents = set()
-        for raw in lines:
+        for index, raw in enumerate(lines):
             split = raw.split("|")
             if len(split) < 3:
                 continue
+            self.pos = index
             self._line(split)
 
     def _holders(self, subject: str | None, of: str | None) -> tuple[tuple[str, str], ...]:
@@ -127,7 +133,9 @@ class ProtocolKnowledge:
     ) -> None:
         if value and holders:
             self.pending.append(
-                Candidate(kind, to_id(value), holders, tag, self.step, explicit=explicit)
+                Candidate(
+                    kind, to_id(value), holders, tag, self.step, explicit=explicit, pos=self.pos
+                )
             )
 
     def _line(self, split: list[str]) -> None:
@@ -228,10 +236,12 @@ class ProtocolKnowledge:
             mon = self._mon(split[2])
             if mon:
                 self.step_flags.add(f"illusion_break:{mon[0]}")
+                self.break_pos.setdefault(mon[0], self.pos)
         if tag == "replace":
             mon = self._mon(split[2])
             if mon:
                 self.step_flags.add(f"illusion_break:{mon[0]}")
+                self.break_pos.setdefault(mon[0], self.pos)
         if tag == "-start" and len(split) > 3 and split[3].startswith("typeadd"):
             self.events_for(split[2]).add("typeadd")
         if tag == "-start" and len(split) > 3 and split[3] == "move: Yawn":
@@ -277,7 +287,8 @@ class ProtocolKnowledge:
     def resolve(
         self,
         truth_mons: dict[tuple[str, str], dict[str, Any]],
-        alias: dict[tuple[str, str], tuple[str, str]],
+        alias_before: dict[tuple[str, str], tuple[str, str]],
+        alias_after: dict[tuple[str, str], tuple[str, str]] | None = None,
     ) -> list[Candidate]:
         """Attribute pending candidates using the Showdown dump; return the unattributed ones.
 
@@ -294,8 +305,19 @@ class ProtocolKnowledge:
             for m in tm["base_moves"] + tm["moves"]:
                 self.ever_item[key].add("move:" + m)
         unresolved: list[Candidate] = []
+        alias_after = alias_after if alias_after is not None else alias_before
         for cand in self.pending:
             winner = None
+            # A line announced under a disguise's ident belongs to the real holder only while
+            # the disguise holds: before the break line in a step that breaks it, the disguise
+            # that was up at the START of the step; after it, none of those.
+            role = cand.holders[0][0]
+            broke_at = self.break_pos.get(role)
+            alias = dict(alias_after)
+            if broke_at is None or cand.pos < broke_at:
+                alias.update(alias_before)
+            elif broke_at is not None:
+                alias = {k: v for k, v in alias.items() if k not in alias_before}
             if cand.kind == "swap_abilities":
                 a, b = (self.mons[h] for h in cand.holders)
                 la = a.abilities[-1] if a.abilities else None
@@ -332,8 +354,10 @@ class ProtocolKnowledge:
             if winner is None:
                 unresolved.append(cand)
                 continue
-            # (events announced under a live disguise's ident belong to the real holder)
-            winner = alias.get(winner, winner)
+            # What a client records is keyed by the ident it was shown. While a disguise holds
+            # that is the disguise's name; the events are logged so that, if the Illusion BREAKS,
+            # they can be moved to the real holder (and left where they are if it never does).
+            disguised_holder = alias.get(winner)
             cand.resolved = winner
             mk = self.mons[winner]
             if cand.kind == "transform":
@@ -346,15 +370,52 @@ class ProtocolKnowledge:
                 if target_ability:
                     mk.abilities.append((target_ability, "transform"))
                 continue
+            log = self.episode_log.setdefault(winner, []) if disguised_holder else None
             if cand.kind == "ability":
+                if log is not None:
+                    log.append(("ability", cand.value, cand.tag))
                 mk.abilities.append((cand.value, cand.tag))
             elif cand.kind == "item":
+                if log is not None:
+                    log.append(("item", cand.value, (mk.item_shown, mk.item_gone)))
                 mk.item_shown = cand.value
                 mk.item_gone = False
             elif cand.kind == "item_gone":
+                if log is not None:
+                    log.append(("item_gone", cand.value, (mk.item_shown, mk.item_gone)))
                 mk.item_gone = True
             elif cand.kind == "move":
-                mk.moves.add(cand.value)
+                real_tm = truth_mons.get(disguised_holder or winner)
+                if not (real_tm and real_tm["transformed"]):
+                    if log is not None:
+                        log.append(("move", cand.value, cand.value in mk.moves))
+                    mk.moves.add(cand.value)  # (a transformed Pokemon uses the TARGET's moves)
+        # Disguise episodes that ended this step: an Illusion break hands what was recorded under
+        # the disguise's name to its real holder; any other ending leaves it where the client put it.
+        for key, holder in alias_before.items():
+            if key in alias_after:
+                continue
+            log = self.episode_log.pop(key, [])
+            if self.break_pos.get(key[0]) is None:
+                continue
+            disguise, real = self.mons[key], self.mons[holder]
+            for kind, value, prior in log:
+                if kind == "ability":
+                    real.abilities.append((value, "illusion-break"))
+                    for i in range(len(disguise.abilities) - 1, -1, -1):
+                        if disguise.abilities[i][0] == value:
+                            del disguise.abilities[i]
+                            break
+                elif kind in ("item", "item_gone"):
+                    if kind == "item":
+                        real.item_shown, real.item_gone = value, False
+                    else:
+                        real.item_gone = True
+                    disguise.item_shown, disguise.item_gone = prior
+                elif kind == "move":
+                    real.moves.add(value)
+                    if not prior:
+                        disguise.moves.discard(value)
         self.pending = []
         return unresolved
 

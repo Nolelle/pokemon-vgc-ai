@@ -100,6 +100,10 @@ def _revealed_base_ability(message: list[object]) -> str | None:
         return to_id(old) or None
     if any(tag.startswith("[from] ability: Trace") for tag in tags):
         return "trace"
+    if any(tag.startswith("[from] ability:") for tag in tags):
+        # Receiver / Power of Alchemy: `-ability|MON|NEW|OLD|[from] ability: Receiver|[of] ALLY`
+        old = tags[0] if tags and not tags[0].startswith("[") else ""
+        return to_id(old) or None
     return to_id(str(message[3])) or "unknown"
 
 
