@@ -162,8 +162,8 @@ def speed_modifiers(state: PokemonState) -> list[int]:
         mods.append(2048)
     if state.ability == "quickfeet" and state.status is not None:
         mods.append(6144)
-    elif state.status == "par":
-        mods.append(2048)
+    elif state.status == "par" and item not in ("cheriberry", "lumberry"):
+        mods.append(2048)  # (a Cheri / Lum Berry cures it the moment it lands)
     if state.item_lost and state.ability == "unburden":
         mods.append(8192)
     return mods

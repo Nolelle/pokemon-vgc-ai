@@ -60,6 +60,13 @@ def hit_probability(
     if accuracy is True:
         return 1.0
     base = float(accuracy)
+    if "cloudnine" in (attacker.ability, defender.ability) or "airlock" in (
+        attacker.ability,
+        defender.ability,
+    ):
+        weather = None
+    elif attacker.ability == "megasol":
+        weather = "sun"
     weather_accuracy = weather_adjusted_accuracy(move_id, weather)
     if weather_accuracy is not None:
         if weather_accuracy >= 1.0:
@@ -91,7 +98,10 @@ def hit_probability(
     boost = 0
     if defender.ability != "unaware":
         boost = max(-6, min(6, attacker.boost_stage("accuracy")))
-    ignores_evasion = move_id in _IGNORE_EVASION_MOVES or attacker.ability == "keeneye"
+    ignores_evasion = move_id in _IGNORE_EVASION_MOVES or attacker.ability in (
+        "keeneye",
+        "illuminate",
+    )
     if not ignores_evasion and attacker.ability != "unaware":
         boost = max(-6, min(6, boost - defender.boost_stage("evasion")))
     if boost > 0:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -309,7 +310,9 @@ def speed_cases(entry_kind: str, entry: str) -> list[Case]:
                 for attr, value in cond.a.items():
                     setattr(a, attr, _copy(value))
                 target = int(base * ratio) + delta
-                sid, points, nature, _ = speed_partner(target)
+                sid, points, nature, reached = speed_partner(target)
+                if reached != target:
+                    continue  # no species/spread reaches this exact Speed
                 b = Mon(sid, sp={"spe": points}, nature=nature)
                 for attr, value in cond.b.items():
                     setattr(b, attr, _copy(value))
@@ -331,7 +334,6 @@ def priority_cases(entry_kind: str, entry: str) -> list[Case]:
     cases: list[Case] = []
     legal = set(legal_moves())
     forced = item_species(entry) if entry_kind == "item" else None
-    base = base_speed(forced or A_SPECIES)
     for move_id in PRIORITY_BATTERY:
         if move_id not in legal:
             continue
@@ -346,7 +348,10 @@ def priority_cases(entry_kind: str, entry: str) -> list[Case]:
                 setattr(a, entry_kind, entry)
                 for attr, value in a_extra.items():
                     setattr(a, attr, value)
-                sid, points, nature, _ = speed_partner(int(base * ratio))
+                # Far outside any entry's own Speed modifier, so only priority decides.
+                sid, points, nature = (
+                    ("regieleki", 32, "jolly") if relation == "A_slow" else ("shuckle", 0, "brave")
+                )
                 b = Mon(sid, sp={"spe": points}, nature=nature)
                 variant = f"priority|{move_id}|{relation}|{cond_name}"
                 seeds = TIE_SEEDS if entry in RANDOM_ORDER_ENTRIES else ((1, 2, 3, 4),)
@@ -412,8 +417,11 @@ def ours_order(case: Case) -> str:
     b_state = case.mons["p2a"].state()
     a_tail = "tailwind" in case.fld.p1side
     b_tail = "tailwind" in case.fld.p2side
-    a_speed = field_effective_speed(a_state, weather=case.fld.weather, tailwind=a_tail)
-    b_speed = field_effective_speed(b_state, weather=case.fld.weather, tailwind=b_tail)
+    kwargs = {"weather": case.fld.weather}
+    if "terrain" in inspect.signature(field_effective_speed).parameters:
+        kwargs["terrain"] = case.fld.terrain
+    a_speed = field_effective_speed(a_state, tailwind=a_tail, **kwargs)
+    b_speed = field_effective_speed(b_state, tailwind=b_tail, **kwargs)
     pa = _priority_of(case, "p1a")
     pb = _priority_of(case, "p2a")
     a_first = resolves_before(pa, a_speed, pb, b_speed, case.fld.trick_room)
@@ -483,7 +491,7 @@ def accuracy_case(
         {"p1a": move_id, "p1b": "splash", "p2a": "splash", "p2b": "splash"},
         fld,
         targets=targets,
-        turns=1,
+        turns=2,  # a charge move only rolls accuracy on its second turn
     )
     case.meta["target_moves_first"] = target_moves_first
     return case
@@ -584,7 +592,13 @@ def compare_accuracy(case: Case, probe: dict) -> dict[str, Any]:
         out.update(status="unexercised", reason="not_used")
         return out
     numbers = [entry["n"] for entry in (results[0].get("accuracy") or []) if entry["t"] == "p2a"]
-    if not numbers and any(line.startswith(("|-immune", "|-fail", "|-block", "|-activate", "|-ability", "|-miss")) for line in log):
+    numbers = numbers[-1:]  # the last turn's roll (a charge move rolls on its second turn)
+    blocked = any(
+        line.startswith(("|-immune", "|-fail", "|-block", "|-activate", "|-ability", "|-miss", "|-start"))
+        or "[from] ability" in line
+        for line in log
+    )
+    if not numbers and blocked:
         out.update(status="unexercised", reason="blocked_before_accuracy")
         return out
     engine = 1.0 if not numbers else min(1.0, max(0.0, numbers[0] / 100.0))

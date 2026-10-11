@@ -500,6 +500,41 @@ def _positive_boosts(state: PokemonState) -> int:
     return sum(stage for stage in state.boosts.values() if stage > 0)
 
 
+# Status-curing berries eat themselves the moment the status lands, so the holder never carries it
+# into a hit; terrain seeds raise a stat once their terrain is up.
+_STATUS_CURE_BERRY: dict[str, frozenset[str]] = {
+    "cheriberry": frozenset({"par"}),
+    "chestoberry": frozenset({"slp"}),
+    "pechaberry": frozenset({"psn", "tox"}),
+    "rawstberry": frozenset({"brn"}),
+    "aspearberry": frozenset({"frz"}),
+    "lumberry": frozenset({"brn", "par", "psn", "tox", "slp", "frz"}),
+}
+_TERRAIN_SEED: dict[str, tuple[str, str]] = {
+    "electricseed": ("electric", "def"),
+    "grassyseed": ("grassy", "def"),
+    "mistyseed": ("misty", "spd"),
+    "psychicseed": ("psychic", "spd"),
+}
+
+
+def _with_item_effects(state: PokemonState, field: FieldState) -> PokemonState:
+    """``state`` as the hit sees it after its berry / terrain seed has already triggered."""
+    if state.item is None or state.item_lost:
+        return state
+    from dataclasses import replace
+
+    cures = _STATUS_CURE_BERRY.get(state.item)
+    seed = _TERRAIN_SEED.get(state.item)
+    if cures is not None and state.status in cures:
+        return replace(state, status=None)
+    if seed is not None and field.terrain == seed[0]:
+        boosts = dict(state.boosts)
+        boosts[seed[1]] = min(6, boosts.get(seed[1], 0) + 1)
+        return replace(state, boosts=boosts)
+    return state
+
+
 def partner_ability(state: PokemonState | None) -> str | None:
     """The ability a standing partner contributes to damage (None when absent or fainted)."""
     if state is None or state.hp_or_max() <= 0:
@@ -853,6 +888,8 @@ def damage_range(
         breakdown["reason"] = "status_move"
         return _zero_result(breakdown)
 
+    attacker = _with_item_effects(attacker, field)
+    defender = _with_item_effects(defender, field)
     weather = _effective_weather(field, attacker, defender)
     if attacker.ability == "megasol":
         weather = "sun"  # the holder's moves resolve as if in harsh sunlight
