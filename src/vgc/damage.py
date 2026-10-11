@@ -415,12 +415,12 @@ _Q = 4096
 
 def _modify(value: int, modifier: int) -> int:
     """``battle.modify(value, modifier / 4096)``: round half DOWN in 4096ths."""
-    return (value * modifier + 2047) >> 12
+    return (int(value) * int(modifier) + 2047) >> 12
 
 
 def _chain_mod(previous: int, numerator: int) -> int:
     """``battle.chainModify`` on a modifier held in 4096ths."""
-    return (previous * numerator + 2048) >> 12
+    return (int(previous) * int(numerator) + 2048) >> 12
 
 
 class _Chain:
@@ -715,7 +715,7 @@ def _effective_speed_for_ratio(state: PokemonState) -> float:
 
 
 def _flail_base_power(attacker: PokemonState) -> int:
-    ratio = max((attacker.hp_or_max() * 48) // attacker.max_hp(), 1)
+    ratio = max((int(attacker.hp_or_max()) * 48) // attacker.max_hp(), 1)
     if ratio < 2:
         return 200
     if ratio < 5:
@@ -730,7 +730,7 @@ def _flail_base_power(attacker: PokemonState) -> int:
 
 
 def _hard_press_base_power(defender: PokemonState) -> int:
-    hp, max_hp = defender.hp_or_max(), defender.max_hp()
+    hp, max_hp = int(defender.hp_or_max()), defender.max_hp()
     scaled = (hp * 4096) // max_hp
     return ((100 * (100 * scaled) + 2047) // 4096) // 100 or 1
 
@@ -760,7 +760,9 @@ def _variable_base_power(
         return None
 
     if move_id in ("waterspout", "eruption"):
-        hp = attacker.hp_or_max()
+        # Showdown HP is an integer; the fast search may carry fractional HP after predicted
+        # damage, so floor it before the integer-only fixed-point chain.
+        hp = int(attacker.hp_or_max())
         max_hp = attacker.max_hp()
         return max(1, (base * hp) // max_hp), None
 
