@@ -565,7 +565,7 @@ class BattleMemory:
                 state = _our_pokemon_state(mon)
                 our_states[species] = state
                 our_effective_speed[species] = field_effective_speed(
-                    state, weather=weather_id, tailwind=our_tailwind
+                    state, weather=weather_id, tailwind=our_tailwind, terrain=terrain_id
                 )
             for mon in theirs:
                 species = to_id(getattr(mon, "species", None))
