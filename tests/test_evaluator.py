@@ -63,13 +63,14 @@ def _klefki(**kwargs) -> PokemonState:
 def test_effective_speed_choice_scarf_multiplies_by_1_5() -> None:
     plain = _garchomp()
     scarfed = _garchomp(item="choicescarf")
-    assert effective_speed(scarfed) == pytest.approx(effective_speed(plain) * 1.5)
+    # the engine rounds the 1.5x half DOWN (battle.modify), so 169 -> 253, not 253.5
+    assert effective_speed(scarfed) == int(effective_speed(plain) * 1.5 - 0.25)
 
 
 def test_effective_speed_paralysis_halves_speed() -> None:
     plain = _garchomp()
     paralyzed = _garchomp(status="par")
-    assert effective_speed(paralyzed) == pytest.approx(effective_speed(plain) * 0.5)
+    assert effective_speed(paralyzed) == int(effective_speed(plain) * 0.5 - 0.25)  # half rounds down
 
 
 def test_effective_speed_positive_boost_stage_increases_speed() -> None:

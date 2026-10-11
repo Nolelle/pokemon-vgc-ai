@@ -90,7 +90,15 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.action_sanity import wasted_action_cost
 from vgc.actions import describe_order, enumerate_joint_orders
-from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
+from vgc.damage import (
+    DamageResult,
+    FieldState,
+    PokemonState,
+    _is_grounded,
+    damage_range,
+    to_id,
+    with_partners,
+)
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.field_setters import ability_condition, move_condition, setter_value
@@ -126,7 +134,7 @@ from vgc.sets import (
     opponent_state,
 )
 from vgc.accuracy import hit_probability
-from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
+from vgc.priority_rules import action_priority, psychic_terrain_blocks, usable_move_ids
 from vgc.stats import STAT_IDS
 from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
@@ -141,22 +149,46 @@ _UNBURDEN_SPEED_MULTIPLIER = 2.0  # data/abilities.ts unburden volatile onModify
 _CHOICE_SCARF_SPEED_MULTIPLIER = 1.5
 
 
+def speed_modifiers(state: PokemonState) -> list[int]:
+    """The Pokemon's own ``ModifySpe`` chain, as the engine's 4096ths numerators: Choice Scarf
+    (1.5x), Iron Ball (0.5x), paralysis (0.5x, ignored by Quick Feet), Quick Feet (1.5x while
+    statused) and Unburden once the holder's item is gone (2x)."""
+
+    mods: list[int] = []
+    item = None if state.item_lost else state.item
+    if item == "choicescarf":
+        mods.append(6144)
+    if item == "ironball":
+        mods.append(2048)
+    if state.ability == "quickfeet" and state.status is not None:
+        mods.append(6144)
+    elif state.status == "par" and item not in ("cheriberry", "lumberry"):
+        mods.append(2048)  # (a Cheri / Lum Berry cures it the moment it lands)
+    if state.item_lost and state.ability == "unburden":
+        mods.append(8192)
+    return mods
+
+
+def _chained_speed(stat: int, mods: list[int]) -> float:
+    """``getStat('spe')``: the staged stat through one chained 4096ths modifier (the engine's
+    ``chainModify`` + ``modify`` rounding), capped at 10000."""
+
+    modifier = 4096
+    for numerator in mods:
+        modifier = (modifier * numerator + 2048) >> 12
+    if modifier != 4096:
+        stat = (stat * modifier + 2047) >> 12
+    return float(min(stat, 10000))
+
+
 def effective_speed(state: PokemonState) -> float:
-    """Effective Speed stat for turn-order purposes: boost stage, then Choice Scarf
-    (1.5x), paralysis (0.5x) and Unburden once the holder's item is gone (2x). A float estimate (not the engine's exact 4096ths-chain
-    integer math) -- fine for comparing two Pokemon's turn order, which is all this is
-    used for; nothing here feeds back into `vgc.damage`'s own (exact) calculations.
-    """
+    """Effective Speed stat for turn-order purposes: boost stage, then the Pokemon's own
+    modifiers (`speed_modifiers`) with the engine's fixed-point rounding."""
     from vgc.damage import _apply_stage  # reuse the exact stage-multiplier formula
 
-    speed = float(_apply_stage(state.stats()["spe"], state.boost_stage("spe")))
-    if state.item == "choicescarf":
-        speed *= _CHOICE_SCARF_SPEED_MULTIPLIER
-    if state.status == "par":
-        speed *= _PARALYSIS_SPEED_MULTIPLIER
-    if state.item_lost and state.ability == "unburden":
-        speed *= _UNBURDEN_SPEED_MULTIPLIER
-    return speed
+    return _chained_speed(
+        _apply_stage(state.stats()["spe"], state.boost_stage("spe")), speed_modifiers(state)
+    )
 
 
 def resolves_before(
@@ -406,22 +438,30 @@ _WEATHER_SPEED_ABILITY = {
 
 
 def field_effective_speed(
-    state: PokemonState, *, weather: str | None = None, tailwind: bool = False
+    state: PokemonState,
+    *,
+    weather: str | None = None,
+    tailwind: bool = False,
+    terrain: str | None = None,
 ) -> float:
     """Effective in-battle Speed including field multipliers.
 
     ``effective_speed`` handles modifiers carried by the Pokemon itself (boost stages,
-    Choice Scarf, paralysis). This wrapper adds the active weather ability and the
-    Pokemon's side of Tailwind, which are properties of the current field instead.
+    Choice Scarf, paralysis). This wrapper adds the active weather ability, Surge Surfer in
+    Electric Terrain and the Pokemon's side of Tailwind (all x2, chained with the Pokemon's own
+    modifiers into one fixed-point step like the engine's ``ModifySpe`` event).
     """
+    from vgc.damage import _apply_stage
 
-    speed = effective_speed(state)
+    mods = speed_modifiers(state)
     weather_ability = _WEATHER_SPEED_ABILITY.get(weather)
     if weather_ability is not None and weather_ability == state.ability:
-        speed *= 2.0
+        mods.append(8192)
+    if state.ability == "surgesurfer" and terrain == "electric":
+        mods.append(8192)
     if tailwind:
-        speed *= 2.0
-    return speed
+        mods.append(8192)
+    return _chained_speed(_apply_stage(state.stats()["spe"], state.boost_stage("spe")), mods)
 
 
 # `mega_species_id` now lives in `vgc.sets` (next to the Mega-form detection that builds live
@@ -914,7 +954,8 @@ def _best_attacking_move(
     field_state: FieldState,
     block_psychic_priority: bool = False,
     model_accuracy: bool = False,
-) -> tuple[float, str | None, int]:
+    effective_priority: bool = False,
+) -> tuple[float, str | None, float]:
     """The attacker's single best (highest expected %) supported, non-immune attacking
     move against `defender` from `move_ids`. Returns (0.0, None, 0) if none qualify.
 
@@ -924,7 +965,7 @@ def _best_attacking_move(
     expected damage including the hit chance.
     """
     moves_data = load_moves()
-    best_pct, best_move_id, best_priority = 0.0, None, 0
+    best_pct, best_move_id, best_priority = 0.0, None, 0.0
     for raw_move_id in move_ids:
         move_id = to_id(raw_move_id)
         data = moves_data.get(move_id)
@@ -943,7 +984,14 @@ def _best_attacking_move(
         if expected > best_pct:
             best_pct = expected
             best_move_id = move_id
-            best_priority = int(data.get("priority", 0))
+            best_priority = action_priority(
+                data,
+                attacker.ability,
+                attacker.hp_or_max() >= attacker.max_hp(),
+                field_state.terrain,
+                effective=effective_priority,
+                grounded=_is_grounded(attacker),
+            )
     return best_pct, best_move_id, best_priority
 
 
@@ -1069,6 +1117,7 @@ def build_context(
                 field_vs_us,
                 config.psychic_terrain_blocks_priority,
                 config.model_move_accuracy,
+                config.effective_move_priority,
             )
             threats_from_each_opp.append(pct)
             threat_matrix[our_idx][opp_idx] = _ThreatInfo(
@@ -1399,6 +1448,14 @@ def _resolve_targets(
     the move's own `target` string instead.
     """
     target_kind = move_data.get("target")
+    if (
+        target_kind == "normal"
+        and to_id(move_data.get("id")) == "expandingforce"
+        and ctx.terrain == "psychic"
+        and ctx.our_states[actor_slot] is not None
+        and _is_grounded(ctx.our_states[actor_slot])
+    ):
+        target_kind = "allAdjacentFoes"  # Expanding Force hits both foes in Psychic Terrain
     opp_alive = ctx.opp_alive()
     our_allies_alive = [i for i in ctx.our_alive() if i != actor_slot]
 
@@ -1436,7 +1493,14 @@ def _score_attack_order(
     opp_targets = [idx for idx, is_ally in targets if not is_ally]
     ally_targets = [idx for idx, is_ally in targets if is_ally]
     num_hit = len(opp_targets) + len(ally_targets)
-    actor_priority = int(move_data.get("priority", 0))
+    actor_priority = action_priority(
+        move_data,
+        attacker_state.ability,
+        attacker_state.hp_or_max() >= attacker_state.max_hp(),
+        ctx.terrain,
+        effective=config.effective_move_priority,
+        grounded=_is_grounded(attacker_state),
+    )
     actor_mon = ctx.our_pokemon[actor_slot]
     if config.psychic_terrain_blocks_priority and ctx.terrain == "psychic":
         # Blocked foes still count toward the spread modifier (`num_hit` above): the engine
@@ -1483,7 +1547,14 @@ def _score_attack_order(
         defender_state = ctx.opp_states[idx]
         if defender_state is None:
             continue
-        result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        target_field = field_vs_opp
+        if config.partner_abilities_in_damage:
+            target_field = with_partners(
+                field_vs_opp,
+                ctx.our_states[1 - actor_slot],
+                ctx.opp_states[1 - idx],
+            )
+        result = damage_range(attacker_state, defender_state, move_id, target_field)
         # Hit chance for THIS target (spread moves roll accuracy per target). Damage, KO
         # credit, flinch and speed-drop value below are scaled by it; the *_by_target maps
         # keep the damage-if-it-lands numbers the cross-slot focus-fire logic compares to HP.
