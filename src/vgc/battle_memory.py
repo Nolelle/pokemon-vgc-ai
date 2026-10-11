@@ -51,6 +51,10 @@ class DamageObservation:
     crit: bool = False
 
 
+# Moves that lock their user in for 2-3 turns (`lockedmove`), then confuse it.
+LOCKING_MOVES = frozenset({"outrage", "thrash", "petaldance", "ragingfury"})
+
+
 def _side(token: object) -> str | None:
     text = str(token or "")
     return text[:2] if len(text) >= 2 and text[0] == "p" and text[1].isdigit() else None
@@ -137,6 +141,21 @@ class BattleMemory:
     # stint (cleared on the next switch-in) makes it active. Public protocol only.
     _lost_item_this_stint: set[tuple[str, str]] = field(default_factory=set, repr=False)
     _stint_ident_species: dict[str, str] = field(default_factory=dict, repr=False)
+    # (role, species) whose `-mustrecharge` has not yet been spent by `cant|recharge` or ended
+    # by a switch. poke-env never clears its `must_recharge` flag on `cant|X|recharge`.
+    _recharging: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    # Public history the exact mirror re-injects (never part of `summary()`): which Pokemon
+    # (role, nickname) have taken a move action since they last switched in, the turn each side
+    # last lost a Pokemon, and the last move anyone used.
+    _acted: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    _fainted_turn: dict[str, int] = field(default_factory=dict, repr=False)
+    last_move_used: str | None = None
+    # (role, nickname) -> Mega forme id from `|detailschange|...|Meganium-Mega`. poke-env only
+    # reveals a Mega through the forme's ability, which it does not know for every Champions
+    # Mega (Mega Sol), so the snapshot would keep the base forme.
+    _mega_formes: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
+    # (role, nickname) -> (turn, move id) of the last Outrage-family move it used this stint.
+    _locking_use: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -177,6 +196,15 @@ class BattleMemory:
             if kind == "move" and len(message) > 3:
                 self._finalize_damage_buffer()
                 actor_role = _side(message[2])
+                if actor_role:
+                    self._acted.add((actor_role, to_id(_display_name(message[2]))))
+                if to_id(message[3]):
+                    self.last_move_used = to_id(message[3])
+                    if actor_role and to_id(message[3]) in LOCKING_MOVES:
+                        self._locking_use[(actor_role, to_id(_display_name(message[2])))] = (
+                            self.current_turn,
+                            to_id(message[3]),
+                        )
                 actor = self._species_for_ident(message[2])
                 move_id = to_id(message[3]) or "unknown"
                 self._last_move = (actor_role or "", actor, move_id)
@@ -200,6 +228,30 @@ class BattleMemory:
                     self.opponent_items[self._species_for_ident(message[2])] = (
                         to_id(message[3]) or "unknown"
                     )
+                continue
+            if kind == "cant" and len(message) > 2:
+                cant_role = _side(message[2])
+                if cant_role:
+                    self._acted.add((cant_role, to_id(_display_name(message[2]))))
+            if kind == "detailschange" and len(message) > 3:
+                mega_role = _side(message[2])
+                forme = to_id(str(message[3]).split(",", 1)[0])
+                if mega_role and "mega" in forme:
+                    self._mega_formes[(mega_role, to_id(_display_name(message[2])))] = forme
+            if kind == "faint" and len(message) > 2:
+                faint_role = _side(message[2])
+                if faint_role:
+                    self._fainted_turn[faint_role] = self.current_turn
+                continue
+            if kind == "-mustrecharge" and len(message) > 2:
+                role = _side(message[2])
+                if role:
+                    self._recharging.add((role, self._stint_species(message[2])))
+                continue
+            if kind == "cant" and len(message) > 3 and to_id(message[3]) == "recharge":
+                role = _side(message[2])
+                if role:
+                    self._recharging.discard((role, self._stint_species(message[2])))
                 continue
             if kind == "-enditem" and len(message) > 3:
                 stint_role = _side(message[2])
@@ -237,11 +289,40 @@ class BattleMemory:
                     self._stint_ident_species[str(message[2])] = stint_species
                     # A fresh stint: the previous one's Unburden volatile is gone.
                     self._lost_item_this_stint.discard((stint_role, stint_species))
+                    self._recharging.discard((stint_role, stint_species))
+                    self._acted.discard((stint_role, to_id(_display_name(message[2]))))
+                    self._locking_use.pop((stint_role, to_id(_display_name(message[2]))), None)
                 if _side(message[2]) == self.opponent_role:
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def locked_move(self, role: str | None, name: str | None, turn: int) -> str | None:
+        """The Outrage-family move ``name`` used last turn (so it is locked into it now)."""
+
+        entry = self._locking_use.get((role or "", to_id(name))) if role else None
+        return entry[1] if entry and entry[0] == turn - 1 else None
+
+    def mega_forme(self, role: str | None, name: str | None) -> str | None:
+        """The Mega forme ``name`` evolved into, from the public `detailschange` line."""
+
+        return self._mega_formes.get((role or "", to_id(name))) if role else None
+
+    def has_acted(self, role: str | None, name: str | None) -> bool:
+        """Has ``name`` taken a move action since it last switched in (public protocol only)?"""
+
+        return bool(role) and (role, to_id(name)) in self._acted
+
+    def lost_pokemon_last_turn(self, role: str | None, turn: int) -> bool:
+        """Did ``role`` lose a Pokemon during the turn before ``turn``?"""
+
+        return bool(role) and self._fainted_turn.get(role) == turn - 1
+
+    def recharge_pending(self, role: str | None, species_id: str | None) -> bool:
+        """Is ``role``'s ``species_id`` still owing the recharge turn of a Hyper Beam-style move?"""
+
+        return bool(role) and (role, to_id(species_id)) in self._recharging
 
     def _stint_species(self, token: object) -> str:
         raw = str(token or "")

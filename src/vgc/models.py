@@ -649,6 +649,49 @@ class PolicyConfig:
     # Choice item, the Toxic stage (Toxic did 0 damage), the Disable target move, and an
     # activated Unburden. True restores them for both sides.
     exact_mirror_restore_state: bool = True
+    # Mirror fidelity audit fixes (2026-10-10, offline/audit_mirror_fidelity.py). Each True =
+    # fixed, False = the exact legacy reconstruction, kept for same-session A/Bs.
+    # Foe forme: the mirror built every previewed foe as its BASE species (Persian-Alola as
+    # Persian, Gourgeist-Small as Gourgeist, Rotom-Wash as Rotom, Indeedee-F as Indeedee), so
+    # types, base stats, abilities and the learnset came from the wrong dex entry. True builds
+    # the set as the real forme (battle-only formes and Megas stay base; the patch applies them).
+    exact_mirror_foe_forme: bool = True
+    # Champions PP: Champions caps base PP at 20 and gives max PP (pp / 5 + 1) * 4 (Protect
+    # 8, Shadow Ball 16), not the vanilla pp * 8 / 5 poke-env assumes (24). The mirror copied
+    # poke-env's vanilla max/current PP over the correct ones, so every move's PP was wrong
+    # in every branch and Leppa/Struggle/Pressure math was off. True derives both from the
+    # Champions formula (and our own request when it lists the move).
+    exact_mirror_champions_pp: bool = True
+    # Gender is public (the |switch| details) but the rebuilt Pokemon kept a random one, so
+    # Attract / Rivalry / Cute Charm were wrong and every switch-in line read differently.
+    exact_mirror_gender: bool = True
+    # Protect's stall volatile was rebuilt with 2 turns left; Showdown has already ticked it
+    # to 1 by the next turn, so a Pokemon that skipped Protect kept its odds one turn too long.
+    exact_mirror_stall_duration: bool = True
+    # A fainted Pokemon: Showdown wipes its boosts and volatiles, marks it `fnt`, and clears
+    # `isActive` (a bench-less slot keeps the husk). poke-env keeps the stat stages and effects
+    # the Pokemon had when it fainted, and the rebuild kept it active, so a fainted mon's +2
+    # or Substitute scored as live board state and its slot read as occupied.
+    exact_mirror_fainted_state: bool = True
+    # Our side's bench order. The exact search resolves `switch <name>` to a POSITION in our
+    # real request, but the rebuilt side listed its bench in team-preview order, so a position
+    # meant a different Pokemon (a switch to a fainted one was rejected, a switch to a healthy
+    # one silently went to the wrong teammate) and random drags drew from a different order.
+    # True makes the mirror hold the request's order.
+    exact_mirror_own_order: bool = True
+    # Remaining turns of rebuilt volatiles that carry no protocol counter: a recharging mon
+    # (Hyper Beam) and a mon mid two-turn move (Dig, Fly, Phantom Force...). They were rebuilt
+    # with no timer (so they never expired: a Pokemon recharged every turn) and, for two-turn
+    # moves, without the semi-invulnerable state, so the mirror hit a Pokemon underground.
+    exact_mirror_volatile_timers: bool = True
+    # Public bookkeeping Showdown reads that the rebuild left at its fresh-battle value:
+    # turns active (Speed Boost never fired on a lead), fainted-teammates count (Last
+    # Respects, Supreme Overlord).
+    exact_mirror_public_bookkeeping: bool = True
+    # A foe's revealed moves were dropped from its mirror set when a belief's moves, the
+    # learnset filter or the 4-move cap left them out, which crashed the branch's parser
+    # when Showdown's request offered the missing move (e.g. a locked Solar Beam).
+    exact_mirror_keep_revealed_moves: bool = True
     # Exact live-judge timers: with one hypothesis the judge kept only the most likely
     # remaining sleep and dropped the 1/3 shorter one (a real wake chance became 0).
     # True searches every remaining-duration branch (up to exact_search_state_hypotheses)
