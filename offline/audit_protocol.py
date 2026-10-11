@@ -199,7 +199,7 @@ class ProtocolKnowledge:
             # (Rough Skin, Rocky Helmet, Drought), but the ATTACKER for an absorbing heal
             # (Water Absorb) and the thief's victim for Pickpocket; the dump arbitrates, with the
             # tag's usual holder tried first.
-            of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status")
+            of_first = tag in ("-damage", "-weather", "-fieldstart", "-sidestart", "-status", "-start")
             order = (of, subject) if of_first else (subject, of)
             self._add(from_kind, from_name, self._holders(*order), f"{tag}[from {from_kind}]")
         if from_kind == "move" and tag == "-heal" and to_id(from_name) == "healingwish":
@@ -226,7 +226,8 @@ class ProtocolKnowledge:
             mon = self._mon(split[2])
             if mon is not None:
                 # Struggle is not one of the Pokemon's moves and no client lists it as one
-                if not kw.get("from") and to_id(split[3]) != "struggle":
+                called_from_own_set = to_id(from_name) in ("sleeptalk", "round") if from_kind == "move" else False
+                if (not kw.get("from") or called_from_own_set) and to_id(split[3]) != "struggle":
                     self._add("move", split[3], (mon,), "move")
                 if to_id(split[3]) in ("rest",):
                     self.events_for(split[2]).add("rest")

@@ -97,18 +97,21 @@ def _illusion_name_collision(finding: dict[str, Any], cx: dict[str, Any]) -> boo
 
 @register(
     id="unrevealed_disguise_residue",
-    key=r"(foe_moves|ability|item)/.*",
+    key=r"(foe_moves|ability|item|hp|fainted|active_flag|active_slots|status|boosts|volatile|protect_counter)/.*",
     kind="hidden",
     reason=(
-        "while a Zoroark's Illusion is up, everything it shows is announced under the disguise's "
-        "name; if it then switches out WITHOUT the Illusion breaking, nothing ever tells the "
-        "client the moves / ability / item it recorded for that name were the Zoroark's"
+        "while a Zoroark's Illusion is up everything it shows (moves, ability, item, damage, even "
+        "its faint) is announced under the disguise's name; if the episode ends WITHOUT the "
+        "Illusion breaking (it switches out, or faints, which clears the disguise silently), "
+        "nothing ever tells the client those records were the Zoroark's, not the named Pokemon's"
     ),
 )
 def _unrevealed_disguise_residue(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
-    return cx.get("label") == "foe" and cx.get("name") in (cx.get("deceived") or {}).get(
-        cx.get("role"), set()
-    )
+    names = (cx.get("deceived") or {}).get(cx.get("role"), set())
+    if finding["field"] == "active_slots":
+        shown = [n for n in list(finding["truth"] or []) + list(finding["belief"] or []) if n]
+        return cx.get("label") == "foe" and any(n in names for n in shown)
+    return cx.get("label") == "foe" and cx.get("name") in names
 
 
 _COLLISION_FIELDS = frozenset(
@@ -185,4 +188,20 @@ def _rest_sleep(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
         know
         and know.has_event(cx["role"], cx["name"], "rest")
         and finding["truth"] - finding["belief"] == 1
+    )
+
+
+@register(
+    id="hidden_ally_skill_swap",
+    key=r"ability/(foe_wrong|foe_known_but_unrevealed|foe_revealed_but_unknown)/.*",
+    kind="hidden",
+    reason=(
+        "an ALLY Skill Swap announces neither ability (`|-activate|A|Skill Swap|||[of] B`), so a "
+        "foe that took part holds an ability the client cannot know, and what it revealed afterwards (the swapped-in ability, kept in BattleMemory as if base) stays unverifiable for the rest of the battle"
+    ),
+)
+def _hidden_ally_skill_swap(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    return bool(
+        know and cx.get("label") == "foe" and know.has_event(cx["role"], cx["name"], "hidden_skillswap")
     )

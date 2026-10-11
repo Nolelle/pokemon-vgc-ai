@@ -1004,10 +1004,23 @@ def audit_battle(
         state = worker.request({"cmd": "dump", "id": battle_id})["state"]
         truth = truth_view(state)
         _record_coverage(acc, [ln for s in SIDES for ln in lines[s]], state)
-        for role, side in truth["sides"].items():
-            for tm in side["visible"].values():
-                if tm.get("collision"):
-                    collided[role] |= {tm["name"], tm["true_name"]}
+        for snapshot_truth in (truth, prev_truth):
+            if snapshot_truth is None:
+                continue
+            for role, side in snapshot_truth["sides"].items():
+                for tm in side["visible"].values():
+                    if tm.get("collision"):
+                        collided[role] |= {tm["name"], tm["true_name"]}
+        # (a real Pokemon switching in under a live disguise's ident collides mid-step even when
+        # the break leaves no collision at either end of it)
+        for (role, disguise), (_, holder) in illusion_alias(prev_truth).items():
+            marker = f": {disguise}|"
+            if any(
+                ln.startswith(("|switch|", "|drag|")) and ln.split("|")[2].startswith(role)
+                and marker in ln
+                for ln in lines["p1"]
+            ):
+                collided[role] |= {disguise, holder}
         # A disguise episode that ENDS without the Illusion breaking (the Zoroark just switched
         # out, or the step carried no break line) leaves its moves / item / ability events filed
         # under the disguise's name for good: nothing ever tells a client they were not its own.
