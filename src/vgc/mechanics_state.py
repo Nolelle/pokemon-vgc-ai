@@ -279,7 +279,9 @@ def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str 
     actually happened.
     """
 
-    if species_id and "mega" in species_id:
+    # NOT a substring test: Meganium is not a Mega, and was read as one (never able to Mega,
+    # never given its stone).
+    if species_id and (load_species().get(species_id) or {}).get("isMega"):
         return species_id
     if not species_id or not forme_change_ability_id:
         return None
@@ -405,6 +407,7 @@ def snapshot_pokemon(
     champions_pp: bool = False,
     request_pp: Mapping[str, tuple[int, int]] | None = None,
     recharge_pending: bool | None = None,
+    mega_forme_hint: str | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -418,7 +421,9 @@ def snapshot_pokemon(
     species_id = to_id(getattr(pokemon, "species", None)) or ""
     base_species_id = to_id(getattr(pokemon, "base_species", None)) or None
     forme_change_ability_id = to_id(getattr(pokemon, "forme_change_ability", None)) or None
-    mega_forme_id = _mega_forme_id(species_id, forme_change_ability_id)
+    mega_forme_id = _mega_forme_id(species_id, forme_change_ability_id) or (
+        mega_forme_hint if mega_forme_hint in load_species() else None
+    )
     if mega_forme_id:
         species_id = mega_forme_id
     raw_stats = getattr(pokemon, "stats", None) or {}
@@ -661,6 +666,11 @@ def _side_snapshot(
                 available_move_ids=available_move_ids,
             ),
             champions_pp=champions_pp,
+            mega_forme_hint=(
+                memory.mega_forme(memory_role, getattr(mon, "name", None))
+                if (memory is not None and champions_pp)
+                else None
+            ),
             recharge_pending=(
                 memory.recharge_pending(memory_role, getattr(mon, "species", None))
                 if (memory is not None and opponent and champions_pp)

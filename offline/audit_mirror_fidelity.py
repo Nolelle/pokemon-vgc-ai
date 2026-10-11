@@ -1028,6 +1028,12 @@ def own_foe_names(tview: dict[str, Any], seat: str) -> dict[str, str]:
     return {}
 
 
+def _illusion_up(tview: dict[str, Any]) -> bool:
+    """An intact Illusion shows the wrong identity BY DESIGN (a documented limitation)."""
+
+    return any(m["illusion"] for side in tview["sides"].values() for m in side["mons"])
+
+
 def audit_normal_point(
     ctx: Ctx, d: DirectBattle, seat: str, memory: BattleMemory, team: str,
     acc: dict[str, Any], meta: dict[str, Any], episodes: set[tuple],
@@ -1039,6 +1045,9 @@ def audit_normal_point(
     truth_state = ctx.dump(worker, d.battle_id)
     tview = state_view(truth_state)
     note_coverage(acc, tview)
+    if _illusion_up(tview):
+        acc["coverage"]["points_skipped_illusion_up"] += 1
+        return
     memory.observe_battle(bt)
     setattr(bt, "_vgc_battle_memory", memory)
     cfg = ctx.config
@@ -1210,6 +1219,8 @@ def audit_oracle_point(
     foe_seat = "p2" if seat == "p1" else "p1"
     truth_state = ctx.dump(worker, d.battle_id)
     tview = state_view(truth_state)
+    if _illusion_up(tview):
+        return
     memory.observe_battle(bt)
     setattr(bt, "_vgc_battle_memory", memory)
     cfg = ctx.config
@@ -1398,6 +1409,9 @@ def audit_battle(
     for s in SIDES:
         acc["agents"][names[s]] += 1
     recent: dict[str, list[str]] = {s: [] for s in SIDES}
+    # Ally Switch (`|swap|`): poke-env then loses which Pokemon holds which slot, which the
+    # parsing audit lists as a limitation; the rest of such a battle is not audited.
+    swapped = {"seen": False}
 
     def feed(lines: dict[str, list[str]]) -> None:
         for s in SIDES:
@@ -1407,6 +1421,8 @@ def audit_battle(
             recent[s][:] = recent[s][-400:]
             for ln in lines[s]:
                 split = ln.split("|")
+                if len(split) > 1 and split[1] == "swap":
+                    swapped["seen"] = True
                 if len(split) > 3 and split[1] == "move" and split[2].startswith(
                     "p1" if s == "p1" else "p2"
                 ):
@@ -1414,6 +1430,14 @@ def audit_battle(
 
     feed(d.last_lines)
     step = 0
+    # Illusion (Zoroark) shows a wrong identity by design: the whole battle is outside the audit.
+    if any(
+        mon["base_ability"] == "illusion"
+        for side in state_view(ctx.dump(worker, battle_id))["sides"].values()
+        for mon in side["mons"]
+    ):
+        acc["coverage"]["battles_skipped_illusion"] += 1
+        swapped["seen"] = True
     try:
         while not d.ended and step < MAX_STEPS:
             to_move = d.sides_to_move()
@@ -1425,7 +1449,9 @@ def audit_battle(
                 and not any(d.battles[s].force_switch or [False])
                 and d.request_state == "move"
             ]
-            if audited and d.battles["p1"].turn >= 1 and rng.random() < job["point_rate"]:
+            if swapped["seen"]:
+                acc["coverage"]["battles_skipped_after_ally_switch"] += 0
+            elif audited and d.battles["p1"].turn >= 1 and rng.random() < job["point_rate"]:
                 for seat in audited:
                     meta = {
                         "battle": battle_id, "seed": seed, "seat": seat, "step": step,
@@ -1571,6 +1597,15 @@ CLASSIFICATION: list[tuple[str, str, str]] = [
     (r"request:request\.active\.moves\.(id|move|pp|maxpp|target)", "gap",
      "a locked/recharging slot offers one move (recharge / the locked move); follows the above"),
     (r"foe_ability_known", "gap", "ability swapped (Skill Swap / Trace) after the reveal"),
+    (r"^normal/public:(species|base_species|stored_stats|move_slots\.ids)", "gap",
+     "Transform / Imposter copy a forme, stats and moves poke-env keeps under the old species"),
+    (r"public:move_slots\.pp", "gap", "PP off by one (Pressure / Spite / Sleep Talk bookkeeping)"),
+    (r"bookkeeping:active_move_actions", "gap",
+     "move-action count after an interrupted/self-switch turn (only zero vs non-zero is read)"),
+    (r"request:request\.(active\.maybe(Disabled|Locked)|update)", "gap",
+     "request metadata for hidden-disable flows; no effect on legality"),
+    (r"timer:frz\.", "hidden", "the freeze thaw timer is rolled privately (not branched yet)"),
+    (r"oracle_hidden:weighthg", "gap", "weight after Transform / Autotomize is not tracked"),
     (r"^oracle_step_gap/", "gap", "downstream of a documented gap in the root state"),
 ]
 

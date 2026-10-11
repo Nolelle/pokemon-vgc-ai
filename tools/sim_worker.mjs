@@ -785,7 +785,9 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 			const stray = snapshot.pokemon.find((candidate) => candidate.active && !candidate.fainted &&
 				!snapshot.force_switch[slotIndex] && !forcedSlotSpecies.includes(candidate.species_id) &&
 				bySpecies.has(candidate.species_id));
-			if (stray) {
+			const placed = [...forcedSlotSpecies.keys()].filter((at) => at !== slotIndex)
+				.map((at) => bySpecies.get(forcedSlotSpecies[at]) || null);
+			if (stray && !placed.includes(bySpecies.get(stray.species_id))) {
 				const found = bySpecies.get(stray.species_id);
 				forcedSlotSpecies[slotIndex] = stray.species_id;
 				found.isActive = true;
@@ -813,7 +815,18 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		pokemon.isActive = !(opts.faintedState && pokemon.fainted);
 		return pokemon;
 	});
-	const activePokemon = side.active.filter(Boolean);
+	// Showdown keeps side.active[i] === side.pokemon[i]. A slot poke-env never named gets the
+	// first unplaced live Pokemon so the two stay aligned.
+	for (let at = 0; at < side.active.length; at++) {
+		const dup = side.active[at] && side.active.indexOf(side.active[at]) !== at;
+		if ((!side.active[at] || dup) && !snapshot.force_switch[at]) {
+			const filler = side.pokemon.find((candidate) => !side.active.includes(candidate) &&
+				!candidate.fainted && candidate.hp > 0);
+			side.active[at] = filler || null;
+			if (filler) filler.isActive = true;
+		}
+	}
+	const activePokemon = [...new Set(side.active.filter(Boolean))];
 	if (opts.bookkeeping) {
 		// Showdown resets both counters on switch-out: a benched Pokemon holds 0.
 		for (const pokemon of side.pokemon) {

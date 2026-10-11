@@ -146,6 +146,10 @@ class BattleMemory:
     _acted: set[tuple[str, str]] = field(default_factory=set, repr=False)
     _fainted_turn: dict[str, int] = field(default_factory=dict, repr=False)
     last_move_used: str | None = None
+    # (role, nickname) -> Mega forme id from `|detailschange|...|Meganium-Mega`. poke-env only
+    # reveals a Mega through the forme's ability, which it does not know for every Champions
+    # Mega (Mega Sol), so the snapshot would keep the base forme.
+    _mega_formes: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -218,6 +222,11 @@ class BattleMemory:
                 cant_role = _side(message[2])
                 if cant_role:
                     self._acted.add((cant_role, to_id(_display_name(message[2]))))
+            if kind == "detailschange" and len(message) > 3:
+                mega_role = _side(message[2])
+                forme = to_id(str(message[3]).split(",", 1)[0])
+                if mega_role and "mega" in forme:
+                    self._mega_formes[(mega_role, to_id(_display_name(message[2])))] = forme
             if kind == "faint" and len(message) > 2:
                 faint_role = _side(message[2])
                 if faint_role:
@@ -276,6 +285,11 @@ class BattleMemory:
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def mega_forme(self, role: str | None, name: str | None) -> str | None:
+        """The Mega forme ``name`` evolved into, from the public `detailschange` line."""
+
+        return self._mega_formes.get((role or "", to_id(name))) if role else None
 
     def has_acted(self, role: str | None, name: str | None) -> bool:
         """Has ``name`` taken a move action since it last switched in (public protocol only)?"""
