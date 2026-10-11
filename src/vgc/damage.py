@@ -907,8 +907,12 @@ def damage_range(
     if move_id == "shellsidearm":
         # Physical (and contact) when the raw Attack would do more than the raw Sp. Atk.
         raw_attacker, raw_defender = attacker.stats(), defender.stats()
-        physical = (22 * 90 * raw_attacker["atk"] // raw_defender["def"]) // 50
-        special = (22 * 90 * raw_attacker["spa"] // raw_defender["spd"]) // 50
+        atk = _apply_stage(raw_attacker["atk"], attacker.boost_stage("atk"))
+        spa = _apply_stage(raw_attacker["spa"], attacker.boost_stage("spa"))
+        def_ = _apply_stage(raw_defender["def"], defender.boost_stage("def"))
+        spd = _apply_stage(raw_defender["spd"], defender.boost_stage("spd"))
+        physical = (22 * 90 * atk // def_) // 50
+        special = (22 * 90 * spa // spd) // 50
         if physical > special:
             category = "Physical"
             flags = {**flags, "contact": 1}

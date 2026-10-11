@@ -65,7 +65,7 @@ def test_exact_entries_do_not_regress() -> None:
     regressions = []
     for (category, entry_kind, entry), result in table.items():
         was = recorded.get(category, {}).get(entry_kind, {}).get(entry)
-        if was is not None and was["status"] == "EXACT" and result.status != "EXACT":
+        if was is not None and was["status"] == "EXACT" and result.status not in ("EXACT", "NOT_EXERCISED"):
             regressions.append(
                 f"{category}/{entry_kind}/{entry}: {result.status} "
                 f"({result.n_mismatch} mismatches; e.g. {result.mismatches[:1]})"

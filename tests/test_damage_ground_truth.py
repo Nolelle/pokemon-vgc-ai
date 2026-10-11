@@ -549,7 +549,8 @@ def test_type_boost_item_charcoal() -> None:
     )
     defender = PokemonState("feraligatr", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold")
     result = damage_range(attacker, defender, "flamethrower", FieldState(is_doubles=False))
-    assert result.breakdown["base_power"] == int(90 * 4915 / 4096)
+    # the engine rounds the 4096ths modifier (108), it does not floor it (107)
+    assert result.breakdown["base_power"] == 108
     assert_actual_in_range(result, actual)
 
 
@@ -850,7 +851,8 @@ def test_thick_fat_halves_fire_damage() -> None:
         "klefki", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold", ability="thickfat"
     )
     result = damage_range(attacker, defender, "flamethrower", FieldState(is_doubles=False))
-    assert result.breakdown["final_multiplier"] == pytest.approx(0.5)
+    # Thick Fat halves the ATTACKER's stat (onSourceModifyAtk), not the final damage
+    assert result.breakdown["final_multiplier"] == pytest.approx(1.0)
     assert_actual_in_range(result, actual)
 
 
