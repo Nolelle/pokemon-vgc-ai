@@ -1039,8 +1039,11 @@ def _build_our_actions(
                 move_id=move_id,
                 targets=side_tagged,
                 priority=int(move_data.get("priority", 0)),
+                # Use the RESOLVED target set: Expanding Force in Psychic Terrain is a
+                # "normal" move that hits both foes and is not redirected.
                 spread=move_data.get("target")
-                in (_SPREAD_TARGETS_FOES_ONLY | _SPREAD_TARGETS_HITTING_ALLY),
+                in (_SPREAD_TARGETS_FOES_ONLY | _SPREAD_TARGETS_HITTING_ALLY)
+                or (move_data.get("target") in _SINGLE_TARGETS and len(targets) > 1),
             )
         )
     return actions, weather_override
