@@ -996,6 +996,8 @@ def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
         inner_hook = late_hook
 
         def keep_protocol_hp() -> None:
+            if _find_mon(battle, split[2]) is leaving:
+                return  # a Zoroark switching in under the SAME ident: the line's HP is its own
             leaving._current_hp = outgoing_hp
             if inner_hook is not None:
                 inner_hook()
