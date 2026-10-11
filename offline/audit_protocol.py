@@ -101,6 +101,7 @@ class ProtocolKnowledge:
         self.break_pos: dict[str, int] = {}  # role -> first Illusion-break line index this step
         self.pos = 0
         self.cud_chewing: set[tuple[str, str]] = set()
+        self.slot_mon: dict[str, tuple[str, str] | None] = {}
         self.last_step_idents: set[tuple[str, str]] = set()
 
     # -- ingest ---------------------------------------------------------------------------
@@ -283,8 +284,21 @@ class ProtocolKnowledge:
             mon = self._mon(split[2])
             if mon:
                 self.cud_chewing.add(mon)
-        if tag == "-singleturn" and len(split) > 3 and split[3] == "move: Instruct":
-            self.events_for(split[2]).add("called_protect")
+        # `called_protect` marks only a Protect-family move actually CALLED by Instruct /
+        # Copycat / Sleep Talk (the `|move|` line above). `-singleturn ... Instruct` fires for
+        # every successful Instruct, including ones that repeat Tackle, so it is not a marker.
+        # The marker ends where Showdown's stall volatile ends: the Pokemon's next move of its
+        # own that is not Protect-family, or leaving the field (switch/drag/faint).
+        if tag == "move" and from_kind is None and to_id(split[3]) not in _PROTECT_FAMILY:
+            self.events_for(split[2]).discard("called_protect")
+        if tag in ("switch", "drag", "faint") and len(split) > 2:
+            parsed = parse_ident(split[2])
+            if parsed:
+                slot_key = parsed[0] + parsed[1]
+                leaving = self.slot_mon.get(slot_key)
+                if leaving is not None:
+                    self.mons[leaving].events.discard("called_protect")
+                self.slot_mon[slot_key] = None if tag == "faint" else (parsed[0], parsed[2])
         if tag == "-transform" and len(split) > 3:
             self.events_for(split[3]).add("transform_target")
             self.events_for(split[2]).add("transformed")

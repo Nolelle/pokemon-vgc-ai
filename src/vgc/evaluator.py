@@ -81,6 +81,7 @@ from dataclasses import dataclass, field
 from statistics import mean
 
 from poke_env.battle.double_battle import DoubleBattle
+from poke_env.battle.effect import Effect
 from poke_env.battle.field import Field
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
@@ -614,6 +615,65 @@ def _partner_removes_threat(
     return True
 
 
+_SAND_IMMUNE_TYPES = frozenset({"Rock", "Ground", "Steel"})
+_SAND_IMMUNE_ABILITIES = frozenset(
+    {"sandveil", "sandrush", "sandforce", "overcoat", "magicguard"}
+)
+_END_OF_TURN_HEAL_ITEMS = frozenset({"leftovers", "blacksludge"})
+
+
+def _residual_fraction(state: PokemonState, mon, ctx: _Context) -> float:
+    """Fraction of max HP an opposing active loses to end-of-turn damage this turn: poison,
+    Toxic (counter-scaled; uses the current counter, which is at most this turn's real step,
+    so it can only under-count), burn, sandstorm chip, Leech Seed and Salt Cure, minus a
+    Leftovers/Black Sludge heal. Deliberately narrow: other residuals (Perish Song, ...)
+    count as 0, i.e. never excuse. Magic Guard / Poison Heal / Safety Goggles negate it."""
+    if state.ability in ("magicguard", "poisonheal"):
+        return 0.0
+    types = set(state.species_data().get("types") or [])
+    total = {"psn": 1 / 8, "brn": 1 / 16}.get(state.status or "", 0.0)
+    if state.status == "tox":
+        total = max(1, int(getattr(mon, "status_counter", 0) or 0)) / 16
+    if (
+        ctx.weather == "sand"
+        and not (types & _SAND_IMMUNE_TYPES)
+        and state.ability not in _SAND_IMMUNE_ABILITIES
+        and state.item != "safetygoggles"
+    ):
+        total += 1 / 16
+    effects = getattr(mon, "effects", None) or {}
+    if Effect.LEECH_SEED in effects:
+        total += 1 / 8
+    if Effect.SALT_CURE in effects:
+        total += 1 / 4 if types & {"Water", "Steel"} else 1 / 8
+    if state.item in _END_OF_TURN_HEAL_ITEMS:
+        total -= 1 / 16
+    return max(0.0, total)
+
+
+def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig) -> bool:
+    """Exception (c): end-of-turn residual damage faints every foe that threatens the
+    protecting slot, so surviving the turn (the repeat Protect) is itself the win."""
+    threats = [
+        opp_slot
+        for opp_slot, info in enumerate(ctx.threat_matrix[protect_slot])
+        if info is not None
+        and ctx.opp_pokemon[opp_slot] is not None
+        and not ctx.opp_pokemon[opp_slot].fainted
+        and info.percent >= config.protect_low_threat_floor
+    ]
+    if not threats:
+        return False
+    for opp_slot in threats:
+        state = ctx.opp_states[opp_slot]
+        if state is None:
+            return False
+        hp_fraction = state.hp_or_max() / state.max_hp()
+        if _residual_fraction(state, ctx.opp_pokemon[opp_slot], ctx) < hp_fraction:
+            return False
+    return True
+
+
 def apply_repeat_protect_rule(
     scored: list[ScoredOrder], ctx: _Context, config: PolicyConfig
 ) -> list[ScoredOrder]:
@@ -623,7 +683,8 @@ def apply_repeat_protect_rule(
     and the search use; a failed Protect resets it to 0, so only a SUCCESSFUL one counts).
     Exceptions per slot, see `PolicyConfig.forbid_repeat_protect`: (a) the slot has no legal
     option but a stall-rolling move, (b) the partner's action in that same order removes the
-    threat first (`_partner_removes_threat`). If nothing would be left, the unfiltered list
+    threat first (`_partner_removes_threat`), (c) end-of-turn residual damage faints every
+    threatening foe (`_residual_kos_threats`). If nothing would be left, the unfiltered list
     comes back. Relative order and `ScoredOrder` objects are untouched; when orders were
     removed a ``repeat_protect_rule`` note goes on the decision trace.
     """
@@ -640,7 +701,7 @@ def apply_repeat_protect_rule(
     forced = {slot: _slot_is_forced_to_stall(all_orders, slot) for slot in repeat_slots}
     kept: list[ScoredOrder] = []
     removed: list[str] = []
-    exceptions = {"forced": 0, "partner_ko": 0}
+    exceptions = {"forced": 0, "partner_ko": 0, "residual_ko": 0}
     for entry in scored:
         dropped = False
         excused = None
@@ -652,6 +713,10 @@ def apply_repeat_protect_rule(
                 excused = excused or "forced"
             elif _partner_removes_threat(entry.breakdown, slot, ctx, config):
                 excused = "partner_ko"
+            elif config.repeat_protect_residual_exception and _residual_kos_threats(
+                slot, ctx, config
+            ):
+                excused = "residual_ko"
             else:
                 dropped = True
                 break

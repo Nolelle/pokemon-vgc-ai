@@ -180,3 +180,54 @@ def test_unbrought_pokemon_are_not_left_active_after_team_preview() -> None:
                 assert len(active) == 2, (side, [m.name for m in active])
         finally:
             battle.close()
+
+
+def _called_protect_marked(lines: list[str]) -> bool:
+    know = proto.ProtocolKnowledge("p1")
+    know.feed(["|switch|p2a: Foo|Garchomp, L50|100/100"])
+    know.feed(lines)
+    return know.has_event("p2", "Foo", "called_protect")
+
+
+def test_called_protect_needs_a_protect_family_call() -> None:
+    # Instruct repeating Tackle is not a called Protect.
+    assert not _called_protect_marked(
+        [
+            "|move|p2a: Foo|Tackle|p1a: X",
+            "|-singleturn|p2a: Foo|move: Instruct|[of] p2b: Bar",
+            "|move|p2a: Foo|Tackle|p1a: X|[from] move: Instruct",
+        ]
+    )
+    # Instruct repeating Protect is.
+    assert _called_protect_marked(
+        [
+            "|move|p2a: Foo|Protect|p2a: Foo",
+            "|move|p2a: Foo|Protect|p2a: Foo|[from] move: Instruct",
+        ]
+    )
+
+
+def test_called_protect_ends_on_switch_out_and_next_own_move() -> None:
+    called = "|move|p2a: Foo|Protect|p2a: Foo|[from] move: Sleep Talk"
+    assert _called_protect_marked([called])
+    assert not _called_protect_marked([called, "|switch|p2a: Baz|Torkoal, L50|100/100"])
+    assert not _called_protect_marked([called, "|move|p2a: Foo|Tackle|p1a: X"])
+    assert not _called_protect_marked([called, "|faint|p2a: Foo"])
+
+
+def test_protect_counter_exemption_only_after_a_genuine_called_protect() -> None:
+    f = _finding("protect_counter", "mismatch")
+
+    def classify(lines: list[str]):
+        know = proto.ProtocolKnowledge("p1")
+        know.feed(["|switch|p2a: Foo|Garchomp, L50|100/100"] + lines)
+        return ex.classify(f, {"know": know, "role": "p2", "name": "Foo"})
+
+    repro = [
+        "|-singleturn|p2a: Foo|move: Instruct|[of] p2b: Bar",
+        "|move|p2a: Foo|Tackle|p1a: X|[from] move: Instruct",
+        "|switch|p2a: Baz|Torkoal, L50|100/100",
+    ]
+    assert classify(repro) is None
+    genuine = ["|move|p2a: Foo|Protect|p2a: Foo|[from] move: Instruct"]
+    assert classify(genuine) == "called_protect_counter"

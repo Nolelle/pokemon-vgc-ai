@@ -215,3 +215,59 @@ def test_knob_and_opponent_flag_control_score_joint_orders(monkeypatch) -> None:
     off = replace(CONFIG, forbid_repeat_protect=False)
     assert ev.score_joint_orders(battle, off) == entries  # knob off = legacy
     assert ev.score_joint_orders(battle, CONFIG, repeat_protect_rule=False) == entries
+
+
+# -- exception (c): end-of-turn residual damage faints every threatening foe ---------------
+
+
+def _frail(status: str | None, frac: float):
+    state = _klefki(status=status)
+    state.current_hp = max(1, int(state.max_hp() * frac))
+    return state
+
+
+def test_residual_ko_keeps_repeat_protect() -> None:
+    ctx = _ctx(counter=1)
+    ctx.opp_states[0] = _frail("psn", 0.10)  # poison takes 1/8 >= 10%
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    kept = apply_repeat_protect_rule(entries, ctx, CONFIG)
+    assert kept == entries
+    assert entries[0].breakdown["repeat_protect_exception"] == "residual_ko"
+
+
+def test_residual_that_does_not_ko_still_drops_protect() -> None:
+    ctx = _ctx(counter=1)
+    ctx.opp_states[0] = _frail("psn", 0.25)  # 1/8 < 25%
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    assert apply_repeat_protect_rule(entries, ctx, CONFIG) == entries[1:]
+
+
+def test_second_surviving_threat_still_drops_protect() -> None:
+    ctx = _ctx(counter=1, threat2=60.0)
+    ctx.opp_states[0] = _frail("psn", 0.10)  # slot 1 foe is at full HP, unstatused
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    assert apply_repeat_protect_rule(entries, ctx, CONFIG) == entries[1:]
+
+
+def test_both_threats_residual_ko_keeps_protect() -> None:
+    ctx = _ctx(counter=1, threat2=60.0)
+    ctx.opp_states[0] = _frail("psn", 0.10)
+    ctx.opp_states[1] = _frail("brn", 0.05)
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    assert apply_repeat_protect_rule(entries, ctx, CONFIG) == entries
+
+
+def test_residual_exception_knob_off_is_legacy() -> None:
+    ctx = _ctx(counter=1)
+    ctx.opp_states[0] = _frail("psn", 0.10)
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    off = replace(CONFIG, repeat_protect_residual_exception=False)
+    assert apply_repeat_protect_rule(entries, ctx, off) == entries[1:]
+
+
+def test_magic_guard_foe_takes_no_residual() -> None:
+    ctx = _ctx(counter=1)
+    ctx.opp_states[0] = _frail("psn", 0.10)
+    ctx.opp_states[0].ability = "magicguard"
+    entries = [_entry(_protect(), _attack()), _entry(_attack(), _attack())]
+    assert apply_repeat_protect_rule(entries, ctx, CONFIG) == entries[1:]

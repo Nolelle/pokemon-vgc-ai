@@ -146,10 +146,31 @@ def test_battle_memory_public_history() -> None:
     feed("|cant|p2a: Foo|recharge", "|faint|p1a: Bar", "|turn|3")
     assert not memory.recharge_pending("p2", "garchomp")  # spent: poke-env never clears it
     assert memory.lost_pokemon_last_turn("p1", 3)
+    assert memory.faint_count("p1") == 1 and memory.faint_count("p2") == 0
     assert not memory.lost_pokemon_last_turn("p1", 4)
     assert memory.last_move_used == "hyperbeam"
     feed("|switch|p2a: Foo|Garchomp, L50, M|100/100")  # a new stint
     assert not memory.has_acted("p2", "Foo")
+
+
+def test_faint_count_counts_events_not_currently_fainted() -> None:
+    """Last Respects reads `side.totalFainted`, which counts faint events: faint, Revival
+    Blessing, faint again is 2, though only one Pokemon is down at the end."""
+    memory = BattleMemory("t")
+    memory.our_role = "p1"
+    memory.observe_protocol(
+        [
+            line.split("|")
+            for line in (
+                "|turn|1",
+                "|faint|p1a: Bar",
+                "|-heal|p1: Bar|50/100|[from] move: Revival Blessing",
+                "|faint|p1a: Bar",
+            )
+        ]
+    )
+    assert memory.faint_count("p1") == 2
+    assert memory.faint_count("p2") == 0
 
 
 # --- integration: run the audit --------------------------------------------------------------

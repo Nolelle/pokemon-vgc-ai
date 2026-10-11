@@ -898,7 +898,11 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 	}
 	if (opts.bookkeeping) {
 		// Last Respects / Supreme Overlord count the Pokemon this side has lost.
-		side.totalFainted = side.pokemon.filter((pokemon) => pokemon.fainted).length;
+		// Showdown counts faint EVENTS: a Pokemon revived by Revival Blessing that faints
+		// again counts twice. The public protocol history has the event count; the board
+		// only shows who is fainted now, which is the floor.
+		const nowFainted = side.pokemon.filter((pokemon) => pokemon.fainted).length;
+		side.totalFainted = Math.max(nowFainted, Number(opts.faintCount) || 0);
 	}
 	side.sideConditions = {};
 	for (const effect of snapshot.side_conditions) {
@@ -987,6 +991,7 @@ async function handlePatchPublic(msg) {
 		acted: hidden.history?.our?.acted,
 		locked: hidden.history?.our?.locked,
 		lostLastTurn: hidden.history?.our?.lostLastTurn,
+		faintCount: hidden.history?.our?.faintCount,
 	});
 	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {}, {
 		...shared,
@@ -996,6 +1001,7 @@ async function handlePatchPublic(msg) {
 		acted: hidden.history?.opponent?.acted,
 		locked: hidden.history?.opponent?.locked,
 		lostLastTurn: hidden.history?.opponent?.lostLastTurn,
+		faintCount: hidden.history?.opponent?.faintCount,
 	});
 	if (options.bookkeeping && hidden.history?.lastMove) {
 		// Copycat repeats the last move anyone used.
