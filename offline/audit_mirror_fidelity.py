@@ -1564,13 +1564,13 @@ CLASSIFICATION: list[tuple[str, str, str]] = [
     (r"request:request\.side\.pokemon\.(ability|baseAbility|item|stats|details|condition|"
      r"ident|_key|active|moves)", "gap",
      "Skill Swap/Trace/Illusion/Ally Switch residue the parse audit lists as limitations"),
-    (r"bookkeeping:own_side_order", "gap", "Ally Switch / drag residue in the bench order"),
-    (r"bookkeeping:(active_turns|active_move_actions)", "gap",
-     "poke-env lost a switch-in (Ally Switch); counters follow the slot"),
-    (r"public:(boosts|is_active|base_species|move_slots\.pp)", "gap",
-     "Ally Switch / duplicate-name residue"),
     (r"^(normal|oracle_state)/(field_value|side_value):\w+\.duration", "gap",
      "a screen/weather duration shifted by an unrevealed extender (Light Clay, Damp Rock)"),
+    (r"volatile_missing:(mustrecharge|trapped|trapper|choicelock)|bookkeeping:trapped", "gap",
+     "recharge/trap/lock volatiles poke-env drops or that only the holder's player can see"),
+    (r"request:request\.active\.moves\.(id|move|pp|maxpp|target)", "gap",
+     "a locked/recharging slot offers one move (recharge / the locked move); follows the above"),
+    (r"foe_ability_known", "gap", "ability swapped (Skill Swap / Trace) after the reveal"),
     (r"^oracle_step_gap/", "gap", "downstream of a documented gap in the root state"),
 ]
 

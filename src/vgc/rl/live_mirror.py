@@ -64,7 +64,7 @@ def _set_species_id(mon, base_id: str) -> str:
 
 def _learnset(forme_id: str, base_id: str) -> dict:
     learnsets = load_learnsets()
-    return learnsets.get(forme_id) or learnsets.get(base_id) or {}
+    return {**(learnsets.get(base_id) or {}), **(learnsets.get(forme_id) or {})}
 
 
 def _ordered_unique(values):
