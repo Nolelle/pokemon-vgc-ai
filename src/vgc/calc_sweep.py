@@ -44,6 +44,7 @@ from typing import Any
 from vgc.config import DATA_DIR, REPO_ROOT, SHOWDOWN_REPO
 from vgc.damage import FieldState, PokemonState, damage_range
 from vgc.data import load_moves, load_species, load_typechart
+from vgc.models import PolicyConfig
 from vgc.node import find_node
 from vgc.priority_rules import psychic_terrain_blocks
 
@@ -612,6 +613,14 @@ def ours_damage(case: Case, *, default_config: bool = True) -> dict[str, Any]:
         is_doubles=True,
         num_targets=num_targets,
     )
+    if getattr(PolicyConfig(), "partner_abilities_in_damage", False):
+        partner = case.mons["p2b" if slot == "p2a" else "p2a"]
+        ally = case.mons["p1b"]
+        state = with_partners(
+            state,
+            None if ally.faint else ally.state(),
+            None if partner.faint else partner.state(),
+        )
     result = damage_range(attacker, defender, move_id, state)
     breakdown = result.breakdown
     supported = bool(breakdown["move_supported"])

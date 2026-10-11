@@ -394,6 +394,11 @@ class PolicyConfig:
     # `offline/sweep_calculator_vs_engine.py` (Prankster Tailwind/Thunder Wave were ordered as
     # priority 0). False is the legacy control.
     effective_move_priority: bool = True
+    # Damage reads the PARTNERS' abilities too: Friend Guard (-25% to the holder's partner),
+    # Armor Tail / Queenly Majesty (block priority moves onto either foe), Lightning Rod /
+    # Storm Drain (redirect Electric / Water moves to the holder), Steely Spirit, the Auras.
+    # False is the legacy control (pair-only damage).
+    partner_abilities_in_damage: bool = True
     # Unburden: Speed doubles once the holder's item is consumed or lost, until it switches
     # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
     # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's

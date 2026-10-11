@@ -90,7 +90,15 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.action_sanity import wasted_action_cost
 from vgc.actions import describe_order, enumerate_joint_orders
-from vgc.damage import DamageResult, FieldState, PokemonState, _is_grounded, damage_range, to_id
+from vgc.damage import (
+    DamageResult,
+    FieldState,
+    PokemonState,
+    _is_grounded,
+    damage_range,
+    to_id,
+    with_partners,
+)
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.field_setters import ability_condition, move_condition, setter_value
@@ -1356,7 +1364,14 @@ def _score_attack_order(
         defender_state = ctx.opp_states[idx]
         if defender_state is None:
             continue
-        result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        target_field = field_vs_opp
+        if config.partner_abilities_in_damage:
+            target_field = with_partners(
+                field_vs_opp,
+                ctx.our_states[1 - actor_slot],
+                ctx.opp_states[1 - idx],
+            )
+        result = damage_range(attacker_state, defender_state, move_id, target_field)
         # Hit chance for THIS target (spread moves roll accuracy per target). Damage, KO
         # credit, flinch and speed-drop value below are scaled by it; the *_by_target maps
         # keep the damage-if-it-lands numbers the cross-slot focus-fire logic compares to HP.

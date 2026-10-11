@@ -497,6 +497,27 @@ def _positive_boosts(state: PokemonState) -> int:
     return sum(stage for stage in state.boosts.values() if stage > 0)
 
 
+def partner_ability(state: PokemonState | None) -> str | None:
+    """The ability a standing partner contributes to damage (None when absent or fainted)."""
+    if state is None or state.hp_or_max() <= 0:
+        return None
+    return state.ability
+
+
+def with_partners(
+    field: FieldState, attacker_partner: PokemonState | None, defender_partner: PokemonState | None
+) -> FieldState:
+    """``field`` carrying both partners' abilities (Friend Guard, Armor Tail / Queenly Majesty,
+    Lightning Rod / Storm Drain redirection, Steely Spirit, the Auras)."""
+    from dataclasses import replace
+
+    return replace(
+        field,
+        attacker_ally_ability=partner_ability(attacker_partner),
+        defender_ally_ability=partner_ability(defender_partner),
+    )
+
+
 def _empty_breakdown() -> dict[str, object]:
     return {
         "move_supported": True,
