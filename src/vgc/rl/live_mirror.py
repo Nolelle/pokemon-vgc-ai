@@ -805,6 +805,7 @@ class LiveExactMirror:
                     mon.name for mon in side.pokemon if mon.name and memory.has_acted(role, mon.name)
                 ],
                 "lostLastTurn": memory.lost_pokemon_last_turn(role, turn),
+                "faintCount": memory.faint_count(role),
             }
         # Our own request is authoritative: a hard-locked slot lists a single move, no target.
         from vgc.actions import locked_move_ids

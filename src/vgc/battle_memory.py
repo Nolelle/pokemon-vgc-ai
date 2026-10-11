@@ -155,6 +155,9 @@ class BattleMemory:
     # last lost a Pokemon, and the last move anyone used.
     _acted: set[tuple[str, str]] = field(default_factory=set, repr=False)
     _fainted_turn: dict[str, int] = field(default_factory=dict, repr=False)
+    # Faint EVENTS per side (Showdown's `side.totalFainted`): a Pokemon revived by Revival
+    # Blessing and fainting again counts twice, which currently-fainted counting misses.
+    _faint_count: dict[str, int] = field(default_factory=dict, repr=False)
     last_move_used: str | None = None
     # (role, nickname) -> Mega forme id from `|detailschange|...|Meganium-Mega`. poke-env only
     # reveals a Mega through the forme's ability, which it does not know for every Champions
@@ -254,6 +257,7 @@ class BattleMemory:
                 faint_role = _side(message[2])
                 if faint_role:
                     self._fainted_turn[faint_role] = self.current_turn
+                    self._faint_count[faint_role] = self._faint_count.get(faint_role, 0) + 1
                 continue
             if kind == "-mustrecharge" and len(message) > 2:
                 role = _side(message[2])
@@ -326,6 +330,11 @@ class BattleMemory:
         """Has ``name`` taken a move action since it last switched in (public protocol only)?"""
 
         return bool(role) and (role, to_id(name)) in self._acted
+
+    def faint_count(self, role: str | None) -> int:
+        """How many times a ``role`` Pokemon fainted this battle (Last Respects' count)."""
+
+        return self._faint_count.get(role, 0) if role else 0
 
     def lost_pokemon_last_turn(self, role: str | None, turn: int) -> bool:
         """Did ``role`` lose a Pokemon during the turn before ``turn``?"""
