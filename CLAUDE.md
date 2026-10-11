@@ -644,6 +644,52 @@ by field and attributed to the protocol messages that touched the Pokemon.
   and strongly bimodal (team-effect SD 0.248; 38 teams >= 70%, 30 <= 30%). The earlier
   55-56% predates the M-C set-priors/spreads refresh. Treat it as unproven, not as a win.
 
+## Calculator-vs-engine sweep (2026-10-11): the fast maths now matches Showdown entry by entry
+
+`offline/sweep_calculator_vs_engine.py` (library `vgc.calc_sweep`, `vgc.calc_sweep_cases`, engine
+probe `tools/calc_probe.mjs`) builds controlled doubles turns for EVERY legal move, ability and
+item, runs them in the built Showdown sim and compares `vgc.damage.damage_range` (all 16 rolls,
+crits off), `vgc.accuracy.hit_probability`, and Speed/priority order (`field_effective_speed`,
+`resolves_before`, `priority_rules.action_priority`) with the engine. Each (category, entry) is
+EXACT / APPROXIMATE / UNSUPPORTED-SAFE / WRONG; abilities and items are judged on their own effect
+by a control twin (same scenario without them), so baseline inexactness is not blamed on them.
+Result: `data/champions/calculator_coverage.json` (per entry, usage-weighted tables), reasons for
+everything not exact in `docs/calculator_coverage.md`.
+
+- **Full run (~12 min on 10 workers, ~790k scenarios):**
+  `.venv/bin/python offline/sweep_calculator_vs_engine.py --profile full --workers 10 --output data/champions/calculator_coverage.json --markdown docs/calculator_coverage.md`.
+  `--profile quick` and `--families moves,abilities,items,mega,order,accuracy,stats` / `--only a,b`
+  narrow it. Re-run it after any change to `damage.py`, `accuracy.py`, speed/priority maths, or a
+  Showdown sync, and commit the new coverage file.
+- **Standing check:** `tests/test_calculator_sweep.py` (integration) re-runs a fixed 1/25
+  thinning (<3 min) and fails if an entry recorded EXACT stops matching, plus a full run of the
+  entries the sweep found WRONG and that were fixed.
+- **What was wrong (before -> after, see the report in the PR/worklog for the tables):**
+  `damage.py` floored every modifier instead of using the engine's 4096ths `chainModify`/`modify`
+  (+-1 on spread, screens, weather, items); Huge Power doubled special attacks; Tough Claws, Sheer
+  Force, Iron Fist, Sharpness, Mega Launcher, Strong Jaw, Fairy/Dark Aura, Reckless, Punk Rock,
+  Fluffy, Thick Fat (now on the attack stat), Heatproof, Fur Coat, Unaware, Protean/Libero,
+  Mold Breaker, Sap Sipper/Soundproof/Bulletproof/Dry Skin/Earth Eater/Motor Drive/Eelevate
+  immunities, Armor Tail/Queenly Majesty priority blocks, Lightning Rod/Storm Drain redirection,
+  Friend Guard, resist berries, terrain seeds, cure berries, Air Balloon/Iron Ball, Black Belt and
+  Spell Tag were missing; Electro Shot/Meteor Beam ignored their +1 Sp. Atk; Grassy Terrain's
+  Earthquake halving, Terrain Pulse, Rising Voltage, Expanding Force, Solar Beam in weather,
+  Knock Off, Acrobatics, Hex/Venoshock/Facade/Brine, Flail/Reversal/Hard Press/Stored Power,
+  Freeze-Dry, Flying Press, always-crit moves, screen breakers, Shell Side Arm and fixed-damage
+  moves (Seismic Toss, Super Fang, OHKO) were wrong or `move_supported=False`. Turn order ignored
+  Prankster/Gale Wings/Triage/Grassy Glide/Stall priority and Quick Feet/Surge Surfer/Iron Ball
+  speed. `hit_probability` mishandled OHKO moves, Mega Sol, Cloud Nine, Illuminate.
+- **Knobs (default True, False = legacy):** `PolicyConfig.effective_move_priority`,
+  `PolicyConfig.partner_abilities_in_damage` (the partners' abilities reach `damage_range` through
+  `FieldState.attacker_ally_ability/defender_ally_ability`). The exact rounding, ability/item/move
+  tables and exact Speed chain are corrections inside the calculators (no knob), guarded by the sweep.
+- **Not fixed (documented in `docs/calculator_coverage.md`):** moves needing turn history (Payback,
+  Avalanche, Stomping Tantrum), random branches (Fickle Beam), Rivalry (gender), Analytic, Mimicry,
+  form-change abilities, crit-only abilities, Imposter, accuracy of charge-move first turns.
+  A change in outcome: `test_predicted_rain_engine_opponent_shifts_our_own_bring_four` no longer
+  sees a marginal Torkoal/Sylveon flip once damage is exact (weakened to the Sylveon assertion).
+  No pool A/B was run: these are correctness fixes held by the sweep, not strength claims.
+
 ## Rung 2 (belief-aware shortlist): built, gated, not enabled
 
 `vgc.belief_scoring` scores joint orders as a probability-weighted mixture over the

@@ -38,26 +38,24 @@
   "damage": {
    "ability": {
     "counts": {
-     "EXACT": 210,
+     "EXACT": 214,
      "NOT_EXERCISED": 1,
-     "WRONG": 11
+     "WRONG": 7
     },
     "entries": 222,
     "usage_weighted": {
-     "EXACT": 0.9982672901926279,
+     "EXACT": 0.9993822371077887,
      "NOT_EXERCISED": 0.0001969863402973053,
-     "WRONG": 0.0015357234670749927
+     "WRONG": 0.00042077655191402396
     }
    },
    "item": {
     "counts": {
-     "EXACT": 155,
-     "WRONG": 11
+     "EXACT": 166
     },
     "entries": 166,
     "usage_weighted": {
-     "EXACT": 0.8399500031847432,
-     "WRONG": 0.1600499968152569
+     "EXACT": 1.0
     }
    },
    "move": {
@@ -6515,24 +6513,8 @@
     },
     "battlearmor": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       39,
-       47
-      ],
-      "ours_range": [
-       59,
-       70
-      ],
-      "reason": "damage_differs",
-      "variant": "def|stormthrow|base"
-     },
-     "max_rel_err": 0.5067,
-     "mismatch_variants": {
-      "base": 2
-     },
-     "mismatches": 2,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 7e-06
     },
@@ -6968,24 +6950,8 @@
     },
     "heavymetal": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       34,
-       41
-      ],
-      "ours_range": [
-       29,
-       35
-      ],
-      "reason": "damage_differs",
-      "variant": "def|grassknot|base"
-     },
-     "max_rel_err": 0.1646,
-     "mismatch_variants": {
-      "base": 2
-     },
-     "mismatches": 2,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.0
     },
@@ -7159,24 +7125,8 @@
     },
     "lightmetal": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       23,
-       28
-      ],
-      "ours_range": [
-       29,
-       35
-      ],
-      "reason": "damage_differs",
-      "variant": "def|grassknot|base"
-     },
-     "max_rel_err": 0.2531,
-     "mismatch_variants": {
-      "base": 2
-     },
-     "mismatches": 2,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 1e-06
     },
@@ -7758,24 +7708,8 @@
     },
     "shellarmor": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       39,
-       47
-      ],
-      "ours_range": [
-       59,
-       70
-      ],
-      "reason": "damage_differs",
-      "variant": "def|stormthrow|base"
-     },
-     "max_rel_err": 0.5067,
-     "mismatch_variants": {
-      "base": 2
-     },
-     "mismatches": 2,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.0011
     },
@@ -8247,24 +8181,8 @@
     },
     "aspearberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_frz"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_frz": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 1e-06
     },
@@ -8403,24 +8321,8 @@
     },
     "cheriberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_par"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_par": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.0
     },
@@ -8433,24 +8335,8 @@
     },
     "chestoberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_slp"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_slp": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 5.9e-05
     },
@@ -8568,24 +8454,8 @@
     },
     "electricseed": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       15,
-       18
-      ],
-      "ours_range": [
-       22,
-       27
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|terrain_electric"
-     },
-     "max_rel_err": 0.5135,
-     "mismatch_variants": {
-      "terrain_electric": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.002175
     },
@@ -8724,24 +8594,8 @@
     },
     "grassyseed": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       15,
-       18
-      ],
-      "ours_range": [
-       22,
-       27
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|terrain_grassy"
-     },
-     "max_rel_err": 0.5135,
-     "mismatch_variants": {
-      "terrain_grassy": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.031217
     },
@@ -8999,24 +8853,8 @@
     },
     "mistyseed": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|terrain_misty"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "terrain_misty": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 5.6e-05
     },
@@ -9057,24 +8895,8 @@
     },
     "oranberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_hp_0.3"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_hp_0.3": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 1e-06
     },
@@ -9094,25 +8916,8 @@
     },
     "pechaberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_psn"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_psn": 1,
-      "H_tox": 1
-     },
-     "mismatches": 2,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.0
     },
@@ -9146,24 +8951,8 @@
     },
     "psychicseed": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|terrain_psychic"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "terrain_psychic": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.029326
     },
@@ -9197,24 +8986,8 @@
     },
     "rawstberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_brn"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_brn": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 1e-06
     },
@@ -9353,24 +9126,8 @@
     },
     "sitrusberry": {
      "cases": 1392,
-     "example": {
-      "eng_range": [
-       22,
-       27
-      ],
-      "ours_range": [
-       33,
-       39
-      ],
-      "reason": "damage_differs",
-      "variant": "def|knockoff|H_hp_0.3"
-     },
-     "max_rel_err": 0.4541,
-     "mismatch_variants": {
-      "H_hp_0.3": 1
-     },
-     "mismatches": 1,
-     "status": "WRONG",
+     "mismatches": 0,
+     "status": "EXACT",
      "unexercised": 0,
      "usage": 0.097084
     },
@@ -17741,12 +17498,12 @@
  "meta": {
   "approx_bound": 0.05,
   "case_rows": {
-   "match": 789261,
-   "mismatch": 863,
+   "match": 789281,
+   "mismatch": 843,
    "unexercised": 3700
   },
   "profile": "full",
-  "seconds": 684.6,
+  "seconds": 670.3,
   "showdown_commit": "2796de703988c32dcd54913e0c5f41d524b885f0",
   "usage_sources": {
    "ability": "Smogon M-C chaos stats 2026-09",
