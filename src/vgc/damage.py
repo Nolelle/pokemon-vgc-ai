@@ -527,11 +527,13 @@ def _with_item_effects(state: PokemonState, field: FieldState) -> PokemonState:
     cures = _STATUS_CURE_BERRY.get(state.item)
     seed = _TERRAIN_SEED.get(state.item)
     if cures is not None and state.status in cures:
-        return replace(state, status=None)
+        return replace(state, status=None, item_lost=True)  # eaten: no longer holds an item
     if seed is not None and field.terrain == seed[0]:
         boosts = dict(state.boosts)
         boosts[seed[1]] = min(6, boosts.get(seed[1], 0) + 1)
-        return replace(state, boosts=boosts)
+        return replace(state, boosts=boosts, item_lost=True)
+    if state.item in ("sitrusberry", "oranberry") and state.hp_or_max() * 2 <= state.max_hp():
+        return replace(state, item_lost=True)  # eaten at half HP (the heal itself is not modelled)
     return state
 
 
@@ -686,7 +688,12 @@ def _weight_ratio_base_power(attacker_hg: float, defender_hg: float) -> int:
 
 def _weight_hg(state: PokemonState) -> float:
     """Weight in hectograms (`weightkg * 10`). No Float Stone/Autotomize/Heavy Metal modelling."""
-    return round(state.species_data()["weightkg"] * 10)
+    weight = round(state.species_data()["weightkg"] * 10)
+    if state.ability == "heavymetal":
+        weight *= 2
+    elif state.ability == "lightmetal":
+        weight //= 2
+    return weight
 
 
 def _effective_speed_for_ratio(state: PokemonState) -> float:
@@ -1041,7 +1048,7 @@ def damage_range(
 
     # --- stats ------------------------------------------------------------------------------------------
     is_physical = category == "Physical"
-    always_crit = move_id in _ALWAYS_CRIT_MOVES
+    always_crit = move_id in _ALWAYS_CRIT_MOVES and defender_ability not in ("shellarmor", "battlearmor")
     attacker_stats = attacker.stats()
     defender_stats = defender.stats()
     attack_stat_id: StatId = _OFFENSIVE_STAT_OVERRIDE.get(move_id) or ("atk" if is_physical else "spa")
