@@ -794,12 +794,25 @@ class LiveExactMirror:
             role = roles[key]
             if role is None:
                 continue
+            locked = {}
+            for mon in side.pokemon:
+                move = memory.locked_move(role, mon.name, turn)
+                if move and not mon.fainted and not any(e.id == "confusion" for e in mon.effects):
+                    locked[mon.name] = move
             history[key] = {
+                "locked": locked,
                 "acted": [
                     mon.name for mon in side.pokemon if mon.name and memory.has_acted(role, mon.name)
                 ],
                 "lostLastTurn": memory.lost_pokemon_last_turn(role, turn),
             }
+        # Our own request is authoritative: a hard-locked slot lists a single move, no target.
+        from vgc.actions import locked_move_ids
+
+        for slot, move_id in locked_move_ids(battle).items():
+            actives = list(getattr(battle, "active_pokemon", None) or ())
+            if slot < len(actives) and actives[slot] is not None and move_id != "struggle":
+                history.setdefault("our", {}).setdefault("locked", {})[actives[slot].name] = move_id
         return history
 
     def _snapshot(self, battle):

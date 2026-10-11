@@ -51,6 +51,10 @@ class DamageObservation:
     crit: bool = False
 
 
+# Moves that lock their user in for 2-3 turns (`lockedmove`), then confuse it.
+LOCKING_MOVES = frozenset({"outrage", "thrash", "petaldance", "ragingfury"})
+
+
 def _side(token: object) -> str | None:
     text = str(token or "")
     return text[:2] if len(text) >= 2 and text[0] == "p" and text[1].isdigit() else None
@@ -150,6 +154,8 @@ class BattleMemory:
     # reveals a Mega through the forme's ability, which it does not know for every Champions
     # Mega (Mega Sol), so the snapshot would keep the base forme.
     _mega_formes: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
+    # (role, nickname) -> (turn, move id) of the last Outrage-family move it used this stint.
+    _locking_use: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -194,6 +200,11 @@ class BattleMemory:
                     self._acted.add((actor_role, to_id(_display_name(message[2]))))
                 if to_id(message[3]):
                     self.last_move_used = to_id(message[3])
+                    if actor_role and to_id(message[3]) in LOCKING_MOVES:
+                        self._locking_use[(actor_role, to_id(_display_name(message[2])))] = (
+                            self.current_turn,
+                            to_id(message[3]),
+                        )
                 actor = self._species_for_ident(message[2])
                 move_id = to_id(message[3]) or "unknown"
                 self._last_move = (actor_role or "", actor, move_id)
@@ -280,11 +291,18 @@ class BattleMemory:
                     self._lost_item_this_stint.discard((stint_role, stint_species))
                     self._recharging.discard((stint_role, stint_species))
                     self._acted.discard((stint_role, to_id(_display_name(message[2]))))
+                    self._locking_use.pop((stint_role, to_id(_display_name(message[2]))), None)
                 if _side(message[2]) == self.opponent_role:
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def locked_move(self, role: str | None, name: str | None, turn: int) -> str | None:
+        """The Outrage-family move ``name`` used last turn (so it is locked into it now)."""
+
+        entry = self._locking_use.get((role or "", to_id(name))) if role else None
+        return entry[1] if entry and entry[0] == turn - 1 else None
 
     def mega_forme(self, role: str | None, name: str | None) -> str | None:
         """The Mega forme ``name`` evolved into, from the public `detailschange` line."""

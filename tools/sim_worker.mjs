@@ -650,6 +650,15 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 			};
 		}
 	}
+	const lockedMove = opts.volatileTimers && opts.locked ? opts.locked[snapshot.name] : null;
+	if (lockedMove && !pokemon.volatiles.lockedmove &&
+		battle.dex.moves.get(lockedMove).self?.volatileStatus === 'lockedmove') {
+		// Outrage / Thrash / Petal Dance: locked into the move for the rest of its 2-3 turns.
+		// The remaining length is rolled privately; assume it ends after the coming turn.
+		pokemon.volatiles.lockedmove = {
+			id: 'lockedmove', target: pokemon, move: lockedMove, duration: 1, trueDuration: 1,
+		};
+	}
 	if (snapshot.protect_counter > 0) {
 		// poke-env counts consecutive successful Protects; Showdown's stall condition stores
 		// the odds denominator instead (3 after one Protect, x3 per repeat, capped at 729).
@@ -968,6 +977,7 @@ async function handlePatchPublic(msg) {
 		...shared,
 		ownOrder: hidden.ownOrder,
 		acted: hidden.history?.our?.acted,
+		locked: hidden.history?.our?.locked,
 		lostLastTurn: hidden.history?.our?.lostLastTurn,
 	});
 	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {}, {
@@ -976,6 +986,7 @@ async function handlePatchPublic(msg) {
 		hpScale: Boolean(options.hpScale),
 		keepHiddenItems: Boolean(options.keepHiddenItems),
 		acted: hidden.history?.opponent?.acted,
+		locked: hidden.history?.opponent?.locked,
 		lostLastTurn: hidden.history?.opponent?.lostLastTurn,
 	});
 	if (options.bookkeeping && hidden.history?.lastMove) {
