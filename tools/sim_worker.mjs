@@ -660,15 +660,17 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 	// At any move decision Showdown has already ticked `activeTurns` at the turn start, so a
 	// Pokemon that has not acted yet (a lead on turn 1, or one switched in last turn) holds 1,
 	// never 0 (Speed Boost, Slow Start and the Truant family key on it being non-zero).
+	// A benched Pokemon holds 0 (Showdown resets both counters on switch-out).
 	pokemon.activeTurns = opts.bookkeeping
-		? Math.max(1, pokemon.activeTurns || 0)
+		? (snapshot.active ? Math.max(1, pokemon.activeTurns || 0) : 0)
 		: (snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1));
 	if (opts.restoreState) {
 		// Champions' Fake Out / First Impression are disabled once `activeMoveActions` is
 		// non-zero. A rebuilt Pokemon starts at 0, so a foe could Fake Out again on every
 		// turn of every branch. poke-env's `first_turn` is exactly "has not acted since
 		// switching in": any later turn means at least one move action.
-		pokemon.activeMoveActions = snapshot.first_turn ? 0 : Math.max(1, pokemon.activeMoveActions || 1);
+		pokemon.activeMoveActions = (snapshot.first_turn || (opts.bookkeeping && !snapshot.active))
+			? 0 : Math.max(1, pokemon.activeMoveActions || 1);
 	}
 	pokemon.weighthg = snapshot.weight === null ? pokemon.weighthg : Math.round(snapshot.weight * 10);
 	pokemon.lastMove = snapshot.last_move_id ? battle.dex.moves.get(snapshot.last_move_id) : null;

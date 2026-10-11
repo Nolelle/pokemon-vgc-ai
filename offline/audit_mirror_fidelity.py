@@ -307,7 +307,7 @@ def mon_view(p: dict[str, Any]) -> dict[str, Any]:
         "hurt_this_turn": bool(hurt),
         "last_damage": int(p.get("lastDamage") or 0),
         "times_attacked": int(p.get("timesAttacked") or 0),
-        "move_last_turn_result": p.get("moveLastTurnResult"),
+        "move_last_turn_failed": p.get("moveLastTurnResult") is False,
         "is_active": bool(p.get("isActive")),
         "position": p.get("position"),
         "fainted": bool(p.get("fainted")),
@@ -439,11 +439,13 @@ STRICT_OWN = (
     "hp", "maxhp", "stored_stats", "base_stored_stats", "weighthg", "item", "ability",
     "base_ability", "last_item", "move_slots", "can_mega_evo",
 )  # fmt: skip
+# State Showdown reads on later turns that is not (or not fully) public. `move_this_turn`,
+# `hurt_this_turn`, `last_damage`, `newly_switched` and `previously_switched_in` are reset
+# every turn or read by no Champions move/ability/item, so they are not compared at all.
 BOOKKEEPING = (
-    "last_move", "last_move_used", "move_this_turn", "hurt_this_turn", "last_damage",
-    "times_attacked", "move_last_turn_result", "newly_switched", "previously_switched_in",
-    "active_turns", "active_move_actions", "truant_turn", "item_knocked_off", "ate_berry",
-    "used_item_this_turn", "trapped", "maybe_trapped",
+    "last_move", "last_move_used", "times_attacked", "move_last_turn_failed", "active_turns",
+    "active_move_actions", "truant_turn", "item_knocked_off", "ate_berry", "trapped",
+    "maybe_trapped",
 )  # fmt: skip
 
 
