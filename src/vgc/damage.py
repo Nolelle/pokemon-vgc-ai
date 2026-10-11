@@ -1003,10 +1003,16 @@ def damage_range(
     if attacker.ability in _MOLD_BREAKER_ABILITIES and ally_blocker in _breakable_abilities():
         ally_blocker = None
     if defender_ability in _PRIORITY_BLOCK_ABILITIES or ally_blocker in _PRIORITY_BLOCK_ABILITIES:
-        from vgc.priority_rules import effective_priority
+        from vgc.priority_rules import action_priority
 
         at_full = attacker.hp_or_max() >= attacker.max_hp()
-        if effective_priority(move, attacker.ability, at_full) > 0:
+        # action_priority adds Grassy Glide's +1 in Grassy Terrain for a grounded user.
+        if (
+            action_priority(
+                move, attacker.ability, at_full, field.terrain, grounded=_is_grounded(attacker)
+            )
+            > 0
+        ):
             breakdown["immune"] = True
             breakdown["reason"] = "priority_block"
             return _zero_result(breakdown)
@@ -1121,7 +1127,7 @@ def damage_range(
     attack_value = atk_chain.apply(attack_value)
 
     def_chain = _Chain()
-    if da == "furcoat" and defense_stat_id == "def" and is_physical:
+    if da == "furcoat" and defense_stat_id == "def":  # incl. Psyshock-style Special moves
         def_chain.add(6, 8192)
     if da == "marvelscale" and defender.status is not None and defense_stat_id == "def":
         def_chain.add(6, 6144)

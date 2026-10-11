@@ -1002,3 +1002,36 @@ def test_wonder_guard_allows_super_effective_hit() -> None:
     result = damage_range(attacker, defender, "earthquake", FieldState(is_doubles=False))
     assert result.breakdown["immune"] is False
     assert_actual_in_range(result, actual)
+
+
+# --- Fur Coat on Psyshock; Grassy Glide vs priority-block abilities ---------------------------
+
+
+def test_fur_coat_doubles_defense_for_special_move_that_targets_defense() -> None:
+    attacker_set = pokeset("Gardevoir", ["psyshock", "psychic"], nature="Modest", sp={"hp": 32, "spa": 32}, ability="Trace")
+    defender_set = pokeset("Furfrou", ["splash"], nature="Bold", sp={"hp": 32, "def": 2, "spd": 32}, ability="Fur Coat")
+    attacker = PokemonState("gardevoir", sp_spread={"hp": 32, "spa": 32}, nature="modest")
+    defender = PokemonState(
+        "furfrou", sp_spread={"hp": 32, "def": 2, "spd": 32}, nature="bold", ability="furcoat"
+    )
+    field = FieldState(is_doubles=False)
+
+    _, shock_actual = _run_single_hit(attacker_set, defender_set, "psyshock")
+    _, psychic_actual = _run_single_hit(attacker_set, defender_set, "psychic")
+    assert_actual_in_range(damage_range(attacker, defender, "psyshock", field), shock_actual)
+    assert_actual_in_range(damage_range(attacker, defender, "psychic", field), psychic_actual)
+
+
+def test_grassy_glide_is_blocked_by_armor_tail_in_grassy_terrain_only() -> None:
+    attacker_set = pokeset("Rillaboom", ["grassyglide"], nature="Adamant", sp={"atk": 32}, ability="Grassy Surge")
+    defender_set = pokeset("Farigiraf", ["splash"], nature="Bold", sp={"hp": 32}, ability="Armor Tail")
+    attacker = PokemonState("rillaboom", sp_spread={"atk": 32}, nature="adamant", ability="grassysurge")
+    defender = PokemonState("farigiraf", sp_spread={"hp": 32}, nature="bold", ability="armortail")
+
+    # Grassy Surge sets grassy terrain on entry: Grassy Glide gets +1 and Armor Tail stops it.
+    log = _run_single_hit_expect_immune(attacker_set, defender_set, "grassyglide")
+    assert not any("|-damage|p2a" in line for line in log)
+    blocked = damage_range(attacker, defender, "grassyglide", FieldState(terrain="grassy", is_doubles=False))
+    assert blocked.breakdown["reason"] == "priority_block"
+    open_field = damage_range(attacker, defender, "grassyglide", FieldState(is_doubles=False))
+    assert open_field.max_damage > 0
