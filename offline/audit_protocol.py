@@ -161,6 +161,8 @@ class ProtocolKnowledge:
                 self._add("ability", new_ability, self._holders(of, None), "-ability[roleplay-of]")
             if from_kind == "ability" and subject:
                 self._add("ability", from_name, self._holders(subject, None), "-ability[from]")
+            if from_kind == "ability" and to_id(from_name) in ("receiver", "powerofalchemy"):
+                self.events_for(subject).add("receiver_announced")
         elif tag in ("-activate", "-start", "-end", "-block", "-immune", "-fail", "-singleturn",
                      "-singlemove", "-sidestart", "-fieldstart", "-hint", "-prepare"):
             # `ability: X` as the effect name: the effect belongs to the subject (or the [of]

@@ -113,7 +113,7 @@ def _unrevealed_disguise_residue(finding: dict[str, Any], cx: dict[str, Any]) ->
 
 _COLLISION_FIELDS = frozenset(
     {"hp", "boosts", "status", "status_counter", "active_flag", "volatile", "protect_counter",
-     "foe_moves", "preparing", "fainted"}
+     "foe_moves", "preparing", "fainted", "item", "ability"}
 )  # fmt: skip
 
 
@@ -148,3 +148,41 @@ def _hidden_foe_extender(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
         if mon.item_state == "known" and mon.item_id == extender
     }
     return any(name not in shown for name in holders)
+
+
+@register(
+    id="receiver_announced_not_applied",
+    key=r"ability/foe_wrong/.*",
+    kind="limitation",
+    reason=(
+        "Showdown announces `-ability|MON|NEW|OLD|[from] ability: Receiver|[of] ALLY` but its "
+        "own dump keeps the Receiver / Power of Alchemy holder's ability unchanged, so the "
+        "announced ability is not the truth"
+    ),
+)
+def _receiver_announced(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    return bool(
+        know
+        and cx.get("label") == "foe"
+        and know.has_event(cx["role"], cx["name"], "receiver_announced")
+        and finding["truth"] in ("receiver", "powerofalchemy")
+    )
+
+
+@register(
+    id="rest_sleep_counter",
+    key=r"status_counter/mismatch/slp",
+    kind="limitation",
+    reason=(
+        "sleep caused by Rest: Showdown's counter is one ahead of the protocol-derived count "
+        "on the first sleeping turn; exempt only for a Pokemon that used Rest, off by exactly +1"
+    ),
+)
+def _rest_sleep(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    know = cx.get("know")
+    return bool(
+        know
+        and know.has_event(cx["role"], cx["name"], "rest")
+        and finding["truth"] - finding["belief"] == 1
+    )

@@ -70,6 +70,8 @@ ALL_FIXES = (
     "typeadd_third_type",  # Trick-or-Treat / Forest's Curse add a type; poke-env had no slot for it
     "imposter_not_a_revealed_move",  # Imposter's switch-in Transform was listed as a known move
     "skill_swap_base_ability",  # a revealed Skill Swap shows both OLD abilities; the bases stayed unknown
+    "temporary_forme_types",  # Castform-Rainy etc. kept the weather forme's types after switching out
+    "extender_item_suppressed",  # Damp Rock / Light Clay were counted under Magic Room or Klutz
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -1018,6 +1020,17 @@ def _restore_temporary_forme(battle: AbstractBattle, mon: Pokemon | None) -> Any
         entry = temps.pop(id(mon), None)
         if entry is not None:
             mon._species = entry[1]
+            if fix_enabled("temporary_forme_types"):
+                # (Castform-Rainy etc.: the types and base stats go back with the species)
+                from poke_env.data import GenData
+
+                dex = GenData.from_gen(mon._gen).pokedex.get(entry[1])
+                if dex:
+                    mon._type_1 = PokemonType.from_name(dex["types"][0])
+                    mon._type_2 = (
+                        PokemonType.from_name(dex["types"][1]) if len(dex["types"]) > 1 else None
+                    )
+                    mon._base_stats = dex["baseStats"]
     return None
 
 
