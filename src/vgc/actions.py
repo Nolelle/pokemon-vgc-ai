@@ -56,6 +56,33 @@ def locked_move_ids(battle) -> dict[int, str]:
     return locked
 
 
+def _fill_self_targets(battle, message: str) -> str:
+    """Give an `adjacentAllyOrSelf` move (Milk Drink in this mod) the target Showdown wants.
+
+    poke-env prunes the ally/self targets it enumerates, and with the ally gone it sent
+    `move milkdrink` bare; Showdown answers "needs a target" and the whole choice is lost.
+    The only legal target then is the user itself: `-1` / `-2` for slot a / b."""
+    if not isinstance(message, str) or "move " not in message:
+        return message
+    request = getattr(battle, "last_request", None) or {}
+    actives = request.get("active") or []
+    prefix = "/choose " if message.startswith("/choose ") else ""
+    parts = message.removeprefix(prefix).split(", ")
+    for slot, part in enumerate(parts[:2]):
+        tokens = part.split()
+        if len(tokens) < 2 or tokens[0] != "move" or slot >= len(actives):
+            continue
+        if any(t.lstrip("-").isdigit() for t in tokens[2:]):
+            continue
+        for entry in (actives[slot] or {}).get("moves") or []:
+            if (
+                _showdown_id(entry.get("id", "")) == _showdown_id(tokens[1])
+                and entry.get("target") == "adjacentAllyOrSelf"
+            ):
+                parts[slot] = " ".join([*tokens, str(-(slot + 1))])
+    return prefix + ", ".join(parts)
+
+
 def index_locked_choice(battle, message: str) -> str:
     """Rewrite a choice so a locked move (Outrage, Petal Dance, ...) is sent as `move 1`.
 
@@ -72,6 +99,7 @@ def index_locked_choice(battle, message: str) -> str:
     Thunderbolt. Sending-time also covers poke-env's own pickers (random/default
     fallbacks, baseline opponents).
     """
+    message = _fill_self_targets(battle, message)
     locked = locked_move_ids(battle)
     if not locked or not isinstance(message, str):
         return message
