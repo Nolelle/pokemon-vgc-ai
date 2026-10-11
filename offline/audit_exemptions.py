@@ -242,4 +242,7 @@ def _holder_fainted_same_step(finding: dict[str, Any], cx: dict[str, Any]) -> bo
     name = cx.get("name")
     if finding["field"] == "active_slots":
         return any("faint" in ln for ln in cx.get("lines", []))
-    return any(f"faint|{role}" in ln and f": {name}" in ln for ln in cx.get("lines", []))
+    hit = any(f"faint|{role}" in ln and f": {name}" in ln for ln in cx.get("lines", []))
+    if hit and cx.get("deceived") is not None:
+        cx["deceived"][role].add(name)  # the record stays wrong on the following steps too
+    return hit

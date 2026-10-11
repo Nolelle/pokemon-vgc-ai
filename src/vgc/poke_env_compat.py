@@ -74,6 +74,8 @@ ALL_FIXES = (
     "extender_item_suppressed",  # Damp Rock / Light Clay were counted under Magic Room or Klutz
     "gastro_acid_keeps_swapped",  # Gastro Acid forgot a Worry Seed / Skill Swap ability instead of suppressing it
     "clock_setter_by_slot",  # a disguised own Zoroark's Damp Rock / Light Clay was looked up under the disguise's name
+    "reflected_move_not_a_sleep_turn",  # a sleeping Pokemon's Magic Bounce reflection advanced its sleep counter
+    "transform_copies_current_types",  # Transform / Imposter copied the species' types, not the target's current ones
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -467,9 +469,13 @@ def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
     if not reflected:
         return None
     counter = mon._protect_counter
+    sleep_counter = mon._status_counter
 
     def restore() -> None:
         mon._protect_counter = counter
+        if _is_sleeping(mon) and fix_enabled("reflected_move_not_a_sleep_turn"):
+            # (a sleeping Pokemon's Magic Bounce reflection is no action of its own)
+            mon._status_counter = sleep_counter
 
     return restore
 
@@ -819,6 +825,24 @@ def _on_item(battle: AbstractBattle, split: list[str]) -> Any:
     return eaten_on_arrival
 
 
+def _on_any_transform(battle: AbstractBattle, split: list[str]) -> Any:
+    """Transform / Imposter copy the target's CURRENT types (Soak, Trick-or-Treat ...), not its
+    species' types as poke-env's `Pokemon.transform` assumes."""
+    if len(split) < 4 or not fix_enabled("transform_copies_current_types"):
+        return _on_transform(battle, split)
+    mon = _find_mon(battle, split[2])
+    into = _find_mon(battle, split[3])
+    inner = _on_transform(battle, split)
+
+    def after() -> None:
+        if inner is not None:
+            inner()
+        if mon is not None and into is not None:
+            mon._temporary_types = list(into.types)
+
+    return after
+
+
 def _on_transform(battle: AbstractBattle, split: list[str]) -> Any:
     """Imposter transforms on switch-in without using Transform; poke-env then lists Transform as
     one of the foe's moves although the protocol never showed it (a Ditto here may carry others)."""
@@ -841,7 +865,7 @@ def _on_transform(battle: AbstractBattle, split: list[str]) -> Any:
 
 
 _HANDLERS = {
-    "-transform": _on_transform,
+    "-transform": _on_any_transform,
     "-enditem": _on_enditem,
     "-item": _on_item,
     "move": _on_move_or_cant,
