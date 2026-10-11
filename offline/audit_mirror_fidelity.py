@@ -62,7 +62,7 @@ from vgc.rl import live_mirror as _live_mirror
 from vgc.rl.agents import make_direct_agent
 from vgc.rl.env import DirectBattle, InvalidChoice, SimWorker, choice_string
 from vgc.rl.hidden_state import HiddenStateHypothesis
-from vgc.rl.live_mirror import LiveExactMirror, MirrorHypothesis, mirror_side
+from vgc.rl.live_mirror import LiveExactMirror, MirrorHypothesis
 
 SIDES = ("p1", "p2")
 DEFAULT_OUTPUT = RUNS_DIR / "eval" / "mirror_fidelity_audit.json"

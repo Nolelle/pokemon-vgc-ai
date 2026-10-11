@@ -1251,3 +1251,44 @@ copied from (`PolicyConfig`, exception-safe `decide()`, Wilson-CI
 `offline/run_matches.py` + `offline/run_gates.py`, JSONL `offline/log_experiment.py`,
 `ContextVar`-based `decision_trace.py`). When in doubt about a pattern not covered here,
 check how that repo does it first.
+
+## Mirror fidelity audit (2026-10-10): does the live judge's Showdown rebuild match the game?
+
+`offline/audit_mirror_fidelity.py` plays seeded local battles (synthetic mechanics-heavy teams +
+team pools, random/maxpower/heuristic/vgc_myopic players), and at many decision points from BOTH
+seats builds the mirror root exactly like the live judge (`judge_config` + `with_exact_timers`,
+posterior beliefs, every timer branch; the private simulator root is stripped from the view).
+
+- **Field comparison** (normal mirror, public info only): public fields must match Showdown's
+  `dump` (forme, HP, status, boosts, volatiles + counters, field/side conditions, Choice lock,
+  Mega state, our PP, our regenerated request). Hidden facts (foe Stat Points/nature/item/
+  ability/moves/bring) are reported as GUESS ACCURACY, not defects.
+- **Oracle equivalence**: the same rebuild code path with the TRUE hidden info injected (sets,
+  spreads, bring, timers, foe absolute HP); from that root and from a true-battle clone the same
+  joint choices + PRNG seed must give identical protocol and requests.
+- Groups are classified (`CLASSIFICATION`): hidden / noise / documented gap / UNEXPLAINED. A pair is
+  `pass` (identical), `gap-explained` (root state had a documented gap) or `fail`.
+- Run: `.venv/bin/python offline/audit_mirror_fidelity.py --battles 200 --workers 8 --seed 20261010
+  --point-rate 0.5` (~60 s); `--config FIELD=VALUE,...` overrides PolicyConfig (all `exact_mirror_*`
+  fix knobs False = the legacy rebuild); `--only N --trace REGEX` follows one battle.
+  `tests/test_mirror_fidelity.py` (integration, ~20 s) is the standing check.
+- **Result, 3 seeds x 200 battles**: ~3,800 oracle pairs each, 77% identical, 22% explained by a
+  documented gap, 0.7-1.4% unexplained (mostly 1-HP damage-roll shifts); legacy rebuild on seed
+  20261010: 0 identical, 364 fail, 12 crashes, 12,617 unexplained episodes (now 4). True sleep
+  timer inside the searched branches 100%; confusion 80%.
+- **Defects found and fixed** (knobs in `PolicyConfig`, default True): `exact_mirror_own_order`
+  (**the fainted-switch judge error**: the search turns `switch <name>` into a POSITION in our real
+  request, the mirror listed its bench in preview order, so a position named another, sometimes
+  fainted, Pokemon; also the bring now comes from the request so a trapped active no longer
+  loses a bench mon), `exact_mirror_foe_forme` (foes built as BASE species: Persian-Alola, Rotom-
+  Wash, Indeedee-F...), `exact_mirror_champions_pp` (PP is `(pp/5+1)*4`, not vanilla), `_gender`,
+  `_stall_duration`, `_fainted_state`, `_volatile_timers` (mustrecharge/two-turn moves never
+  expired; Dig/Fly user was hittable; foe trap recomputed; Outrage lock), `_public_bookkeeping`
+  (activeTurns, totalFainted, faintedLastTurn, move actions from protocol history, last move),
+  `_keep_revealed_moves`. Ungated crash/correctness fixes: Meganium was read as a Mega
+  (`"mega" in "meganium"`), Mega forme from `detailschange` (Mega Sol), Perish Song duration,
+  `apparentType` after Mega, Wrap-family `sourceEffect`, null/duplicate active slots, Floette-Mega.
+- **Known gaps** (classified, reasons in the script): Substitute HP, Transform/Imposter/Illusion
+  (battles with an intact Illusion are skipped), Ally Switch slot loss, Metronome item counter,
+  Rage Fist/Stomping Tantrum/Belch/Recycle history, +-1 turn on Taunt/Encore/Disable/Yawn,
+  pending Future Sight, target slot of a charging move, PP drift of one, hidden Outrage length.
