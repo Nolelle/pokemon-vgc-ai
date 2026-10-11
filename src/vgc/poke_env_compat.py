@@ -81,6 +81,9 @@ ALL_FIXES = (
     "transformed_ability_temporary",  # an ability revealed by a transformed Pokemon was stored as its base
     "fairy_lock_field",  # Fairy Lock arrives as -fieldactivate and was never recorded
     "lock_on_two_turns",  # Lock-On / Mind Reader were dropped at once or kept forever
+    "forme_change_resets_types",  # a Mega Evolution kept Soak / Trick-or-Treat type changes
+    "copied_protect_counts",  # Protect copied by Copycat / Instruct did not advance the counter
+    "gravity_aborts_charge",  # Gravity left a Fly / Bounce user 'preparing'
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -481,7 +484,24 @@ def _on_move_or_cant(battle: AbstractBattle, split: list[str]) -> Any:
     return _chain(*hooks)
 
 
+_PROTECT_FAMILY = frozenset(
+    "protect detect kingsshield spikyshield banefulbunker obstruct silktrap burningbulwark "
+    "quickguard wideguard matblock craftyguard endure".split()
+)
+
+
 def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
+    if (
+        fix_enabled("copied_protect_counts")
+        and any(p in ("[from] move: Copycat", "[from] move: Instruct") for p in split[4:])
+        and _to_id(split[3]) in _PROTECT_FAMILY
+    ):
+        # A Protect copied by Copycat / Instruct is still a use of it: Showdown's stall counter
+        # advances, poke-env only counts the Pokemon's own choices.
+        def counted() -> None:
+            mon._protect_counter += 1
+
+        return counted
     """A move line whose `[from]` tag shows the Pokemon did not choose the move this turn
     (a reflected move, a Dancer copy) must not reset its Protect chain."""
     if not fix_enabled("confusion_resets_protect"):
@@ -528,6 +548,18 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     before = set(mon.effects)
+    if split[3] == "move: Gravity" and fix_enabled("gravity_aborts_charge"):
+        grounded_mon = mon
+
+        def gravity_hits() -> None:
+            move = grounded_mon._preparing_move
+            if move is not None and move.id in ("fly", "bounce", "skydrop", "flyingpress"):
+                grounded_mon._preparing_move = None
+                grounded_mon._preparing_target = None
+
+        pending_gravity = gravity_hits
+    else:
+        pending_gravity = None
     if split[3] == "ability: Cud Chew":
         battle._vgc_cud_chew = mon  # type: ignore[attr-defined]
     symbiosis_to = None
@@ -567,6 +599,8 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
             swap_bases.append((other, shown_swap[0]))
 
     def after() -> None:
+        if pending_gravity is not None:
+            pending_gravity()
         for swapped_mon, old_ability in swap_bases:
             swapped_mon._ability = _to_id(old_ability) or None
         if symbiosis_to is not None and symbiosis_to._item:
@@ -772,8 +806,12 @@ def _on_ability(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     base_before = mon._ability
+    traced = next((p for p in split[4:] if p.startswith("[from] ability: Trace")), None)
 
     def to_temporary() -> None:
+        if traced is not None and mon.forme_change_ability == "trace":
+            # A Mega whose own (forme) ability is Trace: the copied one is the temporary ability
+            mon._temporary_ability = _to_id(split[3])
         _swapped(battle).add(id(mon))
         if changed_by_move and base_before is None and mon._ability is not None:
             # poke-env stored the NEW ability as the base; the line also names the OLD, real one.
@@ -1073,9 +1111,24 @@ def _is_mega_forme(species_id: str) -> bool:
 
 
 def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:
+    mon = _find_mon(battle, split[2])
+    if mon is not None and fix_enabled("forme_change_resets_types"):
+        # Showdown's `formeChange` sets the new forme's types, wiping Soak / Trick-or-Treat /
+        # Reflect Type results; poke-env kept them through a Mega Evolution.
+        reset = _forme_species_hook(battle, split, mon)
+
+        def with_reset() -> None:
+            if reset is not None:
+                reset()
+            mon._temporary_types = []
+
+        return with_reset
+    return _forme_species_hook(battle, split, mon)
+
+
+def _forme_species_hook(battle: AbstractBattle, split: list[str], mon: Pokemon | None) -> Any:
     if not fix_enabled("forme_species"):
         return None
-    mon = _find_mon(battle, split[2])
     if mon is None:
         return None
     new_species = _forme_species_id(split[3])

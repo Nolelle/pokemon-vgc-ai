@@ -119,8 +119,11 @@ class TeamBuilder:
         self.interesting = set(INTERESTING_MOVES)
         self.stones: dict[str, str] = {}
         for item_id, item in self.items.items():
-            if item.get("megaStone") and item.get("megaEvolves"):
-                self.stones.setdefault(to_id(item["megaEvolves"]), item["name"])
+            if item.get("megaStone"):
+                # (the Champions export leaves `megaEvolves` null; `itemUser` names the species)
+                for user in item.get("itemUser") or [item.get("megaEvolves")]:
+                    if user:
+                        self.stones.setdefault(to_id(user), item["name"])
         self.base_species = sorted(
             sid
             for sid, s in self.species.items()
