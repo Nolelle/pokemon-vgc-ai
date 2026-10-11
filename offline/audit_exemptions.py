@@ -116,7 +116,7 @@ def _unrevealed_disguise_residue(finding: dict[str, Any], cx: dict[str, Any]) ->
 
 _COLLISION_FIELDS = frozenset(
     {"hp", "boosts", "status", "status_counter", "active_flag", "volatile", "protect_counter",
-     "foe_moves", "preparing", "fainted", "item", "ability"}
+     "foe_moves", "preparing", "fainted", "item", "ability", "types"}
 )  # fmt: skip
 
 
@@ -191,6 +191,24 @@ def _rest_sleep(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
         and know.has_event(cx["role"], cx["name"], "rest")
         and finding["truth"] - finding["belief"] == 1
     )
+
+
+@register(
+    id="trace_mega_forme_unrecognised",
+    key=r"species/mismatch/foe",
+    kind="limitation",
+    reason=(
+        "the bot recognises a Mega by its forme ability (poke-env does not rename the species); "
+        "a Mega whose own ability is Trace (Meowstic-Mega, Alakazam-Mega) then shows another "
+        "ability, so the match is lost. Follow-up: record the forme from the detailschange line"
+    ),
+)
+def _trace_mega(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    from vgc.data import load_species
+
+    entry = load_species().get(finding["truth"]) or {}
+    abilities = {str(a).lower().replace(" ", "") for a in (entry.get("abilities") or {}).values()}
+    return bool(entry.get("isMega")) and abilities == {"trace"}
 
 
 @register(

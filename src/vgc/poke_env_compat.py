@@ -25,6 +25,7 @@ from typing import Any
 from poke_env.battle.abstract_battle import AbstractBattle
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.battle.effect import Effect
+from poke_env.battle.field import Field
 from poke_env.battle.pokemon import Pokemon
 from poke_env.battle.pokemon_type import PokemonType
 
@@ -78,6 +79,8 @@ ALL_FIXES = (
     "transform_copies_current_types",  # Transform / Imposter copied the species' types, not the target's current ones
     "own_slot_names_the_mon",  # effects announced under our Zoroark's disguise were filed on the disguise
     "transformed_ability_temporary",  # an ability revealed by a transformed Pokemon was stored as its base
+    "fairy_lock_field",  # Fairy Lock arrives as -fieldactivate and was never recorded
+    "lock_on_two_turns",  # Lock-On / Mind Reader were dropped at once or kept forever
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -298,11 +301,16 @@ def _revealed_ability_holder(split: list[str]) -> tuple[str, str] | None:
 _PERSISTENT_ACTIVATE_EFFECTS = frozenset(
     getattr(Effect, name)
     for name in (
-        "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP",
+        "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "LOCK_ON", "MAGMA_STORM", "MIND_READER",
+        "SAND_TOMB", "SNAP_TRAP",
         "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
     )
     if hasattr(Effect, name)
 )  # fmt: skip
+
+_TWO_TURN_EFFECTS = frozenset(
+    getattr(Effect, name) for name in ("LOCK_ON", "MIND_READER") if hasattr(Effect, name)
+)
 
 # Volatiles Baton Pass hands to the incoming Pokemon (Showdown: conditions without `noCopy`
 # that outlive a turn). Boosts always pass.
@@ -394,11 +402,16 @@ def _on_turn(battle: AbstractBattle) -> Any:
                 if mon is not None and mon._status_counter > 15 and mon._status is not None:
                     if mon._status.name == "TOX":
                         mon._status_counter = 15
+        store = _ephemeral(battle)
+        if "fairylock" in store:
+            store["fairylock"] -= 1  # Fairy Lock: the turn it is used and the next one
+            if store["fairylock"] <= 0:
+                del store["fairylock"]
+                battle._fields.pop(Field.FAIRY_LOCK, None)
         if fix_enabled("single_turn_effects"):
-            store = _ephemeral(battle)
             for mon, effect in store["turn"]:
                 _drop(mon, effect)
-            store["turn"] = []
+            store["turn"] = store.pop("turn2", [])  # (promoted: dropped at the end of NEXT turn)
 
     return end_of_turn
 
@@ -570,6 +583,11 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
         if fix_enabled("momentary_activate_effects"):
             for effect in set(mon.effects) - before - _PERSISTENT_ACTIVATE_EFFECTS:
                 _ephemeral(battle)["turn"].append((mon, effect))
+            if fix_enabled("lock_on_two_turns"):
+                # Lock-On / Mind Reader last through the NEXT turn's moves (Showdown duration 2)
+                for effect in set(mon.effects) - before:
+                    if effect in _TWO_TURN_EFFECTS:
+                        _ephemeral(battle).setdefault("turn2", []).append((mon, effect))
 
     return after
 
@@ -855,6 +873,18 @@ def _on_any_transform(battle: AbstractBattle, split: list[str]) -> Any:
     return after
 
 
+def _on_fieldactivate(battle: AbstractBattle, split: list[str]) -> Any:
+    """Fairy Lock arrives as `-fieldactivate`, which poke-env ignores (it never saw the field)."""
+    if len(split) < 3 or "Fairy Lock" not in split[2] or not fix_enabled("fairy_lock_field"):
+        return None
+
+    def start() -> None:
+        battle.field_start("move: Fairy Lock")
+        _ephemeral(battle)["fairylock"] = 2
+
+    return start
+
+
 def _on_transform(battle: AbstractBattle, split: list[str]) -> Any:
     """Imposter transforms on switch-in without using Transform; poke-env then lists Transform as
     one of the foe's moves although the protocol never showed it (a Ditto here may carry others)."""
@@ -877,6 +907,7 @@ def _on_transform(battle: AbstractBattle, split: list[str]) -> Any:
 
 
 _HANDLERS = {
+    "-fieldactivate": _on_fieldactivate,
     "-transform": _on_any_transform,
     "-enditem": _on_enditem,
     "-item": _on_item,
@@ -1036,7 +1067,9 @@ def _is_mega_forme(species_id: str) -> bool:
     from vgc.data import load_species
 
     entry = load_species().get(species_id)
-    return bool(entry and entry.get("isMega")) or "mega" in species_id
+    if entry is not None:
+        return bool(entry.get("isMega"))
+    return "mega" in species_id
 
 
 def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:

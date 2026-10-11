@@ -236,6 +236,14 @@ class PokemonMechanicsState:
     item_lost_this_stint: bool | None = None
 
 
+def _is_mega_species(species_id: str) -> bool:
+    """Meganium and Yanmega contain "mega" without being Mega formes."""
+    entry = load_species().get(species_id)
+    if entry is not None:
+        return bool(entry.get("isMega"))
+    return "mega" in species_id and not species_id.startswith(("meganium", "yanmega"))
+
+
 def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str | None:
     """Mega forme poke-env applied without renaming ``species``.
 
@@ -245,7 +253,7 @@ def _mega_forme_id(species_id: str, forme_change_ability_id: str | None) -> str 
     actually happened.
     """
 
-    if species_id and "mega" in species_id:
+    if species_id and _is_mega_species(species_id):
         return species_id
     if not species_id or not forme_change_ability_id:
         return None
@@ -498,7 +506,7 @@ def snapshot_pokemon(
         first_turn=bool(getattr(pokemon, "first_turn", False)),
         transformed=bool(getattr(pokemon, "transformed", False)),
         mega_evolved=bool(mega_forme_id)
-        or ("mega" in species_id and species_id != (base_species_id or species_id)),
+        or (_is_mega_species(species_id) and species_id != (base_species_id or species_id)),
         terastallized=bool(getattr(pokemon, "is_terastallized", False)),
         tera_type=to_id(getattr(pokemon, "tera_type", None)) or None,
         weight=float(getattr(pokemon, "weight", 0.0))
