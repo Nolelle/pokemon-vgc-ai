@@ -1061,13 +1061,17 @@ def build_context(
     our_tailwind = SideCondition.TAILWIND in battle.side_conditions
     opp_tailwind = SideCondition.TAILWIND in battle.opponent_side_conditions
     our_speed = [
-        field_effective_speed(state, weather=weather, tailwind=our_tailwind)
+        field_effective_speed(
+            state, weather=weather, tailwind=our_tailwind, terrain=terrain
+        )
         if state is not None
         else 0.0
         for state in our_states
     ]
     opp_speed = [
-        field_effective_speed(state, weather=weather, tailwind=opp_tailwind)
+        field_effective_speed(
+            state, weather=weather, tailwind=opp_tailwind, terrain=terrain
+        )
         if state is not None
         else 0.0
         for state in opp_states
@@ -1114,7 +1118,11 @@ def build_context(
                 opp_state,
                 move_ids,
                 our_state,
-                field_vs_us,
+                (
+                    with_partners(field_vs_us, opp_states[1 - opp_idx], our_states[1 - our_idx])
+                    if config.partner_abilities_in_damage
+                    else field_vs_us
+                ),
                 config.psychic_terrain_blocks_priority,
                 config.model_move_accuracy,
                 config.effective_move_priority,
@@ -1151,7 +1159,11 @@ def build_context(
                 our_state,
                 our_move_ids,
                 opp_state,
-                field_vs_opp,
+                (
+                    with_partners(field_vs_opp, our_states[1 - our_idx], opp_states[1 - opp_idx])
+                    if config.partner_abilities_in_damage
+                    else field_vs_opp
+                ),
                 config.psychic_terrain_blocks_priority,
                 config.model_move_accuracy,
             )
