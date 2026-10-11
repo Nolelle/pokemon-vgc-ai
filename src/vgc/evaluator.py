@@ -616,25 +616,39 @@ def _partner_removes_threat(
 
 
 _SAND_IMMUNE_TYPES = frozenset({"Rock", "Ground", "Steel"})
-_SAND_IMMUNE_ABILITIES = frozenset({"sandveil", "sandrush", "sandforce", "overcoat", "magicguard"})
+_SAND_IMMUNE_ABILITIES = frozenset(
+    {"sandveil", "sandrush", "sandforce", "overcoat", "magicguard"}
+)
+_END_OF_TURN_HEAL_ITEMS = frozenset({"leftovers", "blacksludge"})
 
 
 def _residual_fraction(state: PokemonState, mon, ctx: _Context) -> float:
     """Fraction of max HP an opposing active loses to end-of-turn damage this turn: poison,
-    Toxic (counter-scaled, floor 1/16), burn, sandstorm chip and Leech Seed. Deliberately
-    narrow: other residuals (Perish Song, Salt Cure, ...) count as 0, i.e. never excuse."""
-    if state.ability == "magicguard":
+    Toxic (counter-scaled; uses the current counter, which is at most this turn's real step,
+    so it can only under-count), burn, sandstorm chip, Leech Seed and Salt Cure, minus a
+    Leftovers/Black Sludge heal. Deliberately narrow: other residuals (Perish Song, ...)
+    count as 0, i.e. never excuse. Magic Guard / Poison Heal / Safety Goggles negate it."""
+    if state.ability in ("magicguard", "poisonheal"):
         return 0.0
+    types = set(state.species_data().get("types") or [])
     total = {"psn": 1 / 8, "brn": 1 / 16}.get(state.status or "", 0.0)
     if state.status == "tox":
         total = max(1, int(getattr(mon, "status_counter", 0) or 0)) / 16
-    if ctx.weather == "sand":
-        types = set(state.species_data().get("types") or [])
-        if not (types & _SAND_IMMUNE_TYPES) and state.ability not in _SAND_IMMUNE_ABILITIES:
-            total += 1 / 16
-    if Effect.LEECH_SEED in (getattr(mon, "effects", None) or {}):
+    if (
+        ctx.weather == "sand"
+        and not (types & _SAND_IMMUNE_TYPES)
+        and state.ability not in _SAND_IMMUNE_ABILITIES
+        and state.item != "safetygoggles"
+    ):
+        total += 1 / 16
+    effects = getattr(mon, "effects", None) or {}
+    if Effect.LEECH_SEED in effects:
         total += 1 / 8
-    return total
+    if Effect.SALT_CURE in effects:
+        total += 1 / 4 if types & {"Water", "Steel"} else 1 / 8
+    if state.item in _END_OF_TURN_HEAL_ITEMS:
+        total -= 1 / 16
+    return max(0.0, total)
 
 
 def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig) -> bool:
@@ -699,7 +713,9 @@ def apply_repeat_protect_rule(
                 excused = excused or "forced"
             elif _partner_removes_threat(entry.breakdown, slot, ctx, config):
                 excused = "partner_ko"
-            elif _residual_kos_threats(slot, ctx, config):
+            elif config.repeat_protect_residual_exception and _residual_kos_threats(
+                slot, ctx, config
+            ):
                 excused = "residual_ko"
             else:
                 dropped = True

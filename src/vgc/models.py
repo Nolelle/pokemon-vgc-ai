@@ -220,6 +220,12 @@ class PolicyConfig:
     # 0.05 in wins, because the one-turn exact value prefers "survive this turn" to
     # trading. False = legacy (no filter), kept as the control.
     forbid_repeat_protect: bool = True
+    # Exception (c) to the rule above: keep the repeat Protect when end-of-turn residual
+    # damage this turn (poison/Toxic/burn/sand/Leech Seed/Salt Cure, minus Leftovers) is
+    # predicted to faint every foe that threatens the protecting slot, so merely surviving
+    # the turn wins (e.g. our last Pokemon, slower than the foe). False = exceptions (a)/(b)
+    # only (legacy).
+    repeat_protect_residual_exception: bool = True
 
     # -- Defense/utility: opponent Protect anticipation -----------------------------------
     # Baseline chance an opponent slot Protects this turn when it has an unused
