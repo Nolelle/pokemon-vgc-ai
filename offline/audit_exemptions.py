@@ -252,7 +252,7 @@ def _yawn_kept(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
     ),
 )
 def _holder_fainted_same_step(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
-    if cx.get("label") != "foe":
+    if cx.get("label") != "foe" or not cx.get("truth"):
         return False
     role = cx.get("role")
     mons = cx["truth"]["sides"][role]["mons"]
