@@ -504,6 +504,10 @@ function hpForPublicPercent(percent, maxhp) {
 	return Math.floor((low + high) / 2);
 }
 
+// In-battle formes Showdown makes permanent (`formeChange(..., isPermanent=true)`): the
+// Pokemon keeps them through a switch-out, so `baseSpecies` moves too.
+const PERMANENT_FORMES = new Set(['palafinhero', 'mimikyubusted', 'terapagosterastal']);
+
 function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 	const species = battle.dex.species.get(snapshot.species_id);
 	// The set the battle was BUILT from still names the item the Pokemon started with.
@@ -521,7 +525,8 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 			}
 		}
 		pokemon.species = species;
-		if (opts.megaStats && species.isMega && !snapshot.transformed) {
+		if (opts.megaStats && (species.isMega || PERMANENT_FORMES.has(species.id)) &&
+			!snapshot.transformed) {
 			// Mega Evolution is a PERMANENT forme change: Showdown also moves `baseSpecies`, so
 			// a Mega that switches out keeps its Mega forme. Left at the base species it reverted
 			// on the first switch-out, and the protocol `details` kept naming the base forme.
@@ -662,15 +667,17 @@ function patchPokemon(battle, pokemon, snapshot, hidden = {}, opts = {}) {
 	// never 0 (Speed Boost, Slow Start and the Truant family key on it being non-zero).
 	// A benched Pokemon holds 0 (Showdown resets both counters on switch-out).
 	pokemon.activeTurns = opts.bookkeeping
-		? (snapshot.active ? Math.max(1, pokemon.activeTurns || 0) : 0)
+		? Math.max(1, pokemon.activeTurns || 0)  // benched ones are zeroed in patchSide
 		: (snapshot.first_turn ? 0 : Math.max(1, pokemon.activeTurns || 1));
 	if (opts.restoreState) {
 		// Champions' Fake Out / First Impression are disabled once `activeMoveActions` is
 		// non-zero. A rebuilt Pokemon starts at 0, so a foe could Fake Out again on every
 		// turn of every branch. poke-env's `first_turn` is exactly "has not acted since
 		// switching in": any later turn means at least one move action.
-		pokemon.activeMoveActions = (snapshot.first_turn || (opts.bookkeeping && !snapshot.active))
-			? 0 : Math.max(1, pokemon.activeMoveActions || 1);
+		const acted = Array.isArray(opts.acted) ? opts.acted.includes(snapshot.name) : !snapshot.first_turn;
+		// `first_turn` in poke-env is true for the whole switch-in turn even after the Pokemon
+		// moved; the protocol history knows whether it actually took a move action.
+		pokemon.activeMoveActions = !acted ? 0 : Math.max(1, pokemon.activeMoveActions || 1);
 	}
 	pokemon.weighthg = snapshot.weight === null ? pokemon.weighthg : Math.round(snapshot.weight * 10);
 	pokemon.lastMove = snapshot.last_move_id ? battle.dex.moves.get(snapshot.last_move_id) : null;
@@ -782,6 +789,10 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		}
 		const pokemon = bySpecies.get(speciesId) || side.pokemon.find(
 			(candidate) => candidate.species.id === speciesId || candidate.baseSpecies.id === speciesId
+		) || side.pokemon.find(
+			// poke-env keeps the pre-Mega species name (Floette-Eternal) while the snapshot and
+			// the patch already moved the Pokemon to its Mega forme; the original set remembers.
+			(candidate) => String(candidate.set.species).toLowerCase().replace(/[^a-z0-9]/g, '') === speciesId
 		);
 		if (!pokemon) {
 			throw new Error(`cannot activate ${speciesId} on ${side.id}`);
@@ -792,6 +803,15 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		return pokemon;
 	});
 	const activePokemon = side.active.filter(Boolean);
+	if (opts.bookkeeping) {
+		// Showdown resets both counters on switch-out: a benched Pokemon holds 0.
+		for (const pokemon of side.pokemon) {
+			if (!activePokemon.includes(pokemon)) {
+				pokemon.activeTurns = 0;
+				pokemon.activeMoveActions = 0;
+			}
+		}
+	}
 	let bench = side.pokemon.filter((pokemon) => !activePokemon.includes(pokemon));
 	if (Array.isArray(opts.ownOrder) && opts.ownOrder.length) {
 		// Our request lists the simulator's real side order; keep the bench in it.
@@ -830,6 +850,11 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 		}
 	}
 	side.pokemonLeft = side.pokemon.filter((pokemon) => pokemon.hp > 0 && !pokemon.fainted).length;
+	if (opts.bookkeeping && opts.lostLastTurn !== undefined) {
+		// Retaliate doubles after a teammate fainted on the previous turn.
+		side.faintedLastTurn = opts.lostLastTurn
+			? (side.pokemon.find((pokemon) => pokemon.fainted) || null) : null;
+	}
 	if (opts.bookkeeping) {
 		// Last Respects / Supreme Overlord count the Pokemon this side has lost.
 		side.totalFainted = side.pokemon.filter((pokemon) => pokemon.fainted).length;
@@ -918,13 +943,22 @@ async function handlePatchPublic(msg) {
 	patchSide(battle, battle.sides[ownIndex], state.our_side, hidden.our || {}, {
 		...shared,
 		ownOrder: hidden.ownOrder,
+		acted: hidden.history?.our?.acted,
+		lostLastTurn: hidden.history?.our?.lostLastTurn,
 	});
 	patchSide(battle, battle.sides[1 - ownIndex], state.opponent_side, hidden.opponent || {}, {
 		...shared,
 		opponentMega: Boolean(msg.opponentMega),
 		hpScale: Boolean(options.hpScale),
 		keepHiddenItems: Boolean(options.keepHiddenItems),
+		acted: hidden.history?.opponent?.acted,
+		lostLastTurn: hidden.history?.opponent?.lostLastTurn,
 	});
+	if (options.bookkeeping && hidden.history?.lastMove) {
+		// Copycat repeats the last move anyone used.
+		const lastMove = battle.dex.moves.get(hidden.history.lastMove);
+		if (lastMove.exists) battle.lastMove = battle.dex.getActiveMove(lastMove.id);
+	}
 	fillVolatileSources(battle);
 	if (options.restoreState) {
 		// Showdown computes which moves are unavailable (Choice lock, Disable, Fake Out

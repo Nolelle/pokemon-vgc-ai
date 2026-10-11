@@ -87,9 +87,38 @@ def mirror_side(battle) -> str:
     return role if role in ("p1", "p2") else "p1"
 
 
-def _team_preview_order(packed_team: str, battle) -> str:
+def _request_bring(battle) -> list[str]:
+    """Base species ids of the four Pokemon our real request lists, in its order."""
+
+    request = getattr(battle, "last_request", None)
+    team = ((request or {}).get("side") or {}).get("pokemon") if isinstance(request, dict) else None
+    return [
+        _base_species_id(to_id(str(entry.get("details", "")).split(",")[0]))
+        for entry in (team or [])
+        if isinstance(entry, dict) and entry.get("details")
+    ]
+
+
+def _team_preview_order(packed_team: str, battle, config=None) -> str:
     entries = Teambuilder.parse_packed_team(packed_team)
     species = [to_id(entry.species or entry.nickname) for entry in entries]
+    if config is not None and config.exact_mirror_own_order:
+        # The real request IS the brought four (a trapped active leaves `available_switches`
+        # empty, so the rebuilt bring picked arbitrary teammates and the bench was wrong).
+        indices: list[int] = []
+        for wanted_id in _request_bring(battle):
+            match = next(
+                (
+                    index
+                    for index, species_id in enumerate(species)
+                    if index not in indices and _base_species_id(species_id) == wanted_id
+                ),
+                None,
+            )
+            if match is not None:
+                indices.append(match)
+        if len(indices) >= 4:
+            return "team " + "".join(str(index + 1) for index in indices[:4])
     active = [
         _base_species_id(to_id(getattr(mon, "species", None)))
         for mon in (getattr(battle, "active_pokemon", None) or ())
@@ -302,7 +331,15 @@ def _opponent_sets(
                 for move_id in (to_id(raw) for raw in (getattr(mon, "moves", None) or {}))
                 if move_id
             ]
-            moves = (revealed + [m for m in moves if m not in revealed])[:4]
+            for move_id in revealed:
+                if move_id in moves:
+                    continue
+                if len(moves) < 4:
+                    moves.append(move_id)
+                else:
+                    spare = [i for i, m in enumerate(moves) if m not in revealed]
+                    if spare:
+                        moves[spare[-1]] = move_id
         if not moves:
             moves = _fallback_moves(set_species, species_id)
         item = normalize_item(getattr(mon, "item", None)) or normalize_item(
@@ -732,11 +769,38 @@ class LiveExactMirror:
             for side, by_species in _disabled_move_payload(battle).items():
                 for species_id, facts in by_species.items():
                     merged.setdefault(side, {}).setdefault(species_id, {}).update(facts)
+        if self.config.exact_mirror_public_bookkeeping:
+            history = self._public_history(battle)
+            if history:
+                merged["history"] = history  # type: ignore[assignment]
         if self.config.exact_mirror_own_order:
             order = _own_request_order(battle)
             if order:
                 merged["ownOrder"] = order  # type: ignore[assignment]
         return merged or None
+
+    def _public_history(self, battle) -> dict | None:
+        """Protocol-derived facts Showdown reads that the snapshot does not carry."""
+
+        memory = getattr(battle, "_vgc_battle_memory", None)
+        if memory is None:
+            return None
+        state = self._snapshot(battle)
+        turn = int(state.turn or 0)
+        our_role = getattr(memory, "our_role", None) or getattr(battle, "player_role", None)
+        roles = {"our": our_role, "opponent": getattr(memory, "opponent_role", None)}
+        history: dict = {"lastMove": memory.last_move_used}
+        for key, side in (("our", state.our_side), ("opponent", state.opponent_side)):
+            role = roles[key]
+            if role is None:
+                continue
+            history[key] = {
+                "acted": [
+                    mon.name for mon in side.pokemon if mon.name and memory.has_acted(role, mon.name)
+                ],
+                "lostLastTurn": memory.lost_pokemon_last_turn(role, turn),
+            }
+        return history
 
     def _snapshot(self, battle):
         return snapshot_battle(
@@ -874,7 +938,7 @@ class LiveExactMirror:
         try:
             root.step(
                 {
-                    side: _team_preview_order(self.own_packed_team, battle),
+                    side: _team_preview_order(self.own_packed_team, battle, self.config),
                     # Opponent sets were ordered with the current active pair first.
                     other: "team 1234",
                 }

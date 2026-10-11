@@ -140,6 +140,12 @@ class BattleMemory:
     # (role, species) whose `-mustrecharge` has not yet been spent by `cant|recharge` or ended
     # by a switch. poke-env never clears its `must_recharge` flag on `cant|X|recharge`.
     _recharging: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    # Public history the exact mirror re-injects (never part of `summary()`): which Pokemon
+    # (role, nickname) have taken a move action since they last switched in, the turn each side
+    # last lost a Pokemon, and the last move anyone used.
+    _acted: set[tuple[str, str]] = field(default_factory=set, repr=False)
+    _fainted_turn: dict[str, int] = field(default_factory=dict, repr=False)
+    last_move_used: str | None = None
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -180,6 +186,10 @@ class BattleMemory:
             if kind == "move" and len(message) > 3:
                 self._finalize_damage_buffer()
                 actor_role = _side(message[2])
+                if actor_role:
+                    self._acted.add((actor_role, to_id(_display_name(message[2]))))
+                if to_id(message[3]):
+                    self.last_move_used = to_id(message[3])
                 actor = self._species_for_ident(message[2])
                 move_id = to_id(message[3]) or "unknown"
                 self._last_move = (actor_role or "", actor, move_id)
@@ -203,6 +213,15 @@ class BattleMemory:
                     self.opponent_items[self._species_for_ident(message[2])] = (
                         to_id(message[3]) or "unknown"
                     )
+                continue
+            if kind == "cant" and len(message) > 2:
+                cant_role = _side(message[2])
+                if cant_role:
+                    self._acted.add((cant_role, to_id(_display_name(message[2]))))
+            if kind == "faint" and len(message) > 2:
+                faint_role = _side(message[2])
+                if faint_role:
+                    self._fainted_turn[faint_role] = self.current_turn
                 continue
             if kind == "-mustrecharge" and len(message) > 2:
                 role = _side(message[2])
@@ -251,11 +270,22 @@ class BattleMemory:
                     # A fresh stint: the previous one's Unburden volatile is gone.
                     self._lost_item_this_stint.discard((stint_role, stint_species))
                     self._recharging.discard((stint_role, stint_species))
+                    self._acted.discard((stint_role, to_id(_display_name(message[2]))))
                 if _side(message[2]) == self.opponent_role:
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+
+    def has_acted(self, role: str | None, name: str | None) -> bool:
+        """Has ``name`` taken a move action since it last switched in (public protocol only)?"""
+
+        return bool(role) and (role, to_id(name)) in self._acted
+
+    def lost_pokemon_last_turn(self, role: str | None, turn: int) -> bool:
+        """Did ``role`` lose a Pokemon during the turn before ``turn``?"""
+
+        return bool(role) and self._fainted_turn.get(role) == turn - 1
 
     def recharge_pending(self, role: str | None, species_id: str | None) -> bool:
         """Is ``role``'s ``species_id`` still owing the recharge turn of a Hyper Beam-style move?"""
