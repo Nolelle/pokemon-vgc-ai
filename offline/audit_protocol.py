@@ -362,6 +362,17 @@ class ProtocolKnowledge:
                     winner = holder
                 if winner:
                     break
+            if winner is None and broke_at is not None and cand.pos < broke_at:
+                # A Zoroark that switched in disguised and broke in the SAME step is visible as a
+                # disguise at neither end of it: try the side's Illusion holders directly.
+                for key, tm in truth_mons.items():
+                    if key[0] != role or tm["base_ability"] != "illusion":
+                        continue
+                    if (cand.kind == "item" and cand.value in self.ever_item[key]) or (
+                        cand.kind == "move" and ("move:" + cand.value) in self.ever_item[key]
+                    ) or (cand.kind == "ability" and cand.value in self.ever_ability[key]):
+                        winner = key
+                        break
             if winner is None:
                 unresolved.append(cand)
                 continue

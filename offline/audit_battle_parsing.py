@@ -646,7 +646,9 @@ def _compare_mon(
         out.add(
             "status", "mismatch", f"{t_status}->{bm.status}", key, truth=t_status, belief=bm.status
         )
-    elif t_status == "slp" or (t_status == "tox" and tm["active"] and not mid_turn):
+    elif not disguised and (
+        t_status == "slp" or (t_status == "tox" and tm["active"] and not mid_turn)
+    ):  # (a disguise's counter belongs to the Zoroark, whose earlier turns were under other idents)
         # (a benched toxic Pokemon keeps a stale stage: Showdown resets it on switch-IN)
         ss = tm["status_state"]
         if t_status == "slp":

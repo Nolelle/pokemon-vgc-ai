@@ -77,6 +77,7 @@ ALL_FIXES = (
     "reflected_move_not_a_sleep_turn",  # a sleeping Pokemon's Magic Bounce reflection advanced its sleep counter
     "transform_copies_current_types",  # Transform / Imposter copied the species' types, not the target's current ones
     "own_slot_names_the_mon",  # effects announced under our Zoroark's disguise were filed on the disguise
+    "transformed_ability_temporary",  # an ability revealed by a transformed Pokemon was stored as its base
     "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
     "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
@@ -1099,6 +1100,12 @@ def _ability_before(battle: AbstractBattle, split: list[str]) -> Any:
 
 def _reveal_ability(battle: AbstractBattle, before: Any) -> None:
     mon, ability_id, base_before, temporary_before = before
+    if mon.transformed and base_before is None and fix_enabled("transformed_ability_temporary"):
+        # A transformed Ditto showing an ability shows its TARGET's (gone when it switches out);
+        # poke-env may already have stored it as the base (its own Frisk handling does).
+        mon._ability = None
+        mon._temporary_ability = ability_id
+        return
     swapped = id(mon) in _swapped(battle) and fix_enabled("swapped_ability_temporary")
     if swapped and base_before is None:
         # Skill Swap'd (possibly with the abilities hidden): this is the SWAPPED-in ability,
