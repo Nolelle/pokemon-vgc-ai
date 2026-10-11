@@ -780,6 +780,17 @@ function patchSide(battle, side, snapshot, hiddenBySpecies = {}, opts = {}) {
 	const previousActive = side.active.slice();
 	side.active = forcedSlotSpecies.map((speciesId, slotIndex) => {
 		if (!speciesId) {
+			// poke-env's slot list can miss a Pokemon its own roster flags active (it lost the
+			// switch-in); that Pokemon is the one holding the slot.
+			const stray = snapshot.pokemon.find((candidate) => candidate.active && !candidate.fainted &&
+				!snapshot.force_switch[slotIndex] && !forcedSlotSpecies.includes(candidate.species_id) &&
+				bySpecies.has(candidate.species_id));
+			if (stray) {
+				const found = bySpecies.get(stray.species_id);
+				forcedSlotSpecies[slotIndex] = stray.species_id;
+				found.isActive = true;
+				return found;
+			}
 			const previous = previousActive[slotIndex];
 			const taken = forcedSlotSpecies.some((id) => id && (
 				id === previous?.species.id || id === previous?.baseSpecies.id));

@@ -215,7 +215,19 @@ def load_pool_teams(manifests: list[Path], limit: int) -> list[str]:
             if path.exists():
                 teams.append(path.read_text().strip())
     random.Random(7).shuffle(teams)
-    return teams[:limit]
+    # Species Clause: a pool team naming one species twice cannot occur in the real format and
+    # breaks every by-species lookup (the live bot and this audit alike).
+    legal = [t for t in teams if len(_species_names(t)) == len(set(_species_names(t)))]
+    return legal[:limit]
+
+
+def _species_names(packed: str) -> list[str]:
+    names = []
+    for member in packed.split("]"):
+        fields = member.split("|")
+        name = fields[1] or fields[0] if len(fields) > 1 else fields[0]
+        names.append(to_id(name))
+    return names
 
 
 # --- reading Showdown's state into comparable views ---------------------------------------
@@ -508,7 +520,9 @@ def compare_mon(
                     mby = {s["id"]: s for s in mm}
                     for s in tm:
                         o = mby[s["id"]]
-                        for attr in ("pp", "maxpp", "disabled"):
+                        # `disabled` is compared through the request instead: the snapshot marks
+                        # every move of a recharging/locked mon unavailable, Showdown does not.
+                        for attr in ("pp", "maxpp"):
                             if s[attr] != o[attr]:
                                 out.add("public", f"move_slots.{attr}", key, s, o)
             elif t[f] != m[f]:
@@ -547,6 +561,8 @@ def compare_mon(
                 truth_ability=t["ability"],
             )  # fmt: skip
     for f in BOOKKEEPING:
+        if f in ("active_turns", "active_move_actions") and not t["is_active"]:
+            continue  # Showdown resets them on switch-IN; a benched value is stale and unread
         if t[f] != m[f]:
             out.add("bookkeeping", f, key, t[f], m[f])
     # status counters
@@ -822,6 +838,7 @@ def record(
         if TRACE and re.search(TRACE, group):
             print(
                 f"[trace] {meta['battle']} turn {meta.get('turn')} seat {meta['seat']} {group} "
+                f"path={f['path']} "
                 f"mon={f['mon']} truth={json.dumps(f['truth'], default=str)[:200]} "
                 f"mirror={json.dumps(f['mirror'], default=str)[:200]} "
                 f"choices={meta.get('choices')}"
