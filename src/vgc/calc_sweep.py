@@ -42,7 +42,12 @@ from functools import lru_cache
 from typing import Any
 
 from vgc.config import DATA_DIR, REPO_ROOT, SHOWDOWN_REPO
-from vgc.damage import FieldState, PokemonState, damage_range, with_partners
+from vgc.damage import FieldState, PokemonState, damage_range
+
+try:  # absent in the pre-sweep calculators (baseline measurement)
+    from vgc.damage import with_partners
+except ImportError:  # pragma: no cover
+    with_partners = None
 from vgc.data import load_moves, load_species, load_typechart
 from vgc.models import PolicyConfig
 from vgc.node import find_node
@@ -235,7 +240,8 @@ class Mon:
             "species": species["name"],
             "name": species["name"],
             "item": self.item,
-            "ability": self.ability,
+            # An empty ability would fall back to the species' first ability in the engine.
+            "ability": self.ability or "noability",
             "moves": list(self.moves),
             "nature": self.nature.capitalize(),
             "evs": evs,
@@ -558,8 +564,10 @@ def move_variants(move_id: str) -> list[Case]:
     add("def_plus2", dfn={"boosts": {defensive: 2}})
     add("def_minus1", dfn={"boosts": {defensive: -1}})
     add("other_boosts", att={"boosts": {"def": 2, "spe": 1}}, dfn={"boosts": {"atk": 1, "spa": 1}})
+    # (An asleep or frozen attacker cannot move, so only the defender gets those two.)
     for status in ("brn", "par", "psn", "tox", "slp", "frz"):
-        add(f"att_{status}", att={"status": status})
+        if status not in ("slp", "frz"):
+            add(f"att_{status}", att={"status": status})
         add(f"def_{status}", dfn={"status": status})
     for frac in (0.3, 0.6):
         add(f"att_hp_{frac}", att={"hp_frac": frac})
@@ -613,7 +621,7 @@ def ours_damage(case: Case, *, default_config: bool = True) -> dict[str, Any]:
         is_doubles=True,
         num_targets=num_targets,
     )
-    if getattr(PolicyConfig(), "partner_abilities_in_damage", False):
+    if with_partners is not None and getattr(PolicyConfig(), "partner_abilities_in_damage", False):
         partner = case.mons["p2b" if slot == "p2a" else "p2a"]
         ally = case.mons["p1b"]
         state = with_partners(

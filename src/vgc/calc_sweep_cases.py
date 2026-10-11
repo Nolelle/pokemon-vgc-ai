@@ -393,12 +393,15 @@ def engine_pair(results: list[dict], first: str = "p1a", second: str = "p2a") ->
 
 
 def _priority_of(case: Case, slot: str) -> int:
-    from vgc.priority_rules import action_priority
     from vgc.models import PolicyConfig
 
-    effective = getattr(PolicyConfig(), "effective_move_priority", False)
     mon = case.mons[slot]
     md = _move(case.moves[slot])
+    try:
+        from vgc.priority_rules import action_priority
+    except ImportError:  # the pre-sweep calculators (baseline measurement)
+        return int(md.get("priority", 0))
+    effective = getattr(PolicyConfig(), "effective_move_priority", False)
     state = mon.state()
     at_full = state.hp_or_max() >= state.max_hp()
     return action_priority(md, state.ability, at_full, case.fld.terrain, effective=effective)
