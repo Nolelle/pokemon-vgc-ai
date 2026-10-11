@@ -1273,6 +1273,14 @@ def _resolve_targets(
     the move's own `target` string instead.
     """
     target_kind = move_data.get("target")
+    if (
+        target_kind == "normal"
+        and to_id(move_data.get("id")) == "expandingforce"
+        and ctx.terrain == "psychic"
+        and ctx.our_states[actor_slot] is not None
+        and _is_grounded(ctx.our_states[actor_slot])
+    ):
+        target_kind = "allAdjacentFoes"  # Expanding Force hits both foes in Psychic Terrain
     opp_alive = ctx.opp_alive()
     our_allies_alive = [i for i in ctx.our_alive() if i != actor_slot]
 

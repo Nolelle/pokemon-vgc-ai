@@ -269,7 +269,7 @@ function run(req, seed) {
 		order,
 		err,
 		turnsRun,
-		log: req.keepLog ? lines : lines.filter((l) => /^\|(-immune|-fail|-activate|-block|-miss|-ability|-damage|-heal|-start|move|cant|-hitcount|-notarget|-singleturn|-endability|-clearallboost)/.test(l)).slice(0, 40),
+		log: req.keepLog ? lines : lines.filter((l) => /^\|(-immune|-fail|-activate|-block|-miss|-ability|-damage|-heal|-start|move|cant|-hitcount|-notarget|-singleturn|-endability|-clearallboost|-curestatus|-status)/.test(l)).slice(0, 40),
 	};
 }
 

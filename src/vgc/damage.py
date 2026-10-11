@@ -262,6 +262,7 @@ _HUGE_POWER_ABILITIES = frozenset({"hugepower", "purepower"})
 # Ability -> the move type it grants immunity to (absorbing abilities, Levitate).
 ABILITY_TYPE_IMMUNITY: dict[str, str] = {
     "levitate": "Ground",
+    "eelevate": "Ground",
     "flashfire": "Fire",
     "waterabsorb": "Water",
     "voltabsorb": "Electric",
@@ -322,6 +323,8 @@ _IGNORE_DEFENSIVE_BOOSTS = frozenset({"darkestlariat", "sacredsword"})
 # Moves that always land a critical hit (`willCrit: true`): x1.5 after the weather step, the
 # target's positive Defense stages and the user's negative Attack stages ignored, screens ignored.
 _ALWAYS_CRIT_MOVES = frozenset({"flowertrick", "frostbreath", "stormthrow", "surgingstrikes", "wickedblow"})
+# Moves that shatter Reflect / Light Screen / Aurora Veil before they hit.
+_SCREEN_BREAKERS = frozenset({"brickbreak", "psychicfangs", "ragingbull"})
 # Moves that raise the user's Special Attack by one stage before they deal damage.
 _SELF_SPA_PLUS_ONE = frozenset({"electroshot", "meteorbeam"})
 # Moves that count as recoil / crash-damage moves for Reckless.
@@ -482,7 +485,7 @@ def _is_grounded(state: PokemonState) -> bool:
         return True
     if "Flying" in state.types():
         return False
-    if state.ability == "levitate":
+    if state.ability in ("levitate", "eelevate"):
         return False
     if state.item == "airballoon" and not state.item_lost:
         return False
@@ -571,8 +574,11 @@ def _breakable_abilities() -> frozenset[str]:
 
 
 def _effective_weather(field: FieldState, attacker: PokemonState, defender: PokemonState) -> str | None:
-    if attacker.ability in _WEATHER_NEGATING_ABILITIES or defender.ability in _WEATHER_NEGATING_ABILITIES:
-        return None
+    for ability in (
+        attacker.ability, defender.ability, field.attacker_ally_ability, field.defender_ally_ability
+    ):
+        if ability in _WEATHER_NEGATING_ABILITIES:
+            return None
     return field.weather
 
 
@@ -849,11 +855,19 @@ def damage_range(
 
     weather = _effective_weather(field, attacker, defender)
     if attacker.ability == "megasol":
-        weather = "sun" if weather is None or weather == "sun" else weather
+        weather = "sun"  # the holder's moves resolve as if in harsh sunlight
 
     move_type = move["type"]
     category = move["category"]
     flags = move.get("flags") or {}
+    if move_id == "shellsidearm":
+        # Physical (and contact) when the raw Attack would do more than the raw Sp. Atk.
+        raw_attacker, raw_defender = attacker.stats(), defender.stats()
+        physical = (22 * 90 * raw_attacker["atk"] // raw_defender["def"]) // 50
+        special = (22 * 90 * raw_attacker["spa"] // raw_defender["spd"]) // 50
+        if physical > special:
+            category = "Physical"
+            flags = {**flags, "contact": 1}
     base_power = int(move.get("basePower") or 0)
     variable = _variable_base_power(move_id, move, attacker, defender, field, weather)
     if variable is not None:
@@ -914,7 +928,9 @@ def damage_range(
     ungrounded = (
         "Flying" in defender_types
         and not (defender.item == "ironball" and not defender.item_lost)
-    ) or defender_ability == "levitate" or (defender.item == "airballoon" and not defender.item_lost)
+    ) or defender_ability in ("levitate", "eelevate") or (
+        defender.item == "airballoon" and not defender.item_lost
+    )
     ground_immune = move_type == "Ground" and ungrounded and not (
         defender.item == "ironball" and not defender.item_lost
     )
@@ -945,14 +961,15 @@ def damage_range(
             breakdown["reason"] = "priority_block"
             return _zero_result(breakdown)
 
-    if field.defender_ally_ability in ("lightningrod", "stormdrain") and (
-        (field.defender_ally_ability == "lightningrod" and move_type == "Electric")
-        or (field.defender_ally_ability == "stormdrain" and move_type == "Water")
-    ):
-        if attacker.ability not in _MOLD_BREAKER_ABILITIES and move["target"] in ("normal", "any", "adjacentFoe"):
-            breakdown["immune"] = True
-            breakdown["reason"] = "redirected_to_ally"
-            return _zero_result(breakdown)
+    for redirector in (field.defender_ally_ability, field.attacker_ally_ability):
+        if (
+            (redirector == "lightningrod" and move_type == "Electric")
+            or (redirector == "stormdrain" and move_type == "Water")
+        ) and move["target"] in ("normal", "any", "adjacentFoe"):
+            if attacker.ability not in _MOLD_BREAKER_ABILITIES:
+                breakdown["immune"] = True
+                breakdown["reason"] = "redirected_to_partner"
+                return _zero_result(breakdown)
 
     ability_handled = True
     for ability in (attacker.ability, defender.ability):
@@ -1160,7 +1177,12 @@ def damage_range(
         or ("lightscreen" in field.screens and category == "Special")
         or "auroraveil" in field.screens
     )
-    if has_screen and not always_crit and attacker.ability != "infiltrator":
+    if (
+        has_screen
+        and not always_crit
+        and attacker.ability != "infiltrator"
+        and move_id not in _SCREEN_BREAKERS
+    ):
         final_chain.add(
             0, _SCREEN_NUMERATOR_DOUBLES if field.is_doubles else _SCREEN_NUMERATOR_SINGLES
         )

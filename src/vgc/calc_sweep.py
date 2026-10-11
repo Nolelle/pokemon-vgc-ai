@@ -452,17 +452,25 @@ def base_mons(
     return {"p1a": attacker, "p1b": dummy_mon(), "p2a": defender, "p2b": dummy_mon()}
 
 
-def spread_target_count(move_id: str, mons: dict[str, Mon]) -> int:
+def spread_target_count(move_id: str, mons: dict[str, Mon], terrain: str | None = None) -> int:
     """Targets the engine will pick for ``move_id`` (it counts fainted-ness at selection time)."""
 
     target = _move(move_id)["target"]
     foes = sum(1 for slot in ("p2a", "p2b") if not mons[slot].faint)
     ally = 1 if not mons["p1b"].faint else 0
+    if move_id == "expandingforce" and terrain == "psychic" and _grounded(mons["p1a"]):
+        return foes
     if target == "allAdjacentFoes":
         return foes
     if target == "allAdjacent":
         return foes + ally
     return 1
+
+
+def _grounded(mon: Mon) -> bool:
+    from vgc.damage import _is_grounded
+
+    return _is_grounded(mon.state())
 
 
 NEEDS_TARGET = {"normal", "any", "adjacentAlly", "adjacentAllyOrSelf", "adjacentFoe"}
@@ -612,7 +620,7 @@ def ours_damage(case: Case, *, default_config: bool = True) -> dict[str, Any]:
                 p2side=fld.p2side,
             )
     defender = case.mons[slot].state()
-    num_targets = spread_target_count(move_id, case.mons)
+    num_targets = spread_target_count(move_id, case.mons, fld.terrain)
     state = FieldState(
         weather=fld.weather,
         terrain=fld.terrain,
@@ -668,6 +676,8 @@ def _engine_call(case: Case, probe: dict) -> tuple[dict | None, str]:
     used = any(line.startswith("|move|p1a:") for line in log)
     if not used:
         return None, "not_used"
+    if any(line.startswith("|-curestatus|p1a:") for line in log):
+        return None, "failed"  # the status requested for the scenario wore off before the move
     if any(line.startswith("|-fail|") or line.startswith("|-notarget") for line in log):
         return None, "failed"
     return None, "blocked"
