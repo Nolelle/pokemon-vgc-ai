@@ -857,7 +857,7 @@ def episode_signature(lines: list[str], mon_name: str) -> list[str]:
             else:
                 continue
         out.add(tag)
-    return sorted(out)[:12]
+    return sorted(out)[:12]  # (episode_signature)
 
 
 def mon_name_of(f: dict[str, Any]) -> str:
@@ -1019,6 +1019,7 @@ def audit_battle(
     }
     episodes: set[tuple] = set()
     last_pk: dict[str, Any] = {}
+    foe_rebuilt: dict[str, bool] = {}  # perspective -> its client already rebuilt a foe Pokemon
     acc["battles"] += 1
     for s in SIDES:
         acc["agents"][names[s]] += 1
@@ -1062,7 +1063,9 @@ def audit_battle(
         flags = ("I" if any("illusion" in (tm["base_ability"], tm["ability"]) for tm in mons) else "") + (
             "T" if any(tm["transformed"] for tm in mons) else ""
         )
-        target["ep_sigs"][g][";".join(signature[:14]) + "#" + flags] += 1
+        if reader == "pkmn" and foe_rebuilt.get(s):
+            flags += "D"
+        target["ep_sigs"][g][";".join(signature) + "#" + flags] += 1
         mon_name = f["mon"].split(":", 1)[-1]
         touching = [ln for ln in lines if mon_name and mon_name in ln] or lines
         for ln in touching:
@@ -1145,6 +1148,7 @@ def audit_battle(
                 pk_snap = shadow.snapshot(s)
                 if pk_snap is not None:
                     last_pk[s] = pk_snap
+                    foe_rebuilt[s] = pk_snap["p2" if s == "p1" else "p1"]["dupCreates"] > 0
                     pk_state, pk_view = pkmn_shadow.adapt(pk_snap, s)
                     acc["by_reader"]["pkmn"]["compares"] += 1
                     findings = compare_perspective(
