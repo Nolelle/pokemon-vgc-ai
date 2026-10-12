@@ -829,6 +829,41 @@ def _compare_foe_item(
 _FROM = re.compile(r"\[from\] (?:ability|item|move): ([^|]+)")
 
 
+# Moves whose presence among the lines touching a Pokemon names a known cause; every other
+# move collapses to "move" so episode signatures stay countable.
+SIGNATURE_MOVES = frozenset(
+    "bugbite pluck fling wormseed worryseed simplebeam entrainment skillswap gastroacid transform "
+    "block meanlook psychup batonpass uturn voltswitch flipturn partingshot teleport leechseed "
+    "recover roost soak trick switcheroo thief covet knockoff poltergeist focuspunch taunt yawn "
+    "rest sleeptalk imprison healingwish lunardance wish".split()
+)  # fmt: skip
+_NOISE_TAGS = frozenset({"", "request", "t:", "upkeep", "turn", "-damage"})
+
+
+def episode_signature(lines: list[str], mon_name: str) -> list[str]:
+    """The distinct kinds of protocol line that touched a Pokemon on the step a mismatch first
+    appeared (moves collapsed unless they name a known cause), for grouping episodes by cause."""
+    out: set[str] = set()
+    for ln in lines:
+        if mon_name and mon_name not in ln and not ln.startswith(("|request", "|upkeep", "|turn")):
+            continue
+        tag = line_tag(ln.split("|"))
+        if tag.startswith("move:"):
+            move = to_id(tag.split(":", 1)[1])
+            tag = tag if move in SIGNATURE_MOVES else "move"
+        if tag in _NOISE_TAGS:
+            if tag == "-damage" and "[from]" in ln:
+                tag = "-damage [from]"
+            else:
+                continue
+        out.add(tag)
+    return sorted(out)[:12]
+
+
+def mon_name_of(f: dict[str, Any]) -> str:
+    return f["mon"].split(":", 1)[-1]
+
+
 def line_tag(split: list[str]) -> str:
     tag = split[1] if len(split) > 1 else "?"
     detail = ""
@@ -877,6 +912,7 @@ def _new_acc() -> dict[str, Any]:
         "agents": Counter(),
         "winners": Counter(),
         "tracker_notes": Counter(),
+        "ep_sigs": defaultdict(Counter),  # group -> "touching line tags#flags" -> episodes
         "context": defaultdict(Counter),  # group -> battle-context counts per episode
         "by_reader": {},  # reader name -> a nested _new_acc() (today: "pkmn")
         "reader_stats": {},  # reader name -> pkmn_shadow.ReaderStats as a dict
@@ -1022,6 +1058,11 @@ def audit_battle(
         if any(tm["transformed"] for tm in mons):
             target["context"][g]["transform_battle"] += 1
         target["context"][g]["episodes"] += 1
+        signature = episode_signature(lines, mon_name_of(f))
+        flags = ("I" if any("illusion" in (tm["base_ability"], tm["ability"]) for tm in mons) else "") + (
+            "T" if any(tm["transformed"] for tm in mons) else ""
+        )
+        target["ep_sigs"][g][";".join(signature[:14]) + "#" + flags] += 1
         mon_name = f["mon"].split(":", 1)[-1]
         touching = [ln for ln in lines if mon_name and mon_name in ln] or lines
         for ln in touching:
@@ -1257,6 +1298,8 @@ def merge(into: dict[str, Any], part: dict[str, Any]) -> None:
         into["cov"][g].update(counter)
     for g, counter in part["context"].items():
         into["context"][g].update(counter)
+    for g, counter in part["ep_sigs"].items():
+        into["ep_sigs"][g].update(counter)
     into["dup_creates"] = into.get("dup_creates", 0) + part.get("dup_creates", 0)
     into["dup_battles"] = into.get("dup_battles", 0) + part.get("dup_battles", 0)
     for g, examples in part["examples"].items():
@@ -1366,6 +1409,7 @@ def _reader_json(acc: dict[str, Any]) -> dict[str, Any]:
         "tags": {g: dict(c.most_common(6)) for g, c in acc["tags"].items()},
         "examples": dict(acc["examples"]),
         "context": {g: dict(c) for g, c in acc["context"].items()},
+        "ep_sigs": {g: dict(c) for g, c in acc["ep_sigs"].items()},
         "dup_creates": acc.get("dup_creates", 0),
         "dup_battles": acc.get("dup_battles", 0),
     }

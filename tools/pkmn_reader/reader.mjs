@@ -32,7 +32,7 @@ const require = createRequire(import.meta.url);
 const showdownRepo = path.resolve(process.argv[2] || '');
 const { Dex } = require(path.join(showdownRepo, 'dist', 'sim', 'dex.js'));
 const { Generations, toID } = require('@pkmn/data');
-const { Battle } = require('@pkmn/client');
+const { Battle, Side } = require('@pkmn/client');
 
 const champ = Dex.mod('champions');
 
@@ -125,6 +125,23 @@ function selfCheck() {
   return checks;
 }
 
+// Instrumentation (not a fix): count how often the client builds a SECOND Pokemon entry for a
+// side that already holds one with the same ident -- i.e. it failed to recognise a Pokemon
+// that is coming back, so what it knew about the first (moves, item, ability) is dropped.
+class CountingSide extends Side {
+  constructor(...args) {
+    super(...args);
+    this.dupCreates = 0;
+  }
+  addPokemon(details, replaceSlot = -1) {
+    if (replaceSlot < 0 && details.ident && this.team.some((p) => p.originalIdent === details.ident)) {
+      this.dupCreates++;
+    }
+    return super.addPokemon(details, replaceSlot);
+  }
+}
+const makeSide = (b, n, s) => new CountingSide(b, n, s);
+
 const clean = (v) => (v === undefined ? null : v);
 
 function snapPokemon(p) {
@@ -187,6 +204,7 @@ function snapSide(side) {
     conditions,
     totalPokemon: side.totalPokemon,
     faints: side.faints,
+    dupCreates: side.dupCreates || 0,
   };
 }
 
@@ -213,7 +231,7 @@ const battles = new Map();
 function handle(req) {
   switch (req.cmd) {
     case 'open': {
-      battles.set(req.id, { battle: new Battle(gens, req.perspective), perspective: req.perspective });
+      battles.set(req.id, { battle: new Battle(gens, req.perspective, undefined, undefined, makeSide), perspective: req.perspective });
       return { ok: true };
     }
     case 'feed': {
