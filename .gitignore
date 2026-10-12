@@ -15,3 +15,6 @@ __pycache__/
 
 # Local editor state
 .cursor/
+
+# Node deps of the shadow reader (tools/pkmn_reader; install with npm ci --ignore-scripts)
+node_modules/

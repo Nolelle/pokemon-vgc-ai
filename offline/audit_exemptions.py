@@ -28,6 +28,10 @@ class Exemption:
     reason: str
     kind: str  # "hidden" (Showdown does not show it) | "limitation" (shown, not modelled)
     predicate: Predicate
+    # Which battle-state readers the cause applies to. A "hidden" exemption (Showdown never
+    # sends the information) is reader-independent; one that names a poke-env data structure
+    # or repair is "pokeenv" only and must not excuse another reader's mismatch.
+    readers: tuple[str, ...] = ("pokeenv", "pkmn")
 
 
 def finding_key(finding: dict[str, Any]) -> str:
@@ -37,9 +41,11 @@ def finding_key(finding: dict[str, Any]) -> str:
 REGISTRY: list[Exemption] = []
 
 
-def register(*, id: str, key: str, reason: str, kind: str) -> Callable[[Predicate], Predicate]:
+def register(
+    *, id: str, key: str, reason: str, kind: str, readers: tuple[str, ...] = ("pokeenv", "pkmn")
+) -> Callable[[Predicate], Predicate]:
     def deco(fn: Predicate) -> Predicate:
-        REGISTRY.append(Exemption(id, key, reason, kind, fn))
+        REGISTRY.append(Exemption(id, key, reason, kind, fn, readers))
         return fn
 
     return deco
@@ -48,8 +54,9 @@ def register(*, id: str, key: str, reason: str, kind: str) -> Callable[[Predicat
 def classify(finding: dict[str, Any], cx: dict[str, Any]) -> str | None:
     """The id of the first exemption whose key matches AND whose predicate holds, else None."""
     key = finding_key(finding)
+    reader = cx.get("reader", "pokeenv")
     for ex in REGISTRY:
-        if re.fullmatch(ex.key, key) and ex.predicate(finding, cx):
+        if reader in ex.readers and re.fullmatch(ex.key, key) and ex.predicate(finding, cx):
             return ex.id
     return None
 
@@ -76,6 +83,7 @@ _EXTENDERS = {
     id="illusion_name_collision",
     key=r".*",
     kind="limitation",
+    readers=("pokeenv",),
     reason=(
         "a live Illusion copies an ACTIVE ally (every benched Pokemon had fainted), so two "
         "on-field Pokemon share one protocol ident and poke-env's team dict (keyed by ident) "
@@ -197,6 +205,7 @@ def _rest_sleep(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
     id="trace_mega_forme_unrecognised",
     key=r"species/mismatch/foe",
     kind="limitation",
+    readers=("pokeenv",),
     reason=(
         "the bot recognises a Mega by its forme ability (poke-env does not rename the species); "
         "a Mega whose own ability is Trace (Meowstic-Mega, Alakazam-Mega) then shows another "
@@ -236,6 +245,7 @@ def _illusion_episode_within_one_step(finding: dict[str, Any], cx: dict[str, Any
     id="transformed_reveal_not_kept",
     key=r"ability/foe_revealed_but_unknown/.*",
     kind="limitation",
+    readers=("pokeenv",),
     reason=(
         "a transformed Pokemon shows its TARGET's ability; poke-env keeps it only as a temporary "
         "ability that the snapshot reads back as unknown. Follow-up, not repaired"
@@ -275,6 +285,7 @@ def _bench_regenerator(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
     id="called_protect_counter",
     key=r"protect_counter/mismatch",
     kind="limitation",
+    readers=("pokeenv",),
     reason=(
         "a Protect-family move CALLED by Copycat / Instruct / Sleep Talk advances Showdown's stall "
         "counter in ways the bot's per-move counter does not model; follow-up, not repaired"
@@ -368,3 +379,18 @@ def _holder_fainted_same_step(finding: dict[str, Any], cx: dict[str, Any]) -> bo
     if hit and cx.get("deceived") is not None:
         cx["deceived"][role].add(name)  # the record stays wrong on the following steps too
     return hit
+
+
+@register(
+    id="pkmn_not_tracked",
+    key=r"(preparing|protect_counter)/.*",
+    kind="limitation",
+    readers=("pkmn",),
+    reason=(
+        "@pkmn/client has no field for these: it never handles `|-prepare|` (two-turn move "
+        "charge state) and keeps no Protect/stall counter (only a one-turn `protect` volatile). "
+        "Reported as NOT TRACKED, not as correct: a replacement reader would have to add them"
+    ),
+)
+def _pkmn_not_tracked(finding: dict[str, Any], cx: dict[str, Any]) -> bool:
+    return True

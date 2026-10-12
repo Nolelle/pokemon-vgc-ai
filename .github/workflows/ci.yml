@@ -67,6 +67,9 @@ jobs:
           key: showdown-${{ steps.pin.outputs.commit }}-node22
       - name: Check out and build pinned Showdown
         run: .github/scripts/checkout_pinned_showdown.sh "$VGC_SHOWDOWN_REPO" --build
+      - name: Install the @pkmn/client shadow reader (pinned lockfile, no install scripts)
+        run: npm ci --ignore-scripts
+        working-directory: tools/pkmn_reader
       - name: Rebuild the 160-team pool (seeded, byte-identical to local)
         run: >-
           .venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25

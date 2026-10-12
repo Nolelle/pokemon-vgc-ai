@@ -1,0 +1,11 @@
+{
+  "name": "pkmn-reader",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Offline shadow reader: @pkmn/client battle-state reader graded against Showdown truth",
+  "dependencies": {
+    "@pkmn/client": "0.7.3",
+    "@pkmn/data": "0.10.11",
+    "@pkmn/protocol": "0.7.3"
+  }
+}

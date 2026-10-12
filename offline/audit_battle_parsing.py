@@ -63,6 +63,8 @@ from vgc.mechanics_state import snapshot_battle
 from vgc.rl.agents import make_direct_agent
 from vgc.rl.env import DirectBattle, SimWorker
 
+READERS = ("pokeenv", "pkmn", "both")
+
 SIDES = ("p1", "p2")
 DEFAULT_OUTPUT = RUNS_DIR / "eval" / "battle_parsing_audit.json"
 DEFAULT_MANIFESTS = (
@@ -448,10 +450,12 @@ def compare_perspective(
     prev_truth: dict[str, Any] | None = None,
     collided: dict[str, set[str]] | None = None,
     deceived: dict[str, set[str]] | None = None,
+    reader: str = "pokeenv",
 ) -> list[dict[str, Any]]:
     foe_role = "p2" if me == "p1" else "p1"
     out = Findings(
         {
+            "reader": reader,
             "me": me,
             "foe_role": foe_role,
             "truth": truth,
@@ -873,6 +877,9 @@ def _new_acc() -> dict[str, Any]:
         "agents": Counter(),
         "winners": Counter(),
         "tracker_notes": Counter(),
+        "context": defaultdict(Counter),  # group -> battle-context counts per episode
+        "by_reader": {},  # reader name -> a nested _new_acc() (today: "pkmn")
+        "reader_stats": {},  # reader name -> pkmn_shadow.ReaderStats as a dict
     }
 
 
@@ -949,49 +956,78 @@ def audit_battle(
     trace: bool = False,
     agents: dict[str, Any] | None = None,
     max_steps: int = MAX_STEPS,
+    readers: tuple[str, ...] = ("pokeenv",),
+    pkmn_reader: Any = None,
 ) -> None:
     """Play one battle, comparing the bot's view with Showdown's after every step.
 
-    `agents` replaces the baseline players (the targeted scenarios pass scripted ones)."""
+    `agents` replaces the baseline players (the targeted scenarios pass scripted ones).
+    `readers` names the battle-state readers graded on this battle: "pokeenv" (poke-env +
+    repairs, the live reader) and/or "pkmn" (the @pkmn/client shadow; `pkmn_reader` is the
+    long-lived `offline.pkmn_shadow.PkmnReader`). poke-env always drives the game."""
     agents = agents or {s: make_direct_agent(names[s], teams[s]) for s in SIDES}
     battle = DirectBattle.start(worker, battle_id, teams["p1"], teams["p2"], seed=seed)
+    shadow = None
+    if "pkmn" in readers:
+        import pkmn_shadow
+
+        shadow = pkmn_shadow.PkmnShadow(pkmn_reader, battle_id)
+        acc.setdefault("by_reader", {}).setdefault("pkmn", _new_acc())["battles"] += 1
     memories = {s: BattleMemory(battle_tag=battle_id) for s in SIDES}
     knowledge = {s: ProtocolKnowledge(s) for s in SIDES}
     prev_truth: dict[str, Any] | None = None
     collided: dict[str, set[str]] = {s: set() for s in SIDES}
-    deceived: dict[str, set[str]] = {s: set() for s in SIDES}
+    # exemption predicates add to `deceived`, so each reader keeps its own copy
+    deceived_by: dict[str, dict[str, set[str]]] = {
+        r: {s: set() for s in SIDES} for r in ("pokeenv", "pkmn")
+    }
     episodes: set[tuple] = set()
+    last_pk: dict[str, Any] = {}
     acc["battles"] += 1
     for s in SIDES:
         acc["agents"][names[s]] += 1
 
     def feed(lines: dict[str, list[str]]) -> None:
         for s in SIDES:
+            if shadow is not None:
+                shadow.feed(s, lines[s])  # the raw, unfiltered lines a real client receives
             agents[s].observe(battle_id, lines[s])
             memories[s].observe_protocol([ln.split("|") for ln in lines[s]])
             knowledge[s].feed(lines[s])
             for ln in lines[s]:
                 acc["coverage"][line_tag(ln.split("|"))] += 1
 
-    def record(f: dict[str, Any], s: str, truth: dict[str, Any], lines: list[str], step: int) -> None:
+    def record(
+        f: dict[str, Any], s: str, truth: dict[str, Any], lines: list[str], step: int,
+        reader: str = "pokeenv",
+    ) -> None:
+        target = acc if reader == "pokeenv" else acc["by_reader"][reader]
         g = _group(f)
         if trace:
             print(
                 f"  !! {s} turn {truth['turn']} {g} {f['mon']} truth={f['truth']} "
                 f"belief={f['belief']}"
             )
-        acc["observations"][g] += 1
-        ep = (s, f["mon"], g)
+        target["observations"][g] += 1
+        ep = (reader, s, f["mon"], g)
         if ep in episodes:
             return
         episodes.add(ep)
-        acc["episodes"][g] += 1
+        target["episodes"][g] += 1
+        # battle context the triage uses (Illusion / Transform are modelled per reader, and the
+        # comparator's disguise handling was written around poke-env's mechanisms)
+        mons = [tm for side in truth["sides"].values() for tm in side["mons"].values()]
+        if any("illusion" in (tm["base_ability"], tm["ability"]) for tm in mons):
+            target["context"][g]["illusion_battle"] += 1
+        if any(tm["transformed"] for tm in mons):
+            target["context"][g]["transform_battle"] += 1
+        target["context"][g]["episodes"] += 1
         mon_name = f["mon"].split(":", 1)[-1]
         touching = [ln for ln in lines if mon_name and mon_name in ln] or lines
         for ln in touching:
-            acc["tags"][g][line_tag(ln.split("|"))] += 1
-        if len(acc["examples"][g]) < MAX_EXAMPLES:
-            acc["examples"][g].append(
+            target["tags"][g][line_tag(ln.split("|"))] += 1
+        if len(target["examples"][g]) < MAX_EXAMPLES:
+            target["examples"][g].append(
                 {
                     "battle": battle_id,
                     "seed": seed,
@@ -1036,7 +1072,8 @@ def audit_battle(
                 continue
             broke = any(f"illusion_break:{role}" in k.step_flags for k in knowledge.values())
             if not broke:
-                deceived[role].add(disguise)
+                for per_reader in deceived_by.values():
+                    per_reader[role].add(disguise)
         truth_mons = {
             (role, name): tm
             for role, side in truth["sides"].items()
@@ -1046,21 +1083,37 @@ def audit_battle(
             bt = battle.battles[s]
             if bt.teampreview:
                 continue
-            memories[s].observe_battle(bt)
-            setattr(bt, "_vgc_battle_memory", memories[s])
-            snap = snapshot_battle(bt)
-            acc["compares"] += 1
             know = knowledge[s]
             unresolved = know.resolve(truth_mons, illusion_alias(prev_truth), illusion_alias(truth))
-            findings = compare_perspective(
-                s, snap, truth, memories[s], know, bt, lines[s], prev_truth, collided, deceived
-            )
             for cand in unresolved:
                 # the tracker's own rule could not attribute this line; informational (the
                 # bot-vs-truth comparisons above are what fail the audit)
                 acc["tracker_notes"][f"{cand.kind}:{cand.tag}"] += 1
-            for f in findings:
-                record(f, s, truth, lines[s], step)
+            memories[s].observe_battle(bt)
+            setattr(bt, "_vgc_battle_memory", memories[s])
+            if "pokeenv" in readers:
+                snap = snapshot_battle(bt)
+                acc["compares"] += 1
+                findings = compare_perspective(
+                    s, snap, truth, memories[s], know, bt, lines[s], prev_truth, collided,
+                    deceived_by["pokeenv"], reader="pokeenv",
+                )
+                for f in findings:
+                    record(f, s, truth, lines[s], step, "pokeenv")
+            if shadow is not None:
+                pk_snap = shadow.snapshot(s)
+                if pk_snap is not None:
+                    last_pk[s] = pk_snap
+                    pk_state, pk_view = pkmn_shadow.adapt(pk_snap, s)
+                    acc["by_reader"]["pkmn"]["compares"] += 1
+                    findings = compare_perspective(
+                        s, pk_state, truth, pkmn_shadow.NullMemory(), know, pk_view, lines[s],
+                        prev_truth, collided, deceived_by["pkmn"], reader="pkmn",
+                    )
+                    for f in findings:
+                        record(f, s, truth, lines[s], step, "pkmn")
+        if shadow is not None:
+            shadow.end_step()
         prev_truth = truth
 
     feed(battle.last_lines)
@@ -1098,6 +1151,13 @@ def audit_battle(
                 compare(result.lines, step)
         acc["winners"][battle.winner or "none"] += 1
     finally:
+        if shadow is not None:
+            sub = acc["by_reader"]["pkmn"]
+            dups = sum(sn["p1"]["dupCreates"] + sn["p2"]["dupCreates"] for sn in last_pk.values())
+            # (each perspective's client sees both sides, so this counts every duplicate twice)
+            sub["dup_creates"] = sub.get("dup_creates", 0) + dups
+            sub["dup_battles"] = sub.get("dup_battles", 0) + (1 if dups else 0)
+            shadow.close()
         battle.close()
 
 
@@ -1109,6 +1169,8 @@ def worker_main(job: dict[str, Any]) -> dict[str, Any]:
     acc = _new_acc()
     builder = TeamBuilder()
     pool = job["pool_teams"]
+    readers = tuple(job.get("readers") or ("pokeenv",))
+    holder = PkmnReaderHolder(acc) if "pkmn" in readers else None
     with SimWorker() as worker:
         for index in job["indices"]:
             rng = random.Random(job["seed"] * 1_000_003 + index)
@@ -1126,7 +1188,10 @@ def worker_main(job: dict[str, Any]) -> dict[str, Any]:
             names = {s: rng.choice(job["agents"]) for s in SIDES}
             seed = [rng.randrange(1, 2**31) for _ in range(4)]
             try:
-                audit_battle(worker, f"audit{index}", names, teams, seed, acc, trace)
+                audit_battle(
+                    worker, f"audit{index}", names, teams, seed, acc, trace,
+                    readers=readers, pkmn_reader=holder.get() if holder else None,
+                )
             except Exception as exc:  # keep auditing; report at the end
                 acc["errors"].append(
                     {
@@ -1139,7 +1204,46 @@ def worker_main(job: dict[str, Any]) -> dict[str, Any]:
                     worker.request({"cmd": "close", "id": f"audit{index}"})
                 except Exception:
                     pass
+    if holder:
+        holder.finish()
     return acc
+
+
+class PkmnReaderHolder:
+    """One Node reader per worker process, restarted if it dies; its counters go into `acc`."""
+
+    def __init__(self, acc: dict[str, Any]) -> None:
+        self.acc = acc
+        self.reader: Any = None
+        self.stats: list[Any] = []
+
+    def get(self) -> Any:
+        import pkmn_shadow
+
+        if self.reader is not None and self.reader._process.poll() is not None:
+            self.stats.append(self.reader.stats)
+            self.reader = None
+        if self.reader is None:
+            self.reader = pkmn_shadow.PkmnReader()
+        return self.reader
+
+    def finish(self) -> None:
+        if self.reader is not None:
+            self.stats.append(self.reader.stats)
+            self.reader.close()
+        merged: dict[str, Any] = {
+            "feeds": 0, "snapshots": 0, "parse_errors": 0, "process_failures": 0,
+            "snapshot_ms": [], "feed_ms": [], "roundtrip_ms": [], "error_samples": [],
+            "error_kinds": Counter(),
+        }  # fmt: skip
+        for st in self.stats:
+            for key in ("feeds", "snapshots", "parse_errors", "process_failures"):
+                merged[key] += getattr(st, key)
+            for key in ("snapshot_ms", "feed_ms", "roundtrip_ms"):
+                merged[key].extend(getattr(st, key))
+            merged["error_samples"].extend(st.error_samples)
+            merged["error_kinds"].update(st.error_kinds)
+        self.acc["reader_stats"]["pkmn"] = merged
 
 
 def merge(into: dict[str, Any], part: dict[str, Any]) -> None:
@@ -1151,10 +1255,30 @@ def merge(into: dict[str, Any], part: dict[str, Any]) -> None:
         into["tags"][g].update(counter)
     for g, counter in part["cov"].items():
         into["cov"][g].update(counter)
+    for g, counter in part["context"].items():
+        into["context"][g].update(counter)
+    into["dup_creates"] = into.get("dup_creates", 0) + part.get("dup_creates", 0)
+    into["dup_battles"] = into.get("dup_battles", 0) + part.get("dup_battles", 0)
     for g, examples in part["examples"].items():
         room = MAX_EXAMPLES - len(into["examples"][g])
         into["examples"][g].extend(examples[:room])
     into["errors"].extend(part["errors"])
+    for name, sub in part.get("by_reader", {}).items():
+        merge(into["by_reader"].setdefault(name, _new_acc()), sub)
+    for name, st in part.get("reader_stats", {}).items():
+        mine = into["reader_stats"].setdefault(
+            name,
+            {"feeds": 0, "snapshots": 0, "parse_errors": 0, "process_failures": 0,
+             "snapshot_ms": [], "feed_ms": [], "roundtrip_ms": [], "error_samples": [],
+             "error_kinds": Counter()},
+        )  # fmt: skip
+        for key in ("feeds", "snapshots", "parse_errors", "process_failures"):
+            mine[key] += st[key]
+        for key in ("snapshot_ms", "feed_ms", "roundtrip_ms"):
+            mine[key].extend(st[key])
+        room = 40 - len(mine["error_samples"])
+        mine["error_samples"].extend(st["error_samples"][:room])
+        mine["error_kinds"].update(st["error_kinds"])
 
 
 def load_pool_teams(manifests: list[Path], limit: int) -> list[str]:
@@ -1181,12 +1305,19 @@ def unexplained_groups(acc: dict[str, Any]) -> list[str]:
     return sorted(g for g in acc["episodes"] if classify_group(g)[0] == "unexplained")
 
 
-def report_text(acc: dict[str, Any], elapsed: float) -> str:
-    lines = [
-        f"battles={acc['battles']} steps={acc['steps']} perspective-compares={acc['compares']} "
-        f"errors={len(acc['errors'])} elapsed={elapsed:.0f}s",
-        f"agents={dict(acc['agents'])}",
-    ]
+def _field_of(group: str) -> str:
+    return re.sub(r"^\[[a-z0-9_]+\] ", "", group).split("/")[0]
+
+
+def _pct(values: list[float], q: float) -> float:
+    if not values:
+        return float("nan")
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+
+def _reader_section(acc: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
     for kind, title in (
         ("unexplained", "DEFECTS (unexplained mismatches)"),
         ("exempt", "EXEMPT (documented predicate holds for the specific finding)"),
@@ -1203,6 +1334,94 @@ def report_text(acc: dict[str, Any], elapsed: float) -> str:
         for g, n in rows:
             top = ", ".join(f"{t} x{c}" for t, c in acc["tags"][g].most_common(3))
             lines.append(f"{g:64s} {n:8d} {acc['observations'][g]:8d}  {top}")
+    return lines
+
+
+def reader_summary(acc: dict[str, Any]) -> dict[str, Any]:
+    """Headline numbers for one reader's accumulator."""
+    unexplained = [g for g in acc["episodes"] if classify_group(g)[0] == "unexplained"]
+    exempt = [g for g in acc["episodes"] if classify_group(g)[0] == "exempt"]
+    fields: Counter = Counter()
+    for g, n in acc["episodes"].items():
+        if classify_group(g)[0] == "unexplained":
+            fields[_field_of(g)] += n
+    return {
+        "compares": acc["compares"],
+        "episodes": sum(acc["episodes"].values()),
+        "unexplained_groups": len(unexplained),
+        "unexplained_episodes": sum(acc["episodes"][g] for g in unexplained),
+        "exempt_groups": len(exempt),
+        "exempt_episodes": sum(acc["episodes"][g] for g in exempt),
+        "unexplained_episodes_by_field": dict(fields.most_common()),
+    }
+
+
+def _reader_json(acc: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "summary": reader_summary(acc),
+        "episodes": dict(acc["episodes"]),
+        "classification": {g: classify_group(g)[0] for g in acc["episodes"]},
+        "unexplained": unexplained_groups(acc),
+        "observations": dict(acc["observations"]),
+        "tags": {g: dict(c.most_common(6)) for g, c in acc["tags"].items()},
+        "examples": dict(acc["examples"]),
+        "context": {g: dict(c) for g, c in acc["context"].items()},
+        "dup_creates": acc.get("dup_creates", 0),
+        "dup_battles": acc.get("dup_battles", 0),
+    }
+
+
+def report_text(acc: dict[str, Any], elapsed: float) -> str:
+    lines = [
+        f"battles={acc['battles']} steps={acc['steps']} perspective-compares={acc['compares']} "
+        f"errors={len(acc['errors'])} elapsed={elapsed:.0f}s",
+        f"agents={dict(acc['agents'])}",
+    ]
+    readers: dict[str, dict[str, Any]] = {}
+    if acc["compares"] or not acc.get("by_reader"):
+        readers["pokeenv"] = acc
+    readers.update(acc.get("by_reader", {}))
+    for name, sub in readers.items():
+        lines += ["", f"######## READER: {name}"] + _reader_section(sub)
+    if len(readers) > 1:
+        sums = {n: reader_summary(r) for n, r in readers.items()}
+        names = list(sums)
+        lines += ["", "== SIDE BY SIDE (unexplained episodes by field; same battles)"]
+        lines.append(f"{'':34s}" + "".join(f"{n:>12s}" for n in names))
+        for key in (
+            "compares", "episodes", "unexplained_groups", "unexplained_episodes",
+            "exempt_groups", "exempt_episodes",
+        ):  # fmt: skip
+            lines.append(f"{key:34s}" + "".join(f"{sums[n][key]:12d}" for n in names))
+        all_fields = sorted(
+            {f for n in names for f in sums[n]["unexplained_episodes_by_field"]},
+            key=lambda f: -sum(sums[n]["unexplained_episodes_by_field"].get(f, 0) for n in names),
+        )
+        for f in all_fields:
+            lines.append(
+                f"  field {f:27s}"
+                + "".join(f"{sums[n]['unexplained_episodes_by_field'].get(f, 0):12d}" for n in names)
+            )
+    for name, st in acc.get("reader_stats", {}).items():
+        lines += [
+            "",
+            f"== {name} reader process: feeds={st['feeds']} snapshots={st['snapshots']} "
+            f"parse_errors={st['parse_errors']} process_failures={st['process_failures']}",
+            f"   node-side snapshot ms p50={_pct(st['snapshot_ms'], .5):.3f} "
+            f"p99={_pct(st['snapshot_ms'], .99):.3f}; node-side feed ms/step "
+            f"p50={_pct(st['feed_ms'], .5):.3f} p99={_pct(st['feed_ms'], .99):.3f}",
+            f"   per decision point (feed+snapshot, both perspectives, incl. pipe round trips) "
+            f"p50={_pct(st['roundtrip_ms'], .5):.2f} ms p99={_pct(st['roundtrip_ms'], .99):.2f} ms",
+        ]
+        sub = acc.get("by_reader", {}).get(name)
+        if sub is not None:
+            lines.append(
+                f"   duplicate-Pokemon creations (client lost track of a returning Pokemon): "
+                f"{sub.get('dup_creates', 0)} (both perspectives summed) in "
+                f"{sub.get('dup_battles', 0)}/{sub['battles']} battles"
+            )
+        if st["error_kinds"]:
+            lines.append(f"   parse error kinds: {dict(Counter(st['error_kinds']).most_common(8))}")
     return "\n".join(lines)
 
 
@@ -1215,6 +1434,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pool-fraction", type=float, default=0.3)
     parser.add_argument("--pool-limit", type=int, default=120)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--reader",
+        choices=READERS,
+        default="pokeenv",
+        help="which battle-state reader(s) to grade against Showdown's truth: pokeenv (the live "
+        "reader, default), pkmn (the @pkmn/client shadow), or both on the same battles. "
+        "poke-env always drives the game",
+    )
     parser.add_argument(
         "--fail-on-unexplained",
         action="store_true",
@@ -1258,6 +1485,10 @@ def main(argv: list[str] | None = None) -> int:
     pool_teams = load_pool_teams(list(DEFAULT_MANIFESTS), args.pool_limit)
     from vgc import poke_env_compat
 
+    readers = {"pokeenv": ("pokeenv",), "pkmn": ("pkmn",), "both": ("pokeenv", "pkmn")}[
+        args.reader
+    ]
+
     disable = (
         list(poke_env_compat.ALL_FIXES)
         if args.disable_fixes == "all"
@@ -1267,7 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
         job = {
             "disable": disable,
             "indices": [args.trace_index], "seed": args.seed, "agents": args.agents.split(","),
-            "pool_teams": pool_teams,
+            "pool_teams": pool_teams, "readers": readers,
             "pool_fraction": args.pool_fraction if pool_teams else 0.0, "trace": True,
         }  # fmt: skip
         acc = worker_main(job)
@@ -1286,6 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
                 "pool_teams": pool_teams,
                 "pool_fraction": args.pool_fraction if pool_teams else 0.0,
                 "disable": disable,
+                "readers": readers,
             }
         )
     scenario_jobs = []
@@ -1295,6 +1527,8 @@ def main(argv: list[str] | None = None) -> int:
         scenario_jobs = audit_scenarios.make_jobs(
             max(1, args.workers), disable=disable, name_filter=args.scenario_filter
         )
+        for job in scenario_jobs:
+            job["readers"] = readers
     started = time.time()
     total = _new_acc()
     ctx = multiprocessing.get_context("spawn")
@@ -1334,13 +1568,38 @@ def main(argv: list[str] | None = None) -> int:
         "errors": total["errors"],
         "agents": dict(total["agents"]),
         "seed": args.seed,
+        "reader_arg": args.reader,
+        "readers": {
+            name: _reader_json(sub)
+            for name, sub in (
+                ({"pokeenv": total} if total["compares"] else {}) | total["by_reader"]
+            ).items()
+        },
+        "reader_stats": {
+            name: {
+                **{k: v for k, v in st.items() if k not in ("snapshot_ms", "feed_ms", "roundtrip_ms")},
+                "error_kinds": dict(st["error_kinds"]),
+                "snapshot_ms_p50": _pct(st["snapshot_ms"], 0.5),
+                "snapshot_ms_p99": _pct(st["snapshot_ms"], 0.99),
+                "feed_ms_p50": _pct(st["feed_ms"], 0.5),
+                "feed_ms_p99": _pct(st["feed_ms"], 0.99),
+                "decision_roundtrip_ms_p50": _pct(st["roundtrip_ms"], 0.5),
+                "decision_roundtrip_ms_p99": _pct(st["roundtrip_ms"], 0.99),
+                "decision_points": len(st["roundtrip_ms"]),
+            }
+            for name, st in total["reader_stats"].items()
+        },
+        "pkmn_battles": total["by_reader"].get("pkmn", {}).get("battles", 0),
     }
     args.output.write_text(json.dumps(serial, indent=1, default=str))
     print(f"\nwrote {args.output}")
     if total["errors"]:
         return 1
-    if args.fail_on_unexplained and unexplained_groups(total):
-        return 1
+    if args.fail_on_unexplained:
+        if total["compares"] and unexplained_groups(total):
+            return 1
+        if any(unexplained_groups(sub) for sub in total["by_reader"].values()):
+            return 1
     return 0
 
 
