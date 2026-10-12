@@ -191,6 +191,8 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
 
     poke_env_compat.set_disabled_fixes(job.get("disable") or [])
     acc = A._new_acc()
+    readers = tuple(job.get("readers") or ("pokeenv",))
+    holder = A.PkmnReaderHolder(acc) if "pkmn" in readers else None
     with SimWorker() as worker:
         for index, sc in enumerate(job["scenarios"]):
             rng = random.Random(zlib.crc32(sc["name"].encode()))
@@ -205,6 +207,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
                 A.audit_battle(
                     worker, f"scn_{sc['name']}", {"p1": "scripted", "p2": "scripted"}, teams,
                     seed, acc, agents=agents, max_steps=SCENARIO_TURNS * 3,
+                    readers=readers, pkmn_reader=holder.get() if holder else None,
                 )  # fmt: skip
             except Exception as exc:
                 acc["errors"].append(
@@ -215,4 +218,6 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
                     worker.request({"cmd": "close", "id": f"scn_{sc['name']}"})
                 except Exception:
                     pass
+    if holder:
+        holder.finish()
     return acc
