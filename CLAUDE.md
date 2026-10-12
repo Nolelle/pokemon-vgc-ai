@@ -651,7 +651,8 @@ by field and attributed to the protocol messages that touched the Pokemon.
   "preparing"; the toxic/sleep counters were off after replacements, Rest, Snore/Sleep Talk
   and recharge; Illusion dropped the disguise's boosts; own preview-only Pokemon stayed
   `active`.
-- **Known limitations** are listed with reasons in the audit (`KNOWN_LIMITATIONS`): a third
+- **Known limitations** are listed with reasons in the exemption registry
+  (`offline/audit_exemptions.py`; there is no `KNOWN_LIMITATIONS` table): a third
   type from Trick-or-Treat / Forest's Curse, ally Skill Swap residue, Fairy Lock, Rest while
   yawned, Imposter listing Transform, a few Illusion paths.
 - **Trace attribution**: `VgcPlayer._record_final_choice` (tracing only) re-scores the order
@@ -708,6 +709,36 @@ A Codex review found blind spots in the first version; all were closed:
   follow-ups: Mega recognition for Trace Megas (recorded from `detailschange`), the stall
   counter after a CALLED Protect (Copycat/Instruct/Sleep Talk), a transformed Pokemon's revealed
   ability read back as unknown, Rest sleep counter off by one.
+- **Re-run on main after PR #41 (2026-10-12): not 0.** Seed 99 x 2400 shows 5 unexplained
+  groups / 7 episodes (seeds 20261009, 20261010: 5 / 5-6): a sleep counter after Confuse Ray,
+  atk/spa boosts around Protect + Taunt, a Light Screen duration after `-fail`, one foe HP
+  percent near Quick Claw. Small and open; triage before the next `--fail-on-unexplained` run.
+
+### @pkmn/client shadow trial (2026-10-12): keep poke-env as the reader
+
+Owner asked whether `@pkmn/client` (pkmn/ps) should replace poke-env for READING battles.
+Measured offline with the parsing audit grading three readers on identical battles
+(2400 battles x 3 seeds), unexplained mismatch episodes per seed:
+raw poke-env (`--disable-fixes all`) ~15,400; `@pkmn/client` 741-844; repaired poke-env 5-7.
+**Decision: keep repaired poke-env; do not migrate.** pkmn natively avoids ~22 of 57
+poke-env repairs (-copyboost, Champions Mega abilities, single-turn effects, counters, Baton
+Pass, Regenerator, ...) but has ~13 defects of its own -- worst: a Pokemon returning to an
+empty slot is rebuilt blank (forgets item/ability/moves; `lastPokemon` check in the client
+source, confirmed by Codex), in ~5% of battles -- and does not track the Protect counter or
+charge state. It is also only a reader: login/connection, legal orders, team preview and OTS
+handling would all need rebuilding. Latency ~1 ms/decision, 0 crashes; speed was not the issue.
+Codex's fairness review: the ordering holds, but pkmn's counts are inflated somewhat (reveal
+tracker ignores `cant`/Poltergeist reveals, blanket Illusion/Transform triage, extender
+duration ranges collapsed to the lower bound). Not fixed: a ~100x gap does not change the call.
+
+- Code is on the unmerged reference branch `claude/pkmn-shadow-trial` (`tools/pkmn_reader/`,
+  `offline/pkmn_shadow.py`, audit `--reader both`, 13 client-defect repros). Reopen only if
+  poke-env becomes unmaintainable or pkmn fixes the returning-Pokemon defect.
+- **M-C data for any `@pkmn/*` tool**: never use its published dex/mods (M-B era: wrong Mega
+  Z abilities, Meteor Assault 150). Build `@pkmn/data` `Generations` from OUR pinned Showdown,
+  `Dex.mod('champions')`, wrapped in a Proxy whose `forGen(9)` returns the mod --
+  `new Generations(dex).get(9)` silently calls `forGen(9)` and drops the mod. Our sim Dex
+  objects also lack `kind`, which the client needs to record `[from] ability:/item:` reveals.
 
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
