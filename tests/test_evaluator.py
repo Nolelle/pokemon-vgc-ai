@@ -63,13 +63,14 @@ def _klefki(**kwargs) -> PokemonState:
 def test_effective_speed_choice_scarf_multiplies_by_1_5() -> None:
     plain = _garchomp()
     scarfed = _garchomp(item="choicescarf")
-    assert effective_speed(scarfed) == pytest.approx(effective_speed(plain) * 1.5)
+    # the engine rounds the 1.5x half DOWN (battle.modify), so 169 -> 253, not 253.5
+    assert effective_speed(scarfed) == int(effective_speed(plain) * 1.5 - 0.25)
 
 
 def test_effective_speed_paralysis_halves_speed() -> None:
     plain = _garchomp()
     paralyzed = _garchomp(status="par")
-    assert effective_speed(paralyzed) == pytest.approx(effective_speed(plain) * 0.5)
+    assert effective_speed(paralyzed) == int(effective_speed(plain) * 0.5 - 0.25)  # half rounds down
 
 
 def test_effective_speed_positive_boost_stage_increases_speed() -> None:
@@ -1776,3 +1777,39 @@ def test_guaranteed_ko_still_outranks_trick_room() -> None:
     )
 
     assert ko_score > tr_score
+
+
+def test_incoming_threat_includes_partner_abilities_when_enabled() -> None:
+    def threat(flag: bool, friend_guard: bool = False) -> float:
+        ours, partner = _fast_opponent("garchomp"), _fast_opponent("garchomp")
+        if friend_guard:
+            partner._ability = "friendguard"
+        scizor = _fast_opponent("scizor")
+        scizor._add_move("ironhead")
+        perrserker = _fast_opponent("perrserker")
+        perrserker._ability = "steelyspirit"
+        battle = _FakeFullBattle([ours, partner], [scizor, perrserker], [ours, partner])
+        battle.fields = {}
+        ctx = build_context(battle, PolicyConfig(partner_abilities_in_damage=flag))
+        return ctx.threat_matrix[0][0].percent
+
+    base = threat(False)
+    assert threat(True) > base * 1.4  # foe Steely Spirit boosts the partner's Iron Head
+    assert threat(True, friend_guard=True) < threat(True)  # our Friend Guard cuts it
+    assert threat(False, friend_guard=True) == base  # legacy control ignores partners
+
+
+def test_context_speed_includes_surge_surfer_in_electric_terrain() -> None:
+    from poke_env.battle.field import Field
+
+    def speeds(terrain) -> list[float]:
+        raichu = _fast_opponent("raichualola")
+        raichu._ability = "surgesurfer"
+        other = _fast_opponent("garchomp")
+        battle = _FakeFullBattle(
+            [raichu, other], [_fast_opponent("scizor"), _fast_opponent("garchomp")], [raichu, other]
+        )
+        battle.fields = {terrain: 1} if terrain else {}
+        return build_context(battle, PolicyConfig()).our_speed
+
+    assert speeds(Field.ELECTRIC_TERRAIN)[0] == 2 * speeds(None)[0]

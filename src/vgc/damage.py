@@ -72,10 +72,13 @@ for v1 (not in `PokemonState`'s field list) -- see CLAUDE.md's Phase 2a note.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 
-from vgc.data import load_moves, load_species, load_typechart
+from vgc.config import DATA_DIR
+from vgc.data import load_items, load_moves, load_species, load_typechart
 from vgc.stats import StatId, calculate_stats
 
 # --- id normalization ------------------------------------------------------------------
@@ -201,6 +204,11 @@ class FieldState:
     trick_room: bool = False
     is_doubles: bool = True
     num_targets: int = 1
+    # Abilities of the two partners, for effects that cross Pokemon (Friend Guard, Armor Tail /
+    # Queenly Majesty / Dazzling priority blocks, Lightning Rod / Storm Drain redirection,
+    # Steely Spirit, the Auras). None = unknown / none.
+    attacker_ally_ability: str | None = None
+    defender_ally_ability: str | None = None
 
 
 @dataclass
@@ -241,20 +249,36 @@ class DamageResult:
     breakdown: dict[str, object]
 
 
-# --- ability / item whitelists -----------------------------------------------------------
+# --- tables extracted from the Showdown engine --------------------------------------------------
+# Everything below mirrors `data/abilities.ts` / `data/items.ts` / `data/conditions.ts` /
+# `data/moves.ts` of the local checkout (champions mod does not override these). Each modifier is
+# the engine's own 4096ths numerator and the priority is its `on*Priority`, so the chained
+# fixed-point rounding is reproduced exactly (`tests/test_damage_ground_truth.py` and the full
+# sweep in `offline/sweep_calculator_vs_engine.py` are the bar).
 
-# Raw-stat-doubling abilities (applied to the attack stat directly, like a x2 item).
+# Raw-stat-doubling abilities (ModifyAtk, x2, physical only).
 _HUGE_POWER_ABILITIES = frozenset({"hugepower", "purepower"})
 
-# Ability -> the move type it grants immunity to (Levitate/Flash Fire/*Absorb/*Rod).
+# Ability -> the move type it grants immunity to (absorbing abilities, Levitate).
 ABILITY_TYPE_IMMUNITY: dict[str, str] = {
     "levitate": "Ground",
+    "eelevate": "Ground",
     "flashfire": "Fire",
     "waterabsorb": "Water",
     "voltabsorb": "Electric",
     "stormdrain": "Water",
     "lightningrod": "Electric",
+    "sapsipper": "Grass",
+    "dryskin": "Water",
+    "eartheater": "Ground",
+    "motordrive": "Electric",
 }
+# Ability -> the move flag it is immune to.
+ABILITY_FLAG_IMMUNITY: dict[str, str] = {"soundproof": "sound", "bulletproof": "bullet"}
+# Abilities that stop the opposing side's positive-priority moves from reaching the holder.
+_PRIORITY_BLOCK_ABILITIES = frozenset({"armortail", "queenlymajesty", "dazzling"})
+_MOLD_BREAKER_ABILITIES = frozenset({"moldbreaker", "teravolt", "turboblaze"})
+_WEATHER_NEGATING_ABILITIES = frozenset({"cloudnine", "airlock"})
 
 # "-ate" abilities: Normal-type moves become the ability's type and get x4915/4096 base power
 # (data/abilities.ts aerilate/pixilate/refrigerate/galvanize/dragonize; the Champions mod
@@ -281,7 +305,6 @@ _ATE_EXCLUDED_MOVES = frozenset(
 )
 # Liquid Voice: sound moves become Water (no power boost).
 _LIQUID_VOICE_TYPE = "Water"
-_ATE_POWER_MODIFIER = 4915  # of 4096
 
 # Moves that read another stat than their category's default (data/moves.ts override*
 # fields; the data export does not carry them). Body Press attacks with the USER's Defense
@@ -295,28 +318,26 @@ _DEFENSIVE_STAT_OVERRIDE: dict[str, StatId] = {
     "psystrike": "def",
     "secretsword": "def",
 }
-
-ABILITY_WHITELIST: frozenset[str] = frozenset(
+# Moves that ignore the target's defensive stat stages (`ignoreDefensive`).
+_IGNORE_DEFENSIVE_BOOSTS = frozenset({"darkestlariat", "sacredsword"})
+# Moves that always land a critical hit (`willCrit: true`): x1.5 after the weather step, the
+# target's positive Defense stages and the user's negative Attack stages ignored, screens ignored.
+_ALWAYS_CRIT_MOVES = frozenset({"flowertrick", "frostbreath", "stormthrow", "surgingstrikes", "wickedblow"})
+# Moves that shatter Reflect / Light Screen / Aurora Veil before they hit.
+_SCREEN_BREAKERS = frozenset({"brickbreak", "psychicfangs", "ragingbull"})
+# Moves that raise the user's Special Attack by one stage before they deal damage.
+_SELF_SPA_PLUS_ONE = frozenset({"electroshot", "meteorbeam"})
+# Moves that count as recoil / crash-damage moves for Reckless.
+_RECOIL_MOVES = frozenset(
     {
-        *_ATE_ABILITY_TYPE,
-        "liquidvoice",
-        "guts",
-        "hugepower",
-        "purepower",
-        "technician",
-        "adaptability",
-        "wonderguard",
-        "multiscale",
-        "solidrock",
-        "filter",
-        "tintedlens",
-        "thickfat",
-        *ABILITY_TYPE_IMMUNITY,
+        "bravebird", "doubleedge", "flareblitz", "headsmash", "lightofruin", "volttackle",
+        "wavecrash", "wildcharge", "woodhammer", "highjumpkick", "supercellslam", "axekick",
     }
 )
+# `hasSheerForceBoost` moves get Sheer Force's x1.3 although they have no secondary to remove.
+_SHEER_FORCE_BOOST_MOVES = frozenset({"electroshot", "ragingfury"})
 
-# Type-boosting held items -- 1.2x basePower to a matching move type (data/items.ts:
-# onBasePower, chainModify([4915, 4096]) === 1.2 exactly).
+# Type-boosting held items -- onBasePower priority 15, chainModify([4915, 4096]).
 ITEM_TYPE_BOOST: dict[str, str] = {
     "charcoal": "Fire",
     "mysticwater": "Water",
@@ -334,36 +355,105 @@ ITEM_TYPE_BOOST: dict[str, str] = {
     "softsand": "Ground",
     "twistedspoon": "Psychic",
     "fairyfeather": "Fairy",
+    "blackbelt": "Fighting",
+    "spelltag": "Ghost",
 }
-
-# Category-boosting held items -- 1.1x basePower to a matching category (data/items.ts:
-# chainModify([4505, 4096]) === 1.1 exactly).
+# Category-boosting held items -- onBasePower priority 16, chainModify([4505, 4096]).
 ITEM_CATEGORY_BOOST: dict[str, str] = {
     "muscleband": "Physical",
     "wiseglasses": "Special",
 }
-
-# Items with a damage-relevant effect that isn't a basePower modifier -- handled
-# separately in `_final_multiplier`/`_attack_stat_item_modifier`, but listed here so
-# `to_id(item) in ITEM_WHITELIST` covers them for the `item_handled` breakdown flag.
-ITEM_WHITELIST: frozenset[str] = frozenset(
-    {*ITEM_TYPE_BOOST, *ITEM_CATEGORY_BOOST, "lifeorb", "expertbelt", "lightball", "choicescarf"}
+# Resist berries: the type they halve (the Pokemon must be hit super effectively; Chilan Berry
+# halves any Normal hit). Eaten on the hit, so the first hit is the one that matters.
+ITEM_RESIST_BERRY: dict[str, str] = {
+    "occaberry": "Fire", "passhoberry": "Water", "wacanberry": "Electric", "rindoberry": "Grass",
+    "yacheberry": "Ice", "chopleberry": "Fighting", "kebiaberry": "Poison", "shucaberry": "Ground",
+    "cobaberry": "Flying", "payapaberry": "Psychic", "tangaberry": "Bug", "chartiberry": "Rock",
+    "kasibberry": "Ghost", "habanberry": "Dragon", "colburberry": "Dark", "babiriberry": "Steel",
+    "roseliberry": "Fairy", "chilanberry": "Normal",
+}
+# Terrain-boosted seeds only change stats after the terrain starts; no damage effect here.
+ITEM_NO_DAMAGE_EFFECT_LISTED = frozenset(
+    {
+        "airballoon", "bigroot", "bindingband", "brightpowder", "damprock", "ejectbutton",
+        "electricseed", "focusband", "focussash", "grassyseed", "heatrock", "icyrock",
+        "kingsrock", "leek", "leftovers", "leppaberry", "lightclay", "lumberry", "mentalherb",
+        "metronome", "mistyseed", "oranberry", "persimberry", "psychicseed", "quickclaw",
+        "redcard", "rockyhelmet", "scopelens", "shedshell", "shellbell", "sitrusberry",
+        "smoothrock", "terrainextender", "whiteherb", "widelens", "zoomlens", "aspearberry",
+        "cheriberry", "chestoberry", "pechaberry", "rawstberry", "choicescarf", "ironball",
+    }
 )
 
-_LIFE_ORB_MULTIPLIER = 5324 / 4096  # data/items.ts lifeorb.onModifyDamage, == 1.3 exactly
-_EXPERT_BELT_MULTIPLIER = 4915 / 4096  # data/items.ts expertbelt.onModifyDamage, == 1.2 exactly
-_ITEM_TYPE_BOOST_MULTIPLIER = 4915 / 4096  # same fraction as expert belt, == 1.2
-_ITEM_CATEGORY_BOOST_MULTIPLIER = 4505 / 4096  # data/items.ts muscleband/wiseglasses, == 1.1
+# Abilities this module reads (an ability outside this set contributes nothing to damage).
+ABILITY_WHITELIST: frozenset[str] = frozenset(
+    {
+        *_ATE_ABILITY_TYPE, "liquidvoice", "guts", "hugepower", "purepower", "technician",
+        "adaptability", "wonderguard", "multiscale", "solidrock", "filter", "tintedlens",
+        "thickfat", *ABILITY_TYPE_IMMUNITY, *ABILITY_FLAG_IMMUNITY, *_PRIORITY_BLOCK_ABILITIES,
+        *_MOLD_BREAKER_ABILITIES, *_WEATHER_NEGATING_ABILITIES, "toughclaws", "sheerforce",
+        "ironfist", "sharpness", "megalauncher", "strongjaw", "reckless", "punkrock",
+        "fairyaura", "darkaura", "aurabreak", "sandforce", "heatproof", "purifyingsalt",
+        "waterbubble", "furcoat", "marvelscale", "grasspelt", "fluffy", "hustle", "blaze",
+        "overgrow", "torrent", "swarm", "solarpower", "firemane", "steelworker", "transistor",
+        "dragonsmaw", "protean", "libero", "unaware", "friendguard", "steelyspirit", "longreach",
+        "megasol", "scrappy", "infiltrator", "ripen", "levitate",
+    }
+)
+ITEM_WHITELIST: frozenset[str] = frozenset(
+    {
+        *ITEM_TYPE_BOOST, *ITEM_CATEGORY_BOOST, *ITEM_RESIST_BERRY, "lifeorb", "expertbelt",
+        "lightball", "choicescarf", "normalgem", "airballoon", "ironball",
+        *ITEM_NO_DAMAGE_EFFECT_LISTED,
+    }
+)
 
-# Screens: 0.5x in singles, 2/3x in doubles (data/moves.ts reflect/lightscreen/
-# auroraveil: `this.activePerHalf > 1 ? [2732, 4096] : 0.5`; 2732/4096 == 2/3 exactly).
-_SCREEN_MULTIPLIER_SINGLES = 0.5
-_SCREEN_MULTIPLIER_DOUBLES = 2732 / 4096
+# --- fixed-point helpers (sim/battle.ts modify / chainModify) ------------------------------------
 
-_SPREAD_MULTIPLIER = 0.75
-_SPREAD_TARGETS = frozenset({"allAdjacent", "allAdjacentFoes"})
+_Q = 4096
+
+
+def _modify(value: int, modifier: int) -> int:
+    """``battle.modify(value, modifier / 4096)``: round half DOWN in 4096ths."""
+    return (int(value) * int(modifier) + 2047) >> 12
+
+
+def _chain_mod(previous: int, numerator: int) -> int:
+    """``battle.chainModify`` on a modifier held in 4096ths."""
+    return (int(previous) * int(numerator) + 2048) >> 12
+
+
+class _Chain:
+    """One engine event's ``chainModify`` calls, applied in the engine's handler order
+    (higher ``on*Priority`` first, then registration order)."""
+
+    __slots__ = ("items",)
+
+    def __init__(self) -> None:
+        self.items: list[tuple[int, int, int]] = []
+
+    def add(self, priority: int, numerator: int) -> None:
+        self.items.append((-priority, len(self.items), numerator))
+
+    def modifier(self) -> int:
+        modifier = _Q
+        for _priority, _index, numerator in sorted(self.items):
+            modifier = _chain_mod(modifier, numerator)
+        return modifier
+
+    def apply(self, value: int) -> int:
+        if not self.items:
+            return value
+        return _modify(value, self.modifier())
+
 
 TYPE_EFFECTIVENESS_MULTIPLIER: dict[int, float] = {0: 1.0, 1: 2.0, 2: 0.5, 3: 0.0}
+
+# Screens: 0.5x in singles, 2732/4096 in doubles (data/moves.ts reflect/lightscreen/auroraveil).
+_SCREEN_NUMERATOR_SINGLES = 2048
+_SCREEN_NUMERATOR_DOUBLES = 2732
+
+_SPREAD_TARGETS = frozenset({"allAdjacent", "allAdjacentFoes"})
 
 
 def _apply_stage(stat: int, stage: int) -> int:
@@ -373,83 +463,99 @@ def _apply_stage(stat: int, stage: int) -> int:
     return stat * 2 // (2 - stage)
 
 
+def _type_code(move_type: str, defender_type: str) -> int:
+    entry = load_typechart().get(defender_type.lower())
+    if entry is None:
+        return 0
+    return entry["damageTaken"].get(move_type, 0)
+
+
 def _type_effectiveness(move_type: str, defender_types: list[str]) -> float:
-    typechart = load_typechart()
     multiplier = 1.0
     for defender_type in defender_types:
-        entry = typechart.get(defender_type.lower())
-        if entry is None:
-            continue
-        code = entry["damageTaken"].get(move_type, 0)
-        multiplier *= TYPE_EFFECTIVENESS_MULTIPLIER.get(code, 1.0)
+        multiplier *= TYPE_EFFECTIVENESS_MULTIPLIER.get(_type_code(move_type, defender_type), 1.0)
     return multiplier
 
 
 def _is_grounded(state: PokemonState) -> bool:
-    """Rough grounded check for terrain purposes: not Flying-type and not Levitate.
-    Doesn't model Iron Ball/Gravity/Roost/Ingrain (deferred -- see report deviations).
+    """Grounded check for terrain / Ground-move purposes: not Flying-type, not Levitate, not
+    holding an Air Balloon -- unless it holds an Iron Ball. Gravity/Roost/Ingrain are not modelled.
     """
+    if state.item == "ironball" and not state.item_lost:
+        return True
     if "Flying" in state.types():
         return False
-    if state.ability == "levitate":
+    if state.ability in ("levitate", "eelevate"):
+        return False
+    if state.item == "airballoon" and not state.item_lost:
         return False
     return True
 
 
-def _terrain_modifier(field: FieldState, move_type: str, attacker: PokemonState, defender: PokemonState) -> float:
-    if field.terrain == "electric" and move_type == "Electric" and _is_grounded(attacker):
-        return 1.3
-    if field.terrain == "grassy" and move_type == "Grass" and _is_grounded(attacker):
-        return 1.3
-    if field.terrain == "psychic" and move_type == "Psychic" and _is_grounded(attacker):
-        return 1.3
-    if field.terrain == "misty" and move_type == "Dragon" and _is_grounded(defender):
-        return 0.5
-    return 1.0
+def _has_item(state: PokemonState) -> bool:
+    return bool(state.item) and not state.item_lost
 
 
-def _weather_modifier(field: FieldState, move_type: str) -> float:
-    if field.weather == "sun":
-        if move_type == "Fire":
-            return 1.5
-        if move_type == "Water":
-            return 0.5
-    elif field.weather == "rain":
-        if move_type == "Water":
-            return 1.5
-        if move_type == "Fire":
-            return 0.5
-    return 1.0
+def _positive_boosts(state: PokemonState) -> int:
+    return sum(stage for stage in state.boosts.values() if stage > 0)
 
 
-def _weather_defense_value(
-    defense_value: int, field: FieldState, defender: PokemonState, defense_stat_id: str
-) -> int:
-    """Sandstorm: Rock-type Sp. Def x1.5; Snow: Ice-type Def x1.5 (data/conditions.ts).
+# Status-curing berries eat themselves the moment the status lands, so the holder never carries it
+# into a hit; terrain seeds raise a stat once their terrain is up.
+_STATUS_CURE_BERRY: dict[str, frozenset[str]] = {
+    "cheriberry": frozenset({"par"}),
+    "chestoberry": frozenset({"slp"}),
+    "pechaberry": frozenset({"psn", "tox"}),
+    "rawstberry": frozenset({"brn"}),
+    "aspearberry": frozenset({"frz"}),
+    "lumberry": frozenset({"brn", "par", "psn", "tox", "slp", "frz"}),
+}
+_TERRAIN_SEED: dict[str, tuple[str, str]] = {
+    "electricseed": ("electric", "def"),
+    "grassyseed": ("grassy", "def"),
+    "mistyseed": ("misty", "spd"),
+    "psychicseed": ("psychic", "spd"),
+}
 
-    The engine applies it with ``battle.modify(stat, 1.5)`` -- 4096-based fixed point whose
-    rounding sends exact halves DOWN, hence ``(v * 6144 + 2047) // 4096`` rather than ``v * 3 // 2``
-    rounded up. Runs on the already-staged stat, before the base formula.
-    """
 
-    if field.weather == "sand" and defense_stat_id == "spd" and "Rock" in defender.types():
-        return (defense_value * 6144 + 2047) // 4096
-    if field.weather == "snow" and defense_stat_id == "def" and "Ice" in defender.types():
-        return (defense_value * 6144 + 2047) // 4096
-    return defense_value
+def _with_item_effects(state: PokemonState, field: FieldState) -> PokemonState:
+    """``state`` as the hit sees it after its berry / terrain seed has already triggered."""
+    if state.item is None or state.item_lost:
+        return state
+    from dataclasses import replace
+
+    cures = _STATUS_CURE_BERRY.get(state.item)
+    seed = _TERRAIN_SEED.get(state.item)
+    if cures is not None and state.status in cures:
+        return replace(state, status=None, item_lost=True)  # eaten: no longer holds an item
+    if seed is not None and field.terrain == seed[0]:
+        boosts = dict(state.boosts)
+        boosts[seed[1]] = min(6, boosts.get(seed[1], 0) + 1)
+        return replace(state, boosts=boosts, item_lost=True)
+    if state.item in ("sitrusberry", "oranberry") and state.hp_or_max() * 2 <= state.max_hp():
+        return replace(state, item_lost=True)  # eaten at half HP (the heal itself is not modelled)
+    return state
 
 
-def _screen_modifier(field: FieldState, category: str) -> float:
-    per_side_multiplier = _SCREEN_MULTIPLIER_DOUBLES if field.is_doubles else _SCREEN_MULTIPLIER_SINGLES
-    has_reflect = "reflect" in field.screens and category == "Physical"
-    has_light_screen = "lightscreen" in field.screens and category == "Special"
-    if has_reflect or has_light_screen:
-        return per_side_multiplier
-    # Aurora Veil doesn't stack with a same-category Reflect/Light Screen (see
-    # data/moves.ts auroraveil condition -- it explicitly bails in that case).
-    if "auroraveil" in field.screens:
-        return per_side_multiplier
-    return 1.0
+def partner_ability(state: PokemonState | None) -> str | None:
+    """The ability a standing partner contributes to damage (None when absent or fainted)."""
+    if state is None or state.hp_or_max() <= 0:
+        return None
+    return state.ability
+
+
+def with_partners(
+    field: FieldState, attacker_partner: PokemonState | None, defender_partner: PokemonState | None
+) -> FieldState:
+    """``field`` carrying both partners' abilities (Friend Guard, Armor Tail / Queenly Majesty,
+    Lightning Rod / Storm Drain redirection, Steely Spirit, the Auras)."""
+    from dataclasses import replace
+
+    return replace(
+        field,
+        attacker_ally_ability=partner_ability(attacker_partner),
+        defender_ally_ability=partner_ability(defender_partner),
+    )
 
 
 def _empty_breakdown() -> dict[str, object]:
@@ -489,25 +595,69 @@ def _zero_result(breakdown: dict[str, object]) -> DamageResult:
     )
 
 
+@lru_cache(maxsize=1)
+def _breakable_abilities() -> frozenset[str]:
+    """Abilities Mold Breaker (and Teravolt / Turboblaze) bypass: the engine's ``breakable`` flag."""
+    path = DATA_DIR / "mechanics_catalog.json"
+    try:
+        with path.open() as file:
+            catalog = json.load(file)
+        return frozenset(catalog["mechanics_surface"]["ability_flags"]["breakable"])
+    except (OSError, KeyError, ValueError):
+        return frozenset()
+
+
+# --- weather / terrain -------------------------------------------------------------------------------
+
+
+def _effective_weather(field: FieldState, attacker: PokemonState, defender: PokemonState) -> str | None:
+    for ability in (
+        attacker.ability, defender.ability, field.attacker_ally_ability, field.defender_ally_ability
+    ):
+        if ability in _WEATHER_NEGATING_ABILITIES:
+            return None
+    return field.weather
+
+
+def _weather_defense_value(
+    defense_value: int, weather: str | None, defender: PokemonState, defense_stat_id: str
+) -> int:
+    """Sandstorm: Rock-type Sp. Def x1.5; Snow: Ice-type Def x1.5 (data/conditions.ts).
+
+    The engine applies it with ``battle.modify(stat, 1.5)`` -- 4096-based fixed point whose
+    rounding sends exact halves DOWN. Runs on the already-staged stat, before the base formula.
+    """
+
+    if weather == "sand" and defense_stat_id == "spd" and "Rock" in defender.types():
+        return _modify(defense_value, 6144)
+    if weather == "snow" and defense_stat_id == "def" and "Ice" in defender.types():
+        return _modify(defense_value, 6144)
+    return defense_value
+
+
 # --- variable base power (basePowerCallback) moves --------------------------------------
 
 # Weather -> the type Weather Ball becomes (data/moves.ts weatherball.onModifyType); BP
-# doubles (50 -> 100, onModifyMove) for every one of these four cases identically. Sand/
-# snow have no *damage-multiplier* effect (real gen9 Sandstorm/Snow are Def/SpD boosts for
-# Rock/Ice defenders, see `_weather_defense_value`), but they drive Weather Ball's type/power
-# exactly like sun/rain do.
+# doubles (50 -> 100, onModifyMove) for every one of these four cases identically.
 _WEATHER_BALL_TYPE: dict[str, str] = {"sun": "Fire", "rain": "Water", "sand": "Rock", "snow": "Ice"}
+_TERRAIN_PULSE_TYPE: dict[str, str] = {
+    "electric": "Electric",
+    "grassy": "Grass",
+    "misty": "Fairy",
+    "psychic": "Psychic",
+}
 
-# data/moves.ts grassknot/lowkick vs. heavyslam/heatcrash basePowerCallback -- both pairs
-# share their respective threshold tables verbatim.
+# data/moves.ts grassknot/lowkick vs. heavyslam/heatcrash basePowerCallback.
 _WEIGHT_TIER_MOVE_IDS = frozenset({"grassknot", "lowkick"})
 _WEIGHT_RATIO_MOVE_IDS = frozenset({"heavyslam", "heatcrash"})
 
+# Fixed-damage moves: damage regardless of stats (`damage: 'level'`, `damageCallback`).
+_LEVEL_DAMAGE_MOVES = frozenset({"seismictoss", "nightshade"})
+_HALF_TARGET_HP_MOVES = frozenset({"superfang", "naturesmadness", "ruination"})
+_OHKO_MOVES = frozenset({"fissure", "guillotine", "horndrill", "sheercold"})
+
 
 def _weight_tier_base_power(weight_hg: float) -> int:
-    """Grass Knot/Low Kick's basePowerCallback: BP by the target's weight alone (weight
-    in hectograms, matching `Pokemon.getWeight()`'s units -- see `_weight_hg`).
-    """
     if weight_hg >= 2000:
         return 120
     if weight_hg >= 1000:
@@ -522,9 +672,6 @@ def _weight_tier_base_power(weight_hg: float) -> int:
 
 
 def _weight_ratio_base_power(attacker_hg: float, defender_hg: float) -> int:
-    """Heavy Slam/Heat Crash's basePowerCallback: BP by the attacker:defender weight
-    ratio (both in hectograms -- see `_weight_hg`).
-    """
     if defender_hg <= 0:
         return 40
     ratio = attacker_hg / defender_hg
@@ -540,32 +687,52 @@ def _weight_ratio_base_power(attacker_hg: float, defender_hg: float) -> int:
 
 
 def _weight_hg(state: PokemonState) -> float:
-    """Weight in hectograms, matching `Pokemon.getWeight()` (`weighthg`, `weightkg * 10`
-    in the exported species data). No Float Stone/Autotomize/Heavy Metal modeling (the
-    real engine's `ModifyWeight` event) -- `PokemonState` only carries the species'
-    unmodified weight, the same simplification as everything else in this module's
-    whitelist-table design (see `ABILITY_WHITELIST`/`ITEM_WHITELIST`).
-    """
-    return round(state.species_data()["weightkg"] * 10)
+    """Weight in hectograms (`weightkg * 10`). No Float Stone/Autotomize/Heavy Metal modelling."""
+    weight = round(state.species_data()["weightkg"] * 10)
+    if state.ability == "heavymetal":
+        weight *= 2
+    elif state.ability == "lightmetal":
+        weight //= 2
+    return weight
 
 
 def _effective_speed_for_ratio(state: PokemonState) -> float:
-    """Speed as Electro Ball/Gyro Ball's basePowerCallback reads it (`pokemon.getStat
-    ('spe')`): stat stage, then Choice Scarf (1.5x) and paralysis (0.5x) -- the same
+    """Speed as Electro Ball/Gyro Ball's basePowerCallback reads it (`pokemon.getStat('spe')`):
+    stat stage, then Choice Scarf (1.5x), Iron Ball (0.5x) and paralysis (0.5x) -- the same
     "effective speed" `vgc.evaluator.effective_speed` computes for turn-order purposes,
-    duplicated here (not imported) to keep this Phase 2a module free of a dependency on
-    the Phase 2b evaluator built on top of it (see CLAUDE.md's module-layering note). A
-    float estimate is fine -- only the floor()'d *ratio* of two of these numbers ever
-    reaches a real formula, same as `effective_speed`'s own docstring reasoning.
+    duplicated here to keep this Phase 2a module free of a dependency on the evaluator.
     """
     speed = float(_apply_stage(state.stats()["spe"], state.boost_stage("spe")))
     if state.item == "choicescarf":
         speed *= 1.5
+    if state.item == "ironball":
+        speed *= 0.5
     if state.status == "par":
         speed *= 0.5
     if state.item_lost and state.ability == "unburden":
         speed *= 2.0
     return speed
+
+
+def _flail_base_power(attacker: PokemonState) -> int:
+    ratio = max((int(attacker.hp_or_max()) * 48) // attacker.max_hp(), 1)
+    if ratio < 2:
+        return 200
+    if ratio < 5:
+        return 150
+    if ratio < 10:
+        return 100
+    if ratio < 17:
+        return 80
+    if ratio < 33:
+        return 40
+    return 20
+
+
+def _hard_press_base_power(defender: PokemonState) -> int:
+    hp, max_hp = int(defender.hp_or_max()), defender.max_hp()
+    scaled = (hp * 4096) // max_hp
+    return ((100 * (100 * scaled) + 2047) // 4096) // 100 or 1
 
 
 def _variable_base_power(
@@ -574,53 +741,43 @@ def _variable_base_power(
     attacker: PokemonState,
     defender: PokemonState,
     field: FieldState,
+    weather: str | None,
 ) -> tuple[int, str | None] | None:
-    """`(base_power, type_override)` for the variable-basePower moves this module
-    implements (see module docstring point 1), mirroring each move's
-    `basePowerCallback`/`onModifyType`/`onModifyMove` in `data/moves.ts` (no
-    `data/mods/champions/moves.ts` override for any of these -- confirmed by grep, so
-    vanilla gen9 formulas apply verbatim). `type_override` is `None` when the move's type
-    doesn't change (everything except Weather Ball). Returns `None` (not a tuple) for any
-    other move id, which falls through to the caller's existing flat-`basePower`/
-    `move_supported: False` handling -- this function does not change behavior for any
-    move outside its own explicit id list.
+    """`(base_power, type_override)` for the basePowerCallback / onModifyMove moves this module
+    implements, mirroring `data/moves.ts`. `type_override` is `None` when the move's type does
+    not change. Returns `None` for any other move id (the caller then uses the flat power).
     """
+    base = int(move.get("basePower") or 0)
     if move_id == "weatherball":
-        weather_type = _WEATHER_BALL_TYPE.get(field.weather or "")
+        weather_type = _WEATHER_BALL_TYPE.get(weather or "")
         if weather_type is None:
-            return None  # no recognized weather -> flat 50 BP Normal-type (the exported default)
-        return int(move["basePower"]) * 2, weather_type
+            return None
+        return base * 2, weather_type
+
+    if move_id == "terrainpulse":
+        if field.terrain in _TERRAIN_PULSE_TYPE and _is_grounded(attacker):
+            return base * 2, _TERRAIN_PULSE_TYPE[field.terrain]
+        return None
 
     if move_id in ("waterspout", "eruption"):
-        # basePowerCallback: `move.basePower * pokemon.hp / pokemon.maxhp`, then
-        # `clampIntRange(basePower, 1)` (Math.floor, minimum 1) in
-        # sim/battle-actions.ts::getDamage. Integer math here (not the JS float division)
-        # to sidestep float-rounding edge cases -- `move["basePower"] * hp` is always an
-        # exact integer product, so `// max_hp` reproduces `Math.floor` exactly.
-        hp = attacker.hp_or_max()
+        # Showdown HP is an integer; the fast search may carry fractional HP after predicted
+        # damage, so floor it before the integer-only fixed-point chain.
+        hp = int(attacker.hp_or_max())
         max_hp = attacker.max_hp()
-        base_power = (move["basePower"] * hp) // max_hp
-        return max(1, base_power), None
+        return max(1, (base * hp) // max_hp), None
 
     if move_id == "electroball":
-        # basePowerCallback: `ratio = floor(pokemon.getStat('spe') / target.getStat
-        # ('spe'))` -- pokemon is the attacker (move user), target is the defender.
         user_speed = _effective_speed_for_ratio(attacker)
         target_speed = _effective_speed_for_ratio(defender)
         ratio = int(user_speed // target_speed) if target_speed > 0 else 0
-        bp_table = [40, 60, 80, 120, 150]
-        return bp_table[min(ratio, 4)], None
+        return [40, 60, 80, 120, 150][min(ratio, 4)], None
 
     if move_id == "gyroball":
-        # basePowerCallback: `power = floor(25 * target.getStat('spe') / pokemon.getStat
-        # ('spe')) + 1`, capped at 150 -- pokemon is the attacker, target the defender
-        # (a slower attacker vs. a faster target yields a higher ratio -> more power).
         user_speed = _effective_speed_for_ratio(attacker)
         target_speed = _effective_speed_for_ratio(defender)
         if user_speed <= 0:
             return 1, None
-        power = int(25 * target_speed / user_speed) + 1
-        return min(power, 150), None
+        return min(int(25 * target_speed / user_speed) + 1, 150), None
 
     if move_id in _WEIGHT_TIER_MOVE_IDS:
         return _weight_tier_base_power(_weight_hg(defender)), None
@@ -628,7 +785,91 @@ def _variable_base_power(
     if move_id in _WEIGHT_RATIO_MOVE_IDS:
         return _weight_ratio_base_power(_weight_hg(attacker), _weight_hg(defender)), None
 
+    if move_id in ("flail", "reversal"):
+        return _flail_base_power(attacker), None
+
+    if move_id == "hardpress":
+        return _hard_press_base_power(defender), None
+
+    if move_id in ("powertrip", "storedpower"):
+        return base + 20 * _positive_boosts(attacker), None
+
+    if move_id == "acrobatics":
+        return (base * 2 if not _has_item(attacker) else base), None
+
+    if move_id in ("hex", "infernalparade"):
+        if defender.status is not None or defender.ability == "comatose":
+            return base * 2, None
+        return base, None
+
+    if move_id == "risingvoltage":
+        if field.terrain == "electric" and _is_grounded(defender):
+            return base * 2, None
+        return base, None
+
     return None
+
+
+def _move_bp_chain_effects(
+    move_id: str,
+    attacker: PokemonState,
+    defender: PokemonState,
+    field: FieldState,
+    weather: str | None,
+    chain: _Chain,
+) -> None:
+    """The moves' own ``onBasePower`` handlers (priority 0, so they run last in the BasePower chain)."""
+    if move_id == "knockoff":
+        if _has_item(defender) and not _holds_own_mega_stone(defender):
+            chain.add(0, 6144)
+    elif move_id == "facade":
+        if attacker.status is not None and attacker.status != "slp":
+            chain.add(0, 8192)
+    elif move_id in ("venoshock", "barbbarrage"):
+        if defender.status in ("psn", "tox"):
+            chain.add(0, 8192)
+    elif move_id == "brine":
+        if defender.hp_or_max() * 2 <= defender.max_hp():
+            chain.add(0, 8192)
+    elif move_id == "expandingforce":
+        if field.terrain == "psychic" and _is_grounded(attacker):
+            chain.add(0, 6144)
+    elif move_id == "mistyexplosion":
+        if field.terrain == "misty" and _is_grounded(attacker):
+            chain.add(0, 6144)
+    elif move_id in ("solarbeam", "solarblade"):
+        if weather in ("rain", "sand", "snow"):
+            chain.add(0, 2048)
+
+
+def _holds_own_mega_stone(state: PokemonState) -> bool:
+    item = (load_items().get(state.item or "") or {}) if state.item else {}
+    if not item.get("megaStone"):
+        return False
+    base = state.species_data().get("baseSpecies")
+    return any(to_id(user) == to_id(base) or to_id(user) == state.species_id for user in item.get("itemUser") or [])
+
+
+def _terrain_bp(field: FieldState, move_id: str, move_type: str, attacker: PokemonState, defender: PokemonState, chain: _Chain) -> float:
+    """Terrain's ``onBasePower`` effects (priority 6). Returns the display multiplier."""
+    terrain = field.terrain
+    shown = 1.0
+    if terrain == "electric" and move_type == "Electric" and _is_grounded(attacker):
+        chain.add(6, 5325)
+        shown = 1.3
+    elif terrain == "grassy" and move_type == "Grass" and _is_grounded(attacker):
+        chain.add(6, 5325)
+        shown = 1.3
+    elif terrain == "psychic" and move_type == "Psychic" and _is_grounded(attacker):
+        chain.add(6, 5325)
+        shown = 1.3
+    elif terrain == "misty" and move_type == "Dragon" and _is_grounded(defender):
+        chain.add(6, 2048)
+        shown = 0.5
+    if terrain == "grassy" and move_id in ("earthquake", "bulldoze", "magnitude") and _is_grounded(defender):
+        chain.add(6, 2048)
+        shown *= 0.5
+    return shown
 
 
 def damage_range(
@@ -639,9 +880,10 @@ def damage_range(
 ) -> DamageResult:
     """Compute the min/max/expected damage `attacker`'s `move_id` deals to `defender`.
 
-    No crit roll (v1 scope; see module docstring). See `DamageResult.breakdown` for the
-    full trace, including `move_supported`/`immune`/`ability_handled`/`item_handled`
-    flags callers should check before trusting a 0-damage result silently.
+    No crit roll (v1 scope; see module docstring) -- except the few moves that always crit. See
+    `DamageResult.breakdown` for the full trace, including `move_supported`/`immune`/
+    `ability_handled`/`item_handled` flags callers should check before trusting a 0-damage result
+    silently.
     """
     field = field if field is not None else FieldState()
     move_id = to_id(move_id)
@@ -655,23 +897,40 @@ def damage_range(
         breakdown["reason"] = "status_move"
         return _zero_result(breakdown)
 
-    base_power = move.get("basePower") or 0
+    attacker = _with_item_effects(attacker, field)
+    defender = _with_item_effects(defender, field)
+    weather = _effective_weather(field, attacker, defender)
+    if attacker.ability == "megasol":
+        weather = "sun"  # the holder's moves resolve as if in harsh sunlight
+
     move_type = move["type"]
-    variable = _variable_base_power(move_id, move, attacker, defender, field)
+    category = move["category"]
+    flags = move.get("flags") or {}
+    if move_id == "shellsidearm":
+        # Physical (and contact) when the raw Attack would do more than the raw Sp. Atk.
+        raw_attacker, raw_defender = attacker.stats(), defender.stats()
+        atk = _apply_stage(raw_attacker["atk"], attacker.boost_stage("atk"))
+        spa = _apply_stage(raw_attacker["spa"], attacker.boost_stage("spa"))
+        def_ = _apply_stage(raw_defender["def"], defender.boost_stage("def"))
+        spd = _apply_stage(raw_defender["spd"], defender.boost_stage("spd"))
+        physical = (22 * 90 * atk // def_) // 50
+        special = (22 * 90 * spa // spd) // 50
+        if physical > special:
+            category = "Physical"
+            flags = {**flags, "contact": 1}
+    base_power = int(move.get("basePower") or 0)
+    variable = _variable_base_power(move_id, move, attacker, defender, field, weather)
     if variable is not None:
         base_power, variable_type = variable
         if variable_type is not None:
             move_type = variable_type
-    elif base_power <= 0:
-        # Relies on a basePowerCallback this module doesn't implement (anything not in
-        # _variable_base_power's explicit move_id list above). Rather than silently
-        # returning 0 damage, flag it as unsupported.
+    fixed_damage = (
+        move_id in _LEVEL_DAMAGE_MOVES or move_id in _HALF_TARGET_HP_MOVES or move_id in _OHKO_MOVES
+    )
+    if base_power <= 0 and not fixed_damage:
         breakdown["move_supported"] = False
         breakdown["reason"] = "variable_base_power_not_implemented"
         return _zero_result(breakdown)
-
-    category = move["category"]
-    is_physical = category == "Physical"
 
     original_type = move_type
     ate_type = _ATE_ABILITY_TYPE.get(attacker.ability or "")
@@ -679,24 +938,94 @@ def damage_range(
     if ate_type is not None and move_type == "Normal" and move_id not in _ATE_EXCLUDED_MOVES:
         move_type = ate_type
         ate_boosted = True
-    elif attacker.ability == "liquidvoice" and (move.get("flags") or {}).get("sound"):
+    elif attacker.ability == "liquidvoice" and flags.get("sound"):
         move_type = _LIQUID_VOICE_TYPE
     breakdown["move_type"] = move_type
     breakdown["type_changed_from"] = original_type if move_type != original_type else None
 
+    # Defender-side abilities are bypassed by Mold Breaker and friends (the `breakable` flag).
+    defender_ability = defender.ability
+    if attacker.ability in _MOLD_BREAKER_ABILITIES and defender_ability in _breakable_abilities():
+        defender_ability = None
+
+    # --- type effectiveness and immunities -----------------------------------------------------
     defender_types = defender.types()
-    type_mult = _type_effectiveness(move_type, defender_types)
+    type_steps = 0  # the engine's typeMod: +1 per super-effective factor, -1 per resisted one
+    immune_by_type = False
+    scrappy = attacker.ability == "scrappy"
+    effect_pairs = [(move_type, defender_types)]
+    if move_id == "flyingpress":
+        effect_pairs.append(("Flying", defender_types))
+    for pair_type, pair_defenders in effect_pairs:
+        for defender_type in pair_defenders:
+            code = _type_code(pair_type, defender_type)
+            if move_id == "freezedry" and pair_type == move_type and defender_type == "Water":
+                code = 1
+            if code == 3 and scrappy and pair_type in ("Normal", "Fighting") and defender_type == "Ghost":
+                code = 0
+            if pair_type == "Ground" and defender_type == "Flying" and defender.item == "ironball":
+                code = 0
+            if code == 3:
+                immune_by_type = True
+            elif code == 1:
+                type_steps += 1
+            elif code == 2:
+                type_steps -= 1
+    type_mult = 0.0 if immune_by_type else 2.0**type_steps
     breakdown["type_effectiveness"] = type_mult
 
-    ability_immune_type = ABILITY_TYPE_IMMUNITY.get(defender.ability or "")
-    if type_mult == 0.0 or ability_immune_type == move_type:
+    ability_immune_type = ABILITY_TYPE_IMMUNITY.get(defender_ability or "")
+    ungrounded = (
+        "Flying" in defender_types
+        and not (defender.item == "ironball" and not defender.item_lost)
+    ) or defender_ability in ("levitate", "eelevate") or (
+        defender.item == "airballoon" and not defender.item_lost
+    )
+    ground_immune = move_type == "Ground" and ungrounded and not (
+        defender.item == "ironball" and not defender.item_lost
+    )
+    flag_immune = ABILITY_FLAG_IMMUNITY.get(defender_ability or "")
+    if (
+        immune_by_type
+        or ability_immune_type == move_type
+        or ground_immune
+        or (flag_immune is not None and flags.get(flag_immune))
+    ):
         breakdown["immune"] = True
         return _zero_result(breakdown)
 
-    if defender.ability == "wonderguard" and type_mult <= 1.0:
+    if defender_ability == "wonderguard" and type_mult <= 1.0:
         breakdown["immune"] = True
         breakdown["reason"] = "wonder_guard"
         return _zero_result(breakdown)
+
+    ally_blocker = field.defender_ally_ability
+    if attacker.ability in _MOLD_BREAKER_ABILITIES and ally_blocker in _breakable_abilities():
+        ally_blocker = None
+    if defender_ability in _PRIORITY_BLOCK_ABILITIES or ally_blocker in _PRIORITY_BLOCK_ABILITIES:
+        from vgc.priority_rules import action_priority
+
+        at_full = attacker.hp_or_max() >= attacker.max_hp()
+        # action_priority adds Grassy Glide's +1 in Grassy Terrain for a grounded user.
+        if (
+            action_priority(
+                move, attacker.ability, at_full, field.terrain, grounded=_is_grounded(attacker)
+            )
+            > 0
+        ):
+            breakdown["immune"] = True
+            breakdown["reason"] = "priority_block"
+            return _zero_result(breakdown)
+
+    for redirector in (field.defender_ally_ability, field.attacker_ally_ability):
+        if (
+            (redirector == "lightningrod" and move_type == "Electric")
+            or (redirector == "stormdrain" and move_type == "Water")
+        ) and move["target"] in ("normal", "any", "adjacentFoe"):
+            if attacker.ability not in _MOLD_BREAKER_ABILITIES:
+                breakdown["immune"] = True
+                breakdown["reason"] = "redirected_to_partner"
+                return _zero_result(breakdown)
 
     ability_handled = True
     for ability in (attacker.ability, defender.ability):
@@ -705,45 +1034,154 @@ def damage_range(
     breakdown["ability_handled"] = ability_handled
     breakdown["item_handled"] = attacker.item is None or attacker.item in ITEM_WHITELIST
 
+    # --- fixed-damage moves ----------------------------------------------------------------------
+    if fixed_damage:
+        if move_id in _LEVEL_DAMAGE_MOVES:
+            fixed = 50
+        elif move_id in _OHKO_MOVES:
+            if move_id == "sheercold" and "Ice" in defender_types:
+                breakdown["immune"] = True
+                return _zero_result(breakdown)
+            fixed = defender.max_hp()
+        else:
+            fixed = max(1, defender.hp_or_max() // 2)
+        breakdown["base_power"] = None
+        breakdown["rolls"] = [fixed] * 16
+        max_hp = defender.max_hp()
+        return DamageResult(
+            min_damage=fixed,
+            max_damage=fixed,
+            expected_damage=float(fixed),
+            min_percent=fixed / max_hp * 100,
+            max_percent=fixed / max_hp * 100,
+            expected_percent=fixed / max_hp * 100,
+            breakdown=breakdown,
+        )
+
+    # --- stats ------------------------------------------------------------------------------------------
+    is_physical = category == "Physical"
+    always_crit = move_id in _ALWAYS_CRIT_MOVES and defender_ability not in ("shellarmor", "battlearmor")
     attacker_stats = attacker.stats()
     defender_stats = defender.stats()
-    attack_stat_id: StatId = _OFFENSIVE_STAT_OVERRIDE.get(move_id) or (
-        "atk" if is_physical else "spa"
-    )
-    defense_stat_id: StatId = _DEFENSIVE_STAT_OVERRIDE.get(move_id) or (
-        "def" if is_physical else "spd"
-    )
-    # Foul Play reads the target's Attack and the target's Attack stage; every other attack
-    # reads the user's. The user's ModifyAtk abilities/items still apply below.
+    attack_stat_id: StatId = _OFFENSIVE_STAT_OVERRIDE.get(move_id) or ("atk" if is_physical else "spa")
+    defense_stat_id: StatId = _DEFENSIVE_STAT_OVERRIDE.get(move_id) or ("def" if is_physical else "spd")
     from_target = move_id in _OFFENSIVE_FROM_TARGET
     offensive_mon = defender if from_target else attacker
     offensive_stats = defender_stats if from_target else attacker_stats
 
-    attack_value = _apply_stage(
-        offensive_stats[attack_stat_id], offensive_mon.boost_stage(attack_stat_id)
-    )
-    defense_value = _apply_stage(defender_stats[defense_stat_id], defender.boost_stage(defense_stat_id))
-    defense_value = _weather_defense_value(defense_value, field, defender, defense_stat_id)
+    attack_stage = offensive_mon.boost_stage(attack_stat_id)
+    if move_id in _SELF_SPA_PLUS_ONE and attack_stat_id == "spa":
+        attack_stage = min(6, attack_stage + 1)
+    defense_stage = defender.boost_stage(defense_stat_id)
+    if defender_ability == "unaware" and offensive_mon is attacker:
+        attack_stage = 0
+    if attacker.ability == "unaware":
+        defense_stage = 0
+    if move_id in _IGNORE_DEFENSIVE_BOOSTS:
+        defense_stage = 0
+    if always_crit:
+        attack_stage = max(attack_stage, 0)
+        defense_stage = min(defense_stage, 0)
+    attack_value = _apply_stage(offensive_stats[attack_stat_id], attack_stage)
+    defense_value = _apply_stage(defender_stats[defense_stat_id], defense_stage)
+    defense_value = _weather_defense_value(defense_value, weather, defender, defense_stat_id)
 
-    # Raw-stat abilities/items (applied to the boosted stat, before the base formula).
-    if attacker.ability in _HUGE_POWER_ABILITIES:
-        attack_value *= 2
-    if attacker.ability == "guts" and attacker.status is not None:
-        attack_value = int(attack_value * 1.5)
+    # ModifyAtk / ModifyDef chains (ability priority 5-6, Light Ball 1).
+    atk_chain = _Chain()
+    ab = attacker.ability
+    if ab in _HUGE_POWER_ABILITIES and is_physical:
+        atk_chain.add(5, 8192)
+    if ab == "guts" and attacker.status is not None and is_physical:
+        atk_chain.add(5, 6144)
+    if ab == "hustle" and is_physical:
+        atk_chain.add(5, 6144)
+    if ab == "solarpower" and not is_physical and weather == "sun":
+        atk_chain.add(5, 6144)
+    hp_third = attacker.hp_or_max() * 3 <= attacker.max_hp()
+    if hp_third and (
+        (ab == "blaze" and move_type == "Fire")
+        or (ab == "overgrow" and move_type == "Grass")
+        or (ab == "torrent" and move_type == "Water")
+        or (ab == "swarm" and move_type == "Bug")
+    ):
+        atk_chain.add(5, 6144)
+    if (ab == "firemane" and move_type == "Fire") or (ab == "steelworker" and move_type == "Steel") or (
+        ab == "dragonsmaw" and move_type == "Dragon"
+    ):
+        atk_chain.add(5, 6144)
+    if ab == "transistor" and move_type == "Electric":
+        atk_chain.add(5, 5325)
+    if ab == "waterbubble" and move_type == "Water":
+        atk_chain.add(5, 8192)
     if attacker.item == "lightball" and attacker.species_data().get("baseSpecies") == "Pikachu":
-        attack_value *= 2
+        atk_chain.add(1, 8192)
+    da = defender_ability
+    if da == "thickfat" and move_type in ("Fire", "Ice"):
+        atk_chain.add(6, 2048)
+    if da == "heatproof" and move_type == "Fire":
+        atk_chain.add(6 if is_physical else 5, 2048)
+    if da == "purifyingsalt" and move_type == "Ghost":
+        atk_chain.add(6 if is_physical else 5, 2048)
+    if da == "waterbubble" and move_type == "Fire":
+        atk_chain.add(5, 2048)
+    attack_value = atk_chain.apply(attack_value)
 
-    # Base-power-stage modifiers.
-    if attacker.ability == "technician" and base_power <= 60:
-        base_power = int(base_power * 1.5)
-    if ate_boosted:  # after Technician's <=60 check, which reads the unboosted power
-        base_power = (base_power * _ATE_POWER_MODIFIER + 2047) // 4096
-    type_boost_type = ITEM_TYPE_BOOST.get(attacker.item or "")
-    if type_boost_type == move_type:
-        base_power = int(base_power * _ITEM_TYPE_BOOST_MULTIPLIER)
-    category_boost = ITEM_CATEGORY_BOOST.get(attacker.item or "")
-    if category_boost == category:
-        base_power = int(base_power * _ITEM_CATEGORY_BOOST_MULTIPLIER)
+    def_chain = _Chain()
+    if da == "furcoat" and defense_stat_id == "def":  # incl. Psyshock-style Special moves
+        def_chain.add(6, 8192)
+    if da == "marvelscale" and defender.status is not None and defense_stat_id == "def":
+        def_chain.add(6, 6144)
+    if da == "grasspelt" and field.terrain == "grassy" and defense_stat_id == "def":
+        def_chain.add(6, 6144)
+    defense_value = def_chain.apply(defense_value)
+
+    # --- base power chain ------------------------------------------------------------------------------
+    bp_chain = _Chain()
+    if ab == "technician" and base_power <= 60:
+        bp_chain.add(30, 6144)
+    if ab == "rivalry":
+        pass  # gender is not tracked
+    if ab in ("ironfist",) and flags.get("punch"):
+        bp_chain.add(23, 4915)
+    if ab == "reckless" and move_id in _RECOIL_MOVES:
+        bp_chain.add(23, 4915)
+    if ate_boosted:
+        bp_chain.add(23, 4915)
+    if ab == "sheerforce" and (move.get("secondaries") or move_id in _SHEER_FORCE_BOOST_MOVES):
+        bp_chain.add(21, 5325)
+    if ab == "toughclaws" and flags.get("contact") and ab != "longreach":
+        bp_chain.add(21, 5325)
+    if ab == "sandforce" and weather == "sand" and move_type in ("Rock", "Ground", "Steel"):
+        bp_chain.add(21, 5325)
+    if ab == "sharpness" and flags.get("slicing"):
+        bp_chain.add(19, 6144)
+    if ab == "megalauncher" and flags.get("pulse"):
+        bp_chain.add(19, 6144)
+    if ab == "strongjaw" and flags.get("bite"):
+        bp_chain.add(19, 6144)
+    if ab == "punkrock" and flags.get("sound"):
+        bp_chain.add(7, 5325)
+    if ab == "steelyspirit" and move_type == "Steel":
+        bp_chain.add(22, 6144)
+    if field.attacker_ally_ability == "steelyspirit" and move_type == "Steel":
+        bp_chain.add(22, 6144)
+    aura_breaker = "aurabreak" in (attacker.ability, defender.ability, field.defender_ally_ability, field.attacker_ally_ability)
+    for aura, aura_type in (("fairyaura", "Fairy"), ("darkaura", "Dark")):
+        if move_type == aura_type and aura in (
+            attacker.ability, defender.ability, field.attacker_ally_ability, field.defender_ally_ability,
+        ):
+            bp_chain.add(20, 3072 if aura_breaker else 5448)
+    if da == "dryskin" and move_type == "Fire":
+        bp_chain.add(17, 5120)
+    if attacker.item in ITEM_TYPE_BOOST and ITEM_TYPE_BOOST[attacker.item] == move_type and not attacker.item_lost:
+        bp_chain.add(15, 4915)
+    if attacker.item == "normalgem" and move_type == "Normal" and not attacker.item_lost:
+        bp_chain.add(14, 5325)
+    if attacker.item in ITEM_CATEGORY_BOOST and ITEM_CATEGORY_BOOST[attacker.item] == category:
+        bp_chain.add(16, 4505)
+    terrain_shown = _terrain_bp(field, move_id, move_type, attacker, defender, bp_chain)
+    _move_bp_chain_effects(move_id, attacker, defender, field, weather, bp_chain)
+    base_power = max(1, bp_chain.apply(base_power))
 
     breakdown["base_power"] = base_power
     breakdown["attack_stat"] = attack_stat_id
@@ -758,55 +1196,96 @@ def damage_range(
     raw = raw // 50
     raw += 2
 
-    is_spread_move = move["target"] in _SPREAD_TARGETS and field.num_targets >= 2
-    spread_modifier = _SPREAD_MULTIPLIER if is_spread_move else 1.0
+    expanding_spread = (
+        move_id == "expandingforce" and field.terrain == "psychic" and _is_grounded(attacker)
+    )
+    is_spread_move = (move["target"] in _SPREAD_TARGETS or expanding_spread) and field.num_targets >= 2
+    spread_modifier = 0.75 if is_spread_move else 1.0
     breakdown["spread_modifier"] = spread_modifier
-    raw = int(raw * spread_modifier)
+    if is_spread_move:
+        raw = _modify(raw, 3072)
 
-    weather_modifier = _weather_modifier(field, move_type)
-    breakdown["weather_modifier"] = weather_modifier
-    raw = int(raw * weather_modifier)
+    weather_numerator = _Q
+    if weather == "sun":
+        weather_numerator = 6144 if move_type == "Fire" else 2048 if move_type == "Water" else _Q
+    elif weather == "rain":
+        weather_numerator = 6144 if move_type == "Water" else 2048 if move_type == "Fire" else _Q
+    breakdown["weather_modifier"] = weather_numerator / _Q
+    if weather_numerator != _Q:
+        raw = _modify(raw, weather_numerator)
+    breakdown["terrain_modifier"] = terrain_shown
 
-    terrain_modifier = _terrain_modifier(field, move_type, attacker, defender)
-    breakdown["terrain_modifier"] = terrain_modifier
-    raw = int(raw * terrain_modifier)
+    if always_crit:
+        raw = int(raw * 1.5)
 
-    is_stab = move_type in attacker.types()
-    stab = (2.0 if attacker.ability == "adaptability" else 1.5) if is_stab else 1.0
-    breakdown["stab"] = stab
+    attacker_types = [move_type] if attacker.ability in ("protean", "libero") else attacker.types()
+    is_stab = move_type in attacker_types
+    stab_numerator = (8192 if attacker.ability == "adaptability" else 6144) if is_stab else _Q
+    breakdown["stab"] = stab_numerator / _Q
 
-    burn_modifier = 1.0
-    if attacker.status == "brn" and is_physical and attacker.ability != "guts":
-        burn_modifier = 0.5
-    breakdown["burn_modifier"] = burn_modifier
+    burn_applies = attacker.status == "brn" and is_physical and attacker.ability != "guts" and move_id != "facade"
+    breakdown["burn_modifier"] = 0.5 if burn_applies else 1.0
 
-    final_multiplier = 1.0
-    final_multiplier *= _screen_modifier(field, category)
-    if defender.ability == "multiscale" and defender.hp_or_max() >= defender.max_hp():
-        final_multiplier *= 0.5
-    if defender.ability in ("solidrock", "filter") and type_mult > 1.0:
-        final_multiplier *= 0.75
+    # ModifyDamage chain (the final multiplier): screens, defensive and offensive abilities/items.
+    final_chain = _Chain()
+    has_screen = (
+        ("reflect" in field.screens and category == "Physical")
+        or ("lightscreen" in field.screens and category == "Special")
+        or "auroraveil" in field.screens
+    )
+    if (
+        has_screen
+        and not always_crit
+        and attacker.ability != "infiltrator"
+        and move_id not in _SCREEN_BREAKERS
+    ):
+        final_chain.add(
+            0, _SCREEN_NUMERATOR_DOUBLES if field.is_doubles else _SCREEN_NUMERATOR_SINGLES
+        )
+    if da == "multiscale" and defender.hp_or_max() >= defender.max_hp():
+        final_chain.add(0, 2048)
+    if da in ("solidrock", "filter") and type_mult > 1.0:
+        final_chain.add(0, 3072)
+    if da == "fluffy":
+        contact = bool(flags.get("contact")) and attacker.ability != "longreach"
+        if contact:
+            final_chain.add(0, 2048)
+        if move_type == "Fire":
+            final_chain.add(0, 8192)
+    if da == "punkrock" and flags.get("sound"):
+        final_chain.add(0, 2048)
+    if field.defender_ally_ability == "friendguard":
+        final_chain.add(0, 3072)
     if attacker.ability == "tintedlens" and type_mult < 1.0:
-        final_multiplier *= 2.0
-    if defender.ability == "thickfat" and move_type in ("Fire", "Ice"):
-        final_multiplier *= 0.5
-    if attacker.item == "lifeorb":
-        final_multiplier *= _LIFE_ORB_MULTIPLIER
-    if attacker.item == "expertbelt" and type_mult > 1.0:
-        final_multiplier *= _EXPERT_BELT_MULTIPLIER
-    breakdown["final_multiplier"] = final_multiplier
+        final_chain.add(0, 8192)
+    resist_type = ITEM_RESIST_BERRY.get(defender.item or "") if not defender.item_lost else None
+    if resist_type is not None and resist_type == move_type and (type_mult > 1.0 or resist_type == "Normal"):
+        final_chain.add(-1, 1024 if defender_ability == "ripen" else 2048)
+    if attacker.item == "lifeorb" and not attacker.item_lost:
+        final_chain.add(0, 5324)
+    if attacker.item == "expertbelt" and type_mult > 1.0 and not attacker.item_lost:
+        final_chain.add(0, 4915)
+    final_modifier = final_chain.modifier() if final_chain.items else _Q
+    breakdown["final_multiplier"] = final_modifier / _Q
 
-    # The random roll (85%-100%) is applied here in the real engine -- BEFORE STAB/
-    # type/burn/final modifiers, not after (see module docstring point 8).
+    # The random roll (85%-100%) is applied BEFORE STAB/type/burn/final modifiers, exactly as in
+    # the engine; all 16 rolls are computed end to end because every step truncates.
+    steps = type_steps
     rolls: list[int] = []
     for percent in range(85, 101):
-        damage = raw * percent // 100
-        damage = int(damage * stab)
-        damage = int(damage * type_mult)
-        damage = int(damage * burn_modifier)
-        damage = int(damage * final_multiplier)
-        damage = max(damage, 1)
-        rolls.append(damage)
+        damage = (raw * percent) // 100
+        if stab_numerator != _Q:
+            damage = _modify(damage, stab_numerator)
+        if steps > 0:
+            damage *= 2**steps
+        elif steps < 0:
+            for _ in range(-steps):
+                damage //= 2
+        if burn_applies:
+            damage = _modify(damage, 2048)
+        if final_chain.items:
+            damage = _modify(damage, final_modifier)
+        rolls.append(max(damage, 1))
     breakdown["rolls"] = rolls
 
     max_hp = defender.max_hp()
@@ -822,3 +1301,22 @@ def damage_range(
         expected_percent=expected_damage / max_hp * 100,
         breakdown=breakdown,
     )
+
+
+# --- small multipliers other modules (vgc.field_control) read directly -----------------------------
+
+
+def _terrain_modifier(
+    field: FieldState, move_type: str, attacker: PokemonState, defender: PokemonState
+) -> float:
+    """Terrain's base-power multiplier for a move type (display / estimation use)."""
+    return _terrain_bp(field, "", move_type, attacker, defender, _Chain())
+
+
+def _weather_modifier(field: FieldState, move_type: str) -> float:
+    """Sun/rain damage multiplier for a move type."""
+    if field.weather == "sun":
+        return 1.5 if move_type == "Fire" else 0.5 if move_type == "Water" else 1.0
+    if field.weather == "rain":
+        return 1.5 if move_type == "Water" else 0.5 if move_type == "Fire" else 1.0
+    return 1.0

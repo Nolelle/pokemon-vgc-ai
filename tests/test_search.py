@@ -73,6 +73,7 @@ def _build_ctx(
     opp_pokemon: list,
     trick_room: bool = False,
     weather: str | None = None,
+    terrain: str | None = None,
     our_side_screens: frozenset = frozenset(),
     opp_side_screens: frozenset = frozenset(),
     priors: dict | None = None,
@@ -82,7 +83,7 @@ def _build_ctx(
         battle=SimpleNamespace(side_conditions=[], opponent_side_conditions=[]),
         trick_room=trick_room,
         weather=weather,
-        terrain=None,
+        terrain=terrain,
         our_side_screens=our_side_screens,
         opp_side_screens=opp_side_screens,
         our_pokemon=our_pokemon,
@@ -476,6 +477,28 @@ def test_opponent_redirection_changes_our_single_target() -> None:
 
     assert result.opp_states[1].hp_or_max() == 1
     assert result.opp_utility_value == 20.0
+
+
+def test_expanding_force_in_psychic_terrain_is_not_redirected() -> None:
+    redirector = _klefki()
+    partner = _klefki(current_hp=1)
+    ctx = _build_ctx(
+        our_states=[_garchomp(), None],
+        opp_states=[redirector, partner],
+        our_pokemon=[_mon(), None],
+        opp_pokemon=[_mon(moves={"ragepowder": None}), _mon()],
+        terrain="psychic",
+    )
+    our_order = _fake_order(_fake_single("expandingforce", move_target=2), None)
+    response = OppResponse(
+        slot0=_OppSlotAction(kind="utility", move_id="ragepowder", utility_value=20.0),
+        slot1=_OppSlotAction(kind="none"),
+    )
+
+    result = resolve_exchange(our_order, response, ctx, PolicyConfig())
+
+    # The resolved spread hit reaches the partner too; it does not all land on the redirector.
+    assert result.opp_states[1].hp_or_max() < 1 or result.opp_faints == 1
 
 
 def test_our_ally_takes_spread_damage_counted_into_our_hp_lost() -> None:

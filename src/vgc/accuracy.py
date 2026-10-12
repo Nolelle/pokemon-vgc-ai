@@ -14,7 +14,7 @@ Showdown's order, mirrored here:
 
 ``accuracy: true`` moves (and rain-Thunder/Hurricane, snow-Blizzard) skip steps 1-2. The
 Champions mod does not change any of these rules; its per-move accuracy overrides are already in
-``data/champions/moves.json``. Not modelled: Tangled Feet (confusion is not in ``PokemonState``),
+``data/champions/moves.json``. OHKO moves use the engine's flat 30% (20% for Sheer Cold from a non-Ice user). Not modelled: Tangled Feet (confusion is not in ``PokemonState``),
 Victory Star, Gravity, Micle Berry, and OHKO moves.
 """
 
@@ -23,6 +23,7 @@ from __future__ import annotations
 from vgc.damage import PokemonState, to_id
 from vgc.weather_abilities import weather_adjusted_accuracy
 
+_OHKO_MOVES = frozenset({"fissure", "guillotine", "horndrill", "sheercold"})
 _IGNORE_EVASION_MOVES = frozenset({"chipaway", "darkestlariat", "sacredsword", "nihillight"})
 
 # 4096ths numerators of the chained modifiers (data/abilities.ts, data/items.ts).
@@ -59,6 +60,13 @@ def hit_probability(
     if accuracy is True:
         return 1.0
     base = float(accuracy)
+    if "cloudnine" in (attacker.ability, defender.ability) or "airlock" in (
+        attacker.ability,
+        defender.ability,
+    ):
+        weather = None
+    elif attacker.ability == "megasol":
+        weather = "sun"
     weather_accuracy = weather_adjusted_accuracy(move_id, weather)
     if weather_accuracy is not None:
         if weather_accuracy >= 1.0:
@@ -66,6 +74,9 @@ def hit_probability(
         base = weather_accuracy * 100.0
     if attacker.ability == "noguard" or defender.ability == "noguard":
         return 1.0
+    if move_id in _OHKO_MOVES:
+        # Level-based flat chance (equal levels here): no accuracy/evasion stage or item applies.
+        return (20.0 if move_id == "sheercold" and "Ice" not in attacker.types() else 30.0) / 100.0
 
     modifier = 4096
     if attacker.ability == "compoundeyes":
@@ -87,7 +98,10 @@ def hit_probability(
     boost = 0
     if defender.ability != "unaware":
         boost = max(-6, min(6, attacker.boost_stage("accuracy")))
-    ignores_evasion = move_id in _IGNORE_EVASION_MOVES or attacker.ability == "keeneye"
+    ignores_evasion = move_id in _IGNORE_EVASION_MOVES or attacker.ability in (
+        "keeneye",
+        "illuminate",
+    )
     if not ignores_evasion and attacker.ability != "unaware":
         boost = max(-6, min(6, boost - defender.boost_stage("evasion")))
     if boost > 0:

@@ -221,7 +221,25 @@ def _setter_holds_extender(battle: Any, effect_id: str, setter: str | None) -> b
     )
     # Team keys drop the slot letter: "p1a: Torkoal" -> "p1: Torkoal".
     mon = (team or {}).get(setter[:2] + setter[3:])
-    return mon is not None and to_id(str(getattr(mon, "item", "") or "")) == item
+    if setter[:2] == role and fix_enabled("clock_setter_by_slot"):
+        # Our own Zoroark is announced under its disguise's name; the slot says who it really is.
+        try:
+            active = list(battle.active_pokemon)
+            slot_mon = active["ab".index(setter[2])] if setter[2] in "ab" else None
+        except (AttributeError, ValueError, IndexError, RuntimeError):
+            slot_mon = None
+        if slot_mon is not None:
+            mon = slot_mon
+    if mon is None or to_id(str(getattr(mon, "item", "") or "")) != item:
+        return False
+    if fix_enabled("extender_item_suppressed"):
+        # An item does nothing under Magic Room or for a Klutz holder (Showdown `ignoringItem`).
+        fields = getattr(battle, "fields", None) or {}
+        if any(getattr(f, "name", "") == "MAGIC_ROOM" for f in fields):
+            return False
+        if to_id(str(getattr(mon, "ability", "") or "")) == "klutz":
+            return False
+    return True
 
 
 def elapsed_ticks(battle: Any, kind: str, effect_id: str, side: str | None = None) -> int | None:

@@ -81,6 +81,7 @@ from dataclasses import dataclass, field
 from statistics import mean
 
 from poke_env.battle.double_battle import DoubleBattle
+from poke_env.battle.effect import Effect
 from poke_env.battle.field import Field
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
@@ -90,7 +91,16 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.action_sanity import wasted_action_cost
 from vgc.actions import describe_order, enumerate_joint_orders
-from vgc.damage import DamageResult, FieldState, PokemonState, damage_range, to_id
+from vgc.condition_clock import remaining_turns
+from vgc.damage import (
+    DamageResult,
+    FieldState,
+    PokemonState,
+    _is_grounded,
+    damage_range,
+    to_id,
+    with_partners,
+)
 from vgc.data import load_moves, load_species
 from vgc.decision_trace import record_note
 from vgc.field_setters import ability_condition, move_condition, setter_value
@@ -126,7 +136,7 @@ from vgc.sets import (
     opponent_state,
 )
 from vgc.accuracy import hit_probability
-from vgc.priority_rules import psychic_terrain_blocks, usable_move_ids
+from vgc.priority_rules import action_priority, psychic_terrain_blocks, usable_move_ids
 from vgc.stats import STAT_IDS
 from vgc.weather_abilities import SETTER_ABILITY_WEATHER, team_weather_scores
 
@@ -141,22 +151,46 @@ _UNBURDEN_SPEED_MULTIPLIER = 2.0  # data/abilities.ts unburden volatile onModify
 _CHOICE_SCARF_SPEED_MULTIPLIER = 1.5
 
 
+def speed_modifiers(state: PokemonState) -> list[int]:
+    """The Pokemon's own ``ModifySpe`` chain, as the engine's 4096ths numerators: Choice Scarf
+    (1.5x), Iron Ball (0.5x), paralysis (0.5x, ignored by Quick Feet), Quick Feet (1.5x while
+    statused) and Unburden once the holder's item is gone (2x)."""
+
+    mods: list[int] = []
+    item = None if state.item_lost else state.item
+    if item == "choicescarf":
+        mods.append(6144)
+    if item == "ironball":
+        mods.append(2048)
+    if state.ability == "quickfeet" and state.status is not None:
+        mods.append(6144)
+    elif state.status == "par" and item not in ("cheriberry", "lumberry"):
+        mods.append(2048)  # (a Cheri / Lum Berry cures it the moment it lands)
+    if state.item_lost and state.ability == "unburden":
+        mods.append(8192)
+    return mods
+
+
+def _chained_speed(stat: int, mods: list[int]) -> float:
+    """``getStat('spe')``: the staged stat through one chained 4096ths modifier (the engine's
+    ``chainModify`` + ``modify`` rounding), capped at 10000."""
+
+    modifier = 4096
+    for numerator in mods:
+        modifier = (modifier * numerator + 2048) >> 12
+    if modifier != 4096:
+        stat = (stat * modifier + 2047) >> 12
+    return float(min(stat, 10000))
+
+
 def effective_speed(state: PokemonState) -> float:
-    """Effective Speed stat for turn-order purposes: boost stage, then Choice Scarf
-    (1.5x), paralysis (0.5x) and Unburden once the holder's item is gone (2x). A float estimate (not the engine's exact 4096ths-chain
-    integer math) -- fine for comparing two Pokemon's turn order, which is all this is
-    used for; nothing here feeds back into `vgc.damage`'s own (exact) calculations.
-    """
+    """Effective Speed stat for turn-order purposes: boost stage, then the Pokemon's own
+    modifiers (`speed_modifiers`) with the engine's fixed-point rounding."""
     from vgc.damage import _apply_stage  # reuse the exact stage-multiplier formula
 
-    speed = float(_apply_stage(state.stats()["spe"], state.boost_stage("spe")))
-    if state.item == "choicescarf":
-        speed *= _CHOICE_SCARF_SPEED_MULTIPLIER
-    if state.status == "par":
-        speed *= _PARALYSIS_SPEED_MULTIPLIER
-    if state.item_lost and state.ability == "unburden":
-        speed *= _UNBURDEN_SPEED_MULTIPLIER
-    return speed
+    return _chained_speed(
+        _apply_stage(state.stats()["spe"], state.boost_stage("spe")), speed_modifiers(state)
+    )
 
 
 def resolves_before(
@@ -406,22 +440,30 @@ _WEATHER_SPEED_ABILITY = {
 
 
 def field_effective_speed(
-    state: PokemonState, *, weather: str | None = None, tailwind: bool = False
+    state: PokemonState,
+    *,
+    weather: str | None = None,
+    tailwind: bool = False,
+    terrain: str | None = None,
 ) -> float:
     """Effective in-battle Speed including field multipliers.
 
     ``effective_speed`` handles modifiers carried by the Pokemon itself (boost stages,
-    Choice Scarf, paralysis). This wrapper adds the active weather ability and the
-    Pokemon's side of Tailwind, which are properties of the current field instead.
+    Choice Scarf, paralysis). This wrapper adds the active weather ability, Surge Surfer in
+    Electric Terrain and the Pokemon's side of Tailwind (all x2, chained with the Pokemon's own
+    modifiers into one fixed-point step like the engine's ``ModifySpe`` event).
     """
+    from vgc.damage import _apply_stage
 
-    speed = effective_speed(state)
+    mods = speed_modifiers(state)
     weather_ability = _WEATHER_SPEED_ABILITY.get(weather)
     if weather_ability is not None and weather_ability == state.ability:
-        speed *= 2.0
+        mods.append(8192)
+    if state.ability == "surgesurfer" and terrain == "electric":
+        mods.append(8192)
     if tailwind:
-        speed *= 2.0
-    return speed
+        mods.append(8192)
+    return _chained_speed(_apply_stage(state.stats()["spe"], state.boost_stage("spe")), mods)
 
 
 # `mega_species_id` now lives in `vgc.sets` (next to the Mega-form detection that builds live
@@ -459,7 +501,10 @@ class ScoredOrder:
 
 
 def score_joint_orders(
-    battle: DoubleBattle, config: PolicyConfig | None = None
+    battle: DoubleBattle,
+    config: PolicyConfig | None = None,
+    *,
+    repeat_protect_rule: bool = True,
 ) -> list[ScoredOrder]:
     """Score every legal joint order for the current turn, best first.
 
@@ -467,6 +512,13 @@ def score_joint_orders(
     function's own documented empty-list contract) -- callers should fall back to a
     random/default move in that case, same as `vgc.agent.VgcPlayer`'s exception-safe
     wrapper already does for any other evaluator failure.
+
+    With `PolicyConfig.forbid_repeat_protect` (and ``repeat_protect_rule``) the list has
+    back-to-back Protects removed (`apply_repeat_protect_rule`). This is the one place the
+    fast search, the exact judge's judged set and the clock guard's cheap order all take
+    their candidates from, so no layer can pick a dropped order. Callers scoring the
+    OPPONENT's view pass ``repeat_protect_rule=False``: the rule is our own judgement, not
+    a model of how the foe plays.
     """
     config = config or PolicyConfig()
     joint_orders = enumerate_joint_orders(battle)
@@ -475,8 +527,443 @@ def score_joint_orders(
 
     ctx = build_context(battle, config)
     scored = score_joint_orders_in_context(joint_orders, ctx, config)
+    if repeat_protect_rule and config.forbid_repeat_protect:
+        scored = apply_repeat_protect_rule(scored, ctx, config)
     _record_trace(scored, config)
     return scored
+
+
+# --- repeat-Protect rule -----------------------------------------------------------------
+
+# Moves Showdown rolls the stall odds for (`stallingMove` with a `StallMove` event, see
+# `tools/sim_worker.mjs::STALL_ROLL_MOVES`, which `tests/test_exact_stall_odds.py` checks
+# against data/moves.ts). Wide Guard / Quick Guard / Mat Block add the stall volatile
+# without rolling, so repeating THEM is not the 1/3 gamble this rule is about.
+STALL_ROLL_MOVES = frozenset(
+    {
+        "protect",
+        "detect",
+        "spikyshield",
+        "kingsshield",
+        "banefulbunker",
+        "burningbulwark",
+        "silktrap",
+        "obstruct",
+        "endure",
+        "maxguard",
+    }
+)
+
+
+def _stall_roll_move(single) -> str | None:
+    """The stall-rolling move id this single order uses, else None."""
+    target = getattr(single, "order", None)
+    if not isinstance(target, Move):
+        return None
+    move_id = to_id(target.id)
+    return move_id if move_id in STALL_ROLL_MOVES else None
+
+
+def _slot_is_forced_to_stall(joint_orders: Sequence[DoubleBattleOrder], slot: int) -> bool:
+    """True when every legal option for ``slot`` is a stall-rolling move."""
+    options = []
+    for order in joint_orders:
+        single = order.first_order if slot == 0 else order.second_order
+        if single is None or not isinstance(getattr(single, "order", None), (Move, Pokemon)):
+            continue  # a pass is not an option the slot could choose instead
+        options.append(single)
+    return bool(options) and all(_stall_roll_move(single) is not None for single in options)
+
+
+def _partner_removes_threat(
+    breakdown: dict, protect_slot: int, ctx: _Context, config: PolicyConfig
+) -> bool:
+    """True when the partner's action KOs every foe that threatens ``protect_slot``, before
+    that foe moves. "Threatens" = the foe's best known move does at least
+    `protect_low_threat_floor` percent to the slot (the evaluator's own threat measure); a
+    slot nobody threatens has nothing to excuse the repeat, so that is False. A KO counts
+    when the evaluator calls it guaranteed or likely, the partner's hit chance and the
+    foe's Protect odds are on the right side of 50%, and `resolves_before` puts the
+    partner's move ahead of the foe's best move."""
+    partner = breakdown.get(f"slot{1 - protect_slot}") or {}
+    if partner.get("kind") != "move" or "ko_slots" not in partner:
+        return False
+    threats = [
+        (opp_slot, info)
+        for opp_slot, info in enumerate(ctx.threat_matrix[protect_slot])
+        if info is not None
+        and ctx.opp_pokemon[opp_slot] is not None
+        and not ctx.opp_pokemon[opp_slot].fainted
+        and info.percent >= config.protect_low_threat_floor
+    ]
+    if not threats:
+        return False
+    for opp_slot, info in threats:
+        if opp_slot not in partner["ko_slots"]:
+            return False
+        if partner.get("hit_probability_by_target", {}).get(opp_slot, 1.0) <= 0.5:
+            return False
+        if partner.get("protect_prob_by_target", {}).get(opp_slot, 0.0) >= 0.5:
+            return False
+        if not resolves_before(
+            int(partner.get("actor_priority", 0)),
+            float(partner.get("actor_speed", 0.0)),
+            info.priority,
+            ctx.opp_speed[opp_slot],
+            ctx.trick_room,
+        ):
+            return False
+    return True
+
+
+_SAND_IMMUNE_TYPES = frozenset({"Rock", "Ground", "Steel"})
+_SAND_IMMUNE_ABILITIES = frozenset({"sandveil", "sandrush", "sandforce", "overcoat"})
+_WEATHER_SUPPRESSORS = frozenset({"cloudnine", "airlock"})
+_WEATHER_EFFECT_ID = {
+    "sand": "sandstorm",
+    "rain": "raindance",
+    "snow": "snowscape",
+    "sun": "sunnyday",
+}
+
+
+@dataclass(frozen=True)
+class ResidualInputs:
+    """Everything that decides one Pokemon's end-of-turn HP in Showdown (see `residual_hp`)."""
+
+    status: str | None = None
+    toxic_stage: int = 1  # the stage the Toxic tick uses (already incremented)
+    types: frozenset = frozenset()
+    ability: str | None = None
+    item: str | None = None
+    weather: str | None = None  # the weather whose Field Residual still fires this turn
+    grounded_terrain: bool = False  # Grassy Terrain is up and the holder is grounded
+    leech_seed: bool = False  # not used by the exception (blocked as unmodelled); kept for tests
+    salt_cure: bool = False
+    bound: bool = False
+
+
+def residual_hp(hp: int, max_hp: int, inp: ResidualInputs) -> int:
+    """HP after Showdown's end-of-turn residual sequence; <= 0 means it fainted.
+
+    Order, from `sim/battle.ts::fieldEvent('Residual')` and each condition's
+    `onResidualOrder` (data/conditions.ts, data/moves.ts, data/items.ts; the Champions mod
+    only changes Salt Cure): weather phase (order 1: sand chip / Rain Dish / Ice Body / Dry
+    Skin / Solar Power), Grassy Terrain (5, sub 2), Leftovers / Black Sludge (5, sub 4),
+    Leech Seed (8), poison / Toxic (9), burn (10), Salt Cure and binding moves (13). Every
+    amount is `floor(max_hp / n)` with a minimum of 1 (`clampIntRange`), applied separately;
+    Heatproof halves the burn tick (floored, min 1). Healing caps at max HP and a fainted
+    Pokemon is never revived, so a KO ends the sequence.
+    """
+    ability = inp.ability
+    guarded = ability == "magicguard"
+
+    def hurt(h: int, amount: int, *, indirect: bool = True) -> int:
+        if indirect and guarded:
+            return h
+        return h - max(1, amount)
+
+    def heal(h: int, amount: int) -> int:
+        return min(max_hp, h + max(1, amount)) if h < max_hp else h
+
+    weather = inp.weather
+    if weather == "sand" and not (
+        (inp.types & _SAND_IMMUNE_TYPES)
+        or ability in _SAND_IMMUNE_ABILITIES
+        or inp.item == "safetygoggles"
+    ):
+        hp = hurt(hp, max_hp // 16)
+    elif weather == "rain" and ability == "raindish":
+        hp = heal(hp, max_hp // 16)
+    elif weather == "rain" and ability == "dryskin":
+        hp = heal(hp, max_hp // 8)
+    elif weather == "snow" and ability == "icebody":
+        hp = heal(hp, max_hp // 16)
+    elif weather == "sun" and ability in ("dryskin", "solarpower"):
+        hp = hurt(hp, max_hp // 8, indirect=ability == "dryskin")  # Solar Power is direct
+    if hp <= 0:
+        return hp
+    if inp.grounded_terrain:
+        hp = heal(hp, max_hp // 16)
+    if inp.item == "leftovers" or (inp.item == "blacksludge" and "Poison" in inp.types):
+        hp = heal(hp, max_hp // 16)
+    if inp.leech_seed:
+        hp = hurt(hp, max_hp // 8)
+        if hp <= 0:
+            return hp
+    if inp.status in ("psn", "tox"):
+        if ability == "poisonheal":
+            hp = heal(hp, max_hp // 8)
+        else:
+            tick = max_hp // 8 if inp.status == "psn" else max(1, max_hp // 16) * inp.toxic_stage
+            hp = hurt(hp, tick)
+        if hp <= 0:
+            return hp
+    if inp.status == "brn":
+        tick = max(1, max_hp // 16)
+        if ability == "heatproof":
+            tick //= 2
+        hp = hurt(hp, tick)
+        if hp <= 0:
+            return hp
+    if inp.salt_cure:  # Champions: 1/8 for Water/Steel, 1/16 otherwise
+        hp = hurt(hp, max_hp // (8 if inp.types & {"Water", "Steel"} else 16))
+        if hp <= 0:
+            return hp
+    if inp.bound:
+        hp = hurt(hp, max_hp // 8)  # a Binding Band on the trapper would be 1/6: under-count
+    return hp
+
+
+# --- Residual-KO whitelist ------------------------------------------------------------------
+# A FALSE "this foe faints at end of turn" keeps a repeat Protect (a 1/3 gamble), so the
+# exception is conservative BY CONSTRUCTION. It fires only when every residual-relevant thing
+# on the foe and the field is one `residual_hp` models exactly:
+#   sand/snow chip + Rain Dish / Dry Skin / Ice Body / Solar Power / sand-immune abilities,
+#   Grassy Terrain heal, Leftovers / Black Sludge, poison / Toxic / Poison Heal,
+#   burn / Heatproof, Salt Cure, Magic Guard.
+# Anything else that can heal, cure, stop or delay the damage returns "no KO" (the repeat rule
+# applies normally). Those are listed here, once; reviews kept finding more:
+_RESIDUAL_UNMODELLED_EFFECTS = (
+    "AQUA_RING", "INGRAIN", "LEECH_SEED", "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION",
+    "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP", "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
+    "PERISH0", "PERISH1", "PERISH2", "PERISH3", "FUTURE_SIGHT", "CURSE", "NIGHTMARE",
+    "HEAL_BLOCK", "SYRUP_BOMB",
+)  # fmt: skip
+# Abilities that cure the status or heal at end of turn in ways the simulation does not run
+# (Hydration cures poison in rain BEFORE the poison tick; Shed Skin / Healer cure by chance).
+_RESIDUAL_UNMODELLED_ABILITIES = frozenset(
+    {"hydration", "shedskin", "healer", "cheekpouch", "harvest", "naturalcure", "pickup"}
+)
+# Moves whose healing lands in the residual phase and leaves no visible trace until it does.
+_RESIDUAL_UNMODELLED_MOVES = frozenset({"wish", "healingwish", "lunardance", "aquaring", "ingrain"})
+_UNKNOWN_ITEMS = (None, "", "unknown_item")
+
+
+def _foe_hp_hypotheses(
+    mon, state: PokemonState, spreads: Sequence[int] | None = None
+) -> list[tuple[int, int]]:
+    """Every (hp, max_hp) consistent with the SHOWN percent. Champions shows
+    ``floor(100 * hp / max_hp)`` (minimum 1; 100 only at full HP) and the foe's HP Stat Points
+    are hidden (0-32). The percent is read straight off the Pokemon (never round-tripped
+    through an estimated absolute HP, which can land on a different percent)."""
+    fraction = getattr(mon, "current_hp_fraction", None)
+    if not isinstance(fraction, (int, float)):
+        fraction = state.hp_or_max() / state.max_hp()
+    percent = 100 if fraction >= 1 else max(1, int(fraction * 100 + 1e-9))
+    base = int(state.species_data()["baseStats"]["hp"])
+    out: list[tuple[int, int]] = []
+    for max_hp in range(base + 75, base + 75 + 33):
+        if percent >= 100:
+            out.append((max_hp, max_hp))
+            continue
+        low = 1 if percent == 1 else -(-percent * max_hp // 100)
+        high = -(-(percent + 1) * max_hp // 100) - 1
+        out.extend((hp, max_hp) for hp in range(max(1, low), max(1, high) + 1))
+    return out
+
+
+def _possible_abilities(state: PokemonState, mon) -> set[str]:
+    abilities = {state.ability}
+    if not getattr(mon, "ability", None):
+        abilities |= {to_id(a) for a in (state.species_data().get("abilities") or {}).values()}
+    return abilities
+
+
+def _residual_blocked(state: PokemonState, mon, ctx: _Context, config) -> bool:
+    """True when something residual-relevant that `residual_hp` cannot model exactly is present
+    or possible on this foe (or its partner's Healer), so no KO may be predicted."""
+    effects = getattr(mon, "effects", None) or {}
+    for name in _RESIDUAL_UNMODELLED_EFFECTS:
+        effect = getattr(Effect, name, None)
+        if effect is not None and effect in effects:
+            return True
+    if any(a in _RESIDUAL_UNMODELLED_ABILITIES for a in _possible_abilities(state, mon)):
+        return True
+    for other in ctx.opp_states:
+        if other is not None and other is not state and other.ability == "healer":
+            return True
+    moves = (
+        set(opponent_move_ids(mon, priors=ctx.priors, config=config))
+        if hasattr(mon, "moves")
+        else set()
+    )
+    if moves & _RESIDUAL_UNMODELLED_MOVES:
+        return True
+    return False
+
+
+def _residual_kos(
+    state: PokemonState, mon, ctx: _Context, config: PolicyConfig | None = None
+) -> bool:
+    """True only if the foe faints in the end-of-turn residual for EVERY HP/max-HP consistent
+    with its shown percent, every ability it might have, every item it might hold, and weather
+    that may or may not still be running (a weather on its last turn ends before it ticks).
+    Returns False (no KO) whenever anything outside the whitelist above is present/possible."""
+    if _residual_blocked(state, mon, ctx, config):
+        return False
+    types = frozenset(state.species_data().get("types") or [])
+    abilities = _possible_abilities(state, mon)
+    effects = getattr(mon, "effects", None) or {}
+    suppressors = {
+        to_id(s.ability)
+        for s in list(ctx.our_states) + list(ctx.opp_states)
+        if s is not None and s.ability
+    }
+    weather = ctx.weather
+    if weather is not None and suppressors & _WEATHER_SUPPRESSORS:
+        weather = None
+    weather_options: list[str | None] = [weather]
+    if weather is not None:
+        left = None
+        try:
+            left = remaining_turns(ctx.battle, "weather", _WEATHER_EFFECT_ID.get(weather, weather))
+        except Exception:
+            left = None
+        if left is None or left <= 1:
+            weather_options.append(None)  # the weather may end before it ticks
+    stage = min(15, max(1, int(getattr(mon, "status_counter", 0) or 0)))
+    hypotheses = _foe_hp_hypotheses(mon, state)
+    shown_item = getattr(mon, "item", None)
+    if shown_item in _UNKNOWN_ITEMS:
+        shown_item = state.item
+    if state.item_lost:
+        items: list[str | None] = [None]
+    elif shown_item in _UNKNOWN_ITEMS:
+        # Hidden item: it could be a Leftovers / Black Sludge heal.
+        items = [None, "leftovers"] + (["blacksludge"] if "Poison" in types else [])
+    else:
+        items = [to_id(shown_item)]
+    if any(i is not None and (i.endswith("berry")) for i in items) or (
+        not state.item_lost and shown_item in _UNKNOWN_ITEMS
+    ):
+        # A berry (Sitrus/Oran/...) eats at or below half HP and could heal mid-sequence; one
+        # held while at or below half would already have been eaten, so only foes above half
+        # (for some consistent HP) are exposed. Be conservative: any such hypothesis = no KO.
+        if any(hp * 2 > max_hp for hp, max_hp in hypotheses):
+            return False
+    for ability in abilities:
+        grounded = (
+            not (
+                (
+                    state.item != "ironball"
+                    and ("Flying" in types or ability in ("levitate", "eelevate"))
+                )
+                or (state.item == "airballoon" and not state.item_lost)
+            )
+            or state.item == "ironball"
+        )
+        for wx in weather_options:
+            for item in items:
+                inp = ResidualInputs(
+                    status=state.status,
+                    toxic_stage=stage,
+                    types=types,
+                    ability=ability,
+                    item=item,
+                    weather=wx,
+                    grounded_terrain=ctx.terrain == "grassy" and grounded,
+                    salt_cure=Effect.SALT_CURE in effects,
+                )
+                if any(residual_hp(hp, max_hp, inp) > 0 for hp, max_hp in hypotheses):
+                    return False
+    return True
+
+
+def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig) -> bool:
+    """Exception (c): end-of-turn residual damage faints every foe that threatens the
+    protecting slot, so surviving the turn (the repeat Protect) is itself the win."""
+    threats = [
+        opp_slot
+        for opp_slot, info in enumerate(ctx.threat_matrix[protect_slot])
+        if info is not None
+        and ctx.opp_pokemon[opp_slot] is not None
+        and not ctx.opp_pokemon[opp_slot].fainted
+        and info.percent >= config.protect_low_threat_floor
+    ]
+    if not threats:
+        return False
+    for opp_slot in threats:
+        state = ctx.opp_states[opp_slot]
+        if state is None:
+            return False
+        if not _residual_kos(state, ctx.opp_pokemon[opp_slot], ctx, config):
+            return False
+    return True
+
+
+def apply_repeat_protect_rule(
+    scored: list[ScoredOrder], ctx: _Context, config: PolicyConfig
+) -> list[ScoredOrder]:
+    """Drop joint orders in which an active Pokemon that Protected last turn Protects again.
+
+    "Protected last turn" is poke-env's `protect_counter > 0` (the same notion `_score_protect`
+    and the search use; a failed Protect resets it to 0, so only a SUCCESSFUL one counts).
+    Exceptions per slot, see `PolicyConfig.forbid_repeat_protect`: (a) the slot has no legal
+    option but a stall-rolling move, (b) the partner's action in that same order removes the
+    threat first (`_partner_removes_threat`), (c) end-of-turn residual damage faints every
+    threatening foe (`_residual_kos_threats`). If nothing would be left, the unfiltered list
+    comes back. Relative order and `ScoredOrder` objects are untouched; when orders were
+    removed a ``repeat_protect_rule`` note goes on the decision trace.
+    """
+    repeat_slots = [
+        slot
+        for slot in (0, 1)
+        if ctx.our_pokemon[slot] is not None
+        and not ctx.our_pokemon[slot].fainted
+        and int(getattr(ctx.our_pokemon[slot], "protect_counter", 0) or 0) >= 1
+    ]
+    if not repeat_slots or not scored:
+        return scored
+    all_orders = [entry.order for entry in scored]
+    forced = {slot: _slot_is_forced_to_stall(all_orders, slot) for slot in repeat_slots}
+    kept: list[ScoredOrder] = []
+    removed: list[str] = []
+    exceptions = {"forced": 0, "partner_ko": 0, "residual_ko": 0}
+    for entry in scored:
+        dropped = False
+        excused = None
+        for slot in repeat_slots:
+            single = entry.order.first_order if slot == 0 else entry.order.second_order
+            if _stall_roll_move(single) is None:
+                continue
+            if forced[slot]:
+                excused = excused or "forced"
+            elif _partner_removes_threat(entry.breakdown, slot, ctx, config):
+                excused = "partner_ko"
+            elif config.repeat_protect_residual_exception and _residual_kos_threats(
+                slot, ctx, config
+            ):
+                excused = "residual_ko"
+            else:
+                dropped = True
+                break
+        if dropped:
+            removed.append(describe_order(entry.order))
+            continue
+        if excused:
+            exceptions[excused] += 1
+            entry.breakdown["repeat_protect_exception"] = excused
+        kept.append(entry)
+    if not removed:
+        return scored
+    if not kept:
+        record_note(
+            "repeat_protect_rule",
+            {"removed": len(removed), "kept": 0, "fallback": "unfiltered (nothing left)"},
+        )
+        return scored
+    record_note(
+        "repeat_protect_rule",
+        {
+            "slots": repeat_slots,
+            "removed": len(removed),
+            "kept": len(kept),
+            "removed_top": removed[:5],
+            "exceptions_kept": exceptions,
+        },
+    )
+    return kept
 
 
 def score_joint_orders_in_context(
@@ -613,6 +1100,12 @@ class _Context:
     # Strategic non-damage threat (TR/Tailwind/setup/redirection/denial) per opposing slot.
     opp_control_threat: list[float] = field(default_factory=lambda: [0.0, 0.0])
     opp_engine_enabler_slots: frozenset[int] = frozenset()
+    # Best known attack from each opposing slot onto each of our slots,
+    # `threat_matrix[our_slot][opp_slot]` (None when that foe is absent). `threat_on_us` keeps
+    # only the maximum; the repeat-Protect rule needs every foe's own threat.
+    threat_matrix: list[list[_ThreatInfo | None]] = field(
+        default_factory=lambda: [[None, None], [None, None]]
+    )
     preview_plan: object | None = None
     endgame: bool = False
     # Complete observable state. The smaller lists above remain the current evaluator's
@@ -744,7 +1237,8 @@ def _best_attacking_move(
     field_state: FieldState,
     block_psychic_priority: bool = False,
     model_accuracy: bool = False,
-) -> tuple[float, str | None, int]:
+    effective_priority: bool = False,
+) -> tuple[float, str | None, float]:
     """The attacker's single best (highest expected %) supported, non-immune attacking
     move against `defender` from `move_ids`. Returns (0.0, None, 0) if none qualify.
 
@@ -754,7 +1248,7 @@ def _best_attacking_move(
     expected damage including the hit chance.
     """
     moves_data = load_moves()
-    best_pct, best_move_id, best_priority = 0.0, None, 0
+    best_pct, best_move_id, best_priority = 0.0, None, 0.0
     for raw_move_id in move_ids:
         move_id = to_id(raw_move_id)
         data = moves_data.get(move_id)
@@ -773,7 +1267,14 @@ def _best_attacking_move(
         if expected > best_pct:
             best_pct = expected
             best_move_id = move_id
-            best_priority = int(data.get("priority", 0))
+            best_priority = action_priority(
+                data,
+                attacker.ability,
+                attacker.hp_or_max() >= attacker.max_hp(),
+                field_state.terrain,
+                effective=effective_priority,
+                grounded=_is_grounded(attacker),
+            )
     return best_pct, best_move_id, best_priority
 
 
@@ -843,13 +1344,17 @@ def build_context(
     our_tailwind = SideCondition.TAILWIND in battle.side_conditions
     opp_tailwind = SideCondition.TAILWIND in battle.opponent_side_conditions
     our_speed = [
-        field_effective_speed(state, weather=weather, tailwind=our_tailwind)
+        field_effective_speed(
+            state, weather=weather, tailwind=our_tailwind, terrain=terrain
+        )
         if state is not None
         else 0.0
         for state in our_states
     ]
     opp_speed = [
-        field_effective_speed(state, weather=weather, tailwind=opp_tailwind)
+        field_effective_speed(
+            state, weather=weather, tailwind=opp_tailwind, terrain=terrain
+        )
         if state is not None
         else 0.0
         for state in opp_states
@@ -875,6 +1380,7 @@ def build_context(
 
     threat_on_us = [_ThreatInfo(), _ThreatInfo()]
     double_target_threat = [0.0, 0.0]
+    threat_matrix: list[list[_ThreatInfo | None]] = [[None, None], [None, None]]
     opp_threat_score = [0.0, 0.0]
     for our_idx in (0, 1):
         our_state = our_states[our_idx]
@@ -895,11 +1401,19 @@ def build_context(
                 opp_state,
                 move_ids,
                 our_state,
-                field_vs_us,
+                (
+                    with_partners(field_vs_us, opp_states[1 - opp_idx], our_states[1 - our_idx])
+                    if config.partner_abilities_in_damage
+                    else field_vs_us
+                ),
                 config.psychic_terrain_blocks_priority,
                 config.model_move_accuracy,
+                config.effective_move_priority,
             )
             threats_from_each_opp.append(pct)
+            threat_matrix[our_idx][opp_idx] = _ThreatInfo(
+                percent=pct, move_id=move_id, priority=priority, source_slot=opp_idx
+            )
             if pct > threat_on_us[our_idx].percent:
                 threat_on_us[our_idx] = _ThreatInfo(
                     percent=pct, move_id=move_id, priority=priority, source_slot=opp_idx
@@ -928,7 +1442,11 @@ def build_context(
                 our_state,
                 our_move_ids,
                 opp_state,
-                field_vs_opp,
+                (
+                    with_partners(field_vs_opp, our_states[1 - our_idx], opp_states[1 - opp_idx])
+                    if config.partner_abilities_in_damage
+                    else field_vs_opp
+                ),
                 config.psychic_terrain_blocks_priority,
                 config.model_move_accuracy,
             )
@@ -1078,6 +1596,7 @@ def build_context(
         our_speed=our_speed,
         opp_speed=opp_speed,
         threat_on_us=threat_on_us,
+        threat_matrix=threat_matrix,
         opp_threat_score=opp_threat_score,
         opp_protect_prob=opp_protect_prob,
         opp_switch_prob=opp_switch_prob,
@@ -1224,6 +1743,14 @@ def _resolve_targets(
     the move's own `target` string instead.
     """
     target_kind = move_data.get("target")
+    if (
+        target_kind == "normal"
+        and to_id(move_data.get("id")) == "expandingforce"
+        and ctx.terrain == "psychic"
+        and ctx.our_states[actor_slot] is not None
+        and _is_grounded(ctx.our_states[actor_slot])
+    ):
+        target_kind = "allAdjacentFoes"  # Expanding Force hits both foes in Psychic Terrain
     opp_alive = ctx.opp_alive()
     our_allies_alive = [i for i in ctx.our_alive() if i != actor_slot]
 
@@ -1261,7 +1788,14 @@ def _score_attack_order(
     opp_targets = [idx for idx, is_ally in targets if not is_ally]
     ally_targets = [idx for idx, is_ally in targets if is_ally]
     num_hit = len(opp_targets) + len(ally_targets)
-    actor_priority = int(move_data.get("priority", 0))
+    actor_priority = action_priority(
+        move_data,
+        attacker_state.ability,
+        attacker_state.hp_or_max() >= attacker_state.max_hp(),
+        ctx.terrain,
+        effective=config.effective_move_priority,
+        grounded=_is_grounded(attacker_state),
+    )
     actor_mon = ctx.our_pokemon[actor_slot]
     if config.psychic_terrain_blocks_priority and ctx.terrain == "psychic":
         # Blocked foes still count toward the spread modifier (`num_hit` above): the engine
@@ -1308,7 +1842,14 @@ def _score_attack_order(
         defender_state = ctx.opp_states[idx]
         if defender_state is None:
             continue
-        result = damage_range(attacker_state, defender_state, move_id, field_vs_opp)
+        target_field = field_vs_opp
+        if config.partner_abilities_in_damage:
+            target_field = with_partners(
+                field_vs_opp,
+                ctx.our_states[1 - actor_slot],
+                ctx.opp_states[1 - idx],
+            )
+        result = damage_range(attacker_state, defender_state, move_id, target_field)
         # Hit chance for THIS target (spread moves roll accuracy per target). Damage, KO
         # credit, flinch and speed-drop value below are scaled by it; the *_by_target maps
         # keep the damage-if-it-lands numbers the cross-slot focus-fire logic compares to HP.

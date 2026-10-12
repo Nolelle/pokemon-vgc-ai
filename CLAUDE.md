@@ -574,6 +574,38 @@ validated by `offline/audit_battle_parsing.py`, not by these A/Bs. The ladder st
 pattern (repeated double Protect in losing positions) is still open: the one-turn exact
 value prefers surviving a turn; offline bot-vs-bot games rarely produce those positions.
 
+## Repeat-Protect rule (2026-10-10): `forbid_repeat_protect`, ships ON
+
+Ladder losses averaged 1.9 back-to-back Protects per game vs 0.05 in wins (two 50-game
+sessions). A repeat Protect succeeds 1/3, then 1/9, and the exact judge's one-turn value ranks
+"survive this turn" above trading. The owner asked for a plain rule instead of more value
+tuning: an active Pokemon of ours that Protected last turn (poke-env `protect_counter >= 1`; a
+failed Protect resets it to 0, so only a successful one counts) may not use a stall-rolling
+move again (`vgc.evaluator.STALL_ROLL_MOVES` = Showdown's stalling moves: Protect, Detect,
+Spiky Shield, King's Shield, Baneful Bunker, Burning Bulwark, Silk Trap, Obstruct, Endure, Max
+Guard; Wide/Quick Guard, Mat Block do not roll). Two exceptions keep it: (a) **forced** --
+every legal option for the slot is such a move (Encore, Choice lock); (b) **partner KO** --
+the partner's action in the same joint order KOs (evaluator `ko_slots`, hit chance and foe
+Protect odds beyond 50%, and `resolves_before` the foe's best move) every foe whose best known
+move does at least `protect_low_threat_floor` to the protecting slot. If the filter would
+empty the list, the unfiltered list is used.
+
+- **Where**: `vgc.evaluator.apply_repeat_protect_rule`, called from `score_joint_orders` (the
+  one source of candidates for the fast search, the exact judge's judged set -- which is a
+  subset of the fast search's list -- and `VgcPlayer._cheap_order`, the clock guard's
+  fallback). Callers that score the OPPONENT's view pass `repeat_protect_rule=False`
+  (`rl.exact_search` replies, `rl.mechanics_oracle` continuation), and
+  `search_joint_orders_exact` skips it when the caller supplied a `candidate_selector` (the
+  set was fixed upstream; the mirror must not re-filter it with its own view). Known gap:
+  the neural hybrid path (`rl.search_guidance`, no compatible M-C checkpoint) hands its own
+  selector to the mirror and so is not filtered. Trace note `repeat_protect_rule` when it
+  removed orders; kept exceptions are tagged `breakdown["repeat_protect_exception"]`.
+- **Measured by replay, not a pool A/B** (self-play rarely makes these positions): see
+  `offline/replay_repeat_protect_rule.py` (both ladder sessions, 100 games, 737 move
+  decisions, live path = fast search + judge, rule off vs on, same mirror). Numbers in
+  `.agents/worklog.md`.
+- Tests: `tests/test_repeat_protect_rule.py` (filter, forced, partner KO, fallback, knob).
+
 ## Battle parsing audit (2026-10-09): what the bot READS now matches Showdown
 
 The bot reads Showdown through poke-env 0.15, and poke-env gets real state wrong. Found from
@@ -631,6 +663,52 @@ by field and attributed to the protocol messages that touched the Pokemon.
   by regression tests (`tests/test_poke_env_repairs.py`, 44 cases, most also assert the bug
   reappears with the repair off).
 
+### Parsing audit, second pass (2026-10-10): the audit itself was made trustworthy
+
+A Codex review found blind spots in the first version; all were closed:
+
+- **Slots by exact position.** Active Pokemon are compared per slot (a left/right swap is a
+  defect), not as an unordered set of names.
+- **Illusion handled precisely.** The foe side is no longer skipped. While a disguise holds, the
+  audit compares what that client is shown (disguise name/species/types over the holder's real
+  HP, status, boosts, volatiles); only the deceptive identity (true name, item, ability, moves)
+  is exempt. After the break the true Pokemon is compared normally.
+- **No category exemptions.** `offline/audit_exemptions.py` holds predicates evaluated on the
+  specific finding (a named move/ability/protocol event in that Pokemon's history, a state of the
+  dump), each with a one-line reason and a unit test that near-misses are NOT exempt
+  (`tests/test_battle_parsing_audit.py`). Anything else is unexplained.
+- **Independent reveals.** `offline/audit_protocol.py` re-derives which abilities/items/moves a
+  client was shown from the raw lines and shares no code with `poke_env_compat`/`BattleMemory`
+  (the Showdown dump arbitrates ambiguous `[of]` holders). New checks: `*_shown_but_unknown`,
+  `*_known_but_unrevealed` (an information leak), per exact slot.
+- **Coverage.** `--coverage-report` lists which legal moves/abilities/items/volatiles/side and
+  field conditions/protocol tags were exercised; `--scenarios` adds 259 generated battles
+  (`offline/audit_scenarios.py`: every legal move selected, every ability and item on an active
+  Pokemon, Mega stones on their own species). The Mega-stone gap in `TeamBuilder` (it read the
+  null `megaEvolves`; the Champions export keeps the species in `itemUser`) is fixed.
+  Seed 99, 2400 random battles: moves 91.7% -> 99.6%, abilities present 94.1% -> 99.5%,
+  items present 61.4% -> 100%, items triggered 59.6% -> 88.6%. Not exercised: Trace as an
+  active ability in scenarios, Milk Drink / Shed Tail selection, hidden-information-only
+  messages (`-terastallize`, `-zpower`, `-candynamax`, ... do not exist in this format).
+- **Run it** (2 minutes): `.venv/bin/python offline/audit_battle_parsing.py --battles 2400
+  --workers 10 --seed 99 --scenarios --coverage-report --fail-on-unexplained`; seeds 99,
+  20261009, 777 all report 0 unexplained, 0 errors. The integration test
+  `tests/test_battle_parsing_audit.py` runs 40 seeded battles plus a slice of the scenarios.
+- **Real defects the stricter audit exposed and repaired** (`vgc.poke_env_compat`, each in
+  `ALL_FIXES` with a regression test in `tests/test_poke_env_repairs_pass2.py`): a broken foe
+  Illusion left its HP/moves/item on the disguise; our own Zoroark's boosts and one-turn
+  effects were filed on its disguise; item reveals via `[from] item:`/`-activate item:`,
+  Mega stones and Trick were ignored; `-block`, Trace and Role Play `[of]` ability reveals;
+  Trick-or-Treat third type; Castform-type reset; Transform copied species (not current) types;
+  Gastro Acid forgot a swapped ability; Gravity left Fly "preparing"; Lock-On/Fairy Lock
+  durations; Meganium/Yanmega were read as Mega formes (`"mega" in species_id`); Magic Room /
+  Klutz extenders; Receiver/Power of Alchemy memory; `adjacentAllyOrSelf` (Milk Drink) sent
+  without a target (`vgc.actions._fill_self_targets`).
+- **Remaining exemptions** are listed with reasons in `offline/audit_exemptions.py`. Open
+  follow-ups: Mega recognition for Trace Megas (recorded from `detailschange`), the stall
+  counter after a CALLED Protect (Copycat/Instruct/Sleep Talk), a transformed Pokemon's revealed
+  ability read back as unknown, Rest sleep counter off by one.
+
 ## Live exact judge and hidden-set preview: current M-C standing (2026-10-08)
 
 - **Exact judge** (`PolicyConfig.exact_judge_live`, ladder `--exact-judge`): the public
@@ -643,6 +721,52 @@ by field and attributed to the protocol messages that touched the Pokemon.
   current M-C priors the pool160 mirror A/B is **52.4% [0.484, 0.564]**, not significant,
   and strongly bimodal (team-effect SD 0.248; 38 teams >= 70%, 30 <= 30%). The earlier
   55-56% predates the M-C set-priors/spreads refresh. Treat it as unproven, not as a win.
+
+## Calculator-vs-engine sweep (2026-10-11): the fast maths now matches Showdown entry by entry
+
+`offline/sweep_calculator_vs_engine.py` (library `vgc.calc_sweep`, `vgc.calc_sweep_cases`, engine
+probe `tools/calc_probe.mjs`) builds controlled doubles turns for EVERY legal move, ability and
+item, runs them in the built Showdown sim and compares `vgc.damage.damage_range` (all 16 rolls,
+crits off), `vgc.accuracy.hit_probability`, and Speed/priority order (`field_effective_speed`,
+`resolves_before`, `priority_rules.action_priority`) with the engine. Each (category, entry) is
+EXACT / APPROXIMATE / UNSUPPORTED-SAFE / WRONG; abilities and items are judged on their own effect
+by a control twin (same scenario without them), so baseline inexactness is not blamed on them.
+Result: `data/champions/calculator_coverage.json` (per entry, usage-weighted tables), reasons for
+everything not exact in `docs/calculator_coverage.md`.
+
+- **Full run (~12 min on 10 workers, ~790k scenarios):**
+  `.venv/bin/python offline/sweep_calculator_vs_engine.py --profile full --workers 10 --output data/champions/calculator_coverage.json --markdown docs/calculator_coverage.md`.
+  `--profile quick` and `--families moves,abilities,items,mega,order,accuracy,stats` / `--only a,b`
+  narrow it. Re-run it after any change to `damage.py`, `accuracy.py`, speed/priority maths, or a
+  Showdown sync, and commit the new coverage file.
+- **Standing check:** `tests/test_calculator_sweep.py` (integration) re-runs a fixed 1/25
+  thinning (<3 min) and fails if an entry recorded EXACT stops matching, plus a full run of the
+  entries the sweep found WRONG and that were fixed.
+- **What was wrong (before -> after, see the report in the PR/worklog for the tables):**
+  `damage.py` floored every modifier instead of using the engine's 4096ths `chainModify`/`modify`
+  (+-1 on spread, screens, weather, items); Huge Power doubled special attacks; Tough Claws, Sheer
+  Force, Iron Fist, Sharpness, Mega Launcher, Strong Jaw, Fairy/Dark Aura, Reckless, Punk Rock,
+  Fluffy, Thick Fat (now on the attack stat), Heatproof, Fur Coat, Unaware, Protean/Libero,
+  Mold Breaker, Sap Sipper/Soundproof/Bulletproof/Dry Skin/Earth Eater/Motor Drive/Eelevate
+  immunities, Armor Tail/Queenly Majesty priority blocks, Lightning Rod/Storm Drain redirection,
+  Friend Guard, resist berries, terrain seeds, cure berries, Air Balloon/Iron Ball, Black Belt and
+  Spell Tag were missing; Electro Shot/Meteor Beam ignored their +1 Sp. Atk; Grassy Terrain's
+  Earthquake halving, Terrain Pulse, Rising Voltage, Expanding Force, Solar Beam in weather,
+  Knock Off, Acrobatics, Hex/Venoshock/Facade/Brine, Flail/Reversal/Hard Press/Stored Power,
+  Freeze-Dry, Flying Press, always-crit moves, screen breakers, Shell Side Arm and fixed-damage
+  moves (Seismic Toss, Super Fang, OHKO) were wrong or `move_supported=False`. Turn order ignored
+  Prankster/Gale Wings/Triage/Grassy Glide/Stall priority and Quick Feet/Surge Surfer/Iron Ball
+  speed. `hit_probability` mishandled OHKO moves, Mega Sol, Cloud Nine, Illuminate.
+- **Knobs (default True, False = legacy):** `PolicyConfig.effective_move_priority`,
+  `PolicyConfig.partner_abilities_in_damage` (the partners' abilities reach `damage_range` through
+  `FieldState.attacker_ally_ability/defender_ally_ability`). The exact rounding, ability/item/move
+  tables and exact Speed chain are corrections inside the calculators (no knob), guarded by the sweep.
+- **Not fixed (documented in `docs/calculator_coverage.md`):** moves needing turn history (Payback,
+  Avalanche, Stomping Tantrum), random branches (Fickle Beam), Rivalry (gender), Analytic, Mimicry,
+  form-change abilities, crit-only abilities, Imposter, accuracy of charge-move first turns.
+  A change in outcome: `test_predicted_rain_engine_opponent_shifts_our_own_bring_four` no longer
+  sees a marginal Torkoal/Sylveon flip once damage is exact (weakened to the Sylveon assertion).
+  No pool A/B was run: these are correctness fixes held by the sweep, not strength claims.
 
 ## Rung 2 (belief-aware shortlist): built, gated, not enabled
 
@@ -1251,3 +1375,44 @@ copied from (`PolicyConfig`, exception-safe `decide()`, Wilson-CI
 `offline/run_matches.py` + `offline/run_gates.py`, JSONL `offline/log_experiment.py`,
 `ContextVar`-based `decision_trace.py`). When in doubt about a pattern not covered here,
 check how that repo does it first.
+
+## Mirror fidelity audit (2026-10-10): does the live judge's Showdown rebuild match the game?
+
+`offline/audit_mirror_fidelity.py` plays seeded local battles (synthetic mechanics-heavy teams +
+team pools, random/maxpower/heuristic/vgc_myopic players), and at many decision points from BOTH
+seats builds the mirror root exactly like the live judge (`judge_config` + `with_exact_timers`,
+posterior beliefs, every timer branch; the private simulator root is stripped from the view).
+
+- **Field comparison** (normal mirror, public info only): public fields must match Showdown's
+  `dump` (forme, HP, status, boosts, volatiles + counters, field/side conditions, Choice lock,
+  Mega state, our PP, our regenerated request). Hidden facts (foe Stat Points/nature/item/
+  ability/moves/bring) are reported as GUESS ACCURACY, not defects.
+- **Oracle equivalence**: the same rebuild code path with the TRUE hidden info injected (sets,
+  spreads, bring, timers, foe absolute HP); from that root and from a true-battle clone the same
+  joint choices + PRNG seed must give identical protocol and requests.
+- Groups are classified (`CLASSIFICATION`): hidden / noise / documented gap / UNEXPLAINED. A pair is
+  `pass` (identical), `gap-explained` (root state had a documented gap) or `fail`.
+- Run: `.venv/bin/python offline/audit_mirror_fidelity.py --battles 200 --workers 8 --seed 20261010
+  --point-rate 0.5` (~60 s); `--config FIELD=VALUE,...` overrides PolicyConfig (all `exact_mirror_*`
+  fix knobs False = the legacy rebuild); `--only N --trace REGEX` follows one battle.
+  `tests/test_mirror_fidelity.py` (integration, ~20 s) is the standing check.
+- **Result, 3 seeds x 200 battles**: ~3,800 oracle pairs each, 77% identical, 22% explained by a
+  documented gap, 0.7-1.4% unexplained (mostly 1-HP damage-roll shifts); legacy rebuild on seed
+  20261010: 0 identical, 364 fail, 12 crashes, 12,617 unexplained episodes (now 4). True sleep
+  timer inside the searched branches 100%; confusion 80%.
+- **Defects found and fixed** (knobs in `PolicyConfig`, default True): `exact_mirror_own_order`
+  (**the fainted-switch judge error**: the search turns `switch <name>` into a POSITION in our real
+  request, the mirror listed its bench in preview order, so a position named another, sometimes
+  fainted, Pokemon; also the bring now comes from the request so a trapped active no longer
+  loses a bench mon), `exact_mirror_foe_forme` (foes built as BASE species: Persian-Alola, Rotom-
+  Wash, Indeedee-F...), `exact_mirror_champions_pp` (PP is `(pp/5+1)*4`, not vanilla), `_gender`,
+  `_stall_duration`, `_fainted_state`, `_volatile_timers` (mustrecharge/two-turn moves never
+  expired; Dig/Fly user was hittable; foe trap recomputed; Outrage lock), `_public_bookkeeping`
+  (activeTurns, totalFainted, faintedLastTurn, move actions from protocol history, last move),
+  `_keep_revealed_moves`. Ungated crash/correctness fixes: Meganium was read as a Mega
+  (`"mega" in "meganium"`), Mega forme from `detailschange` (Mega Sol), Perish Song duration,
+  `apparentType` after Mega, Wrap-family `sourceEffect`, null/duplicate active slots, Floette-Mega.
+- **Known gaps** (classified, reasons in the script): Substitute HP, Transform/Imposter/Illusion
+  (battles with an intact Illusion are skipped), Ally Switch slot loss, Metronome item counter,
+  Rage Fist/Stomping Tantrum/Belch/Recycle history, +-1 turn on Taunt/Encore/Disable/Yawn,
+  pending Future Sight, target slot of a charging move, PP drift of one, hidden Outrage length.

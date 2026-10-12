@@ -35,7 +35,7 @@ def test_variable_base_power_move_is_flagged_unsupported() -> None:
     # them.)
     attacker = PokemonState("garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant")
     defender = PokemonState("klefki", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold")
-    result = damage_range(attacker, defender, "flail", FieldState())
+    result = damage_range(attacker, defender, "beatup", FieldState())
     assert result.breakdown["move_supported"] is False
     assert result.min_damage == 0 and result.max_damage == 0
 
@@ -63,7 +63,7 @@ def test_unhandled_ability_is_flagged_but_causes_no_crash() -> None:
 
 def test_unhandled_item_is_flagged() -> None:
     attacker = PokemonState(
-        "garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant", item="leftovers"
+        "garchomp", sp_spread={"hp": 30, "atk": 4, "spe": 32}, nature="adamant", item="assaultvest"
     )
     defender = PokemonState("klefki", sp_spread={"hp": 32, "def": 32, "spd": 2}, nature="bold")
     result = damage_range(attacker, defender, "earthquake", FieldState(is_doubles=False))
@@ -238,3 +238,25 @@ def test_boost_stages_are_clamped_to_plus_minus_six() -> None:
     assert overboosted.min_damage == at_cap.min_damage
     assert overboosted.max_damage == at_cap.max_damage
     assert overboosted.min_damage > damage_range(attacker_neutral, defender, "earthquake", field).min_damage
+
+
+def test_fractional_hp_does_not_crash_hp_dependent_base_power() -> None:
+    # The fast search carries fractional HP after predicted damage; HP-scaled base power
+    # must floor like Showdown's integer HP instead of reaching the integer-only `>>`.
+    for move, user, target in (
+        ("eruption", "torkoal", "garchomp"),
+        ("waterspout", "kyogre", "garchomp"),
+        ("hardpress", "garchomp", "torkoal"),
+        ("flail", "garchomp", "torkoal"),
+    ):
+        whole = PokemonState(user, sp_spread={"hp": 32}, nature="modest")
+        whole.current_hp = int(whole.max_hp() * 0.6)
+        frac = PokemonState(user, sp_spread={"hp": 32}, nature="modest")
+        frac.current_hp = whole.current_hp + 0.7
+        foe_w = PokemonState(target, sp_spread={"hp": 32}, nature="bold")
+        foe_f = PokemonState(target, sp_spread={"hp": 32}, nature="bold")
+        foe_w.current_hp = 150
+        foe_f.current_hp = 150.4
+        a = damage_range(whole, foe_w, move, FieldState())
+        b = damage_range(frac, foe_f, move, FieldState())
+        assert (a.min_damage, a.max_damage) == (b.min_damage, b.max_damage), move

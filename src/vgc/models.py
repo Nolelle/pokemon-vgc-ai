@@ -204,6 +204,28 @@ class PolicyConfig:
     # Threat percent (of this Pokemon's max HP) below which protect_low_threat_penalty
     # applies.
     protect_low_threat_floor: float = 15.0
+    # Simple judgement rule, applied where the candidate list is built (the myopic scorer,
+    # so the fast search, the exact judge's judged set and the clock guard's cheap fallback
+    # all see it): an active Pokemon that Protected last turn (its stall counter is above 0,
+    # so a repeat is a 1/3 roll, then 1/9) may not use a Protect-family move again. Dropped
+    # moves are the ones Showdown rolls the stall odds for (Protect, Detect, Spiky Shield,
+    # King's Shield, Baneful Bunker, Burning Bulwark, Silk Trap, Obstruct, Endure, Max
+    # Guard); Wide/Quick Guard do not roll. Two exceptions keep the move: (a) it is forced,
+    # i.e. every legal option for that slot is such a move; (b) the partner's action in the
+    # same joint order is expected to remove the threat first, i.e. it KOs (likely or
+    # guaranteed, hit chance and foe Protect odds above 50%, and before the foe's move
+    # resolves) every foe whose best known move does at least `protect_low_threat_floor` to
+    # the protecting slot. An empty result falls back to the unfiltered list. Ladder
+    # evidence (two 50-game sessions): losses averaged 1.9 back-to-back Protects per game vs
+    # 0.05 in wins, because the one-turn exact value prefers "survive this turn" to
+    # trading. False = legacy (no filter), kept as the control.
+    forbid_repeat_protect: bool = True
+    # Exception (c) to the rule above: keep the repeat Protect when end-of-turn residual
+    # damage this turn (poison/Toxic/burn/sand/Leech Seed/Salt Cure, minus Leftovers) is
+    # predicted to faint every foe that threatens the protecting slot, so merely surviving
+    # the turn wins (e.g. our last Pokemon, slower than the foe). False = exceptions (a)/(b)
+    # only (legacy).
+    repeat_protect_residual_exception: bool = True
 
     # -- Defense/utility: opponent Protect anticipation -----------------------------------
     # Baseline chance an opponent slot Protects this turn when it has an unused
@@ -388,6 +410,17 @@ class PolicyConfig:
     # self-targeting moves are unaffected). The evaluator and the fast search scored such
     # moves at full damage. False is the legacy control.
     psychic_terrain_blocks_priority: bool = True
+    # Turn order reads the EFFECTIVE priority bracket: Prankster (+1 status), Gale Wings (+1
+    # Flying at full HP), Triage (+3 healing), Grassy Glide (+1 in Grassy Terrain), and Stall
+    # (last inside its bracket), not just the move's printed priority. Found by
+    # `offline/sweep_calculator_vs_engine.py` (Prankster Tailwind/Thunder Wave were ordered as
+    # priority 0). False is the legacy control.
+    effective_move_priority: bool = True
+    # Damage reads the PARTNERS' abilities too: Friend Guard (-25% to the holder's partner),
+    # Armor Tail / Queenly Majesty (block priority moves onto either foe), Lightning Rod /
+    # Storm Drain (redirect Electric / Water moves to the holder), Steely Spirit, the Auras.
+    # False is the legacy control (pair-only damage).
+    partner_abilities_in_damage: bool = True
     # Unburden: Speed doubles once the holder's item is consumed or lost, until it switches
     # out. State builders mark active Pokemon whose item is gone (poke-env `Pokemon.item` is
     # None/"" after `-enditem`); the search also consumes terrain seeds (e.g. Sneasler's
@@ -633,6 +666,49 @@ class PolicyConfig:
     # Choice item, the Toxic stage (Toxic did 0 damage), the Disable target move, and an
     # activated Unburden. True restores them for both sides.
     exact_mirror_restore_state: bool = True
+    # Mirror fidelity audit fixes (2026-10-10, offline/audit_mirror_fidelity.py). Each True =
+    # fixed, False = the exact legacy reconstruction, kept for same-session A/Bs.
+    # Foe forme: the mirror built every previewed foe as its BASE species (Persian-Alola as
+    # Persian, Gourgeist-Small as Gourgeist, Rotom-Wash as Rotom, Indeedee-F as Indeedee), so
+    # types, base stats, abilities and the learnset came from the wrong dex entry. True builds
+    # the set as the real forme (battle-only formes and Megas stay base; the patch applies them).
+    exact_mirror_foe_forme: bool = True
+    # Champions PP: Champions caps base PP at 20 and gives max PP (pp / 5 + 1) * 4 (Protect
+    # 8, Shadow Ball 16), not the vanilla pp * 8 / 5 poke-env assumes (24). The mirror copied
+    # poke-env's vanilla max/current PP over the correct ones, so every move's PP was wrong
+    # in every branch and Leppa/Struggle/Pressure math was off. True derives both from the
+    # Champions formula (and our own request when it lists the move).
+    exact_mirror_champions_pp: bool = True
+    # Gender is public (the |switch| details) but the rebuilt Pokemon kept a random one, so
+    # Attract / Rivalry / Cute Charm were wrong and every switch-in line read differently.
+    exact_mirror_gender: bool = True
+    # Protect's stall volatile was rebuilt with 2 turns left; Showdown has already ticked it
+    # to 1 by the next turn, so a Pokemon that skipped Protect kept its odds one turn too long.
+    exact_mirror_stall_duration: bool = True
+    # A fainted Pokemon: Showdown wipes its boosts and volatiles, marks it `fnt`, and clears
+    # `isActive` (a bench-less slot keeps the husk). poke-env keeps the stat stages and effects
+    # the Pokemon had when it fainted, and the rebuild kept it active, so a fainted mon's +2
+    # or Substitute scored as live board state and its slot read as occupied.
+    exact_mirror_fainted_state: bool = True
+    # Our side's bench order. The exact search resolves `switch <name>` to a POSITION in our
+    # real request, but the rebuilt side listed its bench in team-preview order, so a position
+    # meant a different Pokemon (a switch to a fainted one was rejected, a switch to a healthy
+    # one silently went to the wrong teammate) and random drags drew from a different order.
+    # True makes the mirror hold the request's order.
+    exact_mirror_own_order: bool = True
+    # Remaining turns of rebuilt volatiles that carry no protocol counter: a recharging mon
+    # (Hyper Beam) and a mon mid two-turn move (Dig, Fly, Phantom Force...). They were rebuilt
+    # with no timer (so they never expired: a Pokemon recharged every turn) and, for two-turn
+    # moves, without the semi-invulnerable state, so the mirror hit a Pokemon underground.
+    exact_mirror_volatile_timers: bool = True
+    # Public bookkeeping Showdown reads that the rebuild left at its fresh-battle value:
+    # turns active (Speed Boost never fired on a lead), fainted-teammates count (Last
+    # Respects, Supreme Overlord).
+    exact_mirror_public_bookkeeping: bool = True
+    # A foe's revealed moves were dropped from its mirror set when a belief's moves, the
+    # learnset filter or the 4-move cap left them out, which crashed the branch's parser
+    # when Showdown's request offered the missing move (e.g. a locked Solar Beam).
+    exact_mirror_keep_revealed_moves: bool = True
     # Exact live-judge timers: with one hypothesis the judge kept only the most likely
     # remaining sleep and dropped the 1/3 shorter one (a real wake chance became 0).
     # True searches every remaining-duration branch (up to exact_search_state_hypotheses)

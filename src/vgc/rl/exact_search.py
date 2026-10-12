@@ -294,7 +294,12 @@ def search_joint_orders_exact(
         raise ValueError(f"unknown side {side!r}")
     config = config or PolicyConfig()
     battle = getattr(root, "_decision_battles", {}).get(side, root.battles[side])
-    myopic = score_joint_orders(battle, config)
+    # With a caller-supplied selector the candidate set was already fixed upstream (the live
+    # judge's set comes from the fast search, which applied the repeat-Protect rule); the
+    # mirror must not re-filter it with its own, possibly different, view of the board.
+    myopic = score_joint_orders(
+        battle, config, repeat_protect_rule=candidate_selector is None
+    )
     if not myopic:
         return []
     ranked = belief_ordered_candidates(battle, myopic, config)
@@ -325,7 +330,9 @@ def search_joint_orders_exact(
     if side not in expected:
         raise ValueError(f"Showdown is not waiting for {side}")
     opponent_scored = (
-        _opponent_replies(score_joint_orders(root.battles[other], config), config)
+        _opponent_replies(
+            score_joint_orders(root.battles[other], config, repeat_protect_rule=False), config
+        )
         if other in expected
         else []
     )

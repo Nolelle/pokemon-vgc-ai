@@ -25,7 +25,9 @@ from typing import Any
 from poke_env.battle.abstract_battle import AbstractBattle
 from poke_env.battle.double_battle import DoubleBattle
 from poke_env.battle.effect import Effect
+from poke_env.battle.field import Field
 from poke_env.battle.pokemon import Pokemon
+from poke_env.battle.pokemon_type import PokemonType
 
 ALL_FIXES = (
     "copyboost",  # Psych Up / Costar copied the wrong way round
@@ -35,6 +37,7 @@ ALL_FIXES = (
     "skipped_charge",  # Power Herb / Solar Beam in sun left the foe "preparing" forever
     "move_changed_ability",  # Worry Seed / Simple Beam / Entrainment made a permanent ability
     "ability_reveal",  # [from] ability: lines revealed nothing about the foe's ability
+    "instruct_protect_chain",  # Instruct-ed Protect then own move zeroed the Protect chain
     "confusion_resets_protect",  # a confusion self-hit left the Protect counter alone
     "unbrought_not_active",  # own preview-only Pokemon stayed `active`
     "baton_pass",  # Baton Pass dropped the passed boosts and volatiles
@@ -62,6 +65,28 @@ ALL_FIXES = (
     "toxic_stage_cap",  # Showdown caps the toxic stage at 15
     "extender_acquired_later",  # a Light Clay / Damp Rock gained AFTER the set stretched it
     "status_change_resets_counter",  # a new status inherited the old status's turn counter
+    "item_effect_reveal",  # [from] item: / -activate item: lines revealed no foe item (Quick Claw ...)
+    "mega_stone_known",  # a foe's Mega stone is shown by -mega but its item stayed unknown
+    "trick_item_shown",  # Trick / Switcheroo swapped hidden items instead of reading the shown one
+    "ability_reveal_of_holder",  # -block, Trace and Role Play name a second Pokemon's ability
+    "typeadd_third_type",  # Trick-or-Treat / Forest's Curse add a type; poke-env had no slot for it
+    "imposter_not_a_revealed_move",  # Imposter's switch-in Transform was listed as a known move
+    "skill_swap_base_ability",  # a revealed Skill Swap shows both OLD abilities; the bases stayed unknown
+    "temporary_forme_types",  # Castform-Rainy etc. kept the weather forme's types after switching out
+    "extender_item_suppressed",  # Damp Rock / Light Clay were counted under Magic Room or Klutz
+    "gastro_acid_keeps_swapped",  # Gastro Acid forgot a Worry Seed / Skill Swap ability instead of suppressing it
+    "clock_setter_by_slot",  # a disguised own Zoroark's Damp Rock / Light Clay was looked up under the disguise's name
+    "reflected_move_not_a_sleep_turn",  # a sleeping Pokemon's Magic Bounce reflection advanced its sleep counter
+    "transform_copies_current_types",  # Transform / Imposter copied the species' types, not the target's current ones
+    "own_slot_names_the_mon",  # effects announced under our Zoroark's disguise were filed on the disguise
+    "transformed_ability_temporary",  # an ability revealed by a transformed Pokemon was stored as its base
+    "fairy_lock_field",  # Fairy Lock arrives as -fieldactivate and was never recorded
+    "lock_on_two_turns",  # Lock-On / Mind Reader were dropped at once or kept forever
+    "forme_change_resets_types",  # a Mega Evolution kept Soak / Trick-or-Treat type changes
+    "gravity_aborts_charge",  # Gravity left a Fly / Bounce user 'preparing'
+    "gastro_blocks_regenerator",  # a Gastro Acid'd Regenerator holder was healed on switch-out
+    "illusion_slot_from_request",  # a request after an Illusion switch-in left our active slot on the disguise
+    "illusion_restore_disguise",  # a broken Illusion left the disguise's HP/moves/item on the wrong mon
 )
 _DISABLED: set[str] = {
     name.strip()
@@ -191,6 +216,16 @@ if not getattr(Pokemon._update_from_pokedex, "_vgc_champions_abilities", False):
 def _find_mon(battle: AbstractBattle, ident: str) -> Pokemon | None:
     """The poke-env Pokemon for a protocol ident ("p1a: Name"), without creating one."""
     key = ident if len(ident) < 4 or ident[2] == ":" else ident[:2] + ident[3:]
+    if (
+        len(ident) > 3
+        and ident[2] in "ab"
+        and ident[:2] == battle.player_role
+        and fix_enabled("own_slot_names_the_mon")
+    ):
+        # Our own Zoroark is announced under its disguise's name, but the slot says who it is.
+        held = getattr(battle, "_active_pokemon", {}).get(ident[:3])
+        if held is not None:
+            return held
     for team in (battle.team, battle.opponent_team):
         mon = team.get(key)
         if mon is not None:
@@ -219,8 +254,20 @@ def _revealed_ability_holder(split: list[str]) -> tuple[str, str] | None:
     """
     tag = split[1]
     parts = split[2:]
+    if tag == "-ability" and len(split) > 4 and fix_enabled("ability_reveal_of_holder"):
+        # Trace / Receiver / Power of Alchemy / Role Play: `-ability|USER|NEW|[OLD|]...|[of] SOURCE`
+        # -- NEW is the SOURCE's ability too (the USER's own change is poke-env's business).
+        source = next((m.group(1) for p in parts if (m := _OF.search(p))), None)
+        via = any(p.startswith(("[from] ability:", "[from] move: Role Play")) for p in parts)
+        if source is not None and via and not split[3].startswith("["):
+            return source, split[3]
     if tag in ("-ability", "-transform", "-formechange", "detailschange"):
         return None  # poke-env handles these (Trace / Imposter swap abilities)
+    if tag == "-block" and len(split) > 3 and fix_enabled("ability_reveal_of_holder"):
+        # `-block|PROTECTED|ability: Aroma Veil|[of] HOLDER`
+        if split[3].lower().startswith("ability:"):
+            of = next((m.group(1) for p in parts if (m := _OF.search(p))), split[2])
+            return of, split[3].split(":", 1)[1].strip()
     if tag in ("-activate", "-start", "-end") and len(split) > 3:
         if split[3].lower().startswith("ability:"):
             return split[2], split[3].split(":", 1)[1].strip()
@@ -258,11 +305,16 @@ def _revealed_ability_holder(split: list[str]) -> tuple[str, str] | None:
 _PERSISTENT_ACTIVATE_EFFECTS = frozenset(
     getattr(Effect, name)
     for name in (
-        "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP",
+        "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "LOCK_ON", "MAGMA_STORM", "MIND_READER",
+        "SAND_TOMB", "SNAP_TRAP",
         "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
     )
     if hasattr(Effect, name)
 )  # fmt: skip
+
+_TWO_TURN_EFFECTS = frozenset(
+    getattr(Effect, name) for name in ("LOCK_ON", "MIND_READER") if hasattr(Effect, name)
+)
 
 # Volatiles Baton Pass hands to the incoming Pokemon (Showdown: conditions without `noCopy`
 # that outlive a turn). Boosts always pass.
@@ -317,12 +369,42 @@ def _is_sleeping(mon: Pokemon) -> bool:
     return mon._status is not None and mon._status.name == "SLP"
 
 
+def _track_protect_chain(battle: AbstractBattle, split: list[str]) -> None:
+    """Bookkeeping for `_protect_chain_hook`: remember an `Instruct` marker only until the very
+    next line, and forget a recorded Protect chain when Showdown deletes the stall volatile
+    (Feint / `[broken]` protection breaking) or the holder leaves the field."""
+    if not fix_enabled("instruct_protect_chain"):
+        return
+    state = vars(battle)
+    tag = split[1]
+    pending = state.pop("_vgc_instruct_pending", None)
+    if tag == "-singleturn" and len(split) > 3 and split[3] == "move: Instruct":
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            battle._vgc_instruct_pending = (getattr(battle, "turn", None), id(mon))  # type: ignore[attr-defined]
+    elif tag == "move" and pending is not None:
+        battle._vgc_instruct_consumed = pending  # type: ignore[attr-defined]
+    record = state.get("_vgc_protect_turn")
+    if not record or len(split) < 4:
+        return
+    if tag == "-activate" and (split[3] == "move: Feint" or "[broken]" in split[4:]):
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            record.pop(id(mon), None)
+            mon._protect_counter = 0
+    elif tag in ("switch", "drag"):
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            record.pop(id(mon), None)
+
+
 def _prepare_message(battle: AbstractBattle, split: list[str]) -> Any:
     """Capture what a repair needs from BEFORE poke-env handles `split`; return a closure to
     run after it, or None. One small handler per protocol tag."""
     if len(split) < 2:
         return None
     tag = split[1]
+    _track_protect_chain(battle, split)
     if tag == "upkeep":
         # Everything switched in from here until `|turn|` arrives after the residual phase.
         battle._vgc_after_upkeep = True  # type: ignore[attr-defined]
@@ -354,11 +436,16 @@ def _on_turn(battle: AbstractBattle) -> Any:
                 if mon is not None and mon._status_counter > 15 and mon._status is not None:
                     if mon._status.name == "TOX":
                         mon._status_counter = 15
+        store = _ephemeral(battle)
+        if "fairylock" in store:
+            store["fairylock"] -= 1  # Fairy Lock: the turn it is used and the next one
+            if store["fairylock"] <= 0:
+                del store["fairylock"]
+                battle._fields.pop(Field.FAIRY_LOCK, None)
         if fix_enabled("single_turn_effects"):
-            store = _ephemeral(battle)
             for mon, effect in store["turn"]:
                 _drop(mon, effect)
-            store["turn"] = []
+            store["turn"] = store.pop("turn2", [])  # (promoted: dropped at the end of NEXT turn)
 
     return end_of_turn
 
@@ -410,6 +497,9 @@ def _on_move_or_cant(battle: AbstractBattle, split: list[str]) -> Any:
             hooks.append(not_a_sleep_turn)
         return _chain(*hooks)
     # tag == "move"
+    episode = vars(battle).get("_vgc_episode_moves")
+    if episode is not None and not any(part.startswith("[from]") for part in split[4:]):
+        episode.setdefault(split[2][:2] + split[2][3:], set()).add(_to_id(split[3]))
     cant_for = vars(battle).get("_vgc_cant_sleep")
     if cant_for is not mon:
         battle._vgc_cant_sleep = None  # type: ignore[attr-defined]
@@ -425,7 +515,56 @@ def _on_move_or_cant(battle: AbstractBattle, split: list[str]) -> Any:
     return _chain(*hooks)
 
 
+_PROTECT_FAMILY = frozenset(
+    "protect detect kingsshield spikyshield banefulbunker obstruct silktrap burningbulwark "
+    "quickguard wideguard matblock craftyguard endure".split()
+)
+
+
 def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
+    return _chain(
+        _after_move_reflected(battle, mon, split), _protect_chain_hook(battle, mon, split)
+    )
+
+
+def _protect_chain_hook(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
+    """Showdown's `stall` volatile (the Protect chain) lasts two residuals and is NOT removed
+    by the holder's next move: an Instruct-ed Protect (`|move|A|Instruct|B`, `|-singleturn|B|
+    move: Instruct`, `|move|B|Protect|B` -- no `[from]` tag) is followed by B's own queued move
+    the same turn (Rain Dance, ...) and the chain survives into next turn (counter 1, not 0).
+    poke-env resets the counter on every non-Protect move, so remember a Protect made this turn
+    and put its counter back when the same Pokemon's later same-turn move is not a Protect."""
+    if len(split) < 4 or not fix_enabled("instruct_protect_chain"):
+        return None
+    record = vars(battle).setdefault("_vgc_protect_turn", {})
+    turn = getattr(battle, "turn", None)
+    consumed = vars(battle).pop("_vgc_instruct_consumed", None)
+    if _to_id(split[3]) in _PROTECT_FAMILY:
+        # Only the exact Instruct pattern keeps the chain: the same Pokemon's untagged Protect
+        # directly after its `|-singleturn|X|move: Instruct` line.
+        instructed = (
+            consumed == (turn, id(mon)) and not any(p.startswith("[from]") for p in split[4:])
+        )
+
+        def remember() -> None:
+            if instructed and mon._protect_counter > 0:
+                record[id(mon)] = (turn, mon._protect_counter)
+            else:
+                record.pop(id(mon), None)
+
+        return remember
+    seen = record.get(id(mon))
+    if seen is None or seen[0] != turn:
+        return None
+    counter = seen[1]
+
+    def keep_chain() -> None:
+        mon._protect_counter = counter
+
+    return keep_chain
+
+
+def _after_move_reflected(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
     """A move line whose `[from]` tag shows the Pokemon did not choose the move this turn
     (a reflected move, a Dancer copy) must not reset its Protect chain."""
     if not fix_enabled("confusion_resets_protect"):
@@ -438,9 +577,13 @@ def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
     if not reflected:
         return None
     counter = mon._protect_counter
+    sleep_counter = mon._status_counter
 
     def restore() -> None:
         mon._protect_counter = counter
+        if _is_sleeping(mon) and fix_enabled("reflected_move_not_a_sleep_turn"):
+            # (a sleeping Pokemon's Magic Bounce reflection is no action of its own)
+            mon._status_counter = sleep_counter
 
     return restore
 
@@ -468,6 +611,18 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     before = set(mon.effects)
+    if split[3] == "move: Gravity" and fix_enabled("gravity_aborts_charge"):
+        grounded_mon = mon
+
+        def gravity_hits() -> None:
+            move = grounded_mon._preparing_move
+            if move is not None and move.id in ("fly", "bounce", "skydrop", "flyingpress"):
+                grounded_mon._preparing_move = None
+                grounded_mon._preparing_target = None
+
+        pending_gravity = gravity_hits
+    else:
+        pending_gravity = None
     if split[3] == "ability: Cud Chew":
         battle._vgc_cud_chew = mon  # type: ignore[attr-defined]
     symbiosis_to = None
@@ -482,7 +637,35 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
     if other is not None:
         known_before = (known_before[0], _effective_ability(other))
 
+    shown_swap = [
+        a.replace("[ability] ", "").replace("[ability2] ", "")
+        for a in split[4:]
+        if a and not a.startswith("[of]") and not a.startswith("[")
+    ]
+    swap_bases: list[tuple[Pokemon, str]] = []
+    if (
+        skill_swap
+        and len(shown_swap) >= 2
+        and other is not None
+        and fix_enabled("skill_swap_base_ability")
+    ):
+        # Revealed swap (|-activate|SOURCE|Skill Swap|SOURCE_NEW|TARGET_NEW|[of] TARGET): the
+        # two abilities named are what each side holds AFTER, i.e. what the other held before.
+        # A Pokemon that was not swapped already was holding its real ability.
+        if mon._temporary_ability is None and mon._ability is None and id(mon) not in _swapped(battle):
+            swap_bases.append((mon, shown_swap[1]))
+        if (
+            other._temporary_ability is None
+            and other._ability is None
+            and id(other) not in _swapped(battle)
+        ):
+            swap_bases.append((other, shown_swap[0]))
+
     def after() -> None:
+        if pending_gravity is not None:
+            pending_gravity()
+        for swapped_mon, old_ability in swap_bases:
+            swapped_mon._ability = _to_id(old_ability) or None
         if symbiosis_to is not None and symbiosis_to._item:
             # Showdown logs the ally's item arriving BEFORE the berry it replaces is eaten.
             battle._vgc_symbiosis = (symbiosis_to, symbiosis_to._item)  # type: ignore[attr-defined]
@@ -497,6 +680,11 @@ def _on_activate(battle: AbstractBattle, split: list[str]) -> Any:
         if fix_enabled("momentary_activate_effects"):
             for effect in set(mon.effects) - before - _PERSISTENT_ACTIVATE_EFFECTS:
                 _ephemeral(battle)["turn"].append((mon, effect))
+            if fix_enabled("lock_on_two_turns"):
+                # Lock-On / Mind Reader last through the NEXT turn's moves (Showdown duration 2)
+                for effect in set(mon.effects) - before:
+                    if effect in _TWO_TURN_EFFECTS:
+                        _ephemeral(battle).setdefault("turn2", []).append((mon, effect))
 
     return after
 
@@ -624,6 +812,20 @@ def _on_status(battle: AbstractBattle, split: list[str]) -> Any:
 
 
 def _on_start(battle: AbstractBattle, split: list[str]) -> Any:
+    if len(split) > 4 and split[3] == "typeadd" and fix_enabled("typeadd_third_type"):
+        mon = _find_mon(battle, split[2])
+
+        def third_type() -> None:
+            # `-start|MON|typeadd|Ghost|[from] move: Trick-or-Treat`: the type is ADDED to the
+            # others (Showdown's `addedType`, cleared on switch-out like `_temporary_types`).
+            if mon is None:
+                return
+            added = PokemonType.from_name(split[4])
+            types = list(mon.types)
+            if added not in types:
+                mon._temporary_types = types + [added]
+
+        return third_type
     if len(split) > 3 and split[3] == "Smack Down" and fix_enabled("interrupted_charge"):
         mon = _find_mon(battle, split[2])
 
@@ -642,10 +844,15 @@ def _on_endability(battle: AbstractBattle, split: list[str]) -> Any:
     if not fix_enabled("gastro_acid"):
         return None
     mon = _find_mon(battle, split[2])
+    temporary_before = mon._temporary_ability if mon is not None else None
 
     def suppressed() -> None:
         if mon is not None:
             mon._effects.setdefault(Effect.GASTRO_ACID, 0)
+            if temporary_before is not None and fix_enabled("gastro_acid_keeps_swapped"):
+                # poke-env's `-endability` wipes a Worry Seed / Skill Swap ability; Showdown only
+                # suppresses it (the holder reverts to its real one when it switches out).
+                mon._temporary_ability = temporary_before
 
     return suppressed
 
@@ -662,8 +869,12 @@ def _on_ability(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is None:
         return None
     base_before = mon._ability
+    traced = next((p for p in split[4:] if p.startswith("[from] ability: Trace")), None)
 
     def to_temporary() -> None:
+        if traced is not None and mon.forme_change_ability == "trace":
+            # A Mega whose own (forme) ability is Trace: the copied one is the temporary ability
+            mon._temporary_ability = _to_id(split[3])
         _swapped(battle).add(id(mon))
         if changed_by_move and base_before is None and mon._ability is not None:
             # poke-env stored the NEW ability as the base; the line also names the OLD, real one.
@@ -745,7 +956,60 @@ def _on_item(battle: AbstractBattle, split: list[str]) -> Any:
     return eaten_on_arrival
 
 
+def _on_any_transform(battle: AbstractBattle, split: list[str]) -> Any:
+    """Transform / Imposter copy the target's CURRENT types (Soak, Trick-or-Treat ...), not its
+    species' types as poke-env's `Pokemon.transform` assumes."""
+    if len(split) < 4 or not fix_enabled("transform_copies_current_types"):
+        return _on_transform(battle, split)
+    mon = _find_mon(battle, split[2])
+    into = _find_mon(battle, split[3])
+    inner = _on_transform(battle, split)
+
+    def after() -> None:
+        if inner is not None:
+            inner()
+        if mon is not None and into is not None:
+            mon._temporary_types = list(into.types)
+
+    return after
+
+
+def _on_fieldactivate(battle: AbstractBattle, split: list[str]) -> Any:
+    """Fairy Lock arrives as `-fieldactivate`, which poke-env ignores (it never saw the field)."""
+    if len(split) < 3 or "Fairy Lock" not in split[2] or not fix_enabled("fairy_lock_field"):
+        return None
+
+    def start() -> None:
+        battle.field_start("move: Fairy Lock")
+        _ephemeral(battle)["fairylock"] = 2
+
+    return start
+
+
+def _on_transform(battle: AbstractBattle, split: list[str]) -> Any:
+    """Imposter transforms on switch-in without using Transform; poke-env then lists Transform as
+    one of the foe's moves although the protocol never showed it (a Ditto here may carry others)."""
+    if (
+        len(split) < 5
+        or split[4] != "[from] ability: Imposter"
+        or not fix_enabled("imposter_not_a_revealed_move")
+    ):
+        return None
+    mon = _find_mon(battle, split[2])
+    if mon is None:
+        return None
+    had = "transform" in mon._moves._base_moves
+
+    def after() -> None:
+        if not had:
+            mon._moves._base_moves.pop("transform", None)
+
+    return after
+
+
 _HANDLERS = {
+    "-fieldactivate": _on_fieldactivate,
+    "-transform": _on_any_transform,
     "-enditem": _on_enditem,
     "-item": _on_item,
     "move": _on_move_or_cant,
@@ -768,10 +1032,44 @@ _HANDLERS = {
 }
 
 
+def _bench_state(mon: Pokemon) -> dict[str, Any]:
+    """What a benched foe looked like before a switch-in line touched it."""
+    return {
+        "hp": mon._current_hp,
+        "max_hp": mon._max_hp,
+        "status": mon._status,
+        "status_counter": mon._status_counter,
+        "moves": dict(mon._moves._base_moves),
+        "item": mon._item,
+        "ability": mon._ability,
+        "temporary_ability": mon._temporary_ability,
+        "revealed": mon._revealed,
+    }
+
+
+def _remember_bench_state(battle: AbstractBattle, split: list[str]) -> None:
+    """Record the incoming foe's state BEFORE the switch line (it may be a Zoroark's disguise)."""
+    if not fix_enabled("illusion_restore_disguise") or battle.player_role is None:
+        return
+    if split[2][:2] == battle.player_role:
+        return  # our own team comes from the request, not from protocol guesses
+    key = split[2][:2] + split[2][3:]
+    mon = battle._opponent_team.get(key)
+    store = vars(battle).setdefault("_vgc_bench_state", {})
+    state = _bench_state(mon) if mon is not None else None
+    if state is not None:
+        # (a benched Pokemon holds no swapped / traced ability; if this very switch-in replaces
+        # the same ident, switch-out has not cleared it yet)
+        state["temporary_ability"] = None
+    store[key] = state
+    vars(battle).setdefault("_vgc_episode_moves", {})[key] = set()
+
+
 def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
     """Baton Pass: poke-env cleared the outgoing Pokemon's boosts and volatiles on switch-out
     and the incoming one started clean; Showdown hands them over."""
     battle._vgc_cant_sleep = None  # type: ignore[attr-defined]
+    _remember_bench_state(battle, split)
     late = vars(battle).get("_vgc_late_switch_ins")
     if late is not None and vars(battle).get("_vgc_after_upkeep"):
         late_key = split[2]
@@ -798,7 +1096,10 @@ def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
     hp_after_protocol_heal = None
     if leaving is not None:
         _swapped(battle).discard(id(leaving))
-        if healed and id(leaving) in healed and fix_enabled("regenerator_double_heal"):
+        if Effect.GASTRO_ACID in leaving._effects and fix_enabled("gastro_blocks_regenerator"):
+            # a Gastro Acid'd Regenerator heals nothing on the way out
+            hp_after_protocol_heal = leaving._current_hp
+        elif healed and id(leaving) in healed and fix_enabled("regenerator_double_heal"):
             # The protocol already carried Regenerator's heal (`-heal ... [silent]`);
             # `Pokemon.switch_out` is about to add its own 1/3 on top.
             hp_after_protocol_heal = leaving._current_hp
@@ -830,6 +1131,8 @@ def _prepare_switch(battle: AbstractBattle, split: list[str]) -> Any:
         inner_hook = late_hook
 
         def keep_protocol_hp() -> None:
+            if _find_mon(battle, split[2]) is leaving:
+                return  # a Zoroark switching in under the SAME ident: the line's HP is its own
             leaving._current_hp = outgoing_hp
             if inner_hook is not None:
                 inner_hook()
@@ -868,13 +1171,30 @@ def _is_mega_forme(species_id: str) -> bool:
     from vgc.data import load_species
 
     entry = load_species().get(species_id)
-    return bool(entry and entry.get("isMega")) or "mega" in species_id
+    if entry is not None:
+        return bool(entry.get("isMega"))
+    return "mega" in species_id
 
 
 def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:
+    mon = _find_mon(battle, split[2])
+    if mon is not None and fix_enabled("forme_change_resets_types"):
+        # Showdown's `formeChange` sets the new forme's types, wiping Soak / Trick-or-Treat /
+        # Reflect Type results; poke-env kept them through a Mega Evolution.
+        reset = _forme_species_hook(battle, split, mon)
+
+        def with_reset() -> None:
+            if reset is not None:
+                reset()
+            mon._temporary_types = []
+
+        return with_reset
+    return _forme_species_hook(battle, split, mon)
+
+
+def _forme_species_hook(battle: AbstractBattle, split: list[str], mon: Pokemon | None) -> Any:
     if not fix_enabled("forme_species"):
         return None
-    mon = _find_mon(battle, split[2])
     if mon is None:
         return None
     new_species = _forme_species_id(split[3])
@@ -902,6 +1222,17 @@ def _restore_temporary_forme(battle: AbstractBattle, mon: Pokemon | None) -> Any
         entry = temps.pop(id(mon), None)
         if entry is not None:
             mon._species = entry[1]
+            if fix_enabled("temporary_forme_types"):
+                # (Castform-Rainy etc.: the types and base stats go back with the species)
+                from poke_env.data import GenData
+
+                dex = GenData.from_gen(mon._gen).pokedex.get(entry[1])
+                if dex:
+                    mon._type_1 = PokemonType.from_name(dex["types"][0])
+                    mon._type_2 = (
+                        PokemonType.from_name(dex["types"][1]) if len(dex["types"]) > 1 else None
+                    )
+                    mon._base_stats = dex["baseStats"]
     return None
 
 
@@ -923,6 +1254,12 @@ def _ability_before(battle: AbstractBattle, split: list[str]) -> Any:
 
 def _reveal_ability(battle: AbstractBattle, before: Any) -> None:
     mon, ability_id, base_before, temporary_before = before
+    if mon.transformed and base_before is None and fix_enabled("transformed_ability_temporary"):
+        # A transformed Ditto showing an ability shows its TARGET's (gone when it switches out);
+        # poke-env may already have stored it as the base (its own Frisk handling does).
+        mon._ability = None
+        mon._temporary_ability = ability_id
+        return
     swapped = id(mon) in _swapped(battle) and fix_enabled("swapped_ability_temporary")
     if swapped and base_before is None:
         # Skill Swap'd (possibly with the abilities hidden): this is the SWAPPED-in ability,
@@ -940,21 +1277,101 @@ def _reveal_ability(battle: AbstractBattle, before: Any) -> None:
         mon._temporary_ability = ability_id
 
 
+def _is_consumable(item_id: str) -> bool:
+    from vgc.data import load_items
+
+    entry = load_items().get(item_id) or {}
+    return bool(entry.get("isBerry")) or any(key in item_id for key in ("herb", "seed", "gem"))
+
+
+def _revealed_item_holder(split: list[str]) -> tuple[str, str] | None:
+    """(ident, item name) for a line that shows which item a Pokemon HOLDS, else None.
+
+    `-damage ... [from] item: Rocky Helmet|[of] HOLDER` names the holder in `[of]`; every other
+    `[from] item:` line (a Shell Bell `-heal`, a Life Orb `-damage`, a Flame Orb `-status`) and
+    `-activate|HOLDER|item: Quick Claw` belong to the first Pokemon. Consumables are left to
+    `-enditem` (a stolen berry eaten with Bug Bite is not its eater's item)."""
+    tag = split[1]
+    parts = split[2:]
+    if tag == "-mega" and len(split) > 4:
+        return split[2], split[4]
+    if tag == "-activate" and len(split) > 3 and split[3].startswith("item:"):
+        if "[consumed]" in split:
+            return None
+        return split[2], split[3].split(":", 1)[1].strip()
+    for part in parts:
+        if part.startswith("[from] item:"):
+            item = part.split(":", 1)[1].strip()
+            of = next((m.group(1) for p in parts if (m := _OF.search(p))), None)
+            if tag == "-damage" and of is not None:
+                return of, item
+            return split[2], item
+    return None
+
+
+def _item_before(battle: AbstractBattle, split: list[str]) -> Any:
+    if not fix_enabled("item_effect_reveal") and not fix_enabled("mega_stone_known"):
+        return None
+    if split[1] == "-mega" and not fix_enabled("mega_stone_known"):
+        return None
+    if split[1] != "-mega" and not fix_enabled("item_effect_reveal"):
+        return None
+    found = _revealed_item_holder(split)
+    if found is None:
+        return None
+    ident, item = found
+    if ident[:2] == battle.player_role or ident[:2] not in ("p1", "p2"):
+        return None  # our own items come from the request
+    item_id = _to_id(item)
+    if not item_id or (_is_consumable(item_id) and split[1] != "-mega"):
+        return None
+    mon = _find_mon(battle, ident)
+    return None if mon is None else (mon, item_id)
+
+
+def _trick_item_before(battle: AbstractBattle, split: list[str]) -> Any:
+    """`-item|MON|ITEM|[from] move: Trick` shows the item MON now holds; poke-env swaps the two
+    Pokemon's (possibly unknown) items on the `-activate` line and ignores this one."""
+    if (
+        split[1] != "-item"
+        or len(split) < 5
+        or not fix_enabled("trick_item_shown")
+        or split[4] not in ("[from] move: Trick", "[from] move: Switcheroo")
+        or split[2][:2] == battle.player_role
+    ):
+        return None
+    mon = _find_mon(battle, split[2])
+    if mon is None:
+        return None
+    last = vars(battle).get("_vgc_last_enditem")
+    if last is not None and last[0] is mon and last[1] == _to_id(split[3]):
+        return None  # (a White Herb is logged as used up BEFORE it is received)
+    return mon, _to_id(split[3]), True
+
+
 _original_parse_message = AbstractBattle.parse_message
 
 
 def _parse_message_with_repairs(self: AbstractBattle, split_message: list[str]) -> None:
+    trick = _trick_item_before(self, split_message)
     after = _prepare_message(self, split_message)
     reveal = (
         _ability_before(self, split_message)
         if len(split_message) > 3 and fix_enabled("ability_reveal")
         else None
     )
+    item_reveal = _item_before(self, split_message) if len(split_message) > 3 else None
     _original_parse_message(self, split_message)
     if after is not None:
         after()
     if reveal is not None:
         _reveal_ability(self, reveal)
+    if item_reveal is not None:
+        mon, item_id = item_reveal
+        if mon._item == "unknown_item":
+            mon._item = item_id
+    if trick is not None:
+        trick[0]._item = trick[1]
 
 
 if not getattr(AbstractBattle.parse_message, "_vgc_repairs", False):
@@ -1048,6 +1465,9 @@ def _end_illusion_on_keeping_state(
             illusioned._protect_counter,
             illusioned._status_counter,
         )
+    key = None
+    if illusioned is not None and fix_enabled("illusion_restore_disguise"):
+        key = next((k for k, m in self._opponent_team.items() if m is illusioned), None)
     real = _original_end_illusion_on(self, illusionist, illusioned, details)
     if carried is not None and real is not illusioned:
         real._boosts = carried[0]
@@ -1055,7 +1475,42 @@ def _end_illusion_on_keeping_state(
         real._protect_counter = carried[2]
         real._status_counter = carried[3]
         _migrate_expiry(self, illusioned, real)
+    if key is not None and real is not illusioned:
+        _restore_disguise(self, key, illusioned, real)
     return real
+
+
+def _restore_disguise(
+    battle: AbstractBattle, key: str, disguise: Pokemon, real: Pokemon
+) -> None:
+    """The foe's Illusion broke: what the disguise's ident accumulated belongs to the real
+    Pokemon (moves shown, item used or lost, ability revealed), and the disguise Pokemon itself
+    goes back to what it was before it was (falsely) switched in -- Showdown's HP, status and
+    moves for it were never shown. A disguise that was never really seen is unrevealed again."""
+    baseline = vars(battle).get("_vgc_bench_state", {}).get(key)
+    if baseline is None:
+        fresh = Pokemon(gen=disguise._gen, species=disguise._species)
+        baseline = _bench_state(fresh)
+        baseline["revealed"] = False
+    shown_since_switch_in = vars(battle).get("_vgc_episode_moves", {}).get(key, set())
+    for move_id, move in disguise._moves._base_moves.items():
+        if move_id not in baseline["moves"] or move_id in shown_since_switch_in:
+            real._moves._base_moves.setdefault(move_id, move)
+    if disguise._item != baseline["item"]:
+        real._item = disguise._item
+    if disguise._ability is not None and disguise._ability != baseline["ability"]:
+        real._ability = disguise._ability
+    if disguise._temporary_ability != baseline["temporary_ability"]:
+        real._temporary_ability = disguise._temporary_ability
+    disguise._current_hp = baseline["hp"]
+    disguise._max_hp = baseline["max_hp"]
+    disguise._status = baseline["status"]
+    disguise._status_counter = baseline["status_counter"]
+    disguise._moves._base_moves = dict(baseline["moves"])
+    disguise._item = baseline["item"]
+    disguise._ability = baseline["ability"]
+    disguise._temporary_ability = baseline["temporary_ability"]
+    disguise._revealed = baseline["revealed"]
 
 
 if not getattr(AbstractBattle._end_illusion_on, "_vgc_repairs", False):
@@ -1076,13 +1531,19 @@ def _update_team_keeping_illusion_state(
     if fix_enabled("illusion_break_state"):
         falsely: list[Pokemon] = []
         truly: list[Pokemon] = []
-        for entry in side["pokemon"]:
-            mon = self._team.get(entry["ident"])
-            if mon is None:
-                continue
-            if entry["active"] and not mon.active:
+        # Compare the request with the slots poke-env believes in. (The `active` flags are not
+        # enough: the team-preview request leaves its first two Pokemon flagged active, so a
+        # Zoroark among them is already "active" when the first request after the lead switch-ins
+        # arrives, and the disguise's boosts were dropped.)
+        believed = list(getattr(self, "_active_pokemon", {}).values())
+        requested = [
+            self._team[e["ident"]] for e in side["pokemon"] if e["active"] and e["ident"] in self._team
+        ]
+        for mon in requested:
+            if not any(mon is b for b in believed):
                 truly.append(mon)
-            elif not entry["active"] and mon.active:
+        for mon in believed:
+            if not any(mon is r for r in requested):
                 falsely.append(mon)
         # (A team-preview request also leaves bench Pokemon looking active, so only the
         # ones carrying state can be the disguise.)
@@ -1098,6 +1559,18 @@ def _update_team_keeping_illusion_state(
         real._boosts = boosts
         real._effects.update(effects)
         _migrate_expiry(self, fake, real)
+    if fix_enabled("illusion_slot_from_request") and self.player_role is not None:
+        # Showdown keeps the Pokemon in battle slot i at party position i, so the request names
+        # who really holds each slot. poke-env only repairs the slot from a move request, and a
+        # Zoroark that switches in on a Flip Turn / U-turn / replacement is announced under its
+        # disguise's ident, which poke-env files on the (benched) disguise object.
+        active = getattr(self, "_active_pokemon", None)
+        if isinstance(active, dict):
+            for index, entry in enumerate(side["pokemon"][:2]):
+                mon = self._team.get(entry["ident"])
+                key = f"{self.player_role}{'ab'[index]}"
+                if entry["active"] and mon is not None and key in active and active[key] is not mon:
+                    active[key] = mon
 
 
 if not getattr(AbstractBattle._update_team_from_request, "_vgc_repairs", False):

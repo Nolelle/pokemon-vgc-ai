@@ -42,6 +42,31 @@ def _base_species_id(species_id: str) -> str:
     return to_id(data.get("baseSpecies")) or species_id
 
 
+def _set_species_id(mon, base_id: str) -> str:
+    """The species a mirror set must be BUILT as: the foe's real forme, not its base species.
+
+    `_base_species_id` collapses every forme (Persian-Alola -> Persian, Gourgeist-Small ->
+    Gourgeist, Rotom-Wash -> Rotom, Indeedee-F -> Indeedee), which is right for keying the
+    belief tables but wrong for the Showdown set itself: the forme decides types, base
+    stats, abilities and the learnset. Battle-only formes and Megas (Aegislash-Blade,
+    Mimikyu-Busted, Charizard-Mega-Y, ...) are set up as their base: the team is built in
+    base form and the public patch applies the battle forme afterwards.
+    """
+
+    forme_id = to_id(getattr(mon, "species", None))
+    data = load_species().get(forme_id)
+    if not data or data.get("isMega") or data.get("battleOnly"):
+        # The forme it changes FROM (Floette-Mega <- Floette-Eternal), else the base species.
+        parent = to_id(data.get("changesFrom")) if data else ""
+        return parent if parent in load_species() else base_id
+    return forme_id
+
+
+def _learnset(forme_id: str, base_id: str) -> dict:
+    learnsets = load_learnsets()
+    return {**(learnsets.get(base_id) or {}), **(learnsets.get(forme_id) or {})}
+
+
 def _ordered_unique(values):
     return list(dict.fromkeys(value for value in values if value))
 
@@ -62,9 +87,38 @@ def mirror_side(battle) -> str:
     return role if role in ("p1", "p2") else "p1"
 
 
-def _team_preview_order(packed_team: str, battle) -> str:
+def _request_bring(battle) -> list[str]:
+    """Base species ids of the four Pokemon our real request lists, in its order."""
+
+    request = getattr(battle, "last_request", None)
+    team = ((request or {}).get("side") or {}).get("pokemon") if isinstance(request, dict) else None
+    return [
+        _base_species_id(to_id(str(entry.get("details", "")).split(",")[0]))
+        for entry in (team or [])
+        if isinstance(entry, dict) and entry.get("details")
+    ]
+
+
+def _team_preview_order(packed_team: str, battle, config=None) -> str:
     entries = Teambuilder.parse_packed_team(packed_team)
     species = [to_id(entry.species or entry.nickname) for entry in entries]
+    if config is not None and config.exact_mirror_own_order:
+        # The real request IS the brought four (a trapped active leaves `available_switches`
+        # empty, so the rebuilt bring picked arbitrary teammates and the bench was wrong).
+        indices: list[int] = []
+        for wanted_id in _request_bring(battle):
+            match = next(
+                (
+                    index
+                    for index, species_id in enumerate(species)
+                    if index not in indices and _base_species_id(species_id) == wanted_id
+                ),
+                None,
+            )
+            if match is not None:
+                indices.append(match)
+        if len(indices) >= 4:
+            return "team " + "".join(str(index + 1) for index in indices[:4])
     active = [
         _base_species_id(to_id(getattr(mon, "species", None)))
         for mon in (getattr(battle, "active_pokemon", None) or ())
@@ -176,8 +230,28 @@ def _disabled_move_payload(battle) -> dict[str, dict[str, dict[str, str]]]:
     return result
 
 
-def _fallback_moves(species_id: str) -> list[str]:
-    learnset = list((load_learnsets().get(species_id) or {}).keys())
+def _own_request_order(battle) -> list[str]:
+    """Our team's names in Showdown's own side order, from the real request.
+
+    ``side.pokemon`` in the request IS the simulator's order (actives first, then the bench).
+    The exact search resolves ``switch <name>`` to a 1-based position against THIS request, so
+    the mirror has to hold the same order or a position means a different Pokemon there; a
+    random drag (Dragon Tail, Red Card) also samples from this order.
+    """
+
+    request = getattr(battle, "last_request", None)
+    if not isinstance(request, dict):
+        return []
+    team = (request.get("side") or {}).get("pokemon") or []
+    return [
+        str(entry.get("ident", "")).split(": ", 1)[-1]
+        for entry in team
+        if isinstance(entry, dict) and entry.get("ident")
+    ]
+
+
+def _fallback_moves(species_id: str, base_id: str | None = None) -> list[str]:
+    learnset = list(_learnset(species_id, base_id or species_id).keys())
     moves = load_moves()
     ranked = sorted(
         learnset,
@@ -234,6 +308,9 @@ def _opponent_sets(
     result: list[dict[str, object]] = []
     for species_id in ordered_ids:
         mon = known.get(species_id) or preview_by_id[species_id]
+        set_species = (
+            _set_species_id(mon, species_id) if config.exact_mirror_foe_forme else species_id
+        )
         state = opponent_state(mon, usage=usage_spreads_for(config))
         set_assignment = (set_assignments or {}).get(species_id) or {}
         assigned_moves = [to_id(move) for move in set_assignment.get("moves", [])]
@@ -243,10 +320,28 @@ def _opponent_sets(
                 assigned_moves
                 or opponent_move_ids(mon, priors=priors, config=config)
             )
-            if move_id in (load_learnsets().get(species_id) or {})
+            if move_id in _learnset(set_species, species_id)
         ][:4]
+        if config.exact_mirror_keep_revealed_moves:
+            # Every move the foe has shown must exist in its mirror set, whatever a belief
+            # or the learnset filter says: Showdown's request offers it (a locked Solar Beam)
+            # and the parser rejects a request for a move the Pokemon does not know.
+            revealed = [
+                move_id
+                for move_id in (to_id(raw) for raw in (getattr(mon, "moves", None) or {}))
+                if move_id
+            ]
+            for move_id in revealed:
+                if move_id in moves:
+                    continue
+                if len(moves) < 4:
+                    moves.append(move_id)
+                else:
+                    spare = [i for i, m in enumerate(moves) if m not in revealed]
+                    if spare:
+                        moves[spare[-1]] = move_id
         if not moves:
-            moves = _fallback_moves(species_id)
+            moves = _fallback_moves(set_species, species_id)
         item = normalize_item(getattr(mon, "item", None)) or normalize_item(
             set_assignment.get("item")
         )
@@ -273,7 +368,7 @@ def _opponent_sets(
             set_assignment.get("ability")
         )
         if not ability:
-            abilities = (species_data.get(species_id) or {}).get("abilities") or {}
+            abilities = (species_data.get(set_species) or {}).get("abilities") or {}
             ability = to_id(next(iter(abilities.values()), ""))
         believed = (spreads or {}).get(species_id)
         spread = (believed[0] if believed else state.sp_spread) or dict.fromkeys(STAT_IDS, 0)
@@ -282,10 +377,12 @@ def _opponent_sets(
         # observation, whose team is keyed by it ("p1: Vinny"), so a species-named mirror
         # mon read as a fifth Pokemon and crashed the judge for the whole game.
         nickname = _revealed_nickname(mon) if species_id in known else None
+        extra = {"gender": set_assignment["gender"]} if set_assignment.get("gender") else {}
         result.append(
             {
+                **extra,  # offline oracle audit only; real beliefs never carry a gender
                 "name": nickname or species_id,
-                "species": species_id,
+                "species": set_species,
                 "item": item or "",
                 "ability": ability,
                 "moves": moves,
@@ -653,26 +750,77 @@ class LiveExactMirror:
             "keepHiddenItems": config.exact_mirror_keep_hidden_items,
             "megaStats": config.exact_mirror_mega_stats,
             "restoreState": config.exact_mirror_restore_state,
+            "gender": config.exact_mirror_gender,
+            "stallDuration": config.exact_mirror_stall_duration,
+            "faintedState": config.exact_mirror_fainted_state,
+            "volatileTimers": config.exact_mirror_volatile_timers,
+            "bookkeeping": config.exact_mirror_public_bookkeeping,
         }
 
     def _hidden_payload(self, battle, hypothesis) -> dict | None:
         """The hypothesis's hidden timers plus public history the snapshot cannot carry."""
 
         payload = hypothesis.payload if hypothesis is not None else None
-        if not self.config.exact_mirror_restore_state:
-            return payload
-        history = _disabled_move_payload(battle)
-        if not history:
-            return payload
-        merged = {side: dict(species) for side, species in (payload or {}).items()}
-        for side, by_species in history.items():
-            for species_id, facts in by_species.items():
-                merged.setdefault(side, {}).setdefault(species_id, {}).update(facts)
-        return merged
+        merged = {
+            side: {species_id: dict(facts) for species_id, facts in species.items()}
+            for side, species in (payload or {}).items()
+        }
+        if self.config.exact_mirror_restore_state:
+            for side, by_species in _disabled_move_payload(battle).items():
+                for species_id, facts in by_species.items():
+                    merged.setdefault(side, {}).setdefault(species_id, {}).update(facts)
+        if self.config.exact_mirror_public_bookkeeping:
+            history = self._public_history(battle)
+            if history:
+                merged["history"] = history  # type: ignore[assignment]
+        if self.config.exact_mirror_own_order:
+            order = _own_request_order(battle)
+            if order:
+                merged["ownOrder"] = order  # type: ignore[assignment]
+        return merged or None
+
+    def _public_history(self, battle) -> dict | None:
+        """Protocol-derived facts Showdown reads that the snapshot does not carry."""
+
+        memory = getattr(battle, "_vgc_battle_memory", None)
+        if memory is None:
+            return None
+        state = self._snapshot(battle)
+        turn = int(state.turn or 0)
+        our_role = getattr(memory, "our_role", None) or getattr(battle, "player_role", None)
+        roles = {"our": our_role, "opponent": getattr(memory, "opponent_role", None)}
+        history: dict = {"lastMove": memory.last_move_used}
+        for key, side in (("our", state.our_side), ("opponent", state.opponent_side)):
+            role = roles[key]
+            if role is None:
+                continue
+            locked = {}
+            for mon in side.pokemon:
+                move = memory.locked_move(role, mon.name, turn)
+                if move and not mon.fainted and not any(e.id == "confusion" for e in mon.effects):
+                    locked[mon.name] = move
+            history[key] = {
+                "locked": locked,
+                "acted": [
+                    mon.name for mon in side.pokemon if mon.name and memory.has_acted(role, mon.name)
+                ],
+                "lostLastTurn": memory.lost_pokemon_last_turn(role, turn),
+                "faintCount": memory.faint_count(role),
+            }
+        # Our own request is authoritative: a hard-locked slot lists a single move, no target.
+        from vgc.actions import locked_move_ids
+
+        for slot, move_id in locked_move_ids(battle).items():
+            actives = list(getattr(battle, "active_pokemon", None) or ())
+            if slot < len(actives) and actives[slot] is not None and move_id != "struggle":
+                history.setdefault("our", {}).setdefault("locked", {})[actives[slot].name] = move_id
+        return history
 
     def _snapshot(self, battle):
         return snapshot_battle(
-            battle, opponent_mega_unknown=self.config.exact_mirror_opponent_mega
+            battle,
+            opponent_mega_unknown=self.config.exact_mirror_opponent_mega,
+            champions_pp=self.config.exact_mirror_champions_pp,
         )
 
     def hypotheses(self, battle, memory=None) -> list[MirrorHypothesis]:
@@ -804,7 +952,7 @@ class LiveExactMirror:
         try:
             root.step(
                 {
-                    side: _team_preview_order(self.own_packed_team, battle),
+                    side: _team_preview_order(self.own_packed_team, battle, self.config),
                     # Opponent sets were ordered with the current active pair first.
                     other: "team 1234",
                 }
