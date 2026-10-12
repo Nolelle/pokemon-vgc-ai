@@ -91,6 +91,7 @@ from poke_env.player.battle_order import DoubleBattleOrder, SingleBattleOrder
 
 from vgc.action_sanity import wasted_action_cost
 from vgc.actions import describe_order, enumerate_joint_orders
+from vgc.condition_clock import remaining_turns
 from vgc.damage import (
     DamageResult,
     FieldState,
@@ -616,39 +617,173 @@ def _partner_removes_threat(
 
 
 _SAND_IMMUNE_TYPES = frozenset({"Rock", "Ground", "Steel"})
-_SAND_IMMUNE_ABILITIES = frozenset(
-    {"sandveil", "sandrush", "sandforce", "overcoat", "magicguard"}
-)
-_END_OF_TURN_HEAL_ITEMS = frozenset({"leftovers", "blacksludge"})
+_SAND_IMMUNE_ABILITIES = frozenset({"sandveil", "sandrush", "sandforce", "overcoat"})
+_WEATHER_SUPPRESSORS = frozenset({"cloudnine", "airlock"})
+_BINDING_EFFECT_NAMES = (
+    "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP",
+    "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
+)  # fmt: skip
+_WEATHER_EFFECT_ID = {"sand": "sandstorm", "rain": "raindance", "snow": "snowscape", "sun": "sunnyday"}
 
 
-def _residual_fraction(state: PokemonState, mon, ctx: _Context) -> float:
-    """Fraction of max HP an opposing active loses to end-of-turn damage this turn: poison,
-    Toxic (counter-scaled; uses the current counter, which is at most this turn's real step,
-    so it can only under-count), burn, sandstorm chip, Leech Seed and Salt Cure, minus a
-    Leftovers/Black Sludge heal. Deliberately narrow: other residuals (Perish Song, ...)
-    count as 0, i.e. never excuse. Magic Guard / Poison Heal / Safety Goggles negate it."""
-    if state.ability in ("magicguard", "poisonheal"):
-        return 0.0
-    types = set(state.species_data().get("types") or [])
-    total = {"psn": 1 / 8, "brn": 1 / 16}.get(state.status or "", 0.0)
-    if state.status == "tox":
-        total = max(1, int(getattr(mon, "status_counter", 0) or 0)) / 16
-    if (
-        ctx.weather == "sand"
-        and not (types & _SAND_IMMUNE_TYPES)
-        and state.ability not in _SAND_IMMUNE_ABILITIES
-        and state.item != "safetygoggles"
+@dataclass(frozen=True)
+class ResidualInputs:
+    """Everything that decides one Pokemon's end-of-turn HP in Showdown (see `residual_hp`)."""
+
+    status: str | None = None
+    toxic_stage: int = 1  # the stage the Toxic tick uses (already incremented)
+    types: frozenset = frozenset()
+    ability: str | None = None
+    item: str | None = None
+    weather: str | None = None  # the weather whose Field Residual still fires this turn
+    grounded_terrain: bool = False  # Grassy Terrain is up and the holder is grounded
+    leech_seed: bool = False
+    salt_cure: bool = False
+    bound: bool = False
+
+
+def residual_hp(hp: int, max_hp: int, inp: ResidualInputs) -> int:
+    """HP after Showdown's end-of-turn residual sequence; <= 0 means it fainted.
+
+    Order, from `sim/battle.ts::fieldEvent('Residual')` and each condition's
+    `onResidualOrder` (data/conditions.ts, data/moves.ts, data/items.ts; the Champions mod
+    only changes Salt Cure): weather phase (order 1: sand chip / Rain Dish / Ice Body / Dry
+    Skin / Solar Power), Grassy Terrain (5, sub 2), Leftovers / Black Sludge (5, sub 4),
+    Leech Seed (8), poison / Toxic (9), burn (10), Salt Cure and binding moves (13). Every
+    amount is `floor(max_hp / n)` with a minimum of 1 (`clampIntRange`), applied separately;
+    Heatproof halves the burn tick (floored, min 1). Healing caps at max HP and a fainted
+    Pokemon is never revived, so a KO ends the sequence.
+    """
+    ability = inp.ability
+    guarded = ability == "magicguard"
+
+    def hurt(h: int, amount: int, *, indirect: bool = True) -> int:
+        if indirect and guarded:
+            return h
+        return h - max(1, amount)
+
+    def heal(h: int, amount: int) -> int:
+        return min(max_hp, h + max(1, amount)) if h < max_hp else h
+
+    weather = inp.weather
+    if weather == "sand" and not (
+        (inp.types & _SAND_IMMUNE_TYPES)
+        or ability in _SAND_IMMUNE_ABILITIES
+        or inp.item == "safetygoggles"
     ):
-        total += 1 / 16
+        hp = hurt(hp, max_hp // 16)
+    elif weather == "rain" and ability == "raindish":
+        hp = heal(hp, max_hp // 16)
+    elif weather == "rain" and ability == "dryskin":
+        hp = heal(hp, max_hp // 8)
+    elif weather == "snow" and ability == "icebody":
+        hp = heal(hp, max_hp // 16)
+    elif weather == "sun" and ability in ("dryskin", "solarpower"):
+        hp = hurt(hp, max_hp // 8, indirect=ability == "dryskin")  # Solar Power is direct
+    if hp <= 0:
+        return hp
+    if inp.grounded_terrain:
+        hp = heal(hp, max_hp // 16)
+    if inp.item == "leftovers" or (inp.item == "blacksludge" and "Poison" in inp.types):
+        hp = heal(hp, max_hp // 16)
+    if inp.leech_seed:
+        hp = hurt(hp, max_hp // 8)
+        if hp <= 0:
+            return hp
+    if inp.status in ("psn", "tox"):
+        if ability == "poisonheal":
+            hp = heal(hp, max_hp // 8)
+        else:
+            tick = max_hp // 8 if inp.status == "psn" else max(1, max_hp // 16) * inp.toxic_stage
+            hp = hurt(hp, tick)
+        if hp <= 0:
+            return hp
+    if inp.status == "brn":
+        tick = max(1, max_hp // 16)
+        if ability == "heatproof":
+            tick //= 2
+        hp = hurt(hp, tick)
+        if hp <= 0:
+            return hp
+    if inp.salt_cure:  # Champions: 1/8 for Water/Steel, 1/16 otherwise
+        hp = hurt(hp, max_hp // (8 if inp.types & {"Water", "Steel"} else 16))
+        if hp <= 0:
+            return hp
+    if inp.bound:
+        hp = hurt(hp, max_hp // 8)  # a Binding Band on the trapper would be 1/6: under-count
+    return hp
+
+
+def _foe_hp_hypotheses(state: PokemonState) -> list[tuple[int, int]]:
+    """Every (hp, max_hp) consistent with the shown percent: Champions shows
+    ``floor(100 * hp / max_hp)`` (minimum 1) and the foe's HP Stat Points are hidden (0-32)."""
+    nominal = state.max_hp()
+    fraction = state.hp_or_max() / nominal
+    percent = 100 if fraction >= 1 else max(1, int(fraction * 100 + 1e-9))
+    base = int(state.species_data()["baseStats"]["hp"])
+    out: list[tuple[int, int]] = []
+    for max_hp in range(base + 75, base + 75 + 33):
+        if percent >= 100:
+            out.append((max_hp, max_hp))
+            continue
+        low = 1 if percent == 1 else -(-percent * max_hp // 100)
+        high = -(-(percent + 1) * max_hp // 100) - 1
+        out.extend((hp, max_hp) for hp in range(max(1, low), max(1, high) + 1))
+    return out
+
+
+def _residual_kos(state: PokemonState, mon, ctx: _Context) -> bool:
+    """True only if the foe faints in the end-of-turn residual for EVERY HP consistent with
+    its shown percent, every ability it might have, and weather that may or may not still
+    be running (a weather on its last turn ends before it ticks)."""
+    types = frozenset(state.species_data().get("types") or [])
+    abilities = {state.ability}
+    if not getattr(mon, "ability", None):
+        abilities |= {to_id(a) for a in (state.species_data().get("abilities") or {}).values()}
     effects = getattr(mon, "effects", None) or {}
-    if Effect.LEECH_SEED in effects:
-        total += 1 / 8
-    if Effect.SALT_CURE in effects:
-        total += 1 / 4 if types & {"Water", "Steel"} else 1 / 8
-    if state.item in _END_OF_TURN_HEAL_ITEMS:
-        total -= 1 / 16
-    return max(0.0, total)
+    bound = any(
+        getattr(Effect, name, None) in effects for name in _BINDING_EFFECT_NAMES
+    )
+    suppressors = {
+        to_id(s.ability)
+        for s in list(ctx.our_states) + list(ctx.opp_states)
+        if s is not None and s.ability
+    }
+    weather = ctx.weather
+    if weather is not None and suppressors & _WEATHER_SUPPRESSORS:
+        weather = None
+    weather_options: list[str | None] = [weather]
+    if weather is not None:
+        left = None
+        try:
+            left = remaining_turns(ctx.battle, "weather", _WEATHER_EFFECT_ID.get(weather, weather))
+        except Exception:
+            left = None
+        if left is None or left <= 1:
+            weather_options.append(None)  # the weather may end before it ticks
+    stage = min(15, max(1, int(getattr(mon, "status_counter", 0) or 0)))
+    hypotheses = _foe_hp_hypotheses(state)
+    for ability in abilities:
+        grounded = not (
+            (state.item != "ironball" and ("Flying" in types or ability in ("levitate", "eelevate")))
+            or (state.item == "airballoon" and not state.item_lost)
+        ) or state.item == "ironball"
+        for wx in weather_options:
+            inp = ResidualInputs(
+                status=state.status,
+                toxic_stage=stage,
+                types=types,
+                ability=ability,
+                item=None if state.item_lost else state.item,
+                weather=wx,
+                grounded_terrain=ctx.terrain == "grassy" and grounded,
+                leech_seed=Effect.LEECH_SEED in effects,
+                salt_cure=Effect.SALT_CURE in effects,
+                bound=bound,
+            )
+            if any(residual_hp(hp, max_hp, inp) > 0 for hp, max_hp in hypotheses):
+                return False
+    return True
 
 
 def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig) -> bool:
@@ -668,8 +803,7 @@ def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig
         state = ctx.opp_states[opp_slot]
         if state is None:
             return False
-        hp_fraction = state.hp_or_max() / state.max_hp()
-        if _residual_fraction(state, ctx.opp_pokemon[opp_slot], ctx) < hp_fraction:
+        if not _residual_kos(state, ctx.opp_pokemon[opp_slot], ctx):
             return False
     return True
 
