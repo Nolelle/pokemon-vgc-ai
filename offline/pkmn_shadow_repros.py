@@ -175,6 +175,45 @@ CASES = [
         ),
     ),
     Case(
+        "natural_cure_reveal_is_ignored",
+        "`-curestatus|X|slp|[from] ability: Natural Cure` names the ability to both players; the "
+        "client's `-curestatus` handler never reads `[from]`.",
+        [
+            "|-status|p2a: Typhlosion|slp",
+            "|switch|p2a: Lucario|Lucario, L50, M|100/100",
+            "|-curestatus|p2a: Typhlosion|slp|[from] ability: Natural Cure",
+        ],
+        lambda s: (
+            mon(s, "p2", "Typhlosion")[0]["ability"] == "naturalcure",
+            mon(s, "p2", "Typhlosion")[0]["ability"],
+        ),
+    ),
+    Case(
+        "yawn_dropped_when_any_status_lands",
+        "Showdown keeps the (inert) `yawn` volatile until its timer ends even if the target "
+        "meanwhile got another status; the client removes it in its `-status` handler.",
+        [
+            "|move|p1a: Rillaboom|Yawn|p2a: Typhlosion",
+            "|-start|p2a: Typhlosion|move: Yawn",
+            "|move|p1b: Gourgeist|Will-O-Wisp|p2a: Typhlosion",
+            "|-status|p2a: Typhlosion|brn",
+        ],
+        lambda s: (
+            "yawn" in mon(s, "p2", "Typhlosion")[0]["volatiles"],
+            sorted(mon(s, "p2", "Typhlosion")[0]["volatiles"]),
+        ),
+    ),
+    Case(
+        "toxic_counter_is_not_capped",
+        "Showdown caps the toxic stage at 15 (damage stops growing); the client's counter "
+        "increments on every upkeep without a cap.",
+        ["|-status|p2a: Typhlosion|tox"] + ["|upkeep"] * 20,
+        lambda s: (
+            mon(s, "p2", "Typhlosion")[0]["toxicTurns"] <= 15,
+            mon(s, "p2", "Typhlosion")[0]["toxicTurns"],
+        ),
+    ),
+    Case(
         "anger_point_ability_reveal_is_ignored",
         "`-setboost|X|atk|6|[from] ability: Anger Point` reveals the ability to both players; "
         "the client's `-setboost` handler never reads `[from]`.",
