@@ -764,3 +764,53 @@ def test_instructed_protect_then_own_move_keeps_the_protect_chain() -> None:
         "|turn|3",
     ]
     assert foe(play(later), "Alcremie").protect_counter == 0
+
+
+def test_feint_then_dancer_copy_leaves_no_protect_chain() -> None:
+    # Feint deletes the stall volatile; the later Dancer copy (not a chosen move) must not put
+    # the old counter back.
+    lines = LEADS + [
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|Protect",
+        "|move|p1a: Heracross|Feint|p2a: Alcremie",
+        "|-activate|p2a: Alcremie|move: Feint",
+        "|move|p1b: Vivillon|Quiver Dance|p1b: Vivillon",
+        "|move|p2a: Alcremie|Quiver Dance|p2a: Alcremie|[from] ability: Dancer",
+        "|turn|2",
+    ]
+    assert foe(play(lines), "Alcremie").protect_counter == 0
+
+
+def test_protect_chain_kept_only_for_an_immediate_instruct_marker() -> None:
+    plain = LEADS + [
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|Protect",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|turn|2",
+    ]
+    assert foe(play(plain), "Alcremie").protect_counter == 0
+    # Instruct marker on a different Pokemon, or separated from the Protect by another line.
+    wrong = LEADS + [
+        "|-singleturn|p2b: Torkoal|move: Instruct|[of] p1b: Vivillon",
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|turn|2",
+    ]
+    assert foe(play(wrong), "Alcremie").protect_counter == 0
+    stale = LEADS + [
+        "|-singleturn|p2a: Alcremie|move: Instruct|[of] p1b: Vivillon",
+        "|move|p2b: Torkoal|Protect|p2b: Torkoal",
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|turn|2",
+    ]
+    assert foe(play(stale), "Alcremie").protect_counter == 0
+    # Feint after an instructed Protect clears the chain too.
+    broken = LEADS + [
+        "|-singleturn|p2a: Alcremie|move: Instruct|[of] p1b: Vivillon",
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-activate|p2a: Alcremie|move: Feint",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|turn|2",
+    ]
+    assert foe(play(broken), "Alcremie").protect_counter == 0

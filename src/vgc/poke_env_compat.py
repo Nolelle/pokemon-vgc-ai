@@ -369,12 +369,42 @@ def _is_sleeping(mon: Pokemon) -> bool:
     return mon._status is not None and mon._status.name == "SLP"
 
 
+def _track_protect_chain(battle: AbstractBattle, split: list[str]) -> None:
+    """Bookkeeping for `_protect_chain_hook`: remember an `Instruct` marker only until the very
+    next line, and forget a recorded Protect chain when Showdown deletes the stall volatile
+    (Feint / `[broken]` protection breaking) or the holder leaves the field."""
+    if not fix_enabled("instruct_protect_chain"):
+        return
+    state = vars(battle)
+    tag = split[1]
+    pending = state.pop("_vgc_instruct_pending", None)
+    if tag == "-singleturn" and len(split) > 3 and split[3] == "move: Instruct":
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            battle._vgc_instruct_pending = (getattr(battle, "turn", None), id(mon))  # type: ignore[attr-defined]
+    elif tag == "move" and pending is not None:
+        battle._vgc_instruct_consumed = pending  # type: ignore[attr-defined]
+    record = state.get("_vgc_protect_turn")
+    if not record or len(split) < 4:
+        return
+    if tag == "-activate" and (split[3] == "move: Feint" or "[broken]" in split[4:]):
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            record.pop(id(mon), None)
+            mon._protect_counter = 0
+    elif tag in ("switch", "drag"):
+        mon = _find_mon(battle, split[2])
+        if mon is not None:
+            record.pop(id(mon), None)
+
+
 def _prepare_message(battle: AbstractBattle, split: list[str]) -> Any:
     """Capture what a repair needs from BEFORE poke-env handles `split`; return a closure to
     run after it, or None. One small handler per protocol tag."""
     if len(split) < 2:
         return None
     tag = split[1]
+    _track_protect_chain(battle, split)
     if tag == "upkeep":
         # Everything switched in from here until `|turn|` arrives after the residual phase.
         battle._vgc_after_upkeep = True  # type: ignore[attr-defined]
@@ -508,10 +538,16 @@ def _protect_chain_hook(battle: AbstractBattle, mon: Pokemon, split: list[str]) 
         return None
     record = vars(battle).setdefault("_vgc_protect_turn", {})
     turn = getattr(battle, "turn", None)
+    consumed = vars(battle).pop("_vgc_instruct_consumed", None)
     if _to_id(split[3]) in _PROTECT_FAMILY:
+        # Only the exact Instruct pattern keeps the chain: the same Pokemon's untagged Protect
+        # directly after its `|-singleturn|X|move: Instruct` line.
+        instructed = (
+            consumed == (turn, id(mon)) and not any(p.startswith("[from]") for p in split[4:])
+        )
 
         def remember() -> None:
-            if mon._protect_counter > 0:
+            if instructed and mon._protect_counter > 0:
                 record[id(mon)] = (turn, mon._protect_counter)
             else:
                 record.pop(id(mon), None)
