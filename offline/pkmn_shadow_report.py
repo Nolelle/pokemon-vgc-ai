@@ -57,6 +57,9 @@ TRIAGE_RULES: list[Rule] = [
      r"volatile/missing/yawn", lambda sig, fl: True),
     ("B11", "b", "Psych Up does not clear Dragon Cheer (the client's copied-volatile list is older)",
      r"volatile/stale/dragoncheer", lambda sig, fl: True),
+    ("B13", "b", "state implied by the move line but not modelled: Minimize, Lock-On/Mind Reader, "
+     "Fairy Lock (-fieldactivate)", r"volatile/missing/(lockon|minimize)|field/missing/fairylock",
+     lambda sig, fl: True),
     ("C1", "c", "`trapped` volatile ends silently when the trapper leaves", r"volatile/stale/trapped",
      lambda sig, fl: True),
     ("D1", "d", "move revealed through a cant-line / Focus Punch / Forewarn / own post-Transform "
@@ -230,8 +233,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 # ---------------------------------------------------------------------------------------
@@ -254,13 +255,31 @@ def _bare(group: str) -> str:
     return re.sub(r"^\[[a-z0-9_]+\] ", "", group)
 
 
-def _episodes(result: dict[str, Any], reader: str) -> Counter:
+def _episodes(result: dict[str, Any], reader: str, *, skip_illusion: bool = False) -> Counter:
+    """Episodes per bare group. With `skip_illusion`, pkmn's unexplained episodes in battles with
+    an Illusion Pokemon are left out (the comparator's disguise model is poke-env-shaped, so
+    those cannot be attributed to the client) and exempt groups are left out too."""
     r = arm(result, reader)
     out: Counter = Counter()
-    if r:
-        for g, n in r["episodes"].items():
+    if not r:
+        return out
+    for g, n in r["episodes"].items():
+        if not skip_illusion:
             out[_bare(g)] += n
+        elif r["classification"][g] == "unexplained":
+            sigs = r.get("ep_sigs", {}).get(g)
+            if sigs is None:
+                out[_bare(g)] += n
+            else:
+                out[_bare(g)] += sum(c for k, c in sigs.items() if "I" not in k.rpartition("#")[2])
     return out
+
+
+UNTRACKED_FIELDS = ("protect_counter", "preparing")
+ILLUSION_FIXES = (
+    "illusion_break_state", "illusion_restore_disguise", "illusion_slot_from_request",
+    "own_slot_names_the_mon", "clock_setter_by_slot",
+)  # fmt: skip
 
 
 def fixes_table(directory: Path) -> list[dict[str, Any]]:
@@ -274,15 +293,17 @@ def fixes_table(directory: Path) -> list[dict[str, Any]]:
             continue
         res = load(path)
         po = _episodes(res, "pokeenv")
-        pk = _episodes(res, "pkmn")
+        pk = _episodes(res, "pkmn", skip_illusion=True)
         delta = {g: n - base_po.get(g, 0) for g, n in po.items() if n - base_po.get(g, 0) > 0}
         footprint = sum(delta.values())
         pk_same = sum(min(pk.get(g, 0), n) for g, n in delta.items())
-        pk_family = sum(
-            n for g, n in pk.items() if "/".join(g.split("/")[:2]) in {"/".join(d.split("/")[:2]) for d in delta}
-        )
+        untracked = sum(n for g, n in delta.items() if g.split("/")[0] in UNTRACKED_FIELDS)
         if footprint < MIN_FOOTPRINT:
             verdict = "not exercised"
+        elif path.stem in ILLUSION_FIXES:
+            verdict = "undetermined (Illusion)"
+        elif untracked >= 0.5 * footprint:
+            verdict = "n/a: pkmn does not track it"
         elif pk_same <= 0.10 * footprint:
             verdict = "pkmn avoids"
         elif pk_same >= 0.30 * footprint:
@@ -292,8 +313,7 @@ def fixes_table(directory: Path) -> list[dict[str, Any]]:
         rows.append(
             {
                 "fix": path.stem, "footprint": footprint, "pkmn_same_groups": pk_same,
-                "pkmn_family": pk_family, "verdict": verdict,
-                "top": sorted(delta.items(), key=lambda kv: -kv[1])[:3],
+                "verdict": verdict, "top": sorted(delta.items(), key=lambda kv: -kv[1])[:3],
             }
         )  # fmt: skip
     return rows
@@ -309,3 +329,7 @@ def print_fixes(directory: Path) -> None:
               f"pkmn_same={r['pkmn_same_groups']:4d}  {top}")
     counts = Counter(r["verdict"] for r in rows)
     print("  totals:", dict(counts))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
