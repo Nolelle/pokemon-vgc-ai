@@ -221,7 +221,7 @@ def test_knob_and_opponent_flag_control_score_joint_orders(monkeypatch) -> None:
 
 
 def _frail(status: str | None, frac: float):
-    state = _klefki(status=status)
+    state = _klefki(status=status, item="lifeorb")  # a KNOWN, non-healing item
     state.current_hp = max(1, int(state.max_hp() * frac))
     return state
 

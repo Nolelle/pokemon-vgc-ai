@@ -619,11 +619,12 @@ def _partner_removes_threat(
 _SAND_IMMUNE_TYPES = frozenset({"Rock", "Ground", "Steel"})
 _SAND_IMMUNE_ABILITIES = frozenset({"sandveil", "sandrush", "sandforce", "overcoat"})
 _WEATHER_SUPPRESSORS = frozenset({"cloudnine", "airlock"})
-_BINDING_EFFECT_NAMES = (
-    "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION", "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP",
-    "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
-)  # fmt: skip
-_WEATHER_EFFECT_ID = {"sand": "sandstorm", "rain": "raindance", "snow": "snowscape", "sun": "sunnyday"}
+_WEATHER_EFFECT_ID = {
+    "sand": "sandstorm",
+    "rain": "raindance",
+    "snow": "snowscape",
+    "sun": "sunnyday",
+}
 
 
 @dataclass(frozen=True)
@@ -637,7 +638,7 @@ class ResidualInputs:
     item: str | None = None
     weather: str | None = None  # the weather whose Field Residual still fires this turn
     grounded_terrain: bool = False  # Grassy Terrain is up and the holder is grounded
-    leech_seed: bool = False
+    leech_seed: bool = False  # not used by the exception (blocked as unmodelled); kept for tests
     salt_cure: bool = False
     bound: bool = False
 
@@ -714,11 +715,41 @@ def residual_hp(hp: int, max_hp: int, inp: ResidualInputs) -> int:
     return hp
 
 
-def _foe_hp_hypotheses(state: PokemonState) -> list[tuple[int, int]]:
-    """Every (hp, max_hp) consistent with the shown percent: Champions shows
-    ``floor(100 * hp / max_hp)`` (minimum 1) and the foe's HP Stat Points are hidden (0-32)."""
-    nominal = state.max_hp()
-    fraction = state.hp_or_max() / nominal
+# --- Residual-KO whitelist ------------------------------------------------------------------
+# A FALSE "this foe faints at end of turn" keeps a repeat Protect (a 1/3 gamble), so the
+# exception is conservative BY CONSTRUCTION. It fires only when every residual-relevant thing
+# on the foe and the field is one `residual_hp` models exactly:
+#   sand/snow chip + Rain Dish / Dry Skin / Ice Body / Solar Power / sand-immune abilities,
+#   Grassy Terrain heal, Leftovers / Black Sludge, poison / Toxic / Poison Heal,
+#   burn / Heatproof, Salt Cure, Magic Guard.
+# Anything else that can heal, cure, stop or delay the damage returns "no KO" (the repeat rule
+# applies normally). Those are listed here, once; reviews kept finding more:
+_RESIDUAL_UNMODELLED_EFFECTS = (
+    "AQUA_RING", "INGRAIN", "LEECH_SEED", "BIND", "CLAMP", "FIRE_SPIN", "INFESTATION",
+    "MAGMA_STORM", "SAND_TOMB", "SNAP_TRAP", "THUNDER_CAGE", "WHIRLPOOL", "WRAP",
+    "PERISH0", "PERISH1", "PERISH2", "PERISH3", "FUTURE_SIGHT", "CURSE", "NIGHTMARE",
+    "HEAL_BLOCK", "SYRUP_BOMB",
+)  # fmt: skip
+# Abilities that cure the status or heal at end of turn in ways the simulation does not run
+# (Hydration cures poison in rain BEFORE the poison tick; Shed Skin / Healer cure by chance).
+_RESIDUAL_UNMODELLED_ABILITIES = frozenset(
+    {"hydration", "shedskin", "healer", "cheekpouch", "harvest", "naturalcure", "pickup"}
+)
+# Moves whose healing lands in the residual phase and leaves no visible trace until it does.
+_RESIDUAL_UNMODELLED_MOVES = frozenset({"wish", "healingwish", "lunardance", "aquaring", "ingrain"})
+_UNKNOWN_ITEMS = (None, "", "unknown_item")
+
+
+def _foe_hp_hypotheses(
+    mon, state: PokemonState, spreads: Sequence[int] | None = None
+) -> list[tuple[int, int]]:
+    """Every (hp, max_hp) consistent with the SHOWN percent. Champions shows
+    ``floor(100 * hp / max_hp)`` (minimum 1; 100 only at full HP) and the foe's HP Stat Points
+    are hidden (0-32). The percent is read straight off the Pokemon (never round-tripped
+    through an estimated absolute HP, which can land on a different percent)."""
+    fraction = getattr(mon, "current_hp_fraction", None)
+    if not isinstance(fraction, (int, float)):
+        fraction = state.hp_or_max() / state.max_hp()
     percent = 100 if fraction >= 1 else max(1, int(fraction * 100 + 1e-9))
     base = int(state.species_data()["baseStats"]["hp"])
     out: list[tuple[int, int]] = []
@@ -732,18 +763,48 @@ def _foe_hp_hypotheses(state: PokemonState) -> list[tuple[int, int]]:
     return out
 
 
-def _residual_kos(state: PokemonState, mon, ctx: _Context) -> bool:
-    """True only if the foe faints in the end-of-turn residual for EVERY HP consistent with
-    its shown percent, every ability it might have, and weather that may or may not still
-    be running (a weather on its last turn ends before it ticks)."""
-    types = frozenset(state.species_data().get("types") or [])
+def _possible_abilities(state: PokemonState, mon) -> set[str]:
     abilities = {state.ability}
     if not getattr(mon, "ability", None):
         abilities |= {to_id(a) for a in (state.species_data().get("abilities") or {}).values()}
+    return abilities
+
+
+def _residual_blocked(state: PokemonState, mon, ctx: _Context, config) -> bool:
+    """True when something residual-relevant that `residual_hp` cannot model exactly is present
+    or possible on this foe (or its partner's Healer), so no KO may be predicted."""
     effects = getattr(mon, "effects", None) or {}
-    bound = any(
-        getattr(Effect, name, None) in effects for name in _BINDING_EFFECT_NAMES
+    for name in _RESIDUAL_UNMODELLED_EFFECTS:
+        effect = getattr(Effect, name, None)
+        if effect is not None and effect in effects:
+            return True
+    if any(a in _RESIDUAL_UNMODELLED_ABILITIES for a in _possible_abilities(state, mon)):
+        return True
+    for other in ctx.opp_states:
+        if other is not None and other is not state and other.ability == "healer":
+            return True
+    moves = (
+        set(opponent_move_ids(mon, priors=ctx.priors, config=config))
+        if hasattr(mon, "moves")
+        else set()
     )
+    if moves & _RESIDUAL_UNMODELLED_MOVES:
+        return True
+    return False
+
+
+def _residual_kos(
+    state: PokemonState, mon, ctx: _Context, config: PolicyConfig | None = None
+) -> bool:
+    """True only if the foe faints in the end-of-turn residual for EVERY HP/max-HP consistent
+    with its shown percent, every ability it might have, every item it might hold, and weather
+    that may or may not still be running (a weather on its last turn ends before it ticks).
+    Returns False (no KO) whenever anything outside the whitelist above is present/possible."""
+    if _residual_blocked(state, mon, ctx, config):
+        return False
+    types = frozenset(state.species_data().get("types") or [])
+    abilities = _possible_abilities(state, mon)
+    effects = getattr(mon, "effects", None) or {}
     suppressors = {
         to_id(s.ability)
         for s in list(ctx.our_states) + list(ctx.opp_states)
@@ -762,27 +823,50 @@ def _residual_kos(state: PokemonState, mon, ctx: _Context) -> bool:
         if left is None or left <= 1:
             weather_options.append(None)  # the weather may end before it ticks
     stage = min(15, max(1, int(getattr(mon, "status_counter", 0) or 0)))
-    hypotheses = _foe_hp_hypotheses(state)
+    hypotheses = _foe_hp_hypotheses(mon, state)
+    shown_item = getattr(mon, "item", None)
+    if shown_item in _UNKNOWN_ITEMS:
+        shown_item = state.item
+    if state.item_lost:
+        items: list[str | None] = [None]
+    elif shown_item in _UNKNOWN_ITEMS:
+        # Hidden item: it could be a Leftovers / Black Sludge heal.
+        items = [None, "leftovers"] + (["blacksludge"] if "Poison" in types else [])
+    else:
+        items = [to_id(shown_item)]
+    if any(i is not None and (i.endswith("berry")) for i in items) or (
+        not state.item_lost and shown_item in _UNKNOWN_ITEMS
+    ):
+        # A berry (Sitrus/Oran/...) eats at or below half HP and could heal mid-sequence; one
+        # held while at or below half would already have been eaten, so only foes above half
+        # (for some consistent HP) are exposed. Be conservative: any such hypothesis = no KO.
+        if any(hp * 2 > max_hp for hp, max_hp in hypotheses):
+            return False
     for ability in abilities:
-        grounded = not (
-            (state.item != "ironball" and ("Flying" in types or ability in ("levitate", "eelevate")))
-            or (state.item == "airballoon" and not state.item_lost)
-        ) or state.item == "ironball"
-        for wx in weather_options:
-            inp = ResidualInputs(
-                status=state.status,
-                toxic_stage=stage,
-                types=types,
-                ability=ability,
-                item=None if state.item_lost else state.item,
-                weather=wx,
-                grounded_terrain=ctx.terrain == "grassy" and grounded,
-                leech_seed=Effect.LEECH_SEED in effects,
-                salt_cure=Effect.SALT_CURE in effects,
-                bound=bound,
+        grounded = (
+            not (
+                (
+                    state.item != "ironball"
+                    and ("Flying" in types or ability in ("levitate", "eelevate"))
+                )
+                or (state.item == "airballoon" and not state.item_lost)
             )
-            if any(residual_hp(hp, max_hp, inp) > 0 for hp, max_hp in hypotheses):
-                return False
+            or state.item == "ironball"
+        )
+        for wx in weather_options:
+            for item in items:
+                inp = ResidualInputs(
+                    status=state.status,
+                    toxic_stage=stage,
+                    types=types,
+                    ability=ability,
+                    item=item,
+                    weather=wx,
+                    grounded_terrain=ctx.terrain == "grassy" and grounded,
+                    salt_cure=Effect.SALT_CURE in effects,
+                )
+                if any(residual_hp(hp, max_hp, inp) > 0 for hp, max_hp in hypotheses):
+                    return False
     return True
 
 
@@ -803,7 +887,7 @@ def _residual_kos_threats(protect_slot: int, ctx: _Context, config: PolicyConfig
         state = ctx.opp_states[opp_slot]
         if state is None:
             return False
-        if not _residual_kos(state, ctx.opp_pokemon[opp_slot], ctx):
+        if not _residual_kos(state, ctx.opp_pokemon[opp_slot], ctx, config):
             return False
     return True
 
