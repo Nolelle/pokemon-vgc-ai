@@ -280,6 +280,16 @@ class ProtocolKnowledge:
             "copycat", "instruct", "sleeptalk"
         ) and to_id(split[3]) in _PROTECT_FAMILY:
             self.events_for(split[2]).add("called_protect")
+        # Real Instruct protocol: `|move|A|Instruct|B`, `|-singleturn|B|move: Instruct`, then
+        # `|move|B|Protect|B` with NO `[from]` tag. The singleturn line arms the marker for B's
+        # very next move; an untagged Protect-family move while armed was Instruct-called.
+        if tag == "-singleturn" and len(split) > 3 and split[3] == "move: Instruct":
+            self.events_for(split[2]).add("instructed")
+        elif tag == "move" and len(split) > 3:
+            armed = "instructed" in self.events_for(split[2])
+            self.events_for(split[2]).discard("instructed")
+            if armed and from_kind is None and to_id(split[3]) in _PROTECT_FAMILY:
+                self.events_for(split[2]).add("called_protect")
         if tag == "-activate" and len(split) > 3 and split[3] == "ability: Cud Chew":
             mon = self._mon(split[2])
             if mon:

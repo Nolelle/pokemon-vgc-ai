@@ -37,6 +37,7 @@ ALL_FIXES = (
     "skipped_charge",  # Power Herb / Solar Beam in sun left the foe "preparing" forever
     "move_changed_ability",  # Worry Seed / Simple Beam / Entrainment made a permanent ability
     "ability_reveal",  # [from] ability: lines revealed nothing about the foe's ability
+    "instruct_protect_chain",  # Instruct-ed Protect then own move zeroed the Protect chain
     "confusion_resets_protect",  # a confusion self-hit left the Protect counter alone
     "unbrought_not_active",  # own preview-only Pokemon stayed `active`
     "baton_pass",  # Baton Pass dropped the passed boosts and volatiles
@@ -491,7 +492,43 @@ _PROTECT_FAMILY = frozenset(
 
 
 def _after_move(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
+    return _chain(
+        _after_move_reflected(battle, mon, split), _protect_chain_hook(battle, mon, split)
+    )
 
+
+def _protect_chain_hook(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
+    """Showdown's `stall` volatile (the Protect chain) lasts two residuals and is NOT removed
+    by the holder's next move: an Instruct-ed Protect (`|move|A|Instruct|B`, `|-singleturn|B|
+    move: Instruct`, `|move|B|Protect|B` -- no `[from]` tag) is followed by B's own queued move
+    the same turn (Rain Dance, ...) and the chain survives into next turn (counter 1, not 0).
+    poke-env resets the counter on every non-Protect move, so remember a Protect made this turn
+    and put its counter back when the same Pokemon's later same-turn move is not a Protect."""
+    if len(split) < 4 or not fix_enabled("instruct_protect_chain"):
+        return None
+    record = vars(battle).setdefault("_vgc_protect_turn", {})
+    turn = getattr(battle, "turn", None)
+    if _to_id(split[3]) in _PROTECT_FAMILY:
+
+        def remember() -> None:
+            if mon._protect_counter > 0:
+                record[id(mon)] = (turn, mon._protect_counter)
+            else:
+                record.pop(id(mon), None)
+
+        return remember
+    seen = record.get(id(mon))
+    if seen is None or seen[0] != turn:
+        return None
+    counter = seen[1]
+
+    def keep_chain() -> None:
+        mon._protect_counter = counter
+
+    return keep_chain
+
+
+def _after_move_reflected(battle: AbstractBattle, mon: Pokemon, split: list[str]) -> Any:
     """A move line whose `[from]` tag shows the Pokemon did not choose the move this turn
     (a reflected move, a Dancer copy) must not reset its Protect chain."""
     if not fix_enabled("confusion_resets_protect"):

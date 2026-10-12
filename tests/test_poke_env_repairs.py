@@ -737,3 +737,30 @@ def test_an_extender_revealed_by_knock_off_after_the_set_still_counts() -> None:
         observe_condition_line(battle, line.split("|"))
         battle.parse_message(line.split("|"))
     assert remaining_turns(battle, "side", "reflect", "p2") == 6
+
+
+def test_instructed_protect_then_own_move_keeps_the_protect_chain() -> None:
+    # Real shape (audit seed 20261009, battle 2110 turn 35): Instruct makes the foe Protect
+    # (no `[from]` tag), then its own queued Rain Dance. Showdown's stall volatile survives.
+    lines = LEADS + [
+        "|move|p1b: Vivillon|Instruct|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|move: Instruct|[of] p1b: Vivillon",
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|Protect",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|-weather|RainDance",
+        "|upkeep",
+        "|turn|2",
+    ]
+    assert foe(play(lines), "Alcremie").protect_counter == 1
+    with without("instruct_protect_chain"):
+        assert foe(play(lines), "Alcremie").protect_counter == 0
+    # A Protect on an earlier turn followed by an attack THIS turn still resets (stall expired).
+    later = LEADS + [
+        "|move|p2a: Alcremie|Protect|p2a: Alcremie",
+        "|-singleturn|p2a: Alcremie|Protect",
+        "|turn|2",
+        "|move|p2a: Alcremie|Rain Dance|p2a: Alcremie",
+        "|turn|3",
+    ]
+    assert foe(play(later), "Alcremie").protect_counter == 0
