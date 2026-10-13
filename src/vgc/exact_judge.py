@@ -54,13 +54,30 @@ Ranker = Callable[[Any, Any, str, PolicyConfig, "frozenset[str]", str], Mapping[
 # --- pure helpers -------------------------------------------------------------------------
 
 
+def _has_switch(entry: ScoredOrder) -> bool:
+    """True when any slot of the entry's order switches (vs a move or a pass)."""
+
+    for key in ("slot0", "slot1"):
+        slot = entry.breakdown.get(key)
+        if isinstance(slot, Mapping) and slot.get("kind") == "switch":
+            return True
+    order = entry.order
+    for single in (getattr(order, "first_order", None), getattr(order, "second_order", None)):
+        target = getattr(single, "order", None)
+        if target is not None and hasattr(target, "species") and not hasattr(target, "id"):
+            return True
+    return False
+
+
 def select_judged(
-    scored: Sequence[ScoredOrder], top_k: int, extra_myopic: int
+    scored: Sequence[ScoredOrder], top_k: int, extra_myopic: int, *, include_best_switch: bool = False
 ) -> list[ScoredOrder]:
     """The fast search's top-K searched entries, then its best-myopic skipped ones.
 
     ``scored`` is the fast search's output (best first; searched entries precede the
     unsearched tail).  The fast order is preserved so ties resolve towards the fast pick.
+    With ``include_best_switch`` the best-ranked switch-containing entry is also judged
+    when the top-K missed it, so the judge can reposition instead of only re-attacking.
     """
 
     searched = [e for e in scored if e.breakdown.get("searched", True) is not False]
@@ -69,6 +86,12 @@ def select_judged(
     if extra_myopic > 0:
         skipped.sort(key=lambda e: -float(e.breakdown.get("myopic_score", e.score)))
         judged += skipped[: int(extra_myopic)]
+    if include_best_switch:
+        for entry in scored:
+            if _has_switch(entry):
+                if all(entry is not j for j in judged):
+                    judged.append(entry)
+                break
     # LLM proposals (vgc.llm.proposer) are always judged, wherever the fast search
     # ranked them: the exact judge, not the fast search, decides whether they are better.
     for entry in scored:
@@ -339,7 +362,10 @@ class ExactJudge:
             report["status"] = "skipped_forced_switch"
             return scored
         judged = select_judged(
-            scored, config.exact_judge_top_k, config.exact_judge_extra_myopic
+            scored,
+            config.exact_judge_top_k,
+            config.exact_judge_extra_myopic,
+            include_best_switch=config.exact_judge_include_best_switch,
         )
         judged, lookahead = narrow_for_lookahead(judged, config)
         report["lookahead"] = lookahead

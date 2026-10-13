@@ -1391,6 +1391,13 @@ class PolicyConfig:
     # Also judge this many of the fast search's UNSEARCHED candidates, taken in myopic-rank
     # order (the ones the shortlist cut). 0 = judge only the fast search's own top-K.
     exact_judge_extra_myopic: int = 0
+    # Also judge the best switch-containing order even when the fast search ranks it
+    # below top-K. Diagnosis (2026-10-12, 146 ladder games + deep review of the Oct-10
+    # session): losses are dominated by lost positioning; in high-regret decisions the
+    # deep best switched far more often than the bot did (16 vs 6 of 77 at regret>10),
+    # while the judged set was only the fast top-K, so a good switch ranked 7th+ was
+    # invisible to the judge. False = judged set exactly as before.
+    exact_judge_include_best_switch: bool = False
     # Wall-clock cap on one judged decision. With an announced timer the cap is
     # min(this, the clock guard's remaining time for the decision - exact_judge_margin_s);
     # with no timer (offline/direct env) it is this value. A judge that runs out of time
