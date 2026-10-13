@@ -272,7 +272,16 @@ def _initial_hypotheses(
     else:
         from vgc.stats import default_opponent_nature, default_opponent_spread
 
-        entries = [(default_opponent_spread(species_id), default_opponent_nature(species_id), 1.0)]
+        try:
+            entries = [(default_opponent_spread(species_id), default_opponent_nature(species_id), 1.0)]
+        except KeyError:
+            # Species absent from the exported data (the unknown-species case):
+            # never crash belief building; use the fallback mode as the single
+            # legacy-style certain guess.
+            from vgc.sets import fallback_spread_hypotheses
+
+            sp, nature, _weight = fallback_spread_hypotheses(species_id)[0]
+            entries = [(dict(sp), nature, 1.0)]
     return _normalize_hypotheses(entries)
 
 

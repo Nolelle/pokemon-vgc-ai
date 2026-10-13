@@ -111,9 +111,25 @@ def test_damage_we_deal_narrows_their_defensive_spread() -> None:
             {"sp": {"hp": 0, "def": 0}, "nature": "adamant", "weight": 0.5},
         ]
     }
-    belief = build_opponent_beliefs(battle, memory, usage=usage, set_priors=_EMPTY_PRIORS)[0]
+    belief = build_opponent_beliefs(
+        battle, memory, PolicyConfig(use_defensive_damage_evidence=True),
+        usage=usage, set_priors=_EMPTY_PRIORS,
+    )[0]
     by_nature = {h.nature: h.probability for h in belief.hypotheses}
     assert by_nature["impish"] > by_nature["adamant"]
+
+
+def test_guesser_decision_knobs_parked_off_by_default_capture_intact() -> None:
+    # Parked after the pool150 A/B (51.2%, cluster-robust [0.492, 0.533],
+    # runs/eval/guesser_ab_20261016.json) missed the pre-declared bar.
+    config = PolicyConfig()
+    assert config.use_fallback_spread_hypotheses is False
+    assert config.use_defensive_damage_evidence is False
+    # Capture/logging machinery stays available under the same defaults.
+    records = build_capture_records(
+        _battle("fakemonx"), BattleMemory("room-1"), config, usage={}, set_priors=_EMPTY_PRIORS
+    )
+    assert len(records) == 1
 
 
 def test_report_card_scores_a_perfect_and_an_empty_guess() -> None:
