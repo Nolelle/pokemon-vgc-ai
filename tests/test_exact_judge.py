@@ -106,6 +106,24 @@ def test_on_plays_the_stubbed_exact_best_and_it_is_one_of_the_legal_candidates(
     assert record["exact_pick"] == describe_order(scored[2].order)
 
 
+def test_include_best_switch_adds_the_best_switch_order_outside_top_k() -> None:
+    scored = _scored(searched=8)
+    # Tag "f" (fast rank 6, outside a top-2 judged set) as the switch order.
+    scored[5].breakdown["slot0"] = {"kind": "switch"}
+    scored[6].breakdown["slot1"] = {"kind": "switch"}
+
+    plain = select_judged(scored, top_k=2, extra_myopic=0)
+    assert [e.order.message for e in plain] == [_order(t).message for t in "ab"]
+
+    widened = select_judged(scored, top_k=2, extra_myopic=0, include_best_switch=True)
+    assert [e.order.message for e in widened] == [_order(t).message for t in "abf"]
+
+    # Already inside top-K: nothing is added twice.
+    scored[1].breakdown["slot0"] = {"kind": "switch"}
+    inside = select_judged(scored, top_k=2, extra_myopic=0, include_best_switch=True)
+    assert [e.order.message for e in inside] == [_order(t).message for t in "ab"]
+
+
 def test_extra_myopic_widens_the_judged_set_and_the_margin_guards_the_fast_pick() -> None:
     scored = _scored(searched=4)
     judged = select_judged(scored, top_k=2, extra_myopic=2)
