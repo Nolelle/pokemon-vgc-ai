@@ -1032,13 +1032,17 @@ class PolicyConfig:
     capture_unknown_species: bool = False
     unknown_species_log_file: str = "unknown_species.jsonl"
     # No-history species: spread the guess over archetype spreads instead of
-    # one certain default (vgc.sets.fallback_spread_hypotheses). False is the
-    # legacy single-certain-default control for A/Bs.
-    use_fallback_spread_hypotheses: bool = True
+    # one certain default (vgc.sets.fallback_spread_hypotheses). Parked OFF:
+    # the bundled A/B (both guesser knobs on vs off, pool150, 2560 games,
+    # seed 20261016, runs/eval/guesser_ab_20261016.json) read 51.2% with
+    # cluster-robust [0.492, 0.533] -- the pre-declared bar (lower bound
+    # above 50%) was not met. True re-enables it for a future A/B.
+    use_fallback_spread_hypotheses: bool = False
     # Learn an opponent's defensive spread from damage WE deal to them
-    # (BattleMemory.defensive_damage_observations). False ignores that
-    # evidence, the legacy behaviour, for A/Bs.
-    use_defensive_damage_evidence: bool = True
+    # (BattleMemory.defensive_damage_observations). Parked OFF by the same
+    # A/B as above; False is also the legacy behaviour. True re-enables it
+    # for a future A/B.
+    use_defensive_damage_evidence: bool = False
     # Which Stat Point/nature usage file in data/usage/ the bot reads for hidden opponent
     # spreads (`vgc.sets.usage_spreads_for`). "spreads.json" is built from Smogon's
     # 2026-09 M-C chaos stats (1760 cutoff, 1.63M battles); "spreads_regmb.json" is the

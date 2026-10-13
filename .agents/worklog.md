@@ -395,3 +395,10 @@
 - Report card: `offline/guesser_report_card.py` grades beliefs against exact packed teams per-team (item/ability top1/top3/logloss/Brier, move recall, spread coverage). On mc_ladder_01+02 (12 sets): item top1 0.33, ability top1 0.25, spread-in-hypotheses 0.42 — small in-sample sample, baseline only.
 - Codex review: 8 findings (spread targets, defender state, per-team grading, preview appearances, merge recount, finish flush, config gates, limit renormalization) all fixed. Tests: 1540 passed; ruff clean.
 - Not done (follow-ups from plan): decision-level A/Bs for belief mixture/hypotheses, joint move/item/ability consistency widening, team-level conditional priors.
+
+## 2026-10-13 — Guesser A/B: bundled knobs parked OFF
+- Null test (pool150 manifest, 160 teams, 4 games/team, seed 20261015): 319/640 = 49.8% [0.457, 0.540] OK.
+- A/B both guesser knobs on vs off (fast search, 16 games/team, seed 20261016): 1312/2560 = 51.2%, cluster-robust [0.492, 0.533] -- pre-declared bar (lower bound > 50%) NOT met; no archetype Holm-flagged. Result: runs/eval/guesser_ab_20261016.json. Smallest certifiable edge was ~2.0 pts, so a true gain under ~2 pts remains possible but unproven.
+- Parked: PolicyConfig.use_fallback_spread_hypotheses / use_defensive_damage_evidence default False. Capture logging untouched (capture_unknown_species machinery intact).
+- Parking exposed a legacy crash: with the fallback off, a species absent from exported data raised KeyError in belief building. opponent_belief now falls back to the fallback mode as the single certain guess instead of crashing.
+- Tests: new default-parking test in tests/test_unknown_species.py; defensive-evidence test opts in explicitly. 1541 unit passed; ruff clean. Uncommitted on main.
