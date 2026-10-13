@@ -24,8 +24,6 @@ from vgc.sets import normalize_item, normalize_status, set_priors_for, usage_spr
 from vgc.stats import (
     STAT_IDS,
     calculate_stats,
-    default_opponent_nature,
-    default_opponent_spread,
 )
 
 MAX_SPREAD_HYPOTHESES = 3
@@ -251,7 +249,9 @@ def _normalize_hypotheses(
     ]
 
 
-def _initial_hypotheses(species_id: str, usage: dict[str, list[dict[str, Any]]]) -> list:
+def _initial_hypotheses(
+    species_id: str, usage: dict[str, list[dict[str, Any]]], *, honest_fallback: bool = True
+) -> list:
     rows = sorted(
         usage.get(species_id) or [],
         key=lambda entry: float(entry.get("weight", 0.0)),
@@ -262,10 +262,17 @@ def _initial_hypotheses(species_id: str, usage: dict[str, list[dict[str, Any]]])
             (dict(row.get("sp") or {}), str(row.get("nature") or "serious"), float(row.get("weight", 0.0)))
             for row in rows
         ]
-    else:
+    elif honest_fallback:
+        from vgc.sets import fallback_spread_hypotheses
+
         entries = [
-            (default_opponent_spread(species_id), default_opponent_nature(species_id), 1.0)
+            (dict(sp), nature, weight)
+            for sp, nature, weight in fallback_spread_hypotheses(species_id)
         ]
+    else:
+        from vgc.stats import default_opponent_nature, default_opponent_spread
+
+        entries = [(default_opponent_spread(species_id), default_opponent_nature(species_id), 1.0)]
     return _normalize_hypotheses(entries)
 
 
@@ -277,6 +284,7 @@ def _reweight(
     status: str | None,
     item: str | None,
     ability: str | None,
+    use_defensive_evidence: bool = True,
 ) -> tuple[SpreadHypothesis, ...]:
     weighted: list[tuple[dict[str, int], str, float]] = []
     speed_evidence = [
@@ -289,6 +297,11 @@ def _reweight(
         for observation in memory.damage_observations
         if observation.opponent_species == species_id
     ]
+    defensive_evidence = [
+        observation
+        for observation in getattr(memory, "defensive_damage_observations", [])
+        if observation.opponent_species == species_id
+    ] if use_defensive_evidence else []
     for hypothesis in hypotheses:
         evidence_weight = 1.0
         for observation in speed_evidence:
@@ -326,6 +339,44 @@ def _reweight(
             result = damage_range(
                 attacker,
                 observation.target_state,
+                observation.move_id,
+                FieldState(
+                    weather=observation.weather,
+                    terrain=observation.terrain,
+                    screens=observation.screens,
+                    is_doubles=True,
+                    num_targets=observation.num_targets,
+                ),
+            )
+            if not result.breakdown.get("move_supported", False):
+                continue
+            observed_percent = observation.damage_fraction * 100.0
+            matches = (
+                result.min_percent - _DAMAGE_TOLERANCE_PERCENT
+                <= observed_percent
+                <= result.max_percent + _DAMAGE_TOLERANCE_PERCENT
+            )
+            if not matches:
+                evidence_weight *= _EVIDENCE_MISMATCH_WEIGHT
+
+        for observation in defensive_evidence:
+            if observation.crit:
+                continue
+            defender = PokemonState(
+                species_id=species_id,
+                sp_spread=hypothesis.sp,
+                nature=hypothesis.nature,
+                boosts=dict(getattr(observation, "boosts", {}) or {}),
+                status=getattr(observation, "status", None) or status,
+                item=observation.item or item,
+                ability=observation.ability or ability,
+            )
+            hp_before = float(getattr(observation, "hp_fraction_before", 1.0) or 1.0)
+            if hp_before < 1.0:
+                defender.current_hp = round(defender.max_hp() * hp_before)
+            result = damage_range(
+                observation.attacker_state,
+                defender,
                 observation.move_id,
                 FieldState(
                     weather=observation.weather,
@@ -514,11 +565,14 @@ def build_opponent_beliefs(
         move_probabilities.update({move_id: 1.0 for move_id in revealed_moves})
         hypotheses = _reweight(
             species_id,
-            _initial_hypotheses(species_id, usage),
+            _initial_hypotheses(
+                species_id, usage, honest_fallback=config.use_fallback_spread_hypotheses
+            ),
             memory,
             status=status,
             item=known_item,
             ability=known_ability,
+            use_defensive_evidence=config.use_defensive_damage_evidence,
         )
         beliefs.append(
             PokemonBelief(

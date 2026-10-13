@@ -34,6 +34,26 @@ class SpeedObservation:
 
 
 @dataclass(frozen=True)
+class DefensiveDamageObservation:
+    """Damage WE dealt to an opponent: narrows that opponent's defensive spread."""
+
+    opponent_species: str
+    move_id: str
+    attacker_state: Any
+    damage_fraction: float
+    weather: str | None = None
+    terrain: str | None = None
+    screens: frozenset[str] = frozenset()
+    item: str | None = None
+    ability: str | None = None
+    num_targets: int = 1
+    crit: bool = False
+    boosts: dict[str, int] = field(default_factory=dict)
+    status: str | None = None
+    hp_fraction_before: float = 1.0
+
+
+@dataclass(frozen=True)
 class DamageObservation:
     """Direct move damage that can narrow an opponent's possible stat spread."""
 
@@ -83,6 +103,8 @@ class TurnMemory:
     opponent_ability: dict[str, str | None] = field(default_factory=dict)
     terrain: str | None = None
     our_screens: frozenset[str] = frozenset()
+    opponent_boosts: dict[str, dict[str, int]] = field(default_factory=dict)
+    opponent_screens: frozenset[str] = frozenset()
 
 
 def _revealed_base_ability(message: list[object]) -> str | None:
@@ -134,6 +156,7 @@ class BattleMemory:
     plan_changes: list[dict[str, object]] = field(default_factory=list)
     speed_observations: list[SpeedObservation] = field(default_factory=list)
     damage_observations: list[DamageObservation] = field(default_factory=list)
+    defensive_damage_observations: list[DefensiveDamageObservation] = field(default_factory=list)
     opponent_items: dict[str, str] = field(default_factory=dict)
     opponent_abilities: dict[str, str] = field(default_factory=dict)
     # Species currently transformed (Ditto): an ability shown meanwhile is the TARGET's.
@@ -170,6 +193,7 @@ class BattleMemory:
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
     _protocol_hp: dict[tuple[str, str], float] = field(default_factory=dict, repr=False)
     _damage_buffer: list[DamageObservation] = field(default_factory=list, repr=False)
+    _defensive_buffer: list[DefensiveDamageObservation] = field(default_factory=list, repr=False)
     _pending_crit_targets: set[tuple[str, str]] = field(default_factory=set, repr=False)
 
     @property
@@ -194,6 +218,7 @@ class BattleMemory:
             kind = str(message[1])
             if kind in {"turn", "upkeep"}:
                 self._finalize_damage_buffer()
+                self._finalize_defensive_buffer()
                 if kind == "turn" and len(message) > 2:
                     try:
                         self.current_turn = int(message[2])
@@ -204,6 +229,7 @@ class BattleMemory:
                 continue
             if kind == "move" and len(message) > 3:
                 self._finalize_damage_buffer()
+                self._finalize_defensive_buffer()
                 actor_role = _side(message[2])
                 if actor_role:
                     self._acted.add((actor_role, to_id(_display_name(message[2]))))
@@ -289,7 +315,7 @@ class BattleMemory:
                 continue
             if kind == "-crit" and len(message) > 2:
                 target_role = _side(message[2])
-                if target_role == self.our_role:
+                if target_role in {self.our_role, self.opponent_role}:
                     self._pending_crit_targets.add(
                         (target_role or "", self._species_for_ident(message[2]))
                     )
@@ -467,12 +493,43 @@ class BattleMemory:
             )
         self._damage_buffer.clear()
 
+    def _finalize_defensive_buffer(self) -> None:
+        if not self._defensive_buffer:
+            return
+        move_id = self._defensive_buffer[0].move_id
+        num_targets = self._spread_target_count(move_id, len(self._defensive_buffer))
+        for observation in self._defensive_buffer:
+            self.defensive_damage_observations.append(
+                DefensiveDamageObservation(
+                    opponent_species=observation.opponent_species,
+                    move_id=observation.move_id,
+                    attacker_state=observation.attacker_state,
+                    damage_fraction=observation.damage_fraction,
+                    weather=observation.weather,
+                    terrain=observation.terrain,
+                    screens=observation.screens,
+                    item=observation.item,
+                    ability=observation.ability,
+                    num_targets=num_targets,
+                    crit=observation.crit,
+                    boosts=observation.boosts,
+                    status=observation.status,
+                    hp_fraction_before=observation.hp_fraction_before,
+                )
+            )
+        self._defensive_buffer.clear()
+
     def _observe_damage(self, message: list[object]) -> None:
         if self._last_move is None or any("[from]" in str(part) for part in message[4:]):
             return
         target_role = _side(message[2])
         attacker_role, attacker_species, move_id = self._last_move
-        if attacker_role != self.opponent_role or target_role != self.our_role or not self.turns:
+        if not self.turns:
+            return
+        if attacker_role == self.our_role and target_role == self.opponent_role:
+            self._observe_defensive_damage(message, attacker_species, move_id, target_role)
+            return
+        if attacker_role != self.opponent_role or target_role != self.our_role:
             return
         target_species = self._species_for_ident(message[2])
         new_fraction = self._hp_fraction(message[3])
@@ -507,10 +564,49 @@ class BattleMemory:
             )
         )
 
+    def _observe_defensive_damage(
+        self, message: list[object], attacker_species: str, move_id: str, target_role: str | None
+    ) -> None:
+        target_species = self._species_for_ident(message[2])
+        new_fraction = self._hp_fraction(message[3])
+        if new_fraction is None:
+            return
+        key = (target_role or "", target_species)
+        old_fraction = self._protocol_hp.get(key)
+        if old_fraction is None:
+            prior_percent = self.turns[-1].opponent_hp.get(target_species)
+            old_fraction = (prior_percent if prior_percent is not None else 100.0) / 100.0
+        self._protocol_hp[key] = new_fraction
+        lost = old_fraction - new_fraction
+        attacker_state = self.turns[-1].our_states.get(attacker_species)
+        if lost <= 0.0 or attacker_state is None:
+            return
+        snapshot = self.turns[-1]
+        crit = key in self._pending_crit_targets
+        self._pending_crit_targets.discard(key)
+        self._defensive_buffer.append(
+            DefensiveDamageObservation(
+                opponent_species=target_species,
+                move_id=move_id,
+                attacker_state=attacker_state,
+                damage_fraction=lost,
+                weather=snapshot.weather[0] if snapshot.weather else None,
+                terrain=snapshot.terrain,
+                screens=snapshot.opponent_screens,
+                item=snapshot.opponent_item.get(target_species),
+                ability=snapshot.opponent_ability.get(target_species),
+                crit=crit,
+                boosts=dict(snapshot.opponent_boosts.get(target_species) or {}),
+                status=snapshot.opponent_status.get(target_species),
+                hp_fraction_before=old_fraction,
+            )
+        )
+
     def observe_battle(self, battle) -> None:
         """Save one deduplicated live board snapshot for the current decision turn."""
 
         self._finalize_damage_buffer()
+        self._finalize_defensive_buffer()
         self.our_role = self.our_role or getattr(battle, "player_role", None)
         turn = int(getattr(battle, "turn", 0) or self.current_turn or 0)
         self.current_turn = max(self.current_turn, turn)
@@ -541,6 +637,8 @@ class BattleMemory:
         opponent_status: dict[str, str | None] = {}
         opponent_item: dict[str, str | None] = {}
         opponent_ability: dict[str, str | None] = {}
+        opponent_boosts: dict[str, dict[str, int]] = {}
+        opponent_screens: frozenset[str] = frozenset()
         weather_id: str | None = None
         terrain_id: str | None = None
         trick_room = False
@@ -569,6 +667,7 @@ class BattleMemory:
                 getattr(battle, "opponent_side_conditions", {}) or {}
             )
             our_screens = _screens_from(getattr(battle, "side_conditions", {}) or {})
+            opponent_screens = _screens_from(getattr(battle, "opponent_side_conditions", {}) or {})
             for mon in ours:
                 species = to_id(getattr(mon, "species", None))
                 state = _our_pokemon_state(mon)
@@ -585,6 +684,11 @@ class BattleMemory:
                 opponent_ability[species] = self.opponent_abilities.get(
                     species, to_id(getattr(mon, "ability", None)) or None
                 )
+                opponent_boosts[species] = {
+                    stat: int(value)
+                    for stat, value in (getattr(mon, "boosts", {}) or {}).items()
+                    if stat in ("atk", "def", "spa", "spd", "spe", "accuracy", "evasion") and value
+                }
         except (AttributeError, KeyError, TypeError, ValueError):
             pass
 
@@ -615,6 +719,8 @@ class BattleMemory:
             opponent_ability=opponent_ability,
             terrain=terrain_id,
             our_screens=our_screens,
+            opponent_boosts=opponent_boosts,
+            opponent_screens=opponent_screens,
         )
         if self.turns and self.turns[-1].turn == turn:
             previous_choice = self.turns[-1].chosen_order

@@ -94,10 +94,47 @@ def _usage_spread_for_species(
     return best["sp"], best["nature"]
 
 
+def fallback_spread_hypotheses(species_id: str) -> list[tuple[SPSpread, str, float]]:
+    """Honest spread guesses for a species with NO usage history.
+
+    Previously this collapsed to ``default_opponent_spread`` at probability 1.0 --
+    a guess dressed as a fact. A species we have never seen is the *most*
+    uncertain case, not the least, so return three common archetype spreads
+    (bulky attacker, fast attacker, slow bulky attacker) whose weights sum to
+    1.0 with no single one certain. The first entry is the legacy default, so
+    ``opponent_state``'s point estimate (the mode) is unchanged.
+    """
+
+    from vgc.data import load_species
+
+    data = load_species().get(species_id) or {}
+    base = data.get("baseStats") or {}
+    physical = int(base.get("atk", 0)) >= int(base.get("spa", 0))
+    off = "atk" if physical else "spa"
+    other = "spa" if physical else "atk"
+    off_nature = "adamant" if physical else "modest"
+    spe_nature = "jolly" if physical else "timid"
+    # Bulky attacker: the legacy default (HP + offense).
+    bulky: SPSpread = {"hp": 32, "atk": 0, "def": 0, "spa": 0, "spd": 0, "spe": 2}
+    bulky[off] = 32
+    # Fast attacker: Speed + offense, leftover in HP.
+    fast: SPSpread = {"hp": 2, "atk": 0, "def": 0, "spa": 0, "spd": 0, "spe": 32}
+    fast[off] = 32
+    # Slow bulky attacker: HP + offense + a little bulk, Speed untouched
+    # (the Trick Room shape); nature still boosts the offensive stat.
+    slow: SPSpread = {"hp": 32, "atk": 0, "def": 0, "spa": 0, "spd": 0, "spe": 0}
+    slow[off] = 32
+    slow["def" if physical else "spd"] = 2
+    _ = other
+    return [(bulky, off_nature, 0.4), (fast, spe_nature, 0.35), (slow, off_nature, 0.25)]
+
+
 def opponent_spread_hypotheses(
     species_id: str,
     usage: dict[str, list[dict[str, Any]]] | None = None,
     limit: int | None = None,
+    *,
+    honest_fallback: bool = True,
 ) -> list[tuple[SPSpread, str, float]]:
     """Weighted Stat Point/nature beliefs for one opponent species, most likely first.
 
@@ -126,13 +163,15 @@ def opponent_spread_hypotheses(
         ranked = ranked[:limit]
     total = sum(max(0.0, float(entry.get("weight", 0.0))) for entry in ranked)
     if not ranked or total <= 0.0:
-        return [
-            (
-                default_opponent_spread(species_id),
-                default_opponent_nature(species_id),
-                1.0,
-            )
-        ]
+        if not honest_fallback:
+            return [(default_opponent_spread(species_id), default_opponent_nature(species_id), 1.0)]
+        fallback = fallback_spread_hypotheses(species_id)
+        if limit is not None:
+            fallback = fallback[:limit]
+            kept_total = sum(weight for _sp, _nature, weight in fallback)
+            if kept_total > 0.0:
+                fallback = [(sp, nature, weight / kept_total) for sp, nature, weight in fallback]
+        return fallback
     return [
         (
             entry["sp"],
