@@ -145,10 +145,13 @@ def test_limit_keeps_the_most_likely_and_renormalizes() -> None:
 
 
 def test_species_without_usage_data_yields_one_certain_default() -> None:
+    # No history is the most uncertain case: several archetype guesses, none
+    # certain, with the legacy default still first (the point-estimate mode).
     hypotheses = opponent_spread_hypotheses("garchomp", {})
-    assert len(hypotheses) == 1
+    assert len(hypotheses) == 3
     spread, nature, weight = hypotheses[0]
-    assert weight == 1.0
+    assert weight < 1.0
+    assert sum(w for _s, _n, w in hypotheses) == 1.0
     assert spread == default_opponent_spread("garchomp")
     assert nature == default_opponent_nature("garchomp")
 
@@ -156,7 +159,7 @@ def test_species_without_usage_data_yields_one_certain_default() -> None:
 def test_zero_weight_entries_fall_back_rather_than_dividing_by_zero() -> None:
     usage = {"garchomp": [{"sp": {"hp": 1}, "nature": "brave", "weight": 0.0}]}
     hypotheses = opponent_spread_hypotheses("garchomp", usage)
-    assert [weight for _sp, _nature, weight in hypotheses] == [1.0]
+    assert sum(w for _sp, _nature, w in hypotheses) == 1.0
     assert hypotheses[0][1] == default_opponent_nature("garchomp")
 
 

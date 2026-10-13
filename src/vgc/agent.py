@@ -197,7 +197,15 @@ class VgcPlayer(Player):
             await self._handle_battle_message_line([room, normalize_for_poke_env(message)])
             battles = getattr(self, "_battles", None)
             if battle_tag and battles:
-                observe_condition_line(battles.get(battle_tag), message)
+                battle_obj = battles.get(battle_tag)
+                observe_condition_line(battle_obj, message)
+                if (
+                    self.config.capture_unknown_species
+                    and battle_obj is not None
+                    and getattr(battle_obj, "finished", False)
+                ):
+                    # Final-turn reveals never reach a later decide(); flush now.
+                    self._capture_unknown_species(battle_obj, self._memory_for_tag(battle_tag))
 
     async def _handle_battle_message_line(self, split_messages) -> None:
         """Work around poke-env 0.15's Open Team Sheets accept/reject race.
@@ -352,6 +360,37 @@ class VgcPlayer(Player):
             pass
         return memory
 
+    def _capture_unknown_species(self, battle: AbstractBattle, memory: BattleMemory) -> None:
+        """Append a capture record when a no-history species reveals something new.
+
+        Best-effort only: capture must never fail a battle, so all errors are
+        swallowed. Deduplicated per battle by revealed-content signature.
+        """
+
+        try:
+            from vgc.unknown_species import (
+                append_capture_records,
+                build_capture_records,
+                capture_path_for,
+                capture_signature,
+            )
+
+            seen: dict[str, set] = getattr(self, "_unknown_capture_signatures", None)
+            if seen is None:
+                seen = {}
+                self._unknown_capture_signatures = seen
+            battle_seen = seen.setdefault(battle.battle_tag, set())
+            fresh = []
+            for record in build_capture_records(battle, memory, self.config):
+                signature = capture_signature(record)
+                if signature not in battle_seen:
+                    battle_seen.add(signature)
+                    fresh.append(record)
+            if fresh:
+                append_capture_records(capture_path_for(self.config), fresh)
+        except Exception:
+            pass
+
     def _record_decision(self, battle: AbstractBattle, *, team_preview: bool) -> int | None:
         recorder = getattr(self, "_decision_replay_recorder", None)
         if recorder is None:
@@ -402,6 +441,8 @@ class VgcPlayer(Player):
         for any other failure here.
         """
         memory = self._memory_for(battle)
+        if self.config.capture_unknown_species:
+            self._capture_unknown_species(battle, memory)
         if trace_enabled():
             record_note(
                 "information_boundary",

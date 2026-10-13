@@ -1023,6 +1023,22 @@ class PolicyConfig:
     # [0.455, 0.515]; 298 real M-C sheets 51.9% [0.490, 0.547]. Neither is significant.
     # This is a current-format data refresh, not a strength claim.
     set_priors_file: str = "set_priors.json"
+    # Capture fog-safe sightings of opponent species with no/thin history
+    # (`vgc.unknown_species`) to a JSONL log under data/usage/, for later
+    # folding into set priors via tools/build_priors_from_captures.py. Off by
+    # default: live ladder play must not gain a per-turn file write until a
+    # capture run is deliberately enabled. Records never contain Stat Points
+    # or nature (never revealed for an opponent).
+    capture_unknown_species: bool = False
+    unknown_species_log_file: str = "unknown_species.jsonl"
+    # No-history species: spread the guess over archetype spreads instead of
+    # one certain default (vgc.sets.fallback_spread_hypotheses). False is the
+    # legacy single-certain-default control for A/Bs.
+    use_fallback_spread_hypotheses: bool = True
+    # Learn an opponent's defensive spread from damage WE deal to them
+    # (BattleMemory.defensive_damage_observations). False ignores that
+    # evidence, the legacy behaviour, for A/Bs.
+    use_defensive_damage_evidence: bool = True
     # Which Stat Point/nature usage file in data/usage/ the bot reads for hidden opponent
     # spreads (`vgc.sets.usage_spreads_for`). "spreads.json" is built from Smogon's
     # 2026-09 M-C chaos stats (1760 cutoff, 1.63M battles); "spreads_regmb.json" is the
