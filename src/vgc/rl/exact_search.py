@@ -26,6 +26,7 @@ from vgc.evaluator import ScoredOrder, score_joint_orders
 from vgc.field_control import field_control_value
 from vgc.mechanics_state import BattleMechanicsState, PokemonMechanicsState, snapshot_battle
 from vgc.models import PolicyConfig
+from vgc.next_turn_threat import next_turn_threat_value
 from vgc.position_effects import effect_polarity, side_condition_polarity
 from vgc.principles import SELF_PROTECT_MOVES, WIDE_DEFENSE_MOVES
 from vgc.rl.env import DirectBattle, SIDES, choice_string
@@ -141,6 +142,8 @@ def _position_value(state: BattleMechanicsState, config: PolicyConfig) -> float:
     )
     if config.exact_search_field_control:
         value += field_control_value(state, config)
+    if config.exact_search_next_turn_threat:
+        value += next_turn_threat_value(state, config)
     return value
 
 
@@ -175,6 +178,80 @@ def _has_protect(order) -> bool:
 
 def _has_switch(order) -> bool:
     return any(kind == "switch" for kind, _mid, _t in _order_plan(order))
+
+
+def _has_speed_control(order) -> bool:
+    return any(
+        kind == "move" and mid in ("tailwind", "trickroom")
+        for kind, mid, _t in _order_plan(order)
+    )
+
+
+def _is_focus_fire_ko_entry(entry: ScoredOrder) -> bool:
+    """True when both slots in `entry` deal positive damage to a shared foe slot and
+    their combined expected damage reaches that target's remaining HP%."""
+    slot0 = entry.breakdown.get("slot0")
+    slot1 = entry.breakdown.get("slot1")
+    if not isinstance(slot0, dict) or not isinstance(slot1, dict):
+        return False
+    exp0 = slot0.get("expected_percent_by_target") or {}
+    exp1 = slot1.get("expected_percent_by_target") or {}
+    if not isinstance(exp0, dict) or not isinstance(exp1, dict):
+        return False
+    hp0 = slot0.get("current_hp_percent_by_target") or {}
+    hp1 = slot1.get("current_hp_percent_by_target") or {}
+    for target in set(exp0).intersection(exp1):
+        e0 = float(exp0.get(target, 0.0))
+        e1 = float(exp1.get(target, 0.0))
+        hp_t = float(hp0.get(target, hp1.get(target, 100.0)))
+        if e0 > 0.0 and e1 > 0.0 and e0 < hp_t and e1 < hp_t and e0 + e1 >= hp_t:
+            return True
+    return False
+
+
+def _inject_tactical_replies(
+    base: list[ScoredOrder],
+    all_candidates: list[ScoredOrder],
+    config: PolicyConfig,
+) -> list[ScoredOrder]:
+    """A4-lite: ensure the simulated opponent reply set includes the highest-scored
+    plausible speed-control (Tailwind/Trick Room) reply and focus-fire KO reply if not
+    already in `base`."""
+    if len(all_candidates) <= len(base) or len(base) <= 1:
+        return base
+    top = all_candidates[0].score
+    scale = max(float(config.search_response_temperature), 1e-6)
+    floor = float(config.exact_search_diverse_reply_min_weight_ratio)
+    plausible = [
+        entry
+        for entry in all_candidates
+        if math.exp((entry.score - top) / scale) >= floor
+    ]
+    chosen = list(base)
+    protected_messages = {chosen[0].order.message}
+    for pred in (lambda entry: _has_speed_control(entry.order), _is_focus_fire_ko_entry):
+        if any(pred(entry) for entry in chosen):
+            continue
+        present = {entry.order.message for entry in chosen}
+        hit = next(
+            (entry for entry in plausible if pred(entry) and entry.order.message not in present),
+            None,
+        )
+        if hit is None:
+            continue
+        replace_idx = next(
+            (
+                idx
+                for idx in range(len(chosen) - 1, 0, -1)
+                if chosen[idx].order.message not in protected_messages
+            ),
+            None,
+        )
+        if replace_idx is None:
+            break
+        chosen[replace_idx] = hit
+        protected_messages.add(hit.order.message)
+    return sorted(chosen, key=lambda entry: entry.score, reverse=True)
 
 
 def _reply_distance(a, b) -> int:
@@ -262,11 +339,20 @@ def _opponent_replies(
 
     cap = config.search_opp_candidates
     if not config.exact_search_dedupe_mega_replies:
-        return scored[:cap]
+        base = scored[:cap]
+        return (
+            _inject_tactical_replies(base, scored, config)
+            if config.exact_search_tactical_replies
+            else base
+        )
     deduped = _dedupe_mega(scored)
     if config.exact_search_diverse_replies:
-        return _diverse_replies(deduped, config)
-    return deduped[:cap]
+        base = _diverse_replies(deduped, config)
+    else:
+        base = deduped[:cap]
+    if config.exact_search_tactical_replies:
+        return _inject_tactical_replies(base, deduped, config)
+    return base
 
 
 def _softmax_weights(scored: list[ScoredOrder], temperature: float) -> list[float]:
