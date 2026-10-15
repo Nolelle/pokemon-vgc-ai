@@ -211,6 +211,7 @@ def _evaluate_chunk(
     arms: dict[str, dict[str, Any]],
     round_index: int = 0,
     player: str = "vgc",
+    incumbent_player: str | None = None,
 ) -> list[dict[str, Any]]:
     """Play every unit in `entries`. `arms` maps arm name -> PolicyConfig overrides.
 
@@ -226,6 +227,7 @@ def _evaluate_chunk(
     round 0 reproduces the pre-checkpoint seeds exactly.
     """
 
+    second_player = player if incumbent_player is None else incumbent_player
     (first_name, first_overrides), (second_name, second_overrides) = arms.items()
     first_config = PolicyConfig(format_id=FORMAT_ID, **first_overrides)
     second_config = PolicyConfig(format_id=FORMAT_ID, **second_overrides)
@@ -258,7 +260,7 @@ def _evaluate_chunk(
                             _recorded_agent, built, player, first_team, first_config
                         ),
                         second_name: partial(
-                            _recorded_agent, built, player, second_team, second_config
+                            _recorded_agent, built, second_player, second_team, second_config
                         ),
                     },
                     {first_name: first_team, second_name: second_team},
@@ -506,9 +508,17 @@ def parse_args() -> argparse.Namespace:
         "--player",
         default="vgc",
         help=(
-            "registered baseline both arms run: vgc (fast search, default) or vgc_exact "
-            "(every move from the public exact search -- required to test exact-only knobs "
-            "such as exact_search_*; slow)"
+            "registered baseline both arms run: vgc (fast search, default), human_like "
+            "(B1 tactical opponent), or vgc_exact (every move from the public exact search "
+            "-- required to test exact-only knobs such as exact_search_*; slow)"
+        ),
+    )
+    parser.add_argument(
+        "--incumbent-player",
+        default=None,
+        help=(
+            "optional registered baseline for the incumbent arm when playing against a "
+            "different opponent policy (e.g. --player vgc --incumbent-player human_like)"
         ),
     )
     parser.add_argument(
@@ -731,6 +741,7 @@ def main() -> int:
         "futility_min_effect": args.futility_min_effect,
         "min_gain": args.min_gain,
         "player": args.player,
+        "incumbent_player": args.incumbent_player or args.player,
         "shared_overrides": shared,
     }
     all_rows: list[dict[str, Any]] = []
@@ -742,7 +753,14 @@ def main() -> int:
         for round_index, games in enumerate(rounds):
             futures = [
                 executor.submit(
-                    _evaluate_chunk, chunk, games, args.seed, arms, round_index, args.player
+                    _evaluate_chunk,
+                    chunk,
+                    games,
+                    args.seed,
+                    arms,
+                    round_index,
+                    args.player,
+                    args.incumbent_player,
                 )
                 for chunk in chunks
             ]

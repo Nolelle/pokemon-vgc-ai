@@ -104,6 +104,26 @@ class PolicyConfig:
     # Smaller flat bonus when only the EXPECTED (not minimum) roll KOs -- real but
     # roll-dependent, so weighted well below guaranteed_ko_bonus.
     likely_ko_bonus: float = 35.0
+    # Smooth the KO bonus across the 16 damage rolls (`DamageResult.breakdown["rolls"]`)
+    # instead of the legacy step function (0 below the mean roll, `likely_ko_bonus` from
+    # the mean roll up to 15/16 rolls, `guaranteed_ko_bonus` at 16/16 rolls). True uses a
+    # piecewise-linear interpolation through `(0.0, 0.0) -> (0.5, likely_ko_bonus) ->
+    # (1.0, guaranteed_ko_bonus)` on the fraction of the 16 rolls that KO `target_hp`,
+    # matching both legacy landmarks while pricing 1/16..7/16 and 9/16..15/16 roll KOs
+    # smoothly. False = legacy step function.
+    smooth_ko_roll_bonus: bool = False
+    # Price sub-100% incoming threats continuously in `_score_attack_order` (`expected_death_cost`,
+    # `win_con_preservation_weight`, and `threatened_output_discount`), relative to the
+    # actor's CURRENT remaining HP% rather than a hard cliff at 100% of max HP. True
+    # ramps exposure linearly from `continuous_threat_floor_ratio` of remaining HP% up to
+    # 1.0x remaining HP% (where the actor is expected to faint), and scales above 1.0x up
+    # to 2.0x as before. False = legacy hard cliff at `lethal_threat >= 100.0`.
+    continuous_expected_death: bool = False
+    # Fraction of the actor's remaining HP% at which `continuous_expected_death` begins
+    # charging a partial expected-death / win-con preservation / threatened-output cost
+    # (e.g. 0.65 = threats dealing >= 65% of the actor's remaining HP start ramping up to
+    # full cost at 100% of remaining HP). Unused when `continuous_expected_death` is False.
+    continuous_threat_floor_ratio: float = 0.65
     # Multiplier (>1) applied to damage a spread move (Earthquake et al, moves whose
     # data/champions/moves.json target is "allAdjacent") deals to OUR OWN ally, then
     # subtracted from that order's score -- hurting your own team is worse than simply
@@ -1441,3 +1461,40 @@ class PolicyConfig:
     # relative to the CWD). Lets an offline A/B, whose players are discarded after each
     # game, report judge latency/overturn/fallback rates. Empty = in-memory log only.
     exact_judge_log_path: str = ""
+    # Tactical opponent replies for exact search (`vgc.rl.exact_search._opponent_replies`):
+    # ensure the opponent's top-K reply shortlist includes a plausible legal speed-control
+    # reply (Tailwind / Trick Room) and a plausible focus-fire KO reply (both slots
+    # targeting the same active slot with combined expected damage >= remaining HP%) when
+    # not already in the top-K myopic replies. False = legacy top-K.
+    exact_search_tactical_replies: bool = False
+    # Next-turn lethal first-strike leaf term in `_position_value` (`vgc.rl.exact_search`):
+    # prices the symmetric next-turn first-strike KO risk on surviving active slots using
+    # only the remaining marginal value at risk (`100 * hp_fraction + exact_search_alive_weight`),
+    # capped by doubles target assignment (one faster foe can single-target at most one slot)
+    # and discounted when `protect_counter == 0` against a single threat. False = legacy
+    # `_position_value` without next-turn threat pricing.
+    exact_search_next_turn_threat: bool = False
+    # Discount weight on the next-turn lethal first-strike leaf term (0.35 = a one-turn-ahead
+    # forced first-strike loss is priced at 35% of the remaining marginal survival value,
+    # leaving room for switches/partner disruption on turn t+1).
+    exact_search_next_turn_threat_weight: float = 0.35
+
+    # --- Human-like tactical baseline (`vgc.baselines.make_player("human_like")`) ---------
+    # Master switch activating human-like tactical adjustments in `vgc.evaluator` (used by
+    # the `human_like` practice opponent baseline so offline games exercise early speed
+    # control, focus-fire KOs, and fresh defensive Protect at ladder-realistic rates).
+    # False = standard `vgc` evaluator behavior.
+    human_like_tactical_mode: bool = False
+    # Bonus added to a beneficial Tailwind or Trick Room on turns 1-2 (`battle.turn <= 2`)
+    # when not yet active and the setter is not facing an immediate faster OHKO.
+    human_like_early_speed_control_bonus: float = 55.0
+    # Additional cross-slot bonus when both slots focus-fire the same target for a combined
+    # KO (`first_expected + second_expected >= target_hp`), scaled up further when that
+    # target is the opponent's highest-threat active slot.
+    human_like_focus_fire_bonus: float = 40.0
+    # Bonus added to a fresh (`protect_counter == 0`) Protect when the slot's combined
+    # incoming threat is lethal or near-lethal relative to its current remaining HP%.
+    human_like_defensive_protect_bonus: float = 35.0
+    # Fraction of current remaining HP% above which `human_like_defensive_protect_bonus`
+    # triggers when `protect_counter == 0`.
+    human_like_protect_threat_ratio: float = 0.80
