@@ -421,7 +421,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 5 for record in result.records)
+    assert all(record["schema"] == 6 for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -691,3 +691,48 @@ def test_preview_species_defensively_resolves_mega_formes_via_resolve_species() 
     assert result.ok is True
     p1_turn1 = _turn_records(result, "p1")[0]
     assert p1_turn1["state"]["our"]["preview_species"] == ["garchomp"]
+
+
+def test_switch_in_clears_old_boosts_and_battle_only_formes_keep_identity():
+    """Schema 6: stages reset on switch-in; Palafin-Hero is the same team member."""
+
+    log = "\n".join(
+        [
+            "|player|p1|Alice|",
+            "|player|p2|Bob|",
+            "|gametype|doubles",
+            "|poke|p1|Palafin, L50|",
+            "|poke|p1|Incineroar, L50|",
+            "|poke|p1|Amoonguss, L50|",
+            "|poke|p2|Farigiraf, L50|",
+            "|poke|p2|Kingambit, L50|",
+            "|poke|p2|Gholdengo, L50|",
+            "|teampreview",
+            "|start",
+            "|switch|p1a: Palafin|Palafin, L50|100/100",
+            "|switch|p1b: Incineroar|Incineroar, L50|100/100",
+            "|switch|p2a: Farigiraf|Farigiraf, L50|100/100",
+            "|switch|p2b: Kingambit|Kingambit, L50|100/100",
+            "|-unboost|p2a: Farigiraf|atk|1",
+            "|turn|1",
+            "|switch|p1a: Amoonguss|Amoonguss, L50|100/100",
+            "|switch|p2a: Gholdengo|Gholdengo, L50|100/100",
+            "|turn|2",
+            "|switch|p1a: Palafin|Palafin-Hero, L50|100/100",
+            "|switch|p2a: Farigiraf|Farigiraf, L50|100/100",
+            "|turn|3",
+            "|win|Alice",
+        ]
+    )
+    result = parse_replay("test-schema6", 1300, log)
+    assert result.ok is True
+    turn3 = [r for r in result.records if r["decision_kind"] == "turn" and r["turn"] == 3]
+    assert turn3
+    for record in turn3:
+        state = record["state"]
+        p1 = state["our"] if record["player"] == "p1" else state["opp"]
+        p2 = state["opp"] if record["player"] == "p1" else state["our"]
+        farigiraf = next(m for m in p2["active"] if m and m["species"] == "farigiraf")
+        assert farigiraf["boosts"] == {}
+        names = [m["species"] for m in p1["active"] if m] + [m["species_id"] for m in p1["bench"]]
+        assert names.count("palafin") == 1 and "palafinhero" not in names

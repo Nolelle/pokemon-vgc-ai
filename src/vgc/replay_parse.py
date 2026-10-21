@@ -56,7 +56,12 @@ not a tracked fact.
 
 ## Schema (`SCHEMA_VERSION`)
 
-Schema 5 is current. Missing actions in occupied turn-start slots are `unknown`;
+Schema 6 is current (2026-10-18): same fields as schema 5, two value fixes. Stat
+stages reset when a Pokemon switches in (schema 5 kept boosts from an earlier stint),
+and battle-only formes (Palafin-Hero, Aegislash-Blade, ...) resolve to the team member's
+base species like Megas do (schema 5 could list Palafin and Palafin-Hero as two Pokemon).
+
+Schema 5: missing actions in occupied turn-start slots are `unknown`;
 empty slots are `no_action_required`. `action_status` records the same distinction
 from observed actions. Mega Evolution is preserved even when a move is unknown.
 Every record has `outcome`: win/loss/draw/unresolved. The compatibility field `won`
@@ -155,7 +160,7 @@ from vgc.data import load_species
 # -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
 # old datasets stay distinguishable from newer ones instead of silently being read as if
 # compatible.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -216,6 +221,14 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
         base = to_id(species.get("baseSpecies"))
         if base:
             return base, True
+    # Other battle-only formes (Palafin-Hero, Aegislash-Blade, Mimikyu-Busted, ...) are
+    # the same team member too: Palafin switches back in as "Palafin-Hero", and keying
+    # that as a new species listed one Pokemon twice (an extra survivor on the board).
+    battle_only = species.get("battleOnly") if species else None
+    if isinstance(battle_only, list):
+        battle_only = battle_only[0] if battle_only else None
+    if battle_only and to_id(battle_only) != species_id:
+        return to_id(battle_only), False
     return species_id, False
 
 
@@ -472,6 +485,7 @@ def _apply_switch(
     side_state.note_appearance(species_id)
     known = side_state.mon(species_id)
     known.fainted = False
+    known.boosts = {}  # stat stages reset on switching out (Baton Pass is not modelled)
     if is_mega:
         known.mega = True
     parsed_hp = _parse_hp(hp_field)
