@@ -74,3 +74,40 @@ def test_build_units_crosses_opponents_with_our_teams() -> None:
     units = build_units(entries, ours)
     assert [u["unit_id"] for u in units] == ["o0|x", "o0|y"]
     assert build_units(entries, None) == entries
+
+
+def test_live_judge_counts_attribute_and_aggregate_finished_logs() -> None:
+    from types import SimpleNamespace
+
+    from offline.evaluate_own_spread_pool import _live_judge_counts, _live_judge_summary
+
+    def agent(name, logs):
+        return SimpleNamespace(name=name, player=SimpleNamespace(exact_judge_log=logs))
+
+    first = _live_judge_counts([
+        agent('candidate', [
+            {'status': 'ok', 'elapsed_ms': 12, 'overturned': True, 'judged': 3},
+            {'status': 'timeout', 'elapsed_ms': 20, 'overturned': True},
+            {'status': 'ok'},  # An unfinished record is not an invocation.
+        ]),
+        agent('incumbent', [{'status': 'skipped_busy', 'elapsed_ms': 2}]),
+    ], 'candidate')
+    # In the opposite team orientation the names still identify the arms.
+    second = _live_judge_counts([
+        agent('incumbent', [{'status': 'error', 'elapsed_ms': 4,
+                             'error': 'empty exact ranking', 'turn': 3}]),
+        agent('candidate', [{'status': 'ok', 'elapsed_ms': 8, 'judged': 2}]),
+    ], 'candidate')
+    result = _live_judge_summary([{'live_judge': first}, {'live_judge': second}])
+    assert result['candidate']['invocations'] == 3
+    assert result['candidate']['successful'] == 2
+    assert result['candidate']['timeouts'] == 1
+    assert result['candidate']['overturns'] == 1
+    assert result['candidate']['judged'] == 5
+    assert result['candidate']['elapsed_ms_mean'] == pytest.approx(40 / 3)
+    assert result['incumbent']['statuses'] == {'skipped_busy': 1, 'error': 1}
+    assert result['incumbent']['skips'] == 1
+    assert result['incumbent']['errors'] == 1
+    assert result['incumbent']['failure_examples'][0]['error'] == 'empty exact ranking'
+    assert result['incumbent']['failure_examples'][0]['turn'] == 3
+    assert _live_judge_summary([{}])['candidate']['elapsed_ms_mean'] is None

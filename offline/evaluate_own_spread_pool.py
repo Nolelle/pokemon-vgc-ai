@@ -170,7 +170,7 @@ EXACT_FALLBACK_WARN_RATE = 0.05
 
 
 def _exact_counts(agents: Sequence[Any], first_name: str) -> dict[str, Any]:
-    """Per-arm exact-judge decisions vs fallbacks to the fast search (0 for plain `vgc`).
+    """Direct exact-search decisions vs fast-search fallbacks (0 for plain `vgc`).
 
     Kept per arm: pooling both would let one arm's failures hide under the warning line.
     """
@@ -201,6 +201,65 @@ def _exact_summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     summary["exact_fallback_examples"] = [
         example for row in rows for example in row.get("exact_fallback_examples", ())
     ][:10]
+    return summary
+
+
+def _live_judge_counts(agents: Sequence[Any], first_name: str) -> dict[str, Any]:
+    """Summarize completed log entries by arm without retaining rankings."""
+    result: dict[str, Any] = {arm: {"statuses": {}, "overturns": 0,
+                                   "elapsed_ms_sum": 0.0, "elapsed_count": 0,
+                                   "judged": 0, "failure_examples": []} for arm in EXACT_ARMS}
+    for agent in agents:
+        arm = EXACT_ARMS[0] if agent.name == first_name else EXACT_ARMS[1]
+        counts = result[arm]
+        for entry in getattr(agent.player, "exact_judge_log", ()):
+            status = entry.get("status")
+            elapsed = entry.get("elapsed_ms")
+            # The judge fills elapsed only after finishing and before appending its log.
+            if not isinstance(status, str) or not isinstance(elapsed, (int, float)):
+                continue
+            statuses = counts["statuses"]
+            statuses[status] = statuses.get(status, 0) + 1
+            counts["elapsed_ms_sum"] += elapsed
+            counts["elapsed_count"] += 1
+            if status in ("error", "timeout") and len(counts["failure_examples"]) < 5:
+                counts["failure_examples"].append({
+                    "battle_tag": entry.get("battle_tag"), "turn": entry.get("turn"),
+                    "status": status, "error": entry.get("error"),
+                })
+            if status == "ok":
+                counts["overturns"] += int(entry.get("overturned") is True)
+                counts["judged"] += int(entry.get("judged", 0))
+    return result
+
+
+def _live_judge_summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for arm in EXACT_ARMS:
+        statuses: dict[str, int] = {}
+        elapsed_sum = 0.0
+        elapsed_count = overturns = judged = 0
+        examples = []
+        for row in rows:
+            counts = row.get("live_judge", {}).get(arm, {})
+            for status, count in counts.get("statuses", {}).items():
+                statuses[status] = statuses.get(status, 0) + count
+            elapsed_sum += counts.get("elapsed_ms_sum", 0.0)
+            elapsed_count += counts.get("elapsed_count", 0)
+            overturns += counts.get("overturns", 0)
+            judged += counts.get("judged", 0)
+            examples.extend({"team_file": row.get("team_file"), "seed": row.get("seed"),
+                             **example} for example in counts.get("failure_examples", ()))
+        summary[arm] = {
+            "invocations": sum(statuses.values()), "statuses": statuses,
+            "successful": statuses.get("ok", 0), "timeouts": statuses.get("timeout", 0),
+            "errors": statuses.get("error", 0),
+            "skips": sum(n for status, n in statuses.items() if status.startswith("skipped_")),
+            "overturns": overturns, "judged": judged,
+            "elapsed_ms_total": elapsed_sum,
+            "elapsed_ms_mean": elapsed_sum / elapsed_count if elapsed_count else None,
+            "failure_examples": examples[:10],
+        }
     return summary
 
 
@@ -272,6 +331,7 @@ def _evaluate_chunk(
             result = summarize(outcomes, first_name, second_name)
             result.update(_seat_counts(outcomes, first_name))
             result.update(_exact_counts(built, first_name))
+            result["live_judge"] = _live_judge_counts(built, first_name)
             if "our_team" in entry:
                 extra = {
                     "our_team_name": str(entry["our_name"]),
@@ -784,6 +844,7 @@ def main() -> int:
                 report.update(asymmetric_extras(unit_rows))
             exact = _exact_summary(all_rows)
             report["exact_search"] = exact
+            report["live_judge"] = _live_judge_summary(all_rows)
             args.output.write_text(json.dumps(report, indent=2, sort_keys=True))
             if stopped_for_futility:
                 print(
@@ -798,7 +859,7 @@ def main() -> int:
         if not exact["exact_decisions"]:
             continue
         print(
-            f"exact judge, {arm} arm: {exact['exact_decisions']} decisions, "
+            f"direct exact search, {arm} arm: {exact['exact_decisions']} decisions, "
             f"{exact['exact_fallbacks']} fell back to the fast search "
             f"({exact['exact_fallback_rate']:.1%})",
             flush=True,
@@ -807,6 +868,17 @@ def main() -> int:
             print(
                 f"  WARNING: over {EXACT_FALLBACK_WARN_RATE:.0%} of the {arm} arm's moves were "
                 "NOT the exact judge's; this run does not cleanly measure it.",
+                flush=True,
+            )
+    for arm in EXACT_ARMS:
+        live = report["live_judge"][arm]
+        if live["invocations"]:
+            print(
+                f"live judge, {arm} arm: {live['invocations']} calls, "
+                f"{live['successful']} completed, {live['timeouts']} timed out, "
+                f"{live['errors']} errors, {live['skips']} skipped, "
+                f"{live['overturns']} changed the choice; "
+                f"mean {live['elapsed_ms_mean']:.1f} ms per call",
                 flush=True,
             )
     print(
