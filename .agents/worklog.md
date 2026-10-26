@@ -402,3 +402,35 @@
 - Parked: PolicyConfig.use_fallback_spread_hypotheses / use_defensive_damage_evidence default False. Capture logging untouched (capture_unknown_species machinery intact).
 - Parking exposed a legacy crash: with the fallback off, a species absent from exported data raised KeyError in belief building. opponent_belief now falls back to the fallback mode as the single certain guess instead of crashing.
 - Tests: new default-parking test in tests/test_unknown_species.py; defensive-evidence test opts in explicitly. 1541 unit passed; ruff clean. Uncommitted on main.
+
+## 2026-10-13 — Ladder baseline after guesser parking (branch claude/park-guesser-ab, PR #46)
+- Gates blocked on 2 upstream Showdown commits; tools/sync_showdown.py pinned 3a766f2cf, all 3 gates PASS. Local smoke (hatterene_tr, 2 games): 1-1.
+- hatterene_tr (session 20261013T182046Z, 30 games, search+horizon+exactjudge+llmpreview-medium): 13-17, rating 1262->1185 (peak 1288), opp avg 1160, 0 fallbacks. Losses: lost_positioning 12/17.
+- psyspam_sand (session 20261013T193848Z, 25 games, same policy): 14-11, rating 1161->1239 (peak 1285), opp avg 1182, 0 fallbacks. Losses: lost_positioning 9/11.
+- Combined 27-28 vs Oct-12 baseline 28-27 (peak 1346, opp avg 1202): no rating gain; offline owner-team ranking (hatterene first) did not transfer. Positioning still 21/28 losses. Next: step 4, price expected KO loss below 100% certainty.
+
+## 2026-10-16 — HAL (Melee) blog review + quick value-weight fit (no code change)
+- Reviewed ericyuegu.com/hillclimbing-melee for applicable ideas. Applicable: value fit on real outcomes (no TD), denser A/B metric (margin of victory), AWR-weighted human imitation as an extra shortlist source, rating conditioning. Not applicable: action chunking, real-time/KV-cache/latency work, scaling laws.
+- Probe: logistic fit of `won` on our-minus-opp state features, 280,218 M-C replay turn decisions / 20,148 games (replay-clustered bootstrap). In units of 100 = one Pokemon's HP: alive 77 (hand 90), boost stage +16.5 (hand 5), brn/par/psn -41 (hand -18), sleep/freeze -60 (hand -30), Tailwind +46 (hand 12), screens +30 (hand 12). Correlational; proposed follow-up = richer fit then a vgc_exact pool A/B.
+- Data note: decisions_regmc records drop fainted Pokemon; fainted = (6 - unseen_count) - listed. No code reads decisions_regmc.jsonl.gz yet (BC loader uses plain open() on the old M-B file).
+
+## 2026-10-18 — Replay-fitted exact-search scorecard: wins in the exact player, wash in the live judge
+- New `offline/fit_position_value_weights.py`: logistic fit of `won` on our-minus-opp board features (search units, 100 = one Pokemon's HP), replay-clustered bootstrap, lagged-board controls, holdout log loss. Lagged fit (40,885 replays, schema 6): alive ~60-65, boosts ~16-22/stage, brn/psn ~-36..-40, par ~-20..-25, sleep ~-58, fresh Tailwind ~59, fresh screen ~33-36 (hand: 90/5/-18/-18/-30/12/12). Holdout log loss hand 0.586 vs fitted 0.574. Results: runs/eval/value_fit_*_20261018.json.
+- Parser fix (Codex review): `vgc.replay_parse` schema 6 -- boosts reset on switch-in; battle-only formes (Palafin-Hero etc.) resolve to the base species. Re-parsed to data/bc/decisions_regmc_s6.jsonl.gz (40,885 replays; old file untouched). Weights barely moved.
+- New knobs `exact_search_tailwind_weight` / `exact_search_screen_weight` (None = effect weight). `evaluate_own_spread_pool.parse_overrides` parses None-default knobs as floats.
+- Candidate (pre-declared, lagged fit rounded): alive 65, boost 15, status 35, hard control 60, Tailwind 60, screens 35.
+  - `--player vgc_exact`, narrow width, M-C train 226 teams: 1938/3616 = 53.6% [0.515, 0.557] PASS.
+  - Same, holdout 88 teams (seed 20261019): 1483/2816 = 52.7% [0.501, 0.553] PASS.
+  - Ladder path (`--player vgc`, `exact_judge_live=true`, train, seed 20261020): 1855/3616 = 51.3% [0.494, 0.532] FAIL (wash).
+- Defaults NOT changed. Likely reason: the live judge only re-ranks the fast search's shortlist, and the fast search (`vgc.search._exchange_value`) has no boost/status/Tailwind terms, so setup lines rarely reach the judge. Next hypothesis: fitted values in the fast search's leaf/shortlist.
+
+## 2026-10-21 — Replay corpus refresh + schema 6 re-parse
+- Committed the schema 6 parser fix (5a261eb: boosts reset on switch-in, battle-only formes merge to base species); 30 replay_parse tests pass.
+- `tools/download_replays.py --min-rating 1200 --max-pages 600 --exclude-player laplacestheorems`: 13,985 new, corpus 54,870 (was 40,885, newest 2026-10-13 17:14; now 2026-10-21 00:27). 600 pages overlapped 1,507 existing files; hourly counts continuous across Oct 13, no gap. ~1,750 replays/day >=1200; ~2h at default sleep.
+- Re-parsed to `data/bc/decisions_regmc_s6_20261021.jsonl.gz`: 54,870/54,870 parsed, 1,083,846 records (782,228 turn, 191,878 forced_switch, 109,740 teampreview), showteam 3.47% of player-slots. Older s6 file (40,885) untouched.
+- Note: `parse_replays.py` default `--out` is the M-B `data/bc/decisions.jsonl`; always pass `--out`.
+
+## 2026-10-22 — Data-health report for the M-C corpus (new tool, no bot change)
+- New `tools/data_health_report.py` -> `runs/viz/data_health/index.html` (6 figures + PASS/WARN checklist + summary.json). Scans the raw replays and the newest `data/bc/decisions_regmc*.jsonl.gz`; caches under `runs/viz/data_health/cache/` (`--refresh` to rescan, ~1 min).
+- Findings: (1) download filter keys on replay `rating` = min POST-game rating (100% of games) -> near-cutoff games kept only if the underdog won; favourite wins 48.9% overall, 6.1% when weaker player started <1200, 52.9% when both pre-game >=1234 (85.5% of games; max one-game loss 34). (2) 7 accounts bringing the same 6 species (scsme/scorecardpokemon/sccontrol/kvdn64/...) are in 34.9% of games, raw win rates 38-47%. (3) replay_parse ignores pre-turn-1 events: lead weather/terrain missing from turn-1 state in 27,743/27,743 games, lead stat changes (Intimidate) in 20,880/20,880. (4) Floette-Eternal / Meowstic-F become floette/meowstic after Mega (3,502 active snapshots off-preview). (5) teampreview `picked` has <4 species in 19.2% (derived from switch-ins). (6) unknown slot actions 14.5%. Label agreement parsed vs raw 100%, 0 dup logs, 0 collection gaps.
+- Codex review applied: pre-ratings from rating-change messages (|player| ratings can be stale), HTML-unescaped names, net pre-turn-1 boosts, offline losses, softened captions.
