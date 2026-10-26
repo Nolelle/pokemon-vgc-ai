@@ -56,7 +56,10 @@ not a tracked fact.
 
 ## Schema (`SCHEMA_VERSION`)
 
-Schema 6 is current (2026-10-18): same fields as schema 5, two value fixes. Stat
+Schema 7 applies pre-turn-1 public events in log order and preserves the persistent
+identity of Mega formes whose battle-only parent differs from their base species.
+
+Schema 6 (2026-10-18): same fields as schema 5, two value fixes. Stat
 stages reset when a Pokemon switches in (schema 5 kept boosts from an earlier stint),
 and battle-only formes (Palafin-Hero, Aegislash-Blade, ...) resolve to the team member's
 base species like Megas do (schema 5 could list Palafin and Palafin-Hero as two Pokemon).
@@ -160,7 +163,7 @@ from vgc.data import load_species
 # -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
 # old datasets stay distinguishable from newer ones instead of silently being read as if
 # compatible.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -218,7 +221,10 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
     """
     species = load_species().get(species_id)
     if species and species.get("isMega"):
-        base = to_id(species.get("baseSpecies"))
+        base = species.get("battleOnly") or species.get("baseSpecies")
+        if isinstance(base, list):
+            base = base[0] if base else None
+        base = to_id(base)
         if base:
             return base, True
     # Other battle-only formes (Palafin-Hero, Aegislash-Blade, Mimikyu-Busted, ...) are
@@ -505,11 +511,7 @@ def _process_segment(
     showteam_players: set[str],
 ) -> None:
     state.turn = turn_num
-    if turn_num == 0:
-        _process_teampreview_segment(state, lines, showteam_players)
-        return
-
-    snapshot = _snapshot(state)
+    snapshot = _snapshot(state) if turn_num else None
     acted: dict[tuple[str, int], dict] = {}
     pending_mega: set[tuple[str, int]] = set()
     fainted_this_segment: set[tuple[str, int]] = set()
@@ -521,6 +523,14 @@ def _process_segment(
         if len(parts) < 2:
             continue
         tag = parts[1]
+
+        if tag == "poke" and turn_num == 0:
+            if len(parts) >= 4 and parts[2] in ("p1", "p2"):
+                species_id, _ = _resolve_species(_species_from_details(parts[3]))
+                preview = state.sides[parts[2]].preview_species
+                if species_id and species_id not in preview:
+                    preview.append(species_id)
+            continue
 
         if tag == "showteam":
             result = parse_showteam_line(parts)
@@ -541,7 +551,7 @@ def _process_segment(
             species_id, is_mega = _resolve_species(_species_from_details(parts[3]))
             already_acted = (side, slot) in acted
             just_fainted = (side, slot) in fainted_this_segment
-            if already_acted or just_fainted:
+            if turn_num and (already_acted or just_fainted):
                 # Snapshot BEFORE applying the switch: the decision point is "my mon
                 # just fainted/pivoted, what do I send in", so the slot should still
                 # read as empty/pre-switch in the recorded state.
@@ -558,8 +568,10 @@ def _process_segment(
                         "action": {"slot": slot, "switch_species": species_id},
                     }
                 )
-            else:
+            elif turn_num:
                 acted[(side, slot)] = {"kind": "switch", "switch_species": species_id}
+            elif len(state.sides[side].lead_species) < 2:
+                state.sides[side].lead_species.append(species_id)
             _apply_switch(state, side, slot, species_id, is_mega, parts[4])
             continue
 
@@ -718,7 +730,14 @@ def _process_segment(
             state.sides[side].mon(species_id).boosts[parts[3]] = max(-6, min(6, value))
             continue
 
-        if tag == "-clearboost":
+        if tag == "-clearallboost":
+            for side_state in state.sides.values():
+                for species_id in side_state.active:
+                    if species_id is not None:
+                        side_state.mon(species_id).boosts = {}
+            continue
+
+        if tag in ("-clearboost", "-clearnegativeboost"):
             if len(parts) < 3:
                 continue
             side, slot, _name = _parse_position(parts[2])
@@ -726,7 +745,11 @@ def _process_segment(
                 continue
             species_id = state.sides[side].active[slot]
             if species_id is not None:
-                state.sides[side].mon(species_id).boosts = {}
+                known = state.sides[side].mon(species_id)
+                known.boosts = (
+                    {stat: value for stat, value in known.boosts.items() if value > 0}
+                    if tag == "-clearnegativeboost" else {}
+                )
             continue
 
         if tag == "-status":
@@ -862,6 +885,9 @@ def _process_segment(
         # inactive, j/l join-leave, c chat, etc.) is intentionally a no-op -- see module
         # docstring's "known best-effort limitations".
 
+    if turn_num == 0:
+        return
+
     for player in ("p1", "p2"):
         side_state = state.sides[player]
         if not any(side_state.active) and not side_state.appeared_order:
@@ -894,58 +920,6 @@ def _process_segment(
                 "action_status": action_status,
             }
         )
-
-
-def _process_teampreview_segment(
-    state: BattleState, lines: list[str], showteam_players: set[str]
-) -> None:
-    lead_seen: dict[str, int] = {"p1": 0, "p2": 0}
-    for line in lines:
-        if not line or line == "|":
-            continue
-        parts = line.split("|")
-        if len(parts) < 2:
-            continue
-        tag = parts[1]
-
-        if tag == "poke":
-            if len(parts) < 4:
-                continue
-            side = parts[2]
-            if side not in ("p1", "p2"):
-                continue
-            # Mega resolution here is defensive-only (see schema 4's docstring note) --
-            # a `|poke|` line never actually names a mega forme in practice, since Mega
-            # Evolution can't happen before turn 1.
-            species_id, _is_mega = _resolve_species(_species_from_details(parts[3]))
-            if species_id and species_id not in state.sides[side].preview_species:
-                state.sides[side].preview_species.append(species_id)
-            continue
-
-        if tag == "showteam":
-            result = parse_showteam_line(parts)
-            if result is not None:
-                side, sets = result
-                state.sides[side].sets_by_species.update(sets)
-                showteam_players.add(side)
-            continue
-
-        if tag in ("switch", "drag"):
-            if len(parts) < 5:
-                continue
-            side, slot, _name = _parse_position(parts[2])
-            if side not in ("p1", "p2") or slot is None:
-                continue
-            species_id, is_mega = _resolve_species(_species_from_details(parts[3]))
-            _apply_switch(state, side, slot, species_id, is_mega, parts[4])
-            if lead_seen[side] < 2:
-                state.sides[side].lead_species.append(species_id)
-                lead_seen[side] += 1
-            continue
-
-        # -ability (e.g. an Intimidate trigger on the leads switching in) and anything
-        # else pre-turn-1 is a no-op here -- state effects before turn 1 barely matter
-        # for the teampreview record itself (picked/lead_order only).
 
 
 def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[dict]:

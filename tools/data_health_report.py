@@ -719,10 +719,10 @@ def build(rows: list[dict], dec: dict) -> None:
     checks += [
         ("Lead weather/terrain set before turn 1 but absent from the turn-1 state",
          f"{miss_f:,} of {len(raw_f):,} games ({miss_f / max(1, len(raw_f)):.0%})",
-         "0 (parser ignores pre-turn-1 events)", miss_f == 0),
+         "0", miss_f == 0),
         ("Lead stat changes (e.g. Intimidate) before turn 1 but absent from the turn-1 state",
          f"{miss_b:,} of {len(raw_b):,} games ({miss_b / max(1, len(raw_b)):.0%})",
-         "0 (parser ignores pre-turn-1 events)", miss_b == 0),
+         "0", miss_b == 0),
     ]
     summary["pre_turn1"] = {"field_raw": len(raw_f), "field_missing": miss_f,
                             "boost_raw": len(raw_b), "boost_missing": miss_b}

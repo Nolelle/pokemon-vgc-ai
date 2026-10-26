@@ -26,7 +26,10 @@ from __future__ import annotations
 import argparse
 import collections
 import gzip
+import hashlib
+import html
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -118,8 +121,95 @@ def _replay_ids(path: Path) -> set[str]:
         return {json.loads(line)["replay_id"] for line in fh}
 
 
+def _id(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", html.unescape(value).lower())
+
+
+def select_replays(ids: set[str], raw_dir: Path, *, min_rating: int | None,
+                   exclude_accounts: set[str], team_cap: int | None, seed: int,
+                   individual_team_cap: int | None = None):
+    """Filter whole games using only the raw log's rating changes and preview."""
+    counts = collections.Counter()
+    groups: dict[tuple, list[str]] = collections.defaultdict(list)
+    selected = set()
+    teams_by_game = {}
+    raw_digest = hashlib.sha256()
+    counts["input_games"] = len(ids)
+    for replay_id in sorted(ids):
+        path = raw_dir / f"{replay_id}.json"
+        if not path.is_file():
+            raw_digest.update(f"{replay_id}\tMISSING\n".encode())
+            counts["missing_raw"] += 1
+            continue
+        content = path.read_bytes()
+        raw_digest.update(f"{replay_id}\t{hashlib.sha256(content).hexdigest()}\n".encode())
+        counts["raw_files_scanned"] += 1
+        replay = json.loads(content)
+        log = replay.get("log") or ""
+        names = {side: _id(name) for side, name in re.findall(
+            r"^\|player\|(p[12])\|([^|\n]+)", log, re.M)}
+        if len(names) != 2 or not all(names.values()) or len(set(names.values())) != 2:
+            counts["missing_or_ambiguous_players"] += 1
+            continue
+        if exclude_accounts.intersection(names.values()):
+            counts["excluded_accounts"] += 1
+            continue
+        pre = {_id(name): int(before) for name, before in re.findall(
+            r"^\|raw\|(.+?)'s rating: (\d+) &rarr; <strong>\d+</strong>", log, re.M)}
+        missing_rating = any(name not in pre for name in names.values())
+        if missing_rating:
+            counts["missing_pre_rating"] += 1
+        if min_rating is not None and missing_rating:
+            counts["excluded_missing_pre_rating"] += 1
+            continue
+        if min_rating is not None and any(pre[name] < min_rating for name in names.values()):
+            counts["excluded_below_rating"] += 1
+            continue
+        if team_cap is None and individual_team_cap is None:
+            selected.add(replay_id)
+            continue
+        preview = {side: [] for side in ("p1", "p2")}
+        for side, species in re.findall(r"^\|poke\|(p[12])\|([^,|\n]+)", log, re.M):
+            preview[side].append(_id(species))
+        if any(len(team) != 6 or not all(team) for team in preview.values()):
+            counts["excluded_missing_preview"] += 1
+            continue
+        pair = tuple(sorted(tuple(sorted(team)) for team in preview.values()))
+        groups[pair].append(replay_id)
+        teams_by_game[replay_id] = pair
+    rng = np.random.default_rng(seed)
+    for pair in sorted(groups):
+        choices = groups[pair]
+        if team_cap is not None and len(choices) > team_cap:
+            picked = rng.choice(len(choices), team_cap, replace=False)
+            selected.update(choices[i] for i in picked)
+            counts["excluded_team_cap"] += len(choices) - team_cap
+        else:
+            selected.update(choices)
+    if individual_team_cap is not None:
+        team_counts = collections.Counter()
+        choices = sorted(selected)
+        selected = set()
+        for index in rng.permutation(len(choices)):
+            replay_id = choices[index]
+            # A mirror match is one game for that template, not two games.
+            teams = set(teams_by_game[replay_id])
+            if any(team_counts[team] >= individual_team_cap for team in teams):
+                counts["excluded_individual_team_cap"] += 1
+                continue
+            selected.add(replay_id)
+            team_counts.update(teams)
+    counts["retained_games"] = len(selected)
+    metadata = dict(counts)
+    metadata["raw_inputs_sha256"] = raw_digest.hexdigest()
+    metadata["raw_hash_format"] = "sorted replay ID, tab, file SHA-256 or MISSING, newline"
+    metadata["counting"] = "exclusion counts are sequential; missing_pre_rating is an overlapping observation"
+    return selected, metadata
+
+
 def load(path: Path, *, keep: set[str] | None = None) -> dict[str, np.ndarray]:
-    by_view: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
+    # Keep only compact features and condition sets; never retain full parsed states.
+    by_view = collections.defaultdict(list)
     with _open(path) as fh:
         for line in fh:
             record = json.loads(line)
@@ -127,37 +217,41 @@ def load(path: Path, *, keep: set[str] | None = None) -> dict[str, np.ndarray]:
                 continue
             if keep is not None and record["replay_id"] not in keep:
                 continue
-            by_view[(record["replay_id"], record["player"])].append(record)
+            sides = []
+            for key in ("our", "opp"):
+                side = record["state"][key]
+                conditions = set(side.get("side_conditions") or [])
+                sides.append((_side_features(side, {c: True for c in conditions}), conditions))
+            by_view[(record["replay_id"], record["player"])].append(
+                (record["turn"], float(record["won"]), sides))
 
     rows, lagged, has_lag, won, games, total_alive = [], [], [], [], [], []
     for (replay_id, _player), records in by_view.items():
-        records.sort(key=lambda r: r["turn"])
-        previous_conditions = {"our": set(), "opp": set()}
+        records.sort(key=lambda r: r[0])
+        previous_conditions = [set(), set()]
         previous_row = None
-        for record in records:
-            state = record["state"]
-            feats = {}
-            for side_key in ("our", "opp"):
-                conditions = set(state[side_key].get("side_conditions") or [])
-                fresh = {c: c not in previous_conditions[side_key] for c in conditions}
-                feats[side_key] = _side_features(state[side_key], fresh)
-                previous_conditions[side_key] = conditions
-            row = [a - b for a, b in zip(feats["our"], feats["opp"])]
+        for _turn, outcome, sides in records:
+            feats = []
+            for i, (features, conditions) in enumerate(sides):
+                features = features.copy()
+                for condition in ("tailwind", *SCREENS):
+                    if condition in conditions and condition in previous_conditions[i]:
+                        fresh, old = (10, 11) if condition == "tailwind" else (12, 13)
+                        features[fresh] -= 1
+                        features[old] += 1
+                feats.append(features)
+                previous_conditions[i] = conditions
+            row = [a - b for a, b in zip(*feats)]
             rows.append(row)
             lagged.append(previous_row if previous_row is not None else [0.0] * len(row))
             has_lag.append(previous_row is not None)
             previous_row = row
-            won.append(float(record["won"]))
+            won.append(outcome)
             games.append(replay_id)
-            total_alive.append(feats["our"][0] + feats["opp"][0])
-    return {
-        "X": np.asarray(rows),
-        "L": np.asarray(lagged),
-        "has_lag": np.asarray(has_lag),
-        "y": np.asarray(won),
-        "games": np.asarray(games),
-        "total_alive": np.asarray(total_alive),
-    }
+            total_alive.append(feats[0][0] + feats[1][0])
+    return {"X": np.asarray(rows), "L": np.asarray(lagged), "has_lag": np.asarray(has_lag),
+            "y": np.asarray(won), "games": np.asarray(games),
+            "total_alive": np.asarray(total_alive)}
 
 
 def logistic(X: np.ndarray, y: np.ndarray, iters: int = 25) -> np.ndarray:
@@ -232,6 +326,14 @@ def holdout_comparison(data, seed: int) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    parser.add_argument("--raw-replays", type=Path, help="raw replay JSON directory for filters")
+    parser.add_argument("--min-pre-rating", type=int, help="require BOTH pre-game ratings >= this")
+    parser.add_argument("--exclude-account", action="append", default=[],
+                        help="exclude a normalized account name; repeat for multiple accounts")
+    parser.add_argument("--max-games-per-team-pair", type=int,
+                        help="seeded cap per unordered pair of six-species preview teams")
+    parser.add_argument("--max-games-per-team", type=int,
+                        help="seeded cap per individual six-species preview team")
     parser.add_argument("--boots", type=int, default=30)
     parser.add_argument("--seed", type=int, default=20261018)
     parser.add_argument(
@@ -242,8 +344,33 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
+    if args.boots < 1:
+        parser.error("--boots must be at least 1")
+    if args.max_games_per_team_pair is not None and args.max_games_per_team_pair < 1:
+        parser.error("--max-games-per-team-pair must be at least 1")
+    if args.max_games_per_team is not None and args.max_games_per_team < 1:
+        parser.error("--max-games-per-team must be at least 1")
+    excluded = {_id(name) for name in args.exclude_account}
+    if "" in excluded:
+        parser.error("account names must contain letters or digits")
+    filtering = (args.min_pre_rating is not None or excluded or
+                 args.max_games_per_team_pair is not None or args.max_games_per_team is not None)
+    if filtering and args.raw_replays is None:
+        parser.error("--raw-replays is required when using replay filters")
     keep = _replay_ids(args.same_replays_as) if args.same_replays_as else None
+    counts = {}
+    if args.raw_replays is not None:
+        ids = _replay_ids(args.data)
+        if keep is not None:
+            ids &= keep
+        keep, counts = select_replays(ids, args.raw_replays, min_rating=args.min_pre_rating,
+                                      exclude_accounts=excluded,
+                                      team_cap=args.max_games_per_team_pair, seed=args.seed,
+                                      individual_team_cap=args.max_games_per_team)
+    selected_filter_ids = keep
     data = load(args.data, keep=keep)
+    if len(np.unique(data["games"])) < 5:
+        parser.error("at least five retained games with outcomes are required")
     everyone = np.ones(len(data["y"]), bool)
     blocks = {
         "all": fit_block(data, everyone, lagged=False, boots=args.boots, seed=args.seed),
@@ -257,8 +384,40 @@ def main() -> None:
             data, data["total_alive"] <= 4, lagged=False, boots=args.boots, seed=args.seed
         ),
     }
-    report = {"features": list(FEATURES), "hand": HAND, "fits": blocks}
+    def file_digest(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    selected_ids = sorted(set(data["games"]))
+    selected_filter_hash = (hashlib.sha256("".join(f"{game}\n" for game in sorted(selected_filter_ids)).encode()).hexdigest()
+                            if selected_filter_ids is not None else None)
+    selected_hash = hashlib.sha256("".join(f"{game}\n" for game in selected_ids).encode()).hexdigest()
+    schemas = set()
+    with _open(args.data) as fh:
+        for line in fh:
+            record = json.loads(line)
+            schemas.add(str(record.get("schema", "missing")))
+    report = {"features": list(FEATURES), "hand": HAND, "fits": blocks,
+              "dataset": {"path": str(args.data.resolve()), "sha256": file_digest(args.data),
+                          "schema_versions": sorted(schemas)},
+              "selection": {"raw_replays": str(args.raw_replays.resolve()) if args.raw_replays else None,
+                            "same_replays_as": str(args.same_replays_as.resolve()) if args.same_replays_as else None,
+                            "same_replays_as_sha256": file_digest(args.same_replays_as) if args.same_replays_as else None,
+                            "selected_replay_ids_sha256": selected_filter_hash,
+                            "fitted_replay_ids_sha256": selected_hash,
+                            "fitted_replay_ids_hash_format": "sorted replay IDs, each followed by newline",
+                            "min_pre_rating_both": args.min_pre_rating,
+                            "exclude_accounts": sorted(excluded),
+                            "max_games_per_team_pair": args.max_games_per_team_pair,
+                            "max_games_per_team": args.max_games_per_team,
+                            "team_cap_order": "pair cap then individual cap; seeded, outcome-independent",
+                            "seed": args.seed, "boots": args.boots, "counts": counts,
+                            "fitted_games": len(np.unique(data["games"]))}}
     report["holdout"] = holdout_comparison(data, args.seed)
+    report["holdout"]["split"] = "random games; accounts and preview teams may repeat across train and test"
 
     print("units: 100 = one Pokemon's full HP; our-minus-opponent board, start of turn")
     header = f"{'feature':16s} {'hand':>7s}"
