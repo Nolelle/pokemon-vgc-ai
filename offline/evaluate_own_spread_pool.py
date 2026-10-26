@@ -579,6 +579,8 @@ def parse_overrides(pairs: Sequence[str] | None) -> dict[str, Any]:
             overrides[field] = int(raw)
         elif isinstance(default, float):
             overrides[field] = float(raw)
+        elif default is None:  # optional knob (`float | None`): a number, or "none"
+            overrides[field] = None if raw.lower() == "none" else float(raw)
         else:
             overrides[field] = raw
     return overrides

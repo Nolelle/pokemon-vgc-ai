@@ -617,6 +617,13 @@ class PolicyConfig:
     # effect actually occurred and how long it lasts.
     exact_search_boost_weight: float = 5.0
     exact_search_effect_weight: float = 12.0
+    # Own weights for Tailwind and for screens (Reflect / Light Screen / Aurora Veil) in
+    # the signed side-condition term. None = exact_search_effect_weight (the legacy
+    # scorecard). A logistic fit on 280k rated M-C replay positions
+    # (offline/fit_position_value_weights.py, 2026-10-18) put a freshly set Tailwind at
+    # ~60 and a fresh screen at ~36 (100 = one Pokemon's HP), vs 12 here.
+    exact_search_tailwind_weight: float | None = None
+    exact_search_screen_weight: float | None = None
     # Spend exact_search_effect_weight with a SIGN (vgc.position_effects) instead of on a
     # bare count of active effects. False is the pre-Rung-3a behavior and is a bug, kept
     # only as the exact legacy control for same-session A/Bs: `len(mon.effects)` scored a

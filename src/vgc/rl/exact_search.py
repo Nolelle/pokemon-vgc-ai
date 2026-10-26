@@ -60,6 +60,18 @@ def _hp_fraction(mon: PokemonMechanicsState) -> float:
     return max(0.0, min(1.0, mon.current_hp / mon.max_hp))
 
 
+_SCREENS = frozenset({"reflect", "lightscreen", "auroraveil"})
+
+
+def _side_condition_weight(effect: object, config: PolicyConfig) -> float:
+    effect_id = getattr(effect, "id", effect)
+    if effect_id == "tailwind" and config.exact_search_tailwind_weight is not None:
+        return config.exact_search_tailwind_weight
+    if effect_id in _SCREENS and config.exact_search_screen_weight is not None:
+        return config.exact_search_screen_weight
+    return config.exact_search_effect_weight
+
+
 def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None) -> float:
     score = 0.0
     hard_control = {"slp", "frz"}
@@ -101,8 +113,8 @@ def _side_position(side, config: PolicyConfig, *, bring_size: int | None = None)
         else:
             score += config.exact_search_effect_weight * len(mon.effects)
     if signed:
-        score += config.exact_search_effect_weight * sum(
-            side_condition_polarity(effect)
+        score += sum(
+            _side_condition_weight(effect, config) * side_condition_polarity(effect)
             for effect in side.side_conditions
             if not (field and effect.id == "tailwind")
         )
