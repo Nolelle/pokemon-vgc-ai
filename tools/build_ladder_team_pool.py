@@ -33,6 +33,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,13 +62,18 @@ _WEATHER_ABILITIES = {
 _WEATHER_MEGA_STONES = {"charizarditey": "sun", "tyranitarite": "sand", "abomasite": "snow"}
 
 
-def extract_sheets(replays_dir: Path, min_rating: int) -> dict[str, dict[str, Any]]:
-    """Latest `|showteam|` team per player id, from replays rated >= `min_rating`."""
+def extract_sheets(
+    replays_dir: Path, min_rating: int, since: float = 0.0
+) -> dict[str, dict[str, Any]]:
+    """Latest `|showteam|` team per player id, from replays rated >= `min_rating` and
+    uploaded at or after `since` (unix seconds; 0 = no cutoff)."""
     latest: dict[str, dict[str, Any]] = {}
     for path in sorted(replays_dir.glob("*-*.json")):
         replay = json.loads(path.read_text())
         rating = replay.get("rating")
         if rating is None or rating < min_rating:
+            continue
+        if (replay.get("uploadtime") or 0) < since:
             continue
         names: dict[str, str] = {}
         for line in replay.get("log", "").split("\n"):
@@ -166,11 +172,20 @@ def main() -> int:
     parser.add_argument("--replays-dir", type=Path, default=DEFAULT_REPLAYS_DIR)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--min-rating", type=int, default=DEFAULT_MIN_RATING)
+    parser.add_argument(
+        "--since",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="only use replays uploaded on/after this UTC date (default: all history)",
+    )
     args = parser.parse_args()
 
+    since = 0.0
+    if args.since:
+        since = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
     node = find_node()
     spreads = load_usage_spreads()
-    sheets = extract_sheets(args.replays_dir, args.min_rating)
+    sheets = extract_sheets(args.replays_dir, args.min_rating, since)
     args.out.mkdir(parents=True, exist_ok=True)
 
     manifest: list[dict[str, Any]] = []
@@ -196,6 +211,7 @@ def main() -> int:
                 "source": "showteam",
                 "replay_id": sheet["replay_id"],
                 "rating": sheet["rating"],
+                "uploadtime": sheet["uploadtime"],
                 "species": [_species_id(member.split("|")) for member in packed.split("]")],
             }
         )

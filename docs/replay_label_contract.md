@@ -72,3 +72,12 @@ action, 360 observed moves, and 22 observed switches. All 102 former pass slots 
 excluded from move and target teaching; the 382 remaining action labels are unchanged.
 These counts do not certify that all observed actions equal submitted choices.
 Detailed IDs and source hashes are in `runs/replay_label_audit_20260909/report.json`.
+
+## Schema 7 state corrections
+
+Schema 7 applies public events before turn 1 in their logged order, including opening
+weather, terrain, stat changes, and revealed abilities, items, and statuses. Team
+preview remains a preview-only observation; opening switches do not create turn or
+replacement-switch actions. Mega forms retain their persistent team identity, including
+Floette-Eternal and Meowstic-F. Schema 6 data must be reparsed from raw logs to gain
+these corrections; existing datasets are unchanged.

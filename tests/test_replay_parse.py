@@ -421,7 +421,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 5 for record in result.records)
+    assert all(record["schema"] == 7 for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -691,3 +691,101 @@ def test_preview_species_defensively_resolves_mega_formes_via_resolve_species() 
     assert result.ok is True
     p1_turn1 = _turn_records(result, "p1")[0]
     assert p1_turn1["state"]["our"]["preview_species"] == ["garchomp"]
+
+
+def test_switch_in_clears_old_boosts_and_battle_only_formes_keep_identity():
+    """Schema 6: stages reset on switch-in; Palafin-Hero is the same team member."""
+
+    log = "\n".join(
+        [
+            "|player|p1|Alice|",
+            "|player|p2|Bob|",
+            "|gametype|doubles",
+            "|poke|p1|Palafin, L50|",
+            "|poke|p1|Incineroar, L50|",
+            "|poke|p1|Amoonguss, L50|",
+            "|poke|p2|Farigiraf, L50|",
+            "|poke|p2|Kingambit, L50|",
+            "|poke|p2|Gholdengo, L50|",
+            "|teampreview",
+            "|start",
+            "|switch|p1a: Palafin|Palafin, L50|100/100",
+            "|switch|p1b: Incineroar|Incineroar, L50|100/100",
+            "|switch|p2a: Farigiraf|Farigiraf, L50|100/100",
+            "|switch|p2b: Kingambit|Kingambit, L50|100/100",
+            "|-unboost|p2a: Farigiraf|atk|1",
+            "|turn|1",
+            "|switch|p1a: Amoonguss|Amoonguss, L50|100/100",
+            "|switch|p2a: Gholdengo|Gholdengo, L50|100/100",
+            "|turn|2",
+            "|switch|p1a: Palafin|Palafin-Hero, L50|100/100",
+            "|switch|p2a: Farigiraf|Farigiraf, L50|100/100",
+            "|turn|3",
+            "|win|Alice",
+        ]
+    )
+    result = parse_replay("test-schema6", 1300, log)
+    assert result.ok is True
+    turn3 = [r for r in result.records if r["decision_kind"] == "turn" and r["turn"] == 3]
+    assert turn3
+    for record in turn3:
+        state = record["state"]
+        p1 = state["our"] if record["player"] == "p1" else state["opp"]
+        p2 = state["opp"] if record["player"] == "p1" else state["our"]
+        farigiraf = next(m for m in p2["active"] if m and m["species"] == "farigiraf")
+        assert farigiraf["boosts"] == {}
+        names = [m["species"] for m in p1["active"] if m] + [m["species_id"] for m in p1["bench"]]
+        assert names.count("palafin") == 1 and "palafinhero" not in names
+
+
+def test_opening_public_events_are_ordered_and_not_retroactive():
+    log = _log([
+        '|poke|p1|Garchomp, L50|', '|poke|p2|Incineroar, L50|',
+        '|switch|p1a: Garchomp|Garchomp, L50|100/100',
+        '|switch|p2a: Incineroar|Incineroar, L50|100/100',
+        '|-ability|p2a: Incineroar|Intimidate', '|-item|p1a: Garchomp|Life Orb',
+        '|-status|p1a: Garchomp|par', '|-unboost|p1a: Garchomp|atk|1',
+        '|-boost|p1a: Garchomp|spe|2', '|-clearnegativeboost|p1a: Garchomp',
+        '|-weather|RainDance', '|-weather|none', '|-weather|SunnyDay',
+        '|-fieldstart|move: Electric Terrain', '|turn|1',
+        '|move|p1a: Garchomp|Protect|p1a: Garchomp',
+        '|-ability|p1a: Garchomp|Rough Skin', '|-clearallboost',
+        '|-fieldend|move: Electric Terrain', '|turn|2', '|win|Alice',
+    ])
+    result = parse_replay('opening', 1300, log)
+    assert result.ok, result.fail_reason
+    first, second = _turn_records(result, 'p1')
+    mon = first['state']['our']['active'][0]
+    assert mon['boosts'] == {'spe': 2}
+    assert mon['item'] == 'lifeorb' and mon['status'] == 'par'
+    assert mon['ability'] is None
+    assert first['state']['opp']['active'][0]['ability'] == 'intimidate'
+    assert first['state']['field']['weather'] == 'sun'
+    assert first['state']['field']['terrain'] == 'electric'
+    assert second['state']['our']['active'][0]['boosts'] == {}
+    assert second['state']['our']['active'][0]['ability'] == 'roughskin'
+    assert second['state']['field']['terrain'] is None
+    assert first['action']['slot0']['move_id'] == 'protect'
+    assert not any(r['decision_kind'] == 'forced_switch' for r in result.records)
+    assert _teampreview_record(result, 'p1')['state']['field'] == {'turn': 0}
+
+
+def test_mega_return_preserves_persistent_forme_identity():
+    log = _log([
+        '|poke|p1|Floette-Eternal, L50|', '|poke|p1|Meowstic-F, L50|',
+        '|poke|p2|Garchomp, L50|',
+        '|switch|p1a: Floette|Floette-Eternal, L50|100/100',
+        '|switch|p1b: Meowstic|Meowstic-F, L50|100/100',
+        '|switch|p2a: Garchomp|Garchomp, L50|100/100', '|turn|1',
+        '|switch|p1a: Incineroar|Incineroar, L50|100/100',
+        '|switch|p1b: Amoonguss|Amoonguss, L50|100/100', '|turn|2',
+        '|switch|p1a: Floette|Floette-Mega, L50|100/100',
+        '|switch|p1b: Meowstic|Meowstic-F-Mega, L50|100/100', '|turn|3', '|tie|',
+    ])
+    result = parse_replay('mega-return', 1300, log)
+    assert result.ok, result.fail_reason
+    side = _turn_records(result, 'p1')[2]['state']['our']
+    assert [(m['species'], m['mega']) for m in side['active']] == [
+        ('floetteeternal', True), ('meowsticf', True),
+    ]
+    assert all(m['species_id'] not in ('floette', 'meowstic') for m in side['bench'])
