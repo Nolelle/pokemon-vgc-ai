@@ -100,14 +100,16 @@
         "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
         "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
-        "status": "incompatible_vocabulary",
+        "status": "rejected_architecture",
         "vocabulary_rows": {
           "ability": 321,
           "item": 150,
           "move": 942,
           "species": 1520
         },
-        "vocabulary_sha256": null
+        "vocabulary_sha256": null,
+        "previous_status": "incompatible_vocabulary",
+        "observation_contract_note": "v5 derives brought resources and preview selection from the actual request; v4 checkpoints require explicit retraining or a separately evaluated migration."
       },
       "release_approval": null,
       "status": "historical",
@@ -182,14 +184,16 @@
         "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
         "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
-        "status": "incompatible_vocabulary",
+        "status": "rejected_architecture",
         "vocabulary_rows": {
           "ability": 321,
           "item": 150,
           "move": 942,
           "species": 1520
         },
-        "vocabulary_sha256": null
+        "vocabulary_sha256": null,
+        "previous_status": "incompatible_vocabulary",
+        "observation_contract_note": "v5 derives brought resources and preview selection from the actual request; v4 checkpoints require explicit retraining or a separately evaluated migration."
       },
       "release_approval": null,
       "status": "historical",
@@ -272,14 +276,16 @@
         "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
         "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
-        "status": "incompatible_vocabulary",
+        "status": "rejected_architecture",
         "vocabulary_rows": {
           "ability": 321,
           "item": 150,
           "move": 942,
           "species": 1520
         },
-        "vocabulary_sha256": null
+        "vocabulary_sha256": null,
+        "previous_status": "incompatible_vocabulary",
+        "observation_contract_note": "v5 derives brought resources and preview selection from the actual request; v4 checkpoints require explicit retraining or a separately evaluated migration."
       },
       "release_approval": null,
       "status": "historical",
@@ -362,14 +368,16 @@
         "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
         "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
-        "status": "incompatible_vocabulary",
+        "status": "rejected_architecture",
         "vocabulary_rows": {
           "ability": 321,
           "item": 150,
           "move": 942,
           "species": 1520
         },
-        "vocabulary_sha256": null
+        "vocabulary_sha256": null,
+        "previous_status": "incompatible_vocabulary",
+        "observation_contract_note": "v5 derives brought resources and preview selection from the actual request; v4 checkpoints require explicit retraining or a separately evaluated migration."
       },
       "release_approval": null,
       "status": "historical",
@@ -488,14 +496,16 @@
         "checked_on": "2026-09-29",
         "name": "vgc.rl.opponents.load_snapshot",
         "reason": "M-B-era checkpoint: item embedding has 150 rows, the M-C data/champions export (2026-09-09) gives 168; load_snapshot refuses it. Needs retraining on M-C data.",
-        "status": "incompatible_vocabulary",
+        "status": "rejected_architecture",
         "vocabulary_rows": {
           "ability": 321,
           "item": 150,
           "move": 942,
           "species": 1520
         },
-        "vocabulary_sha256": null
+        "vocabulary_sha256": null,
+        "previous_status": "incompatible_vocabulary",
+        "observation_contract_note": "v5 derives brought resources and preview selection from the actual request; v4 checkpoints require explicit retraining or a separately evaluated migration."
       },
       "release_approval": null,
       "status": "historical",

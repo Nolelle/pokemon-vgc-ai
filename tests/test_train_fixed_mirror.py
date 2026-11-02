@@ -181,3 +181,35 @@ def test_init_from_cli_is_accepted() -> None:
     args = train_fixed_mirror.parse_args(["--init-from", "/tmp/latest.pt", "--opponent", "maxpower"])
     assert args.init_from == Path("/tmp/latest.pt")
     assert args.opponent == "maxpower"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("evaluation", [False, True])
+def test_full_battle_rejects_a_recovered_actor_failure(monkeypatch, evaluation) -> None:
+    """A live fallback can finish a game, but cannot silently become RL evidence."""
+    torch = pytest.importorskip("torch")
+    from vgc.rl.env import SimWorker
+    from vgc.rl.player import PpoVgcPlayer
+    from vgc.rl.ppo import RolloutBuffer
+
+    torch.set_num_threads(1)
+    original = PpoVgcPlayer.decide
+
+    def fail_once(self, battle):
+        if not getattr(self, "_injected_failure", False):
+            self._injected_failure = True
+            raise RuntimeError("intentional recovered actor failure")
+        return original(self, battle)
+
+    monkeypatch.setattr(PpoVgcPlayer, "decide", fail_once)
+    model = CandidatePolicyValueNet()
+    common = dict(model=model, team=train_fixed_mirror.DEFAULT_TEAM.read_text().strip(),
+                  opponent_name="random", ppo_config=train_fixed_mirror.build_ppo_config(),
+                  device="cpu")
+    with SimWorker() as worker, pytest.raises(RuntimeError, match="fallback invalidated"):
+        if evaluation:
+            train_fixed_mirror._run_eval(worker, games=1, seed=17, iteration=0, **common)
+        else:
+            train_fixed_mirror._play_training_game(
+                worker, buffer=RolloutBuffer(), battle_tag="fallback-contract",
+                learner_side="p1", sim_seed=[17]*4, policy_seed=17, opponent_seed=18, **common)

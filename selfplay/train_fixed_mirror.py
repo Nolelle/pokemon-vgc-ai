@@ -17,6 +17,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
+
 try:
     import torch
 except ImportError as exc:  # pragma: no cover - train extra is optional
@@ -88,6 +90,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--seed", type=int, default=20260812)
+    parser.add_argument("--team", type=Path, default=DEFAULT_TEAM)
+    parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -339,6 +343,8 @@ def _play_training_game(
         battle_format=FORMAT_ID,
         seed=sim_seed,
     )
+    if learner.fallback_count:
+        raise RuntimeError("learner fallback invalidated full-battle training trajectory")
     steps_added = len(buffer.steps) - steps_before
     return outcome.result_for(LEARNER_NAME), steps_added
 
@@ -357,21 +363,21 @@ def _run_eval(
 ) -> dict[str, object]:
     model.eval()
     rng = random.Random(
-        seed + iteration * 20_000 + sum(ord(char) for char in opponent_name)
+        seed + sum(ord(char) for char in opponent_name)
     )
     outcomes: list[BattleOutcome] = []
     for game_idx in range(games):
         learner_side = "p1" if game_idx % 2 == 0 else "p2"
         opponent_side = "p2" if learner_side == "p1" else "p1"
         sim_seed = [rng.randrange(1, 2**31) for _ in range(4)]
-        random.seed(seed + iteration * 20_000 + game_idx)
+        random.seed(seed + game_idx)
         learner = PpoVgcPlayer(
             model=model,
             rollout_buffer=None,
             ppo_config=ppo_config,
             device=device,
             deterministic=False,
-            policy_seed=seed + iteration * 20_000 + game_idx,
+            policy_seed=seed + game_idx,
             start_listening=False,
             team=team,
             battle_format=FORMAT_ID,
@@ -397,6 +403,8 @@ def _run_eval(
                 seed=sim_seed,
             )
         )
+        if learner.fallback_count:
+            raise RuntimeError("learner fallback invalidated full-battle evaluation")
     return summarize(outcomes, LEARNER_NAME, opponent_name)
 
 
@@ -483,6 +491,9 @@ def _record_evals(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.torch_threads < 1:
+        raise SystemExit("--torch-threads must be positive")
+    torch.set_num_threads(args.torch_threads)
     if args.workers != 1:
         raise SystemExit("train_fixed_mirror v1 supports --workers 1 only")
     if args.iterations < 0:
@@ -508,7 +519,7 @@ def main(argv: list[str] | None = None) -> None:
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    team = DEFAULT_TEAM.read_text().strip()
+    team = args.team.read_text().strip()
     eval_opponents = _parse_eval_opponents(
         args.eval_opponents,
         args.opponent,
@@ -644,7 +655,8 @@ def main(argv: list[str] | None = None) -> None:
                         "no PPO decisions were recorded from completed training games"
                     )
                 update_metrics = ppo_update(
-                    model, optimizer, buffer, ppo_config, device=args.device
+                    model, optimizer, buffer, ppo_config, device=args.device,
+                    rng=np.random.default_rng(args.seed + iteration * 30_000),
                 )
                 games_seen += args.games_per_iteration
                 snapshot_path = _save_iteration_snapshot(

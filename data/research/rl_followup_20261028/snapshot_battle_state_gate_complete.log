@@ -1,0 +1,40 @@
+observable_property_coverage: exact (4 test(s))
+decision_request_cutoff: exact (3 test(s))
+active_bench_health_status_resources: exact (2 test(s))
+boosts_temporary_field_side_slot_effects: exact (2 test(s))
+open_team_sheet_reveal_timing: exact (3 test(s))
+decision_replay_bundle: exact (4 test(s))
+normal_and_forced_decision_identity: exact (3 test(s))
+private_root_isolation: exact (2 test(s))
+future_label_isolation: exact (3 test(s))
+spread_and_nature_distribution: exact (5 test(s))
+joint_move_item_ability_configurations: exact (1 test(s))
+unresolved_brought_four_distribution: exact (7 test(s))
+hidden_sleep_confusion_timers: exact (3 test(s))
+belief_branch_cap_and_renormalization: exact (4 test(s))
+public_information_teacher: exact (9 test(s))
+fail_closed_public_and_training_entrypoints: exact (1 test(s))
+declared ready: True
+joint priors current: True
+decision replay schema current: True
+multi-belief defaults ready: True
+exact (16): active_bench_health_status_resources, belief_branch_cap_and_renormalization, boosts_temporary_field_side_slot_effects, decision_replay_bundle, decision_request_cutoff, fail_closed_public_and_training_entrypoints, future_label_isolation, hidden_sleep_confusion_timers, joint_move_item_ability_configurations, normal_and_forced_decision_identity, observable_property_coverage, open_team_sheet_reveal_timing, private_root_isolation, public_information_teacher, spread_and_nature_distribution, unresolved_brought_four_distribution
+partial (0): 
+missing (0): 
+scopes: belief_state=READY, decision_replay=READY, live_observation=READY, search_input=READY, temporal_boundary=READY, training_input=READY
+local_head: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+local_dirty: False
+pinned_commit: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+pinned_matches_head: True
+upstream_ref: origin/master
+fetched: False
+fetch_error: None
+missing_upstream_commits (block -- affect Reg M-C or unproven):
+  (none)
+irrelevant_upstream_commits (behind, but cannot affect Reg M-C):
+  (none)
+running 52 gate test node(s)
+.........................................................                [100%]
+57 passed in 48.76s
+artifact current: True
+verdict: PASS

@@ -13,6 +13,9 @@ not establish the target rating; actual ladder results must do that. Coaching in
 and product work are deferred until the playing goal is demonstrated.
 
 Current repair plan: [audit implementation plan](docs/audit_implementation_plan_2026-09-07.md).
+Proposed RL research sequence: [first-principles plan, 2026-10-28](docs/rl_research_plan_2026-10-28.md)
+(verify experience and updates, prove learning on small tasks, then expand and evaluate).
+Execution evidence: [RL research progress and current blockers](docs/rl_sections_1_8_progress_2026-10-28.md).
 Current model inventory: [model register](data/models/registry.json).
 The older pipeline and commands below describe historical development and must not be
 treated as current release approval.

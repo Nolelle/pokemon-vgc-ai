@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -81,13 +83,33 @@ def run_gate_pytest(test_node_ids: list[str]) -> subprocess.CompletedProcess[str
         "-p",
         "no:cacheprovider",
     ]
-    return subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    # Pytest exits successfully when required cases skip (for example because an
+    # ignored fixture pool was not copied into a clean research checkout). A skip
+    # is not mechanics evidence, so inspect structured results before certifying.
+    with tempfile.TemporaryDirectory(prefix="vgc-gate-") as directory:
+        report_path = Path(directory) / "results.xml"
+        command.append(f"--junitxml={report_path}")
+        completed = subprocess.run(
+            command, cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+        )
+        if completed.returncode != 0:
+            return completed
+        try:
+            cases = list(ET.parse(report_path).getroot().iter("testcase"))
+        except (OSError, ET.ParseError) as exc:
+            reason = f"required gate test results could not be verified: {exc}"
+        else:
+            skipped = [case for case in cases if case.find("skipped") is not None]
+            if cases and not skipped:
+                return completed
+            names = ", ".join(
+                f"{case.get('classname', '')}::{case.get('name', '')}" for case in skipped
+            )
+            reason = (f"required gate tests were skipped: {names}" if skipped
+                      else "required gate run produced no test cases")
+        return subprocess.CompletedProcess(
+            completed.args, 1, completed.stdout, (completed.stderr or "") + f"\n{reason}\n",
+        )
 
 
 def pytest_collection_failed(returncode: int) -> bool:

@@ -1,0 +1,9 @@
+{
+  "snapshot": "/var/folders/zb/9rr1lhqs2wx3jp2d_8vm5zrm0000gn/T/vgc-research-20261028-icom_dcs",
+  "commit": "85ed1294eb113eb9632b99b84d18dd50de0f6f0b",
+  "purpose": "Isolated source snapshot; original worktree unchanged; no release approval",
+  "previous_commit_with_missing_fixture_pool": "532b536e1b4b98a1050408ff35824fb8b98db062",
+  "fixture_pool_sha256": "20a3706b94232768855550d7a019093502e97f4ddbb51989a832796efe5bcbe4",
+  "source_bundle_path": "runs/rl_sections_1_8/research_source.bundle",
+  "source_bundle_sha256": "847f82ecd7bcba93f5758ad601a97848d823832cfc40a5fb7a7b4e21238210aa"
+}
