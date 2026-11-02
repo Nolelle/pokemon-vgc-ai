@@ -1,0 +1,152 @@
+{
+  "status": "diagnostic_unapproved",
+  "seed": 707,
+  "config": {
+    "gamma": 1.0,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "value_clip_ratio": 0.2,
+    "value_loss_weight": 0.5,
+    "entropy_weight": 0.01,
+    "teacher_anchor_weight": 0.0,
+    "max_grad_norm": 0.5,
+    "epochs": 4,
+    "minibatch_size": 64,
+    "reward_shaping_coef": 0.0
+  },
+  "learning_rate": 0.001,
+  "games_per_update": 32,
+  "fixture_sha256": "e6abc1d869a1ea44f0a8498b313d6e5d8ac6995a5edbe6e3b9954f660e47b28f",
+  "evaluations": [
+    {
+      "iteration": 0,
+      "tasks": [
+        {
+          "task": "setup",
+          "wins": 6,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "replacement",
+          "wins": 9,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "target",
+          "wins": 6,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "sacrifice",
+          "wins": 0,
+          "draws": 0,
+          "games": 16
+        }
+      ],
+      "win_rate": 0.328125
+    },
+    {
+      "iteration": 4,
+      "tasks": [
+        {
+          "task": "setup",
+          "wins": 8,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "replacement",
+          "wins": 10,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "target",
+          "wins": 5,
+          "draws": 0,
+          "games": 16
+        },
+        {
+          "task": "sacrifice",
+          "wins": 1,
+          "draws": 0,
+          "games": 16
+        }
+      ],
+      "win_rate": 0.375
+    }
+  ],
+  "updates": [
+    {
+      "iteration": 1,
+      "decisions": 195,
+      "loss": 0.1524593741632998,
+      "policy_loss": -0.00595337909180671,
+      "value_loss": 0.35195282846689224,
+      "entropy": 1.7563664391636848,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.014541498814651277,
+      "clip_fraction": 0.029296875,
+      "grad_norm": 0.4978516660630703,
+      "steps": 195.0
+    },
+    {
+      "iteration": 2,
+      "decisions": 204,
+      "loss": 0.08359085593838245,
+      "policy_loss": -0.04885626136092469,
+      "value_loss": 0.29915518686175346,
+      "entropy": 1.7130472585558891,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.007998333487194031,
+      "clip_fraction": 0.1552734370343387,
+      "grad_norm": 0.39880541153252125,
+      "steps": 204.0
+    },
+    {
+      "iteration": 3,
+      "decisions": 219,
+      "loss": 0.10468656697776169,
+      "policy_loss": -0.01128577534109354,
+      "value_loss": 0.2669239593669772,
+      "entropy": 1.7489637285470963,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.008898684958694503,
+      "clip_fraction": 0.0166015625,
+      "grad_norm": 0.332390571013093,
+      "steps": 219.0
+    },
+    {
+      "iteration": 4,
+      "decisions": 197,
+      "loss": 0.14830840728245676,
+      "policy_loss": 0.037151852156966925,
+      "value_loss": 0.25806576665490866,
+      "entropy": 1.7876320704817772,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.009854043717496097,
+      "clip_fraction": 0.1902343761175871,
+      "grad_norm": 0.6039720857515931,
+      "steps": 197.0
+    }
+  ],
+  "selection": "highest minimum development wins, earliest tie",
+  "selected_iteration": 4,
+  "source_sha256": "b0013f9f6e6c4a6526211e36bd7c51414de0d34edab1c80035ede90f0d016f74",
+  "elapsed_seconds": 23.06278179199944
+}

@@ -1,0 +1,42 @@
+{
+  "command": [
+    "/private/var/folders/zb/9rr1lhqs2wx3jp2d_8vm5zrm0000gn/T/vgc-research-20261028-icom_dcs/.venv/bin/python",
+    "-u",
+    "selfplay/train_fixed_mirror.py",
+    "--iterations",
+    "2",
+    "--games-per-iteration",
+    "32",
+    "--eval-games",
+    "64",
+    "--eval-every-iterations",
+    "2",
+    "--opponent",
+    "random",
+    "--eval-opponents",
+    "random",
+    "--seed",
+    "7707",
+    "--lr",
+    "0.0003",
+    "--information-features",
+    "--tactical-features",
+    "--init-from",
+    "/Users/edmundyu/code/projects/pokemon-vgc-ai/runs/rl_sections_1_8/full_battle_initial/seed77.pt",
+    "--out-dir",
+    "/Users/edmundyu/code/projects/pokemon-vgc-ai/runs/rl_sections_1_8/full_battle_pilot",
+    "--no-wandb"
+  ],
+  "source_snapshot": {
+    "snapshot": "/var/folders/zb/9rr1lhqs2wx3jp2d_8vm5zrm0000gn/T/vgc-research-20261028-icom_dcs",
+    "commit": "85ed1294eb113eb9632b99b84d18dd50de0f6f0b",
+    "purpose": "Isolated source snapshot; original worktree unchanged; no release approval",
+    "previous_commit_with_missing_fixture_pool": "532b536e1b4b98a1050408ff35824fb8b98db062",
+    "fixture_pool_sha256": "20a3706b94232768855550d7a019093502e97f4ddbb51989a832796efe5bcbe4"
+  },
+  "initial_checkpoint_sha256": "21e2a0d2f5703333c859a1875737007f695b8524ee1821816c7ca1e28731ca4d",
+  "team_sha256": "3a68100912ce15fb2ca56aed0d25a693c7355d3de94ad2d44949cf570d69aa70",
+  "status": "diagnostic_unapproved",
+  "returncode": 0,
+  "elapsed_seconds": 175.1210139169998
+}

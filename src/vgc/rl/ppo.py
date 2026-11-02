@@ -299,6 +299,7 @@ def ppo_update(
     config: PpoConfig = PpoConfig(),
     *,
     device: str = "cpu",
+    rng: np.random.Generator | None = None,
 ) -> dict[str, float]:
     """Run clipped PPO epochs over completed trajectories and return mean metrics."""
 
@@ -313,9 +314,12 @@ def ppo_update(
     for step, advantage in zip(buffer.steps, advantages):
         step.advantage = float(advantage)
 
-    rng = np.random.default_rng()
+    rng = rng if rng is not None else np.random.default_rng()
     metric_rows: list[dict[str, float]] = []
-    model.train()
+    # Rollouts are collected in eval mode (PpoVgcPlayer.decide). Keep the same
+    # distribution here: enabling dropout would change the importance ratios even
+    # before the first optimizer step. eval() does not disable autograd.
+    model.eval()
     for _ in range(config.epochs):
         indices = rng.permutation(len(buffer.steps))
         for start in range(0, len(indices), config.minibatch_size):
