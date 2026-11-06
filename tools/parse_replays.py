@@ -99,6 +99,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="parse at most this many replay files (default: all)",
     )
+    parser.add_argument(
+        "--only-ids",
+        type=Path,
+        default=None,
+        help="JSONL file (e.g. a saved index.jsonl) whose per-line `id` fields restrict "
+        "which replays get parsed -- for re-parsing a fixed corpus while the same "
+        "directory keeps receiving new downloads (default: all *.json files)",
+    )
     return parser.parse_args()
 
 
@@ -109,6 +117,13 @@ def main() -> int:
         return 1
 
     files = sorted(args.replays_dir.glob("*.json"))
+    if args.only_ids is not None:
+        only = {
+            json.loads(line)["id"]
+            for line in args.only_ids.open()
+            if line.strip()
+        }
+        files = [path for path in files if path.stem in only]
     if args.limit is not None:
         files = files[: args.limit]
 

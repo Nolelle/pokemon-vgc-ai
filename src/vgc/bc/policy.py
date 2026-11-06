@@ -311,10 +311,35 @@ def _load_bc_policy_uncached(checkpoint_path: str) -> BcPolicy | None:
 # --- battle_state_record: the live adapter ------------------------------------------
 
 
+_ABILITY_CACHE: dict[str, str | None] = {}
+
+
+def _champions_single_ability(forme_id: str) -> str | None:
+    """Single legal ability for `forme_id` in Champions data (poke-env's dex
+    maps `<id>mega` to the BASE ability list -- 9 M-C megas affected)."""
+    if forme_id in _ABILITY_CACHE:
+        return _ABILITY_CACHE[forme_id]
+    from vgc.data import load_species
+    entry = load_species().get(forme_id) or {}
+    abilities = {to_id(a) for a in (entry.get("abilities") or {}).values()}
+    _ABILITY_CACHE[forme_id] = abilities.pop() if len(abilities) == 1 else None
+    return _ABILITY_CACHE[forme_id]
+
+
 def _active_mon_dict(pokemon: Pokemon | None) -> dict | None:
     if pokemon is None or pokemon.fainted:
         return None
-    species_id, mega = _resolve_species(to_id(pokemon.species) or "")
+    # Per-mon evidence only: the mon's own |detailschange|/switch details is the
+    # reliable species+forme (poke-env's `-mega` handling can land on the wrong
+    # Pokemon object; `forme_change_ability` alone proved unreliable).
+    raw_details = (
+        getattr(pokemon, "details", None)
+        or getattr(pokemon, "_last_details", "")
+        or pokemon.species
+        or ""
+    )
+    details_id = to_id(str(raw_details).split(",", 1)[0].strip())
+    species_id, mega = _resolve_species(details_id)
     boosts = {
         stat: value
         for stat, value in (pokemon.boosts or {}).items()
@@ -333,7 +358,14 @@ def _active_mon_dict(pokemon: Pokemon | None) -> dict | None:
         # opponent -- no special-casing needed, poke-env's own Pokemon fields already
         # carry this asymmetry, see module docstring.
         "item": normalize_item(pokemon.item),
-        "ability": to_id(pokemon.ability) if pokemon.ability else None,
+        # poke-env's precedence (temporary_ability > forme_change_ability >
+        # _ability) is right once the compat shim demotes a forme_change_ability
+        # stale against a fresher post-forme -ability reveal. The
+        # single-legal-ability fill applies to BASE formes only -- Champions
+        # megas can legally carry base abilities (revealed Intimidate on a
+        # Salamence-Mega).
+        "ability": to_id(pokemon.ability or "")
+        or (None if mega else _champions_single_ability(details_id)),
         "mega": mega,
         "revealed_moves": revealed_moves,
     }

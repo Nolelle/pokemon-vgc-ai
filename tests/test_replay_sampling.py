@@ -72,3 +72,35 @@ def test_empty_and_invalid_requests():
         sample_task_units(plan, "move", 1, 1)
     with pytest.raises(ValueError):
         build_sampling_plan({}, {}, phase="invalid")
+
+
+def test_per_task_eligibility():
+    """1100-rated side contributes outcome units but no policy units; a showteam
+    game contributes outcome only; expert unchanged."""
+    from vgc.bc.replay_sampling import _eligible
+    game = {"ratings": {"p1": 1100.0, "p2": 1750.0}, "showteam": False,
+            "split": "train"}
+    assert _eligible(game, "p1", "outcome", "broad", 1200, float("-inf"))
+    assert not _eligible(game, "p1", "move", "broad", 1200, float("-inf"))
+    assert not _eligible(game, "p1", "preview_brought", "broad", 1200, float("-inf"))
+    assert _eligible(game, "p2", "move", "broad", 1200, float("-inf"))
+    sheet = dict(game, showteam=True)
+    assert not _eligible(sheet, "p2", "move", "broad", 1200, float("-inf"))
+    assert not _eligible(sheet, "p2", "preview_leads", "broad", 1200, float("-inf"))
+    assert _eligible(sheet, "p2", "outcome", "broad", 1200, float("-inf"))
+    assert _eligible(game, "p2", "move", "expert") and not _eligible(game, "p1", "move", "expert")
+
+
+def test_fixed_boundary_splits():
+    """time < DEV_START -> train; < TEST_START -> validation; <= WINDOW_END ->
+    test; after -> excluded with 'after_window'."""
+    import sys
+    sys.path.insert(0, "tools")
+    from inventory_replay_pretraining import assign_splits  # noqa: PLC0415
+    games = [{"id": f"g{i}", "time": t, "exclusions": [], "rosters": {},
+              "log_sha256": f"h{i}"}
+             for i, t in enumerate([100, 200, 300, 400, 500])]
+    assign_splits(games, {"dev_start": 300, "test_start": 400, "window_end": 450})
+    assert [g["base_split"] for g in games] == [
+        "train", "train", "validation", "test", "excluded"]
+    assert "after_window" in games[4]["exclusions"]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vgc.replay_parse import parse_replay, parse_showteam_line
+from vgc.replay_parse import SCHEMA_VERSION, parse_replay, parse_showteam_line
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "replay_sample.json"
 
@@ -421,7 +421,7 @@ def test_schema_version_present_on_every_record() -> None:
     result = parse_replay("test-two-turn", 1400, _two_turn_log())
     assert result.ok is True
     assert result.records  # sanity: there's something to check
-    assert all(record["schema"] == 7 for record in result.records)
+    assert all(record["schema"] == SCHEMA_VERSION for record in result.records)
 
 
 def test_revealed_moves_accumulate_from_moves_actually_used() -> None:
@@ -789,3 +789,64 @@ def test_mega_return_preserves_persistent_forme_identity():
         ('floetteeternal', True), ('meowsticf', True),
     ]
     assert all(m['species_id'] not in ('floette', 'meowstic') for m in side['bench'])
+
+
+def test_forced_switch_snapshot_before_any_replacement():
+    """A forced_switch record's state never contains its own destination on the
+    field nor the opponent's simultaneous replacement (F1 batch freeze)."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Charizard", "|poke|p1|Venusaur", "|poke|p1|Blastoise",
+        "|poke|p2|Dragonite", "|poke|p2|Snorlax", "|poke|p2|Slowbro",
+        "|turn|1",
+        "|switch|p1a: Charizard|Charizard|100/100",
+        "|switch|p2a: Dragonite|Dragonite|100/100",
+        "|move|p1a: Charizard|Ember|p2a: Dragonite",
+        "|move|p2a: Dragonite|Tackle|p1a: Charizard",
+        "|turn|2",
+        "|move|p2a: Dragonite|Hyper Beam|p1a: Charizard",
+        "|faint|p1a: Charizard",
+        "|move|p1a: Charizard|cant",
+        "|faint|p2a: Dragonite",
+        "|switch|p1a: Venusaur|Venusaur|100/100",
+        "|switch|p2a: Snorlax|Snorlax|100/100",
+    ])
+    recs = [r for r in parse_replay("t", None, log).records
+            if r["decision_kind"] == "forced_switch"]
+    assert len(recs) == 2
+    for rec in recs:
+        own_actives = {m["species"] for m in rec["state"]["our"]["active"] if m}
+        opp_actives = {m["species"] for m in rec["state"]["opp"]["active"] if m}
+        assert rec["action"]["switch_species"] not in own_actives
+        assert "venusaur" not in opp_actives and "snorlax" not in opp_actives
+
+
+def test_from_item_heal_and_trace_ability_attribution() -> None:
+    """[from] item: on a -heal line reveals the holder's item; a Trace -ability
+    line gives the holder `trace` and reveals the [of] mon's copied ability."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Clefable", "|poke|p2|Gardevoir", "|poke|p2|Venusaur",
+        "|poke|p2|Snorlax", "|poke|p2|Slowbro", "|poke|p2|Dragonite",
+        "|turn|1",
+        "|switch|p1a: Clefable|Clefable|100/100",
+        "|switch|p2a: Gardevoir|Gardevoir|100/100",
+        "|switch|p2b: Venusaur|Venusaur|100/100",
+        "|move|p2a: Gardevoir|Dazzling Gleam|spread",
+        "|turn|2",
+        "|-heal|p1a: Clefable|67/100|[from] item: Leftovers",
+        "|-ability|p2a: Gardevoir|Magic Guard|Trace|[from] ability: Trace|[of] p1a: Clefable",
+        "|move|p1a: Clefable|Moonblast|p2a: Gardevoir",
+        "|turn|3",
+        "|move|p1a: Clefable|Moonblast|p2a: Gardevoir",
+    ])
+    recs = parse_replay("t", None, log).records
+    # The reveals happen inside turn 2's segment -> visible at turn 3's
+    # snapshot (records always snapshot at the request instant).
+    t3 = next(r for r in recs if r["decision_kind"] == "turn" and r["turn"] == 3
+              and r["player"] == "p2")
+    clefable = t3["state"]["opp"]["active"][0]
+    gard = t3["state"]["our"]["active"][0]
+    assert clefable["item"] == "leftovers"
+    assert clefable["ability"] == "magicguard"  # revealed BY the copy on the [of] mon
+    assert gard["ability"] == "magicguard"  # EFFECTIVE copy (live parity); base_ability stays "trace" internally

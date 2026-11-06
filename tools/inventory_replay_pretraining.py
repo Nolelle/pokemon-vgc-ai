@@ -20,6 +20,11 @@ try:
 except ModuleNotFoundError:
     from audit_replay_state import raw_identities
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
+from vgc.bc.own_team_rebuild import illusion_possible  # noqa: E402
+
 FORMAT = "gen9championsvgc2026regmc"
 SEATS = ("p1", "p2")
 RATING_RE = re.compile(r"^\|raw\|(.+?)'s rating: (\d+) &rarr; <strong>(\d+)</strong>", re.M)
@@ -185,7 +190,11 @@ def outcome_candidate(g, group):
             and not (set(g["exclusions"]) - allowed))
 
 
-def assign_splits(games):
+def assign_splits(games, boundaries=None):
+    """Same-time-grouped splits. `boundaries` = {"dev_start", "test_start",
+    "window_end"} epochs (derived from the v3 manifest): time < dev_start ->
+    train; < test_start -> validation; <= window_end -> test; after -> excluded
+    with reason "after_window". None keeps the 80/10/10 midpoint fractions."""
     """Place same-time and exact-log duplicates together; exclude duplicate games."""
     by_hash = collections.defaultdict(list)
     for g in games:
@@ -196,17 +205,37 @@ def assign_splits(games):
                 g["exclusions"].append("exact_duplicate")
     eligible = sorted((g for g in games if not g["exclusions"] and g["time"] is not None),
                       key=lambda x: (x["time"], x["id"]))
-    n = len(eligible)
-    i = 0
-    while i < n:
-        j = i + 1
-        while j < n and eligible[j]["time"] == eligible[i]["time"]:
-            j += 1
-        midpoint = (i + j) / 2
-        split = "train" if midpoint < n * .8 else "validation" if midpoint < n * .9 else "test"
-        for g in eligible[i:j]:
-            g["base_split"] = split
-        i = j
+    if boundaries is not None:
+        dev_start, test_start, window_end = (
+            boundaries["dev_start"], boundaries["test_start"], boundaries["window_end"])
+        for g in games:
+            if g["time"] is not None and g["time"] > window_end:
+                g["exclusions"].append("after_window")
+        eligible = [g for g in eligible if g["time"] <= window_end]
+        n = len(eligible)
+        i = 0
+        while i < n:
+            j = i + 1
+            while j < n and eligible[j]["time"] == eligible[i]["time"]:
+                j += 1
+            t = eligible[i]["time"]
+            split = ("train" if t < dev_start
+                     else "validation" if t < test_start else "test")
+            for g in eligible[i:j]:
+                g["base_split"] = split
+            i = j
+    else:
+        n = len(eligible)
+        i = 0
+        while i < n:
+            j = i + 1
+            while j < n and eligible[j]["time"] == eligible[i]["time"]:
+                j += 1
+            midpoint = (i + j) / 2
+            split = "train" if midpoint < n * .8 else "validation" if midpoint < n * .9 else "test"
+            for g in eligible[i:j]:
+                g["base_split"] = split
+            i = j
     for g in games:
         g.setdefault("base_split", "excluded")
         g["split"] = g["base_split"]
@@ -248,6 +277,10 @@ def main():
     parser.add_argument("--raw-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--baseline-index", type=Path, default=Path("runs/replay_refresh_20261101/index_before.jsonl"))
+    parser.add_argument("--boundaries-from", type=Path, default=None,
+                        help="v3 selection manifest to derive fixed split boundaries "
+                             "from (DEV_START=min validation time, TEST_START=min test "
+                             "time, WINDOW_END=max time); replaces the 80/10/10 mode")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=False)
     baseline = baseline_ids(args.baseline_index)
@@ -315,6 +348,10 @@ def main():
         for flag in ("transform", "illusion_or_replace", "baton_pass"):
             if g["protocol_flags"][flag]:
                 g["exclusions"].append("state_review_" + flag)
+        # Unbroken Illusion emits no |replace| line and no protocol flag; set aside
+        # any game previewing a species that could carry it.
+        if any(illusion_possible(g["rosters"].get(seat) or []) for seat in SEATS):
+            g["exclusions"].append("state_review_illusion_possible")
         if g["row_errors"]:
             g["exclusions"].append("bad_rows")
         for seat in SEATS:
@@ -336,7 +373,16 @@ def main():
             g["exclusions"].append("preview_record_count")
         g["baseline"] = g["id"] in baseline
         g["exclusions"] = sorted(set(g["exclusions"]))
-    assign_splits(list(games.values()))
+    boundaries = None
+    if args.boundaries_from:
+        rows = [json.loads(line) for line in args.boundaries_from.open()]
+        boundaries = {
+            "dev_start": min(r["time"] for r in rows if r["split"] == "validation"),
+            "test_start": min(r["time"] for r in rows if r["split"] == "test"),
+            "window_end": max(r["time"] for r in rows),
+        }
+        print("fixed boundaries:", boundaries, file=sys.stderr)
+    assign_splits(list(games.values()), boundaries)
     reserved = reserve_teams(list(games.values()))
     groups = collections.defaultdict(lambda: {"games": 0, "baseline_games": 0, "counts": collections.Counter(),
                                              "counts_pre1600": collections.Counter(), "times": [],

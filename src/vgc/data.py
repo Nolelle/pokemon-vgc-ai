@@ -77,6 +77,25 @@ def load_mechanics_coverage() -> dict[str, Any]:
     return _load_json("mechanics_coverage.json")
 
 
+@lru_cache(maxsize=1)
+def load_cosmetic_formes() -> dict[str, str]:
+    """Cosmetic forme id -> base species id (Alcremie flavors, Furfrou trims, ...).
+
+    Derived from Showdown's own dex: a forme is cosmetic iff its base species lists it
+    in `cosmeticFormes`. Regenerated from the pinned checkout, checked in like the other
+    data/champions exports.
+    """
+    return _load_json("cosmetic_formes.json")
+
+
+def canonical_species_id(species_id: str) -> str:
+    """Base species id for `species_id`, collapsing cosmetic formes (identity is
+    unchanged -- same stats/moves/team slot -- so records/encodings should never split
+    `alcremierubycream` from `alcremie`). Non-cosmetic ids pass through untouched.
+    """
+    return load_cosmetic_formes().get(species_id, species_id)
+
+
 def clear_cache() -> None:
     """Drop all cached loads -- mainly useful for tests that re-export data mid-run."""
     load_species.cache_clear()
@@ -87,6 +106,7 @@ def clear_cache() -> None:
     load_natures.cache_clear()
     load_mechanics_catalog.cache_clear()
     load_mechanics_coverage.cache_clear()
+    load_cosmetic_formes.cache_clear()
 
 
 def data_dir() -> Path:

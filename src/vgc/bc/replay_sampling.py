@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 TASKS = ("move", "target", "switch_destination", "preview_brought", "preview_leads", "outcome")
+POLICY_TASKS = tuple(t for t in TASKS if t != "outcome")
 METHOD = "equal_game_then_perspective_then_unit_both_role_inverse_sqrt_roster_frequency"
 Group = tuple[str, str, str]
 
@@ -23,12 +24,36 @@ class SamplingPlan:
     roster_frequencies: dict[tuple[str, ...], int]
 
 
-def _eligible(game: dict, side: str, phase: str) -> bool:
+def _known(rating) -> bool:
+    return isinstance(rating, (int, float)) and not isinstance(rating, bool) and math.isfinite(rating)
+
+
+def _eligible(
+    game: dict, side: str, task: str, phase: str,
+    broad_min_pre_rating: float | None = None,
+    broad_outcome_min_pre_rating: float | None = None,
+) -> bool:
+    """Per-(game, side, task) eligibility.
+
+    Expert: known rating >= 1600, all tasks. Broad policy tasks: no open-sheet
+    games (those players chose knowing the opponent's sets, which the ladder bot
+    never has) plus the optional `broad_min_pre_rating` floor. Broad outcome:
+    `broad_outcome_min_pre_rating` floor only -- pass ``-inf`` for "any known
+    finite rating" (all rated games including <1200); None keeps today's
+    no-requirement meaning.
+    """
     rating = game.get("ratings", {}).get(side)
-    return phase == "broad" or (
-        isinstance(rating, (int, float)) and not isinstance(rating, bool)
-        and math.isfinite(rating) and rating >= 1600
-    )
+    if phase == "expert":
+        return _known(rating) and rating >= 1600
+    if task == "outcome":
+        if broad_outcome_min_pre_rating is None:
+            return True
+        return _known(rating) and rating >= broad_outcome_min_pre_rating
+    if game.get("showteam"):
+        return False
+    if broad_min_pre_rating is None:
+        return True
+    return _known(rating) and rating >= broad_min_pre_rating
 
 
 def _rosters(game: dict) -> set[tuple[str, ...]]:
@@ -46,19 +71,27 @@ def _rosters(game: dict) -> set[tuple[str, ...]]:
 
 def build_sampling_plan(
     manifest: Mapping[str, dict], unit_counts: Mapping[Group, int], *, phase: str = "broad",
+    broad_min_pre_rating: float | None = None,
+    broad_outcome_min_pre_rating: float | None = None,
 ) -> SamplingPlan:
     """Assign probabilities to eligible units using only fixed training assignments.
 
     A group's probability is its per-unit weight times its eligible unit count.
     Roster frequencies count each lineup once per game, including mirror matches.
-    Unknown expert ratings are excluded. Held-out group counts are ignored entirely.
+    Eligibility is per (game, side, task) -- see `_eligible`; a game stays in the
+    pool if ANY side+task is eligible, so an outcome-only <floor game still
+    contributes outcome units. Held-out group counts are ignored entirely.
     """
     if phase not in ("broad", "expert"):
         raise ValueError("phase must be broad or expert")
     games = {
         rid: game for rid, game in manifest.items()
         if game.get("split") == "train"
-        and any(_eligible(game, side, phase) for side in ("p1", "p2"))
+        and any(
+            _eligible(game, side, task, phase, broad_min_pre_rating,
+                      broad_outcome_min_pre_rating)
+            for side in ("p1", "p2") for task in TASKS
+        )
     }
     roster_sets = {rid: _rosters(game) for rid, game in games.items()}
     frequencies = Counter(roster for rosters in roster_sets.values() for roster in rosters)
@@ -72,7 +105,8 @@ def build_sampling_plan(
             raise ValueError(f"invalid training group: {key}")
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:
             raise ValueError("eligible unit counts must be nonnegative integers")
-        if count and _eligible(games[rid], side, phase):
+        if count and _eligible(games[rid], side, task, phase, broad_min_pre_rating,
+                               broad_outcome_min_pre_rating):
             counts[key] = count
             by_task[task][rid].append(key)
     weights, diagnostics, normalizers = {}, {}, {}

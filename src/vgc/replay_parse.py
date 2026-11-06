@@ -152,7 +152,7 @@ from dataclasses import dataclass, field
 from poke_env.teambuilder.teambuilder import Teambuilder
 
 from vgc.damage import STATUS_IDS, to_id
-from vgc.data import load_species
+from vgc.data import canonical_species_id, load_species
 
 # --- protocol constants -----------------------------------------------------------------
 
@@ -163,7 +163,17 @@ from vgc.data import load_species
 # -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
 # old datasets stay distinguishable from newer ones instead of silently being read as if
 # compatible.
-SCHEMA_VERSION = 7
+#
+# Schema 8 (2026-11-04): every record gains `"log_line"`, the raw-log line index the
+# record's snapshot is taken at (the `|turn|N|` marker for "turn" records, the
+# `|switch|`/`|drag|` line for "forced_switch", the first `|turn|` marker for
+# "teampreview") -- every protocol event at a raw index < `log_line` was already
+# public when the decision was made. This is what `vgc.bc.own_team_rebuild` aligns
+# fills against. Species ids are now canonicalized through
+# `vgc.data.canonical_species_id` (cosmetic formes like `alcremierubycream` collapse to
+# their base species -- identity is unchanged, so live poke-env ids and replay names
+# share one token).
+SCHEMA_VERSION = 9
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -226,7 +236,7 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
             base = base[0] if base else None
         base = to_id(base)
         if base:
-            return base, True
+            return canonical_species_id(base), True
     # Other battle-only formes (Palafin-Hero, Aegislash-Blade, Mimikyu-Busted, ...) are
     # the same team member too: Palafin switches back in as "Palafin-Hero", and keying
     # that as a new species listed one Pokemon twice (an extra survivor on the board).
@@ -234,8 +244,8 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
     if isinstance(battle_only, list):
         battle_only = battle_only[0] if battle_only else None
     if battle_only and to_id(battle_only) != species_id:
-        return to_id(battle_only), False
-    return species_id, False
+        return canonical_species_id(to_id(battle_only)), False
+    return canonical_species_id(species_id), False
 
 
 def _parse_position(token: str) -> tuple[str, int | None, str]:
@@ -289,7 +299,10 @@ class MonKnowledge:
     status: str | None = None
     boosts: dict[str, int] = field(default_factory=dict)
     item: str | None = None
-    ability: str | None = None
+    ability: str | None = None  # current EFFECTIVE ability -- matches live encoding
+    # Revealed BASE ability (Trace, not the copied value) -- temporary changes
+    # never touch this; switching back in reverts `ability` to it.
+    base_ability: str | None = None
     mega: bool = False
     tera_type: str | None = None
     fainted: bool = False
@@ -297,6 +310,9 @@ class MonKnowledge:
     # turns; a `|cant|`-attempted move counts too -- see the "move"/"cant" tag handlers
     # below). Schema 2+ only -- see module docstring and `SCHEMA_VERSION`.
     revealed_moves: set[str] = field(default_factory=set)
+    # Exact forme id from the last |detailschange|/-formechange (e.g.
+    # "charizardmegay") -- the public -mega line only names the base species.
+    forme_id: str | None = None
 
 
 @dataclass
@@ -335,6 +351,27 @@ class BattleState:
 # --- state snapshotting ------------------------------------------------------------------
 
 
+def _is_consumable(item_id: str) -> bool:
+    from vgc.data import load_items
+    entry = load_items().get(item_id) or {}
+    return bool(entry.get("isBerry")) or any(k in item_id for k in ("herb", "seed", "gem"))
+
+
+_SINGLE_ABILITY_CACHE: dict[str, str | None] = {}
+
+
+def _single_ability(forme_id: str) -> str | None:
+    """The ability when `forme_id` has exactly one legal ability in Champions
+    data -- public info, mirrors poke-env's auto-fill of unambiguous abilities."""
+    if forme_id in _SINGLE_ABILITY_CACHE:
+        return _SINGLE_ABILITY_CACHE[forme_id]
+    from vgc.data import load_species
+    entry = load_species().get(forme_id) or {}
+    abilities = {to_id(a) for a in (entry.get("abilities") or {}).values()}
+    _SINGLE_ABILITY_CACHE[forme_id] = abilities.pop() if len(abilities) == 1 else None
+    return _SINGLE_ABILITY_CACHE[forme_id]
+
+
 def _mon_dict(known: MonKnowledge | None) -> dict | None:
     if known is None:
         return None
@@ -344,7 +381,7 @@ def _mon_dict(known: MonKnowledge | None) -> dict | None:
         "status": known.status,
         "boosts": dict(known.boosts),
         "item": known.item,
-        "ability": known.ability,
+        "ability": known.ability or _single_ability(known.species_id),
         "mega": known.mega,
         # Schema 2+: every move id observed for this mon so far this game, sorted for
         # deterministic JSONL output -- see MonKnowledge.revealed_moves' docstring.
@@ -429,7 +466,7 @@ def parse_showteam_line(parts: list[str]) -> tuple[str, dict[str, dict]] | None:
         return None
     sets: dict[str, dict] = {}
     for mon in mons:
-        species_id = to_id(mon.species or mon.nickname)
+        species_id = canonical_species_id(to_id(mon.species or mon.nickname))
         if not species_id:
             continue
         sets[species_id] = {
@@ -492,6 +529,9 @@ def _apply_switch(
     known = side_state.mon(species_id)
     known.fainted = False
     known.boosts = {}  # stat stages reset on switching out (Baton Pass is not modelled)
+    # Effective ability reverts to the revealed base on switch-out (a Trace copy
+    # / Skill Swap does not survive leaving the field).
+    known.ability = known.base_ability
     if is_mega:
         known.mega = True
     parsed_hp = _parse_hp(hp_field)
@@ -505,24 +545,79 @@ def _apply_switch(
 def _process_segment(
     state: BattleState,
     turn_num: int,
-    lines: list[str],
+    lines: list[tuple[int, str]],
     records: list[dict],
     skipped: Counter,
     showteam_players: set[str],
+    segment_marker_idx: int,
 ) -> None:
+    """`lines` is `(raw_log_line_index, line)` pairs; `segment_marker_idx` is the raw
+    index of the `|turn|N|` marker that opened this segment -- the `log_line` every
+    "turn" record for this segment is stamped with (the snapshot is public state
+    before any segment line applied, so events at raw indices < the marker were all
+    already known -- see SCHEMA_VERSION's schema-8 note).
+    """
     state.turn = turn_num
     snapshot = _snapshot(state) if turn_num else None
     acted: dict[tuple[str, int], dict] = {}
     pending_mega: set[tuple[str, int]] = set()
     fainted_this_segment: set[tuple[str, int]] = set()
+    # Forced-replacement batch: every forced_switch record snapshots BEFORE any
+    # replacement |switch| of EITHER side in its batch (the request instant), so a
+    # later record never sees an earlier replacement applied -- that would leak
+    # the destination label into the field or the opponent's simultaneous
+    # replacement into opp.active.
+    forced_snapshot: dict | None = None
+    forced_pending: list[tuple[str, int, str, bool, str]] = []
 
-    for line in lines:
+    def flush_forced() -> None:
+        nonlocal forced_snapshot
+        for s_, sl_, sp_, m_, hp_ in forced_pending:
+            _apply_switch(state, s_, sl_, sp_, m_, hp_)
+        forced_pending.clear()
+        forced_snapshot = None
+
+    for raw_idx, line in lines:
         if not line or line == "|":
             continue
         parts = line.split("|")
         if len(parts) < 2:
             continue
         tag = parts[1]
+        if tag not in ("switch", "drag"):
+            flush_forced()
+
+        # Generic `[from] item:/[from] ability:` reveals -- must run BEFORE the
+        # tag handlers, which `continue` past them (Leftovers ticks on -heal, Life
+        # Orb recoil on -damage, weather setters' `[of]` abilities). Owner = the
+        # `[of]` mon when present, else the line's subject -- the same rule
+        # analyze_log applies. Skipped on tags that already own the field
+        # (-ability owns its subject+source semantics; -item/-enditem theirs).
+        if "[from]" in line and "[from] move:" not in line:
+            for marker, attr, skip_tag in (
+                ("[from] item:", "item", ("-item", "-enditem")),
+                ("[from] ability:", "ability", ("-ability",)),
+            ):
+                if marker in line and tag not in skip_tag and len(parts) >= 3:
+                    target = line.split("[of]", 1)[1] if "[of]" in line else parts[2]
+                    tside, tslot, _ = _parse_position(target.strip(" |"))
+                    if tside in ("p1", "p2") and tslot is not None:
+                        tspecies = state.sides[tside].active[tslot]
+                        if tspecies is not None:
+                            value = to_id(
+                                line.split(marker, 1)[1].split("|", 1)[0].strip(" |"))
+                            # A used consumable (Sitrus Berry eaten, White Herb
+                            # spent) proves prior possession but the item is
+                            # already gone -- `-enditem` tracks it; recording it
+                            # as current would outdate the snapshot.
+                            if attr == "item" and _is_consumable(value):
+                                continue
+                            tmon = state.sides[tside].mon(tspecies)
+                            setattr(tmon, attr, value)
+                            if attr == "ability":
+                                # `[from] ability:` on a non--ability line (Rough
+                                # Skin, Drought's weather setter) is a BASE reveal.
+                                tmon.base_ability = value
 
         if tag == "poke" and turn_num == 0:
             if len(parts) >= 4 and parts[2] in ("p1", "p2"):
@@ -552,10 +647,8 @@ def _process_segment(
             already_acted = (side, slot) in acted
             just_fainted = (side, slot) in fainted_this_segment
             if turn_num and (already_acted or just_fainted):
-                # Snapshot BEFORE applying the switch: the decision point is "my mon
-                # just fainted/pivoted, what do I send in", so the slot should still
-                # read as empty/pre-switch in the recorded state.
-                forced_snapshot = _for_player(_snapshot(state), side)
+                if forced_snapshot is None:
+                    forced_snapshot = _snapshot(state)
                 records.append(
                     {
                         "replay_id": None,  # filled in by parse_replay
@@ -564,11 +657,15 @@ def _process_segment(
                         "player": side,
                         "turn": turn_num,
                         "decision_kind": "forced_switch",
-                        "state": forced_snapshot,
+                        "log_line": raw_idx,  # snapshot taken just before this switch
+                        "state": _for_player(forced_snapshot, side),
                         "action": {"slot": slot, "switch_species": species_id},
                     }
                 )
+                forced_pending.append((side, slot, species_id, is_mega, parts[4]))
+                continue
             elif turn_num:
+                flush_forced()
                 acted[(side, slot)] = {"kind": "switch", "switch_species": species_id}
             elif len(state.sides[side].lead_species) < 2:
                 state.sides[side].lead_species.append(species_id)
@@ -587,6 +684,14 @@ def _process_segment(
             known = state.sides[side].mon(species_id)
             known.mega = True
             known.item = to_id(parts[4]) or known.item
+            # parts[3] on the public -mega line is the BASE species; the exact
+            # mega forme was announced by the preceding |detailschange|. Mega
+            # formes each have one legal ability -- public info the instant it
+            # megas (it is now both effective and base).
+            mega_ability = _single_ability(known.forme_id or "")
+            if mega_ability:
+                known.ability = mega_ability
+                known.base_ability = mega_ability
             if (side, slot) in acted and acted[(side, slot)].get("kind") == "move":
                 acted[(side, slot)]["mega"] = True
             else:
@@ -776,6 +881,18 @@ def _process_segment(
                 state.sides[side].mon(species_id).status = None
             continue
 
+        if tag == "detailschange":
+            if len(parts) < 4:
+                continue
+            side, slot, _name = _parse_position(parts[2])
+            if side not in ("p1", "p2") or slot is None:
+                continue
+            forme_id = to_id(_species_from_details(parts[3]))
+            species_id, _ = _resolve_species(_species_from_details(parts[3]))
+            if species_id is not None:
+                state.sides[side].mon(species_id).forme_id = forme_id
+            continue
+
         if tag == "-ability":
             if len(parts) < 4:
                 continue
@@ -783,8 +900,58 @@ def _process_segment(
             if side not in ("p1", "p2") or slot is None:
                 continue
             species_id = state.sides[side].active[slot]
-            if species_id is not None:
-                state.sides[side].mon(species_id).ability = to_id(parts[3])
+            if species_id is None:
+                continue
+            ability_id = to_id(parts[3])
+            known = state.sides[side].mon(species_id)
+
+            def _of_mon() -> MonKnowledge | None:
+                if "[of]" not in line:
+                    return None
+                o_side, o_slot, _ = _parse_position(
+                    line.split("[of]", 1)[1].strip(" |"))
+                if o_side in ("p1", "p2") and o_slot is not None:
+                    o_species = state.sides[o_side].active[o_slot]
+                    if o_species is not None:
+                        return state.sides[o_side].mon(o_species)
+                return None
+
+            # `ability` carries the CURRENT EFFECTIVE ability (matches live's
+            # temporary_ability semantics); `base_ability` keeps the revealed base
+            # for rebuild facts. analyze_log applies the same attribution.
+            ability_froms = [
+                seg.split("ability: ", 1)[1].strip() for seg in parts[4:]
+                if seg.startswith("[from] ability:")
+            ]
+            if ability_froms:
+                for source in ability_froms:
+                    source_id = to_id(source)
+                    of_mon = _of_mon()
+                    if ability_id == source_id:
+                        # Contact spread (Mummy/Wandering Spirit/Lingering
+                        # Aroma): the receiver's ability BECAME it (effective),
+                        # and the [of] mon's base is now revealed.
+                        known.ability = ability_id
+                        if of_mon is not None:
+                            of_mon.ability = source_id
+                            of_mon.base_ability = source_id
+                    else:
+                        # Trace/Receiver/Power of Alchemy: holder's EFFECTIVE
+                        # ability is the copy; its base stays the copier -- and
+                        # the [of] mon's base ability is now revealed.
+                        known.ability = ability_id
+                        known.base_ability = source_id
+                        if of_mon is not None:
+                            of_mon.ability = ability_id
+                            of_mon.base_ability = ability_id
+            elif "[from]" in "|".join(parts[4:]):
+                # `[from] move:` Skill Swap / Entrainment / Role Play / Doodle,
+                # `[from] item:` -- an effective ability CHANGE on the subject,
+                # not a base reveal.
+                known.ability = ability_id
+            else:
+                known.ability = ability_id
+                known.base_ability = ability_id
             continue
 
         if tag == "-item":
@@ -885,6 +1052,7 @@ def _process_segment(
         # inactive, j/l join-leave, c chat, etc.) is intentionally a no-op -- see module
         # docstring's "known best-effort limitations".
 
+    flush_forced()
     if turn_num == 0:
         return
 
@@ -915,6 +1083,7 @@ def _process_segment(
                 "player": player,
                 "turn": turn_num,
                 "decision_kind": "turn",
+                "log_line": segment_marker_idx,  # schema 8: snapshot as of the |turn|N| marker
                 "state": _for_player(snapshot, player),
                 "action": action,
                 "action_status": action_status,
@@ -922,7 +1091,9 @@ def _process_segment(
         )
 
 
-def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[dict]:
+def _teampreview_record(
+    state: BattleState, showteam_players: set[str], log_line: int
+) -> list[dict]:
     records = []
     preview_snapshot = {
         "p1": {"preview": list(state.sides["p1"].preview_species)},
@@ -939,6 +1110,7 @@ def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[
                 "player": player,
                 "turn": 0,
                 "decision_kind": "teampreview",
+                "log_line": log_line,  # schema 8: preview decision, everything before turn 1 known
                 "state": _for_player(preview_snapshot, player),
                 "action": {
                     "picked": list(side_state.appeared_order[:4]),
@@ -988,16 +1160,31 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
         player_names = _parse_player_names(log)
         winner: str | None = None
 
-        segment_lines: list[str] = []
+        segment_lines: list[tuple[int, str]] = []
         pending_turn = 0
+        # Raw index of the `|turn|N|` marker that opened the current segment (schema-8
+        # `log_line` for that segment's records); `first_turn_idx` stamps teampreview
+        # records -- everything before turn 1 was already public at lead-pick time.
+        segment_marker_idx = 0
+        first_turn_idx: int | None = None
         ended = False
         outcome_kind = "unresolved"
-        for line in log.splitlines():
+        raw_lines = log.splitlines()
+        for raw_idx, line in enumerate(raw_lines):
             if line.startswith("|turn|"):
                 _process_segment(
-                    state, pending_turn, segment_lines, records, skipped, showteam_players
+                    state,
+                    pending_turn,
+                    segment_lines,
+                    records,
+                    skipped,
+                    showteam_players,
+                    segment_marker_idx,
                 )
                 segment_lines = []
+                if first_turn_idx is None:
+                    first_turn_idx = raw_idx
+                segment_marker_idx = raw_idx
                 parts = line.split("|")
                 try:
                     pending_turn = int(parts[2])
@@ -1006,7 +1193,13 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                 continue
             if line.startswith("|win|") or line.startswith("|tie|") or line == "|tie":
                 _process_segment(
-                    state, pending_turn, segment_lines, records, skipped, showteam_players
+                    state,
+                    pending_turn,
+                    segment_lines,
+                    records,
+                    skipped,
+                    showteam_players,
+                    segment_marker_idx,
                 )
                 segment_lines = []
                 ended = True
@@ -1023,11 +1216,20 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                 else:
                     outcome_kind = "draw"
                 break
-            segment_lines.append(line)
+            segment_lines.append((raw_idx, line))
         if not ended:
-            _process_segment(state, pending_turn, segment_lines, records, skipped, showteam_players)
+            _process_segment(
+                state,
+                pending_turn,
+                segment_lines,
+                records,
+                skipped,
+                showteam_players,
+                segment_marker_idx,
+            )
 
-        records = _teampreview_record(state, showteam_players) + records
+        preview_log_line = first_turn_idx if first_turn_idx is not None else len(raw_lines)
+        records = _teampreview_record(state, showteam_players, preview_log_line) + records
 
         # Attach each player's showteam parse (if any) to the FIRST record we emit for
         # that (replay, player) -- see module docstring's "sets" schema note. `"won"` is

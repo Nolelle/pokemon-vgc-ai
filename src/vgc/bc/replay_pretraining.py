@@ -15,6 +15,7 @@ from pathlib import Path
 
 from vgc.bc.replay_sampling import TASKS, SamplingPlan, build_sampling_plan, sample_task_units
 from vgc.bc.replay_supervision import audit_raw_log, build_supervision
+from vgc.bc.own_team_rebuild import RebuildContext, rebuild_record
 
 FORMAT = "gen9championsvgc2026regmc"
 SCHEMA = "partial-replay-pretraining-v1"
@@ -71,8 +72,20 @@ def _load_selection(manifest: Path, summary_path: Path, data: Path, expected_sel
 
 
 def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, out: Path,
-            *, expected_selection_sha256: str):
-    """Write immutable prepared shards and training-only sampling plans, no fitting."""
+            *, expected_selection_sha256: str, own_team_ctx: RebuildContext | None = None,
+            broad_min_pre_rating: float | None = None,
+            broad_outcome_min_pre_rating: float | None = None):
+    """Write immutable prepared shards and training-only sampling plans, no fitting.
+
+    `own_team_ctx` (opt-in): a `vgc.bc.own_team_rebuild.RebuildContext`. When given,
+    each schema-8 record's own-active `item`/`ability`/`revealed_moves` are rebuilt
+    through Layers 1-3 before the example input is written; `own_info` /
+    `own_fully_confirmed` ride along as row-level bookkeeping (never inside
+    `input.state`). The rebuild's own invariant check is what the exported-input
+    verification becomes: opponent side byte-identical, own side fills only
+    previously-null item/ability and extends revealed_moves -- enforced inside
+    `rebuild_record` per record.
+    """
     games, selection = _load_selection(manifest, selection_summary, data, expected_selection_sha256)
     manifest_fingerprint = file_hash(manifest)
     summary_fingerprint = file_hash(selection_summary)
@@ -95,8 +108,16 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
             rid, side = record["replay_id"], record["player"]
             if rid not in games or side not in ("p1", "p2"):
                 raise ValueError("source replay or player not in the fixed selection")
-            if record.get("schema") != 7 or record.get("format_id") != FORMAT:
-                raise ValueError("source schema or format mismatch")
+            if record.get("format_id") != FORMAT:
+                raise ValueError("source format mismatch")
+            expected_schema = 9 if own_team_ctx is not None else 7
+            if record.get("schema") != expected_schema:
+                raise ValueError("source schema mismatch")
+            if own_team_ctx is not None and record["decision_kind"] in ("turn", "forced_switch"):
+                game_facts = own_team_ctx.game_facts.get(rid)
+                if game_facts is None:
+                    raise ValueError(f"no Layer-1 facts for {rid} in the rebuild context")
+                rebuild_record(record, game_facts, own_team_ctx)
             source_per_game[rid] += 1
             seen.add(rid)
             counts["source_records"] += 1
@@ -123,6 +144,10 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
                 "turn": record["turn"], "input": {"state": record["state"]},
                 "pre_rating": game["ratings"][side], "supervision": supervision,
             }
+            if own_team_ctx is not None and record["decision_kind"] in ("turn", "forced_switch"):
+                # Bookkeeping, NOT a model input: how each own field was sourced.
+                example["own_info"] = record.get("own_info")
+                example["own_fully_confirmed"] = record.get("own_fully_confirmed")
             state_bytes = json.dumps(example["input"], sort_keys=True, separators=(",", ":")).encode()
             input_state_digest.update(str(line_number).encode() + b"\0" + state_bytes + b"\n")
             expert = isinstance(example["pre_rating"], (int, float)) and example["pre_rating"] >= 1600
@@ -145,7 +170,10 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
             raise ValueError("per-game source record count mismatch")
     sampling = {}
     for phase in ("broad", "expert"):
-        plan = build_sampling_plan(games, unit_counts, phase=phase)
+        plan = build_sampling_plan(
+            games, unit_counts, phase=phase, broad_min_pre_rating=broad_min_pre_rating,
+            broad_outcome_min_pre_rating=broad_outcome_min_pre_rating
+        )
         with (out / f"sampling_{phase}.jsonl").open("x") as handle:
             for key in sorted(plan.group_counts):
                 rid, side, task = key
@@ -164,7 +192,12 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
                     raise ValueError("held-out replay sampled for training")
                 smoke[task] = {"draws": len(refs), "unique_games": len({x[0] for x in refs}),
                                "heldout_games": 0}
-        sampling[phase] = {"method": plan.method, "diagnostics": plan.diagnostics, "smoke": smoke}
+        sampling[phase] = {"method": plan.method, "diagnostics": plan.diagnostics,
+                           "smoke": smoke,
+                           "broad_min_pre_rating": broad_min_pre_rating if phase == "broad" else None,
+                           "broad_outcome_min_pre_rating": (
+                               broad_outcome_min_pre_rating if phase == "broad" else None),
+                           "policy_no_showteam": True}
     files = list(output_paths.values()) + [out / f"sampling_{phase}.jsonl" for phase in ("broad", "expert")]
     report = {
         "status": "complete", "schema": SCHEMA, "source_records": counts["source_records"],
@@ -176,6 +209,7 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
         "input_state_digest": input_state_digest.hexdigest(),
         "files_sha256": {p.name: file_hash(p) for p in files},
         "joint_choice_certified": False, "model_training_performed": False,
+        "own_team_rebuild": own_team_ctx is not None,
         "limits": ["Observed partial supervision, not submitted-choice certification.",
                    "All target-choice and complete-joint-choice teaching disabled.",
                    "No candidate scorer is trained by this exporter or its sampler.",
@@ -215,6 +249,16 @@ def load_sampling_plan(directory: Path, *, phase="broad") -> SamplingPlan:
         rating = game["ratings"].get(side)
         if phase == "expert" and (not isinstance(rating, (int, float)) or rating < 1600):
             raise ValueError("non-expert player in expert sampling plan")
+        info_sampling = summary["sampling"][phase] or {}
+        floor = info_sampling.get("broad_min_pre_rating")
+        o_floor = info_sampling.get("broad_outcome_min_pre_rating")
+        if phase == "broad":
+            if task != "outcome" and game.get("showteam") and info_sampling.get(
+                    "policy_no_showteam"):
+                raise ValueError("open-sheet game in policy sampling plan")
+            fl = o_floor if task == "outcome" else floor
+            if fl is not None and (not isinstance(rating, (int, float)) or rating < fl):
+                raise ValueError("below-floor player in broad sampling plan")
         count, weight = group["units"], group["probability_per_unit"]
         if type(count) is not int or count <= 0 or not math.isfinite(weight) or weight <= 0:
             raise ValueError("invalid sampling probability/count")
@@ -272,6 +316,10 @@ def iter_task_examples(directory: Path, task: str, *, split="train", phase="broa
                 ordinals[group_key] += 1
                 yield {"input": row["input"], "target": target, "component": component,
                        "reference": (*group_key, task, ordinal), "source_line": row["source_line"],
+                       "meta": {"pre_rating": row.get("pre_rating"), "turn": row.get("turn"),
+                                "decision_kind": row.get("decision_kind"),
+                                "showteam": row.get("showteam"),
+                                "own_fully_confirmed": row.get("own_fully_confirmed")},
                        "sampling_probability": groups[group_key]["probability_per_unit"] if split == "train" else None}
     if split == "train" and any(ordinals[k] != g["units"] for k, g in groups.items()):
         raise ValueError("prepared label counts no longer match the sampler")

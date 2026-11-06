@@ -23,11 +23,9 @@ from vgc.bc.encoding import (
     ABILITY_TO_IDX,
     ITEM_TO_IDX,
     MOVE_TO_IDX,
-    SLOT_FEATURE_DIM,
     SPECIES_TO_IDX,
     TARGET_TO_IDX,
-    encode_state,
-    flatten_state,
+    trunk_inputs,
 )
 from vgc.bc.policy import _bench_list, battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
@@ -119,12 +117,10 @@ class CandidateFeatures:
         return int(self.move_indices.shape[0])
 
 
-def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
-    """Return BC-compatible ``(index_array, scalars+zero-slot-marker)`` for a battle.
-
-    BC historically appends a two-value active-slot marker. A joint-order policy has
-    no single deciding slot, so both values are zero. Retaining the width allows the
-    full BC state trunk to be warm-started without changing its first linear layer.
+def live_state_record(battle, config=None) -> dict:
+    """The full decision record `encode_live_state` encodes: `battle_state_record`
+    plus the private-request bench override (brought-four minus active/fainted).
+    Shared with the live-vs-replay parity harness so both read the same inputs.
     """
 
     record = battle_state_record(battle, config)
@@ -138,8 +134,18 @@ def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
         if len(team) != len(identities):
             raise ValueError("cannot map every brought Pokemon from the private request")
         record["state"]["our"]["bench"] = _bench_list(team, list(battle.active_pokemon))
-    index_array, scalars = flatten_state(encode_state(record))
-    return index_array, np.concatenate((scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)))
+    return record
+
+
+def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
+    """Return BC-compatible ``(index_array, scalars+zero-slot-marker)`` for a battle.
+
+    BC historically appends a two-value active-slot marker. A joint-order policy has
+    no single deciding slot, so both values are zero. Retaining the width allows the
+    full BC state trunk to be warm-started without changing its first linear layer.
+    """
+
+    return trunk_inputs(live_state_record(battle, config))
 
 
 def _distribution_uncertainty(probabilities: dict[str, float]) -> float:
