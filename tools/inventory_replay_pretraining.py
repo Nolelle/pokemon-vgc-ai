@@ -456,6 +456,7 @@ def main():
     assert all(all(len(g["preview_actions"][s]) == 1 for s in SEATS)
                or "preview_record_count" in g["exclusions"] for g in games.values())
     summary = {"input_path": str(args.data), "raw_dir": str(args.raw_dir),
+               "boundaries": boundaries,
                "script_sha256": digest(Path(__file__)), "species_sha256": digest(species_path),
                "baseline_path": str(args.baseline_index) if args.baseline_index else None,
                "input_sha256": digest(args.data), "baseline_sha256": digest(args.baseline_index) if args.baseline_index else None,

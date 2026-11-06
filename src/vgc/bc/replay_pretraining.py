@@ -13,6 +13,7 @@ import json
 import math
 from pathlib import Path
 
+from vgc.replay_parse import SCHEMA_VERSION
 from vgc.bc.replay_sampling import TASKS, SamplingPlan, build_sampling_plan, sample_task_units
 from vgc.bc.replay_supervision import audit_raw_log, build_supervision
 from vgc.bc.own_team_rebuild import RebuildContext, rebuild_record
@@ -110,7 +111,7 @@ def prepare(data: Path, manifest: Path, selection_summary: Path, raw_dir: Path, 
                 raise ValueError("source replay or player not in the fixed selection")
             if record.get("format_id") != FORMAT:
                 raise ValueError("source format mismatch")
-            expected_schema = 9 if own_team_ctx is not None else 7
+            expected_schema = SCHEMA_VERSION if own_team_ctx is not None else 7
             if record.get("schema") != expected_schema:
                 raise ValueError("source schema mismatch")
             if own_team_ctx is not None and record["decision_kind"] in ("turn", "forced_switch"):

@@ -173,7 +173,7 @@ from vgc.data import canonical_species_id, load_species
 # `vgc.data.canonical_species_id` (cosmetic formes like `alcremierubycream` collapse to
 # their base species -- identity is unchanged, so live poke-env ids and replay names
 # share one token).
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -324,6 +324,10 @@ class SideState:
     appeared_order: list[str] = field(default_factory=list)
     lead_species: list[str] = field(default_factory=list)
     sets_by_species: dict[str, dict] = field(default_factory=dict)
+    # Display nickname -> species_id, from switch/drag/replace lines: a side-wide
+    # `p2: Nickname` target (Revival Blessing) resolves through this map -- the
+    # name is NOT the species id (e.g. nickname "Maushold" -> mausholdfour).
+    nicknames: dict[str, str] = field(default_factory=dict)
 
     def mon(self, species_id: str) -> MonKnowledge:
         known = self.known.get(species_id)
@@ -516,7 +520,8 @@ def _target_slot_label(
 
 
 def _apply_switch(
-    state: BattleState, side: str, slot: int, species_id: str, is_mega: bool, hp_field: str
+    state: BattleState, side: str, slot: int, species_id: str, is_mega: bool,
+    hp_field: str, nick: str | None = None,
 ) -> None:
     """Applies a switch-in to `state`. `species_id`/`is_mega` must already be resolved
     via `_resolve_species` by the caller (single resolution point, so the action record
@@ -526,6 +531,8 @@ def _apply_switch(
     side_state = state.sides[side]
     side_state.active[slot] = species_id
     side_state.note_appearance(species_id)
+    if nick is not None:
+        side_state.nicknames[nick] = species_id
     known = side_state.mon(species_id)
     known.fainted = False
     known.boosts = {}  # stat stages reset on switching out (Baton Pass is not modelled)
@@ -568,12 +575,12 @@ def _process_segment(
     # the destination label into the field or the opponent's simultaneous
     # replacement into opp.active.
     forced_snapshot: dict | None = None
-    forced_pending: list[tuple[str, int, str, bool, str]] = []
+    forced_pending: list[tuple[str, int, str, bool, str, str | None]] = []
 
     def flush_forced() -> None:
         nonlocal forced_snapshot
-        for s_, sl_, sp_, m_, hp_ in forced_pending:
-            _apply_switch(state, s_, sl_, sp_, m_, hp_)
+        for s_, sl_, sp_, m_, hp_, nick_ in forced_pending:
+            _apply_switch(state, s_, sl_, sp_, m_, hp_, nick_)
         forced_pending.clear()
         forced_snapshot = None
 
@@ -662,14 +669,14 @@ def _process_segment(
                         "action": {"slot": slot, "switch_species": species_id},
                     }
                 )
-                forced_pending.append((side, slot, species_id, is_mega, parts[4]))
+                forced_pending.append((side, slot, species_id, is_mega, parts[4], _name))
                 continue
             elif turn_num:
                 flush_forced()
                 acted[(side, slot)] = {"kind": "switch", "switch_species": species_id}
             elif len(state.sides[side].lead_species) < 2:
                 state.sides[side].lead_species.append(species_id)
-            _apply_switch(state, side, slot, species_id, is_mega, parts[4])
+            _apply_switch(state, side, slot, species_id, is_mega, parts[4], _name)
             continue
 
         if tag == "-mega":
@@ -743,6 +750,31 @@ def _process_segment(
             side, slot, _name = _parse_position(parts[2])
             if side not in ("p1", "p2") or slot is None:
                 continue
+            # `|cant|HOLDER|ability: X|MOVE|[of] ATTACKER` (Queenly Majesty /
+            # Dazzling / Armor Tail block): the subject is the ability holder
+            # that blocked, the attempted move belongs to the `[of]` mon, and
+            # the holder's ability is now revealed. The holder's own action is
+            # not described by this line.
+            if len(parts) > 4 and parts[3].startswith("ability:") and "[of]" in line:
+                holder_id = state.sides[side].active[slot]
+                if holder_id is not None:
+                    holder = state.sides[side].mon(holder_id)
+                    holder.ability = to_id(parts[3].split(":", 1)[1].strip())
+                    holder.base_ability = holder.ability
+                o_side, o_slot, _ = _parse_position(
+                    line.split("[of]", 1)[1].strip(" |"))
+                if o_side in ("p1", "p2") and o_slot is not None:
+                    attempted_move_id = to_id(parts[4])
+                    if (o_side, o_slot) not in acted and attempted_move_id:
+                        acted[(o_side, o_slot)] = {
+                            "kind": "move", "move_id": attempted_move_id,
+                            "target_slot": None,
+                            "mega": (o_side, o_slot) in pending_mega}
+                    attacker_id = state.sides[o_side].active[o_slot]
+                    if attacker_id is not None and attempted_move_id:
+                        state.sides[o_side].mon(
+                            attacker_id).revealed_moves.add(attempted_move_id)
+                continue
             if (side, slot) in acted:
                 continue
             attempted_move = parts[4] if len(parts) > 4 and parts[4] else None
@@ -765,6 +797,27 @@ def _process_segment(
                 }
             continue
 
+        if tag == "swap":
+            # `|swap|p1a: Name|1|...` (Ally Switch): the subject moves to the
+            # named position and that position's occupant takes the vacated
+            # slot -- i.e. the side's two active entries exchange. Everything
+            # else (hp/boosts/revealed moves) travels with the mon, keyed by
+            # species_id in `known`, so only the slot map needs the swap.
+            if len(parts) < 4:
+                continue
+            side, old_slot, _name = _parse_position(parts[2])
+            if side not in ("p1", "p2") or old_slot is None:
+                continue
+            try:
+                new_slot = int(parts[3])
+            except ValueError:
+                continue
+            active = state.sides[side].active
+            if 0 <= new_slot < len(active) and new_slot != old_slot:
+                active[old_slot], active[new_slot] = (
+                    active[new_slot], active[old_slot])
+            continue
+
         if tag == "faint":
             if len(parts) < 3:
                 continue
@@ -783,8 +836,26 @@ def _process_segment(
         if tag in ("-damage", "-heal"):
             if len(parts) < 4:
                 continue
-            side, slot, _name = _parse_position(parts[2])
-            if side not in ("p1", "p2") or slot is None:
+            side, slot, name = _parse_position(parts[2])
+            if side not in ("p1", "p2"):
+                continue
+            if slot is None:
+                # Side-addressed heal (`|-heal|p2: Glalie|49/100|...`) -- Revival
+                # Blessing revives a fainted bench mon at the given HP; the name
+                # is the species (no slot letter). It rejoins the bench.
+                if tag == "-heal" and name:
+                    # The token is a NICKNAME, not a species id ("Maushold" may
+                    # be mausholdfour) -- resolve via the side's map populated
+                    # by switch/drag/replace lines, else the literal name.
+                    species_id = state.sides[side].nicknames.get(name, to_id(name))
+                    known = state.sides[side].known.get(species_id)
+                    if known is not None:
+                        parsed_hp = _parse_hp(parts[3])
+                        if parsed_hp is not None:
+                            fraction, status, fainted = parsed_hp
+                            known.hp_fraction = fraction
+                            known.status = status
+                            known.fainted = bool(fainted)
                 continue
             species_id = state.sides[side].active[slot]
             if species_id is None:
@@ -1036,6 +1107,8 @@ def _process_segment(
             new_species, is_mega = _resolve_species(_species_from_details(parts[3]))
             old_species = state.sides[side].active[slot]
             new_known = state.sides[side].mon(new_species)
+            if _name:
+                state.sides[side].nicknames[_name] = new_species
             if is_mega:
                 new_known.mega = True
             if old_species is not None and old_species in state.sides[side].known:

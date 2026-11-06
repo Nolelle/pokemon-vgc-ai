@@ -328,7 +328,8 @@ def analyze_log(replay_id: str, log: str) -> GameFacts:
 
         # `|swap|p1a: 1`: Ally Switch swaps the two ACTIVE slots -- the
         # position->species map must follow the occupants or later facts land on
-        # the wrong species (matches the parser's slot tracking).
+        # the wrong species (replay_parse applies the same |swap| swap to its
+        # `active` map so parser and facts agree).
         if tag == "swap" and len(parts) > 2:
             side, _slot, _name = _parse_position(parts[2])
             if side in ("p1", "p2"):

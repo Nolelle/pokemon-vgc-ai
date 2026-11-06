@@ -850,3 +850,141 @@ def test_from_item_heal_and_trace_ability_attribution() -> None:
     assert clefable["item"] == "leftovers"
     assert clefable["ability"] == "magicguard"  # revealed BY the copy on the [of] mon
     assert gard["ability"] == "magicguard"  # EFFECTIVE copy (live parity); base_ability stays "trace" internally
+
+
+def test_ally_switch_swap_retracks_active_slots() -> None:
+    """After `|swap|` (Ally Switch) later slot-addressed lines credit the right mon."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Tyranitar", "|poke|p1|Houndstone", "|poke|p1|Incineroar",
+        "|poke|p1|Amoonguss", "|poke|p1|Ursaluna", "|poke|p1|Slowking",
+        "|poke|p2|Gardevoir", "|poke|p2|Venusaur", "|poke|p2|Snorlax",
+        "|poke|p2|Slowbro", "|poke|p2|Dragonite", "|poke|p2|Corviknight",
+        "|turn|1",
+        "|switch|p1a: Tyranitar|Tyranitar|100/100",
+        "|switch|p1b: Houndstone|Houndstone|100/100",
+        "|switch|p2a: Gardevoir|Gardevoir|100/100",
+        "|switch|p2b: Venusaur|Venusaur|100/100",
+        "|move|p1a: Tyranitar|Ally Switch|self",
+        "|swap|p1a: Tyranitar|1|[from] move: Ally Switch",
+        "|turn|2",
+        "|move|p1b: Tyranitar|Rock Slide|spread",
+        "|-damage|p2a: Gardevoir|60/100",
+        "|-heal|p1b: Tyranitar|95/100|[from] item: Leftovers",
+        "|move|p1a: Houndstone|Shadow Ball|p2a: Gardevoir",
+        "|turn|3",
+        "|move|p1b: Tyranitar|Rock Slide|spread",
+    ])
+    recs = parse_replay("t", None, log).records
+    t3 = next(r for r in recs if r["decision_kind"] == "turn" and r["turn"] == 3
+              and r["player"] == "p1")
+    act = t3["state"]["our"]["active"]
+    assert act[1]["species"] == "tyranitar"
+    assert act[0]["species"] == "houndstone"
+    # Rock Slide (turn 2, slot b post-swap) credited to Tyranitar, not Houndstone.
+    assert "rockslide" in act[1]["revealed_moves"]
+    assert "shadowball" in act[0]["revealed_moves"]
+    # The post-swap Leftovers reveal on slot b lands on Tyranitar.
+    assert act[1]["item"] == "leftovers"
+    assert act[0]["item"] is None
+
+
+def test_revival_blessing_revives_bench_mon() -> None:
+    """`|-heal|p2: Glalie|49/100|[from] move: Revival Blessing` un-faints the
+    bench mon so it reappears in the bench at the given HP."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Gardevoir", "|poke|p1|Venusaur", "|poke|p1|Snorlax",
+        "|poke|p1|Slowbro", "|poke|p1|Dragonite", "|poke|p1|Corviknight",
+        "|poke|p2|Typhlosionhisui", "|poke|p2|Amoonguss", "|poke|p2|Glalie",
+        "|poke|p2|Slowbro", "|poke|p2|Dragonite", "|poke|p2|Corviknight",
+        "|turn|1",
+        "|switch|p1a: Gardevoir|Gardevoir|100/100",
+        "|switch|p1b: Venusaur|Venusaur|100/100",
+        "|switch|p2a: Amoonguss|Amoonguss|100/100",
+        "|switch|p2b: Glalie|Glalie|100/100",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+        "|-damage|p2b: Glalie|0 fnt",
+        "|faint|p2b: Glalie",
+        "|switch|p2b: Typhlosion-Hisui|Typhlosionhisui|100/100",
+        "|turn|2",
+        "|move|p2b: Amoonguss|Revival Blessing|self",
+        "|-heal|p2: Glalie|49/100|[from] move: Revival Blessing",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+        "|turn|3",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+    ])
+    recs = parse_replay("t", None, log).records
+    t3 = next(r for r in recs if r["decision_kind"] == "turn" and r["turn"] == 3
+              and r["player"] == "p1")
+    bench_species = {b["species_id"] for b in t3["state"]["opp"]["bench"]}
+    assert "glalie" in bench_species
+    glalie = next(b for b in t3["state"]["opp"]["bench"] if b["species_id"] == "glalie")
+    assert abs(glalie["hp_fraction"] - 0.49) < 1e-6
+
+
+def test_cant_ability_block_attributes_to_of_mon() -> None:
+    """`|cant|HOLDER|ability: X|MOVE|[of] ATTACKER` -- the move is the attacker's
+    (blocked by the holder's revealed ability), not the holder's."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Incineroar", "|poke|p1|Gardevoir", "|poke|p1|Snorlax",
+        "|poke|p1|Slowbro", "|poke|p1|Dragonite", "|poke|p1|Corviknight",
+        "|poke|p2|Tsareena", "|poke|p2|Amoonguss", "|poke|p2|Venusaur",
+        "|poke|p2|Slowbro", "|poke|p2|Dragonite", "|poke|p2|Corviknight",
+        "|turn|1",
+        "|switch|p1a: Incineroar|Incineroar|100/100",
+        "|switch|p1b: Gardevoir|Gardevoir|100/100",
+        "|switch|p2a: Amoonguss|Amoonguss|100/100",
+        "|switch|p2b: Tsareena|Tsareena|100/100",
+        "|cant|p2b: Tsareena|ability: Queenly Majesty|Fake Out|[of] p1a: Incineroar",
+        "|move|p1b: Gardevoir|Expanding Force|spread",
+        "|turn|2",
+        "|move|p1b: Gardevoir|Expanding Force|spread",
+    ])
+    recs = parse_replay("t", None, log).records
+    t2_p2 = next(r for r in recs if r["decision_kind"] == "turn" and r["turn"] == 2
+                 and r["player"] == "p2")
+    incin = t2_p2["state"]["opp"]["active"][0]
+    tsareena = t2_p2["state"]["our"]["active"][1]
+    # The blocked move is credited to the ATTACKER (Incineroar), not the holder.
+    assert "fakeout" in incin["revealed_moves"]
+    assert "fakeout" not in tsareena["revealed_moves"]
+    # The holder's ability is revealed by the block line.
+    assert tsareena["ability"] == "queenlymajesty"
+
+
+def test_revival_blessing_resolves_nickname() -> None:
+    """A revived mon is resolved via the side's nickname->species map, not by
+    to_id(nickname) -- e.g. 'Maushold' -> 'mausholdfour'."""
+    log = "\n".join([
+        "|player|p1|A", "|player|p2|B",
+        "|poke|p1|Gardevoir", "|poke|p1|Venusaur", "|poke|p1|Snorlax",
+        "|poke|p1|Slowbro", "|poke|p1|Dragonite", "|poke|p1|Corviknight",
+        "|poke|p2|Typhlosionhisui", "|poke|p2|Amoonguss", "|poke|p2|Mausholdfour",
+        "|poke|p2|Slowbro", "|poke|p2|Dragonite", "|poke|p2|Corviknight",
+        "|turn|1",
+        "|switch|p1a: Gardevoir|Gardevoir|100/100",
+        "|switch|p1b: Venusaur|Venusaur|100/100",
+        "|switch|p2a: Amoonguss|Amoonguss|100/100",
+        "|switch|p2b: Maushold|Maushold-Four, L50|100/100",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+        "|-damage|p2b: Maushold|0 fnt",
+        "|faint|p2b: Maushold",
+        "|switch|p2b: Typhlosion-Hisui|Typhlosionhisui|100/100",
+        "|turn|2",
+        "|move|p2a: Amoonguss|Revival Blessing|self",
+        "|-heal|p2: Maushold|49/100|[from] move: Revival Blessing",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+        "|turn|3",
+        "|move|p1a: Gardevoir|Expanding Force|spread",
+    ])
+    recs = parse_replay("t", None, log).records
+    t3 = next(r for r in recs if r["decision_kind"] == "turn" and r["turn"] == 3
+              and r["player"] == "p1")
+    bench_ids = {b["species_id"] for b in t3["state"]["opp"]["bench"]}
+    assert "mausholdfour" in bench_ids  # resolved via the nickname map
+    assert "maushold" not in bench_ids
+    maus = next(b for b in t3["state"]["opp"]["bench"]
+                if b["species_id"] == "mausholdfour")
+    assert abs(maus["hp_fraction"] - 0.49) < 1e-6

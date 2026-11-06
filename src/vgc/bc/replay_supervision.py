@@ -123,6 +123,16 @@ def audit_raw_log(log: str) -> dict:
                 blocked_switch = True
         elif tag in ("move", "cant", "faint") and len(p) > 2:
             pos = re.match(r"^(p[12])([ab]):", p[2])
+            cant_of = None
+            if tag == "cant" and len(p) > 4 and p[3].startswith("ability:"):
+                # Queenly-Majesty-style block: the move is the [of] attacker's,
+                # not the holder's -- re-key the event to the [of] position.
+                of = next((x for x in p[4:] if x.startswith("[of]")), None)
+                if of is not None:
+                    cant_of = re.match(r"^(p[12])([ab]):", of[4:].strip())
+            if cant_of is not None:
+                pos = cant_of
+                p = p[:3] + [p[4]] + p[5:]
             if turn and pos:
                 ev = result["turns"].setdefault(str(turn), {}).setdefault(pos.group(1), {}).setdefault(str("ab".index(pos.group(2))), [])
                 ev.append({"tag": tag, "move": _id(p[3]) if len(p) > 3 else None,
