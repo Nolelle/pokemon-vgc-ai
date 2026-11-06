@@ -23,6 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from vgc.replay_parse import SCHEMA_VERSION  # noqa: E402
 from vgc.bc.own_team_rebuild import (  # noqa: E402
     RebuildContext,
     build_corpus_facts,
@@ -59,8 +60,8 @@ def main() -> int:
     with opener_in(args.data, "rt") as src, opener_out(args.out, "wt") as dst:
         for line in src:
             record = json.loads(line)
-            if record.get("schema") != 8:
-                raise ValueError("rebuild expects schema-8 records (log_line + canonical species)")
+            if record.get("schema") != SCHEMA_VERSION:
+                raise ValueError(f"rebuild expects schema-{SCHEMA_VERSION} records (log_line + canonical species)")
             game_facts = facts.get(record["replay_id"])
             if game_facts is not None and record.get("decision_kind") in ("turn", "forced_switch"):
                 rebuild_record(record, game_facts, ctx)

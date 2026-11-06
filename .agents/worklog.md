@@ -521,3 +521,14 @@
 - Readiness gates (battle-state, action, static) PASS after live changes; 135 focused tests pass. All work since 33a8861 UNCOMMITTED.
 - Next: wait for download -> listing audit, reparse s9, select v4 (fixed boundaries), skew diagnostic (lead-authored), prepare with rebuild + floors (1200 policy / -inf outcome).
 - Committed 2026-11-05 (see git log): everything since 33a8861. Pre-commit gate: full non-integration suite 1619 pass, ruff clean; tests/test_bc_policy.py opp-ability expectations updated to the single-legal-ability rule (Gholdengo -> goodasgold). Integration suite (needs local server) not re-run; static readiness gates passed earlier.
+
+## 2026-11-06 — Dataset rebuild on the completed backfill
+
+- Download finished: 149,752 replays (11,518 new in the resume), full listing walked to Sep 9, 0 failed fetches, 20,315 unrated skipped.
+- s9 reparse: data/bc/decisions_regmc_s9_20261106.jsonl.gz (149,752 games, 2,857,780 records, 0 parse failures). tools/parse_replays.py writes plain text regardless of .gz suffix — recompressed. audit_replay_state FAIL is a positional-join artifact: lead keyed check on the 65,011 s8 games -> identical record counts per kind and identical turn actions (924,518/924,518).
+- Selection v4: runs/pretraining_selection_20261106_v4 (fixed v3 boundaries): train 109,547 / val 11,517 / test 11,110; excluded 15,325 (open_team_sheet 4,873, after_window 4,107, illusion_possible 3,087, baton_pass 2,671, illusion_or_replace 1,865, preview_raw_mismatch 860, transform 611); reserved_team_excluded 2,253. NOTE: open-team-sheet games were already excluded wholesale in v3 too, so they feed neither outcome training nor policy tasks (only the own-team answer key/donors via raw facts).
+- Who-won check (tools/rating_skew_check.py, lead-authored): v3 showed stronger-player win 5.0% (lower 1100-1199) and 33% (1200-1233); v4 shows 52-56% in every band and split. Skew fixed.
+- Own-team answer key on v4 (runs/own_team_rebuild_20261106): L1 facts 99.99/99.96/100%; end-to-end item 95.2 / ability 98.1 / all-4-moves 87.5 / fully exact 84.9 (no-sheet-donor 48.6); own_fully_confirmed train 20.8%, 1600+ 39.6%.
+- Prepared: data/bc/pretraining_regmc_s9_20261106 (floors 1200 policy / -inf outcome; selection sha cec196…f25, dataset sha 797186…4300). Broad units/effective games: move 697,580/13.6k, switch_destination 114,348/14.0k, preview_brought 86,401/15.7k, preview_leads 107,945/18.0k, outcome 2,045,790/36.2k. Expert: move 41,248/1.46k, outcome 60,481/1.99k. Team participation after weighting <=2.8%; expert top account ~9-10%. target task 0 (not certifiable, by design).
+- Fixed stale schema gates (inventory_replay_pretraining.py, rebuild_own_team.py -> SCHEMA_VERSION).
+- Next: user go/no-go on first pretraining pilots.

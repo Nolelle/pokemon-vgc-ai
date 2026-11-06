@@ -24,6 +24,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "src"))
 from vgc.bc.own_team_rebuild import illusion_possible  # noqa: E402
+from vgc.replay_parse import SCHEMA_VERSION  # noqa: E402
 
 FORMAT = "gen9championsvgc2026regmc"
 SEATS = ("p1", "p2")
@@ -324,7 +325,7 @@ def main():
             g["exclusions"].append("raw_id_mismatch")
         if metadata["format"] != FORMAT or g["formats"] != {FORMAT}:
             g["exclusions"].append("format_mismatch")
-        if g["schemas"] != {7}:
+        if g["schemas"] != {SCHEMA_VERSION}:
             g["exclusions"].append("schema_mismatch")
         if any(len(r) != 6 or len(set(r)) != 6 or not all(r) for r in g["rosters"].values()):
             g["exclusions"].append("incomplete_preview")
