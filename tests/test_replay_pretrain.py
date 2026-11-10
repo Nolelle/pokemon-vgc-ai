@@ -71,6 +71,49 @@ def test_test_split_never_opened() -> None:
             Path("runs/own_team_rebuild_20261104/scratch/prepared"), "move", split="test"))
 
 
+def test_encoded_cache_rejects_changed_dataset_and_legacy_cache(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import sys
+
+    sys.path.insert(0, "tools")
+    import train_replay_pretrain as trainer
+
+    prepared, cache_dir = tmp_path / "prepared", tmp_path / "cache"
+    prepared.mkdir()
+    cache_dir.mkdir()
+    hashes = {}
+    for name in ("train.jsonl.gz", "sampling_broad.jsonl", "sampling_expert.jsonl"):
+        path = prepared / name
+        path.write_bytes(b"win")
+        hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    summary = prepared / "summary.json"
+    summary.write_text(json.dumps({"files_sha256": hashes}))
+    target = ["win"]
+
+    def examples(directory, task, **kwargs):
+        if task == "outcome":
+            yield {"input": _record(), "reference": ("game", "p1", task, 0),
+                   "source_line": 1, "component": None, "target": target[0],
+                   "meta": {"pre_rating": 1300, "turn": 1}}
+
+    monkeypatch.setattr(trainer, "iter_task_examples", examples)
+    assert trainer.build_cache(prepared, "train", cache_dir)["tasks"]["outcome"]["label_pos"] == [1.0]
+    assert trainer.build_cache(prepared, "train", cache_dir)["tasks"]["outcome"]["label_pos"] == [1.0]
+    (prepared / "train.jsonl.gz").write_bytes(b"loss")
+    with pytest.raises(ValueError, match="artifact fingerprint"):
+        trainer.build_cache(prepared, "train", cache_dir)
+    hashes["train.jsonl.gz"] = hashlib.sha256(b"loss").hexdigest()
+    summary.write_text(json.dumps({"files_sha256": hashes}))
+    target[0] = "loss"
+    with pytest.raises(ValueError, match="cache provenance"):
+        trainer.build_cache(prepared, "train", cache_dir)
+    assert trainer.build_cache(prepared, "train")["tasks"]["outcome"]["label_pos"] == [0.0]
+    np.savez(cache_dir / "cache_train.npz", legacy=np.array(True))
+    with pytest.raises(ValueError, match="cache provenance"):
+        trainer.build_cache(prepared, "train", cache_dir)
+
+
 def test_label_not_in_options_skipped() -> None:
     # The option lookup returns empty -> the unit is dropped and counted, never trained.
     net = TurnPretrainNet()
@@ -242,6 +285,7 @@ def test_cache_meta_and_1600_subset(monkeypatch) -> None:
                          "decision_kind": "turn", "own_fully_confirmed": False})
 
     monkeypatch.setattr(tp, "iter_task_examples", fake_iter)
+    monkeypatch.setattr(tp, "_cache_fingerprint", lambda *args: "metadata-test-stub")
     from pathlib import Path
     cache = tp.build_cache(Path("unused"), "validation")
     t = cache["tasks"]["outcome"]

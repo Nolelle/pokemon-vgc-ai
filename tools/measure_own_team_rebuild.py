@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import random
 import sys
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +43,7 @@ from vgc.bc.own_team_rebuild import (  # noqa: E402
     SAME_PLAYER_SHEET,
     RebuildContext,
     UNKNOWN,
-    game_facts_from_json,
+    build_corpus_facts,
     game_flagged,
     illusion_affected,
     game_prior_contribution,
@@ -93,7 +95,7 @@ def evaluate_units(units: list[dict], manifest: dict, facts: dict, ctx: RebuildC
     share_bins = {"item": Counter(), "ability": Counter()}
     share_bins_correct = {"item": Counter(), "ability": Counter()}
     mismatches = []
-    contrib_cache: dict[str, dict] = {}
+    contrib_cache: dict[str, list[dict]] = {}
     for unit in units:
         game_id, side, species = unit["game_id"], unit["side"], unit["species"]
         game = manifest[game_id]
@@ -115,10 +117,21 @@ def evaluate_units(units: list[dict], manifest: dict, facts: dict, ctx: RebuildC
         # game is excluded as a donor by `eligible_donors`; the priors are
         # leave-one-game-out -- this game's contribution is subtracted.
         if game_id not in contrib_cache:
-            contrib_cache[game_id] = game_prior_contribution(gf)
+            # A species can appear on both teams. The legacy helper is keyed by
+            # species, so calling it on both sides together overwrites the first
+            # team's contribution. Isolate each side and subtract both.
+            contrib_cache[game_id] = [
+                game_prior_contribution(replace(
+                    gf,
+                    mons={key: mon for key, mon in gf.mons.items() if key[0] == seat},
+                    sheets={seat: gf.sheets.get(seat, {})},
+                ))
+                for seat in ("p1", "p2")
+            ]
         prior = ctx.priors.get(species)
-        if prior is not None:
-            prior = subtract_prior(prior, contrib_cache[game_id].get(species, {}))
+        if prior is not None and game_id in ctx.prior_game_ids:
+            for contribution in contrib_cache[game_id]:
+                prior = subtract_prior(prior, contribution.get(species, {}))
         # Teammate items (Item Clause): the other Pokémon on this side's Layer-1
         # start-of-game items (the whole side's sheet is withheld in answer-key mode).
         teammate_items = {
@@ -362,6 +375,7 @@ def main() -> int:
     p.add_argument("--data", type=Path, required=True)
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--facts", type=Path, required=True, help="game_facts.jsonl(.gz) from build_corpus_facts")
+    p.add_argument("--raw-dir", type=Path, required=True, help="raw <id>.json replay dir")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--prior-versions", nargs="+", default=["v1", "v2"],
                    choices=["v1", "v2"], help="prior versions to evaluate side by side")
@@ -369,12 +383,9 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = load_manifest(args.manifest)
-    opener = gzip.open if args.facts.suffix == ".gz" else open
-    facts = {}
-    with opener(args.facts, "rt") as handle:
-        for line in handle:
-            gf = game_facts_from_json(json.loads(line))
-            facts[gf.replay_id] = gf
+    # Goes through the same provenance check as dataset preparation: a facts file
+    # from other raw games or older parser code is refused, not silently measured.
+    facts = build_corpus_facts(manifest, args.raw_dir, args.facts)
     ctx = RebuildContext(manifest, facts)
 
     units = answer_key_units(manifest, facts)
@@ -429,7 +440,16 @@ def main() -> int:
             out.write(json.dumps({"replay_id": rid, "side": side, "species": sp,
                                   "field": field, "ours": ours, "sheet": sheet}) + "\n")
     coverage = coverage_pass(args.data, manifest, facts, ctx)
+    input_hashes = {}
+    for path in (args.data, args.manifest, args.facts, Path(__file__),
+                 REPO_ROOT / "src/vgc/bc/own_team_rebuild.py"):
+        with path.open("rb") as handle:
+            input_hashes[str(path.resolve())] = hashlib.file_digest(handle, "sha256").hexdigest()
     report = {"answer_key": keys, "coverage": coverage,
+              "inputs_sha256": input_hashes,
+              "prior_source_games": len(ctx.prior_game_ids),
+              "reserved_roster_source_games": sum(
+                  ctx._reserved_source(manifest[rid]) for rid in ctx.prior_game_ids),
               "commands": {
                   "facts": "build_corpus_facts(manifest, raw_dir) -> game_facts.jsonl.gz",
                   "measure": " ".join(sys.argv)}}

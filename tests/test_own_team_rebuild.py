@@ -101,6 +101,103 @@ def _ctx(games: dict, facts: dict) -> RebuildContext:
     return RebuildContext(full, facts)
 
 
+def test_shell_bell_and_rocky_helmet_have_different_effect_owners():
+    log = _minimal_log(
+        "|-enditem|p2a: Rillaboom|Sitrus Berry|[eat]",
+        "|-heal|p2a: Rillaboom|80/100|[from] item: Sitrus Berry",
+        "|-heal|p1a: Incineroar|90/100|[from] item: Shell Bell|[of] p2a: Rillaboom",
+        "|-damage|p1b: Amoonguss|90/100|[from] item: Rocky Helmet|[of] p2b: Salamence",
+    )
+    facts = analyze_log("items", log)
+    assert facts.mons[("p1", "incineroar")].item == "shellbell"
+    assert facts.mons[("p2", "rillaboom")].item == "sitrusberry"
+    assert facts.mons[("p2", "salamence")].item == "rockyhelmet"
+    row = _turn_record(_records(log), 2)
+    assert row["state"]["our"]["active"][0]["item"] == "shellbell"
+    assert row["state"]["opp"]["active"][0]["item"] is None
+    assert row["state"]["opp"]["active"][1]["item"] == "rockyhelmet"
+
+
+def test_reserved_games_and_rosters_cannot_supply_donors_or_priors():
+    facts = analyze_log("normal", _minimal_log())
+    normal = _game()
+    reserved = copy.deepcopy(normal)
+    reserved["split"] = "reserved_team_excluded"
+    excluded = copy.deepcopy(normal)
+    excluded.update(split="excluded", rosters={"p1": ["reserved"], "p2": ["other"]})
+    test_game = {"split": "test", "time": 30, "rosters": {"p1": ["reserved"]}}
+    ctx = _ctx({"normal": normal, "reserved": reserved, "excluded": excluded, "x1": test_game},
+               {"normal": facts, "reserved": facts, "excluded": facts})
+    assert ctx.prior_game_ids == {"normal"}
+    donor_ids = {d.game_id for group in ctx.donors.values() for entries in group.values() for d in entries}
+    assert donor_ids == {"normal"}
+    assert ctx.eligible_donors("alice", normal["rosters"]["p1"], "incineroar", ("train", 0, "target")) == []
+
+
+def test_facts_cache_requires_current_raw_code_and_content(tmp_path):
+    import hashlib
+    import json
+
+    import pytest
+
+    from vgc.bc.own_team_rebuild import build_corpus_facts, game_facts_to_json
+
+    raw = tmp_path / "game.json"
+    raw.write_text(json.dumps({"log": _minimal_log("|-item|p1a: Incineroar|Safety Goggles")}))
+    manifest = {"game": {"file_sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}}
+    cache = tmp_path / "facts.jsonl.gz"
+    first = build_corpus_facts(manifest, tmp_path, cache)
+    loaded = build_corpus_facts(manifest, tmp_path, cache)
+    assert game_facts_to_json(loaded["game"]) == game_facts_to_json(first["game"])
+    raw.write_text(json.dumps({"log": _minimal_log("|-item|p1a: Incineroar|Leftovers")}))
+    with pytest.raises(ValueError, match="raw replay fingerprint"):
+        build_corpus_facts(manifest, tmp_path, cache)
+    manifest["game"]["file_sha256"] = hashlib.sha256(raw.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="cache provenance"):
+        build_corpus_facts(manifest, tmp_path, cache)
+    fresh = tmp_path / "fresh.jsonl.gz"
+    assert build_corpus_facts(manifest, tmp_path, fresh)["game"].mons[("p1", "incineroar")].item == "leftovers"
+    with fresh.open("ab") as handle:
+        handle.write(b"tampered")
+    with pytest.raises(ValueError, match="cache provenance"):
+        build_corpus_facts(manifest, tmp_path, fresh)
+    # A cache with no provenance record (written before this check existed) is refused.
+    legacy = tmp_path / "legacy.jsonl.gz"
+    build_corpus_facts(manifest, tmp_path, legacy)
+    (tmp_path / "legacy.jsonl.gz.meta.json").unlink()
+    with pytest.raises(ValueError, match="cache provenance"):
+        build_corpus_facts(manifest, tmp_path, legacy)
+
+
+def test_answer_key_removes_both_teams_contributions(monkeypatch):
+    import tools.measure_own_team_rebuild as measurement
+    from vgc.bc.own_team_rebuild import GameFacts
+
+    moves = ["fakeout", "flareblitz", "partingshot", "protect"]
+    sheet = {"item": "leftovers", "ability": "intimidate", "moves": moves}
+    facts = GameFacts(
+        "mirror", mons={(s, "incineroar"): MonFacts("incineroar") for s in ("p1", "p2")},
+        sheets={s: {"incineroar": dict(sheet)} for s in ("p1", "p2")})
+    game = _game()
+    ctx = _ctx({"mirror": game}, {"mirror": facts})
+    assert ctx.priors["incineroar"].item_counts["leftovers"] == 2
+    captured = []
+    original = measurement.resolve_fields
+
+    def resolve(mon, own_sheet, donors, prior, **kwargs):
+        captured.append(prior)
+        return original(mon, own_sheet, donors, prior, **kwargs)
+
+    monkeypatch.setattr(measurement, "resolve_fields", resolve)
+    measurement.evaluate_units(
+        [{"game_id": "mirror", "side": "p1", "species": "incineroar", "truth": sheet}],
+        {"mirror": game}, {"mirror": facts}, ctx)
+    assert captured[0].item_counts["leftovers"] == 0
+    assert captured[0].ability_counts["intimidate"] == 0
+    assert captured[0].complete_sets == []
+    assert ctx.priors["incineroar"].item_counts["leftovers"] == 2
+
+
 def test_transfer_in_blocks_item_fact() -> None:
     # Incineroar's Safety Goggles is Tricked away turn 1, then it receives a
     # Choice Band -- the -item transfer-in must not count as its initial item.
@@ -604,6 +701,66 @@ def test_encode_state_bench_order_invariant() -> None:
     for key in a:
         import numpy as np
         assert np.array_equal(a[key], b[key]), key
+
+
+def test_unseen_brought_slot_is_a_deterministic_preview_guess() -> None:
+    # A brought mon that never appears still takes up a bench slot live -- the
+    # bench must reach the brought-four size regardless. With only 3 of the 6
+    # previewed mons ever appearing, the missing slot is a deterministic guess
+    # among the three unseen preview species (same game+side -> same guess on
+    # every record and every call).
+    log = _log(
+        [
+            "|player|p1|alice||",
+            "|player|p2|bob||",
+            "|poke|p1|Incineroar, L50, M|",
+            "|poke|p1|Amoonguss, L50, F|",
+            "|poke|p1|Rillaboom, L50, M|",
+            "|poke|p1|Salamence, L50, M|",
+            "|poke|p1|Zapdos, L50|",
+            "|poke|p1|Gholdengo, L50|",
+            "|poke|p2|Kingambit, L50, M|",
+            "|poke|p2|Sneasler, L50, F|",
+            "|start",
+            "|switch|p1a: Incineroar|Incineroar, L50, M|100/100",
+            "|switch|p1b: Amoonguss|Amoonguss, L50, F|100/100",
+            "|switch|p2a: Kingambit|Kingambit, L50, M|100/100",
+            "|switch|p2b: Sneasler|Sneasler, L50, F|100/100",
+            "|turn|1",
+            "|move|p1a: Incineroar|Fake Out|p2a: Kingambit",
+            "|move|p1b: Amoonguss|Spore|p2b: Sneasler",
+            "|move|p2a: Kingambit|Sucker Punch|p1a: Incineroar",
+            "|move|p2b: Sneasler|Close Combat|p1b: Amoonguss",
+            "|turn|2",
+            "|switch|p1a: Rillaboom|Rillaboom, L50, M|100/100",
+            "|move|p1b: Amoonguss|Spore|p2b: Sneasler",
+            "|move|p2a: Kingambit|Kowtow Cleave|p1b: Amoonguss",
+            "|move|p2b: Sneasler|Protect|p2b: Sneasler",
+            "|turn|3",
+            "|move|p1a: Rillaboom|Grassy Glide|p2a: Kingambit",
+            "|move|p1b: Amoonguss|Spore|p2a: Kingambit",
+            "|move|p2a: Kingambit|Sucker Punch|p1a: Rillaboom",
+            "|move|p2b: Sneasler|Close Combat|p1a: Rillaboom",
+            "|win|alice",
+        ]
+    )
+    facts = analyze_log("rid-1", log)
+    unseen = {"salamence", "zapdos", "gholdengo"}
+    guesses = []
+    for turn in (1, 2, 3):
+        record = _turn_record(_records(log), turn)
+        rebuild_record(record, facts, None)
+        our = record["state"]["our"]
+        total = sum(1 for mon in our["active"] if mon) + len(our["bench"])
+        assert total == 4
+        guessed = record["own_info"]["bench_guessed"]
+        assert len(guessed) == 1 and set(guessed) <= unseen
+        assert record["own_info"]["bench_complete"] is False
+        guesses.append(guessed[0])
+    assert len(set(guesses)) == 1  # the same guess on every record of the game
+    repeat = _turn_record(_records(log), 1)
+    rebuild_record(repeat, facts, None)
+    assert repeat["own_info"]["bench_guessed"] == [guesses[0]]
 
 
 def test_revealed_moves_fill_is_whole_game() -> None:

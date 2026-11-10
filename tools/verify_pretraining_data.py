@@ -57,10 +57,12 @@ def single_ability(forme: str) -> str | None:
 class Tally:
     def __init__(self):
         self.counts = collections.Counter()
+        self.violations = collections.Counter()
         self.examples = collections.defaultdict(list)
 
     def bad(self, key: str, example) -> None:
         self.counts[key] += 1
+        self.violations[key] += 1
         if len(self.examples[key]) < 5:
             self.examples[key].append(example)
 
@@ -88,7 +90,7 @@ def raw_facts(log: str):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--prepared", type=Path, default=REPO / "data/bc/pretraining_regmc_s9_20261106")
+    ap.add_argument("--prepared", type=Path, required=True)
     ap.add_argument("--raw", type=Path, default=REPO / "data/replays/gen9championsvgc2026regmc")
     ap.add_argument("--fog-games", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=20261106)
@@ -100,6 +102,18 @@ def main() -> int:
     manifest_path = Path(summary["inputs"]["selection"])
     dataset_path = Path(summary["inputs"]["dataset"])
     sel_summary = json.loads((manifest_path.parent / "summary.json").read_text())
+    fingerprints = {
+        dataset_path: summary["inputs"]["dataset_sha256"],
+        manifest_path: summary["inputs"]["selection_sha256"],
+        manifest_path.parent / "summary.json": summary["inputs"]["selection_summary_sha256"],
+        **{args.prepared / name: digest for name, digest in summary["files_sha256"].items()},
+    }
+    for path, expected in fingerprints.items():
+        with path.open("rb") as handle:
+            actual = hashlib.file_digest(handle, "sha256").hexdigest()
+        t.ok("A_artifact_hash")
+        if actual != expected:
+            t.bad("A_artifact_hash", (str(path), expected, actual))
 
     # ---------------- A. selection ----------------
     games = {}
@@ -132,6 +146,12 @@ def main() -> int:
     reserved = set(sorted(test_rosters, key=lambda r: hashlib.sha256(
         ("20261102:" + ",".join(r)).encode()).hexdigest())[:max(1, round(len(test_rosters) * .05))])
     for g in kept.values():
+        expected_split = (
+            "train" if g["time"] < 1792406685 else
+            "validation" if g["time"] < 1792870992 else
+            "test" if g["time"] <= 1793572357 else "excluded")
+        if g["split"] != expected_split:
+            t.bad("A_fixed_split_boundary", (g["id"], g["split"], g["time"]))
         if g["split"] in ("train", "validation") and any(tuple(r) in reserved for r in g["rosters"].values()):
             t.bad("A_train_val_roster_in_team_challenge", g["id"])
         if g.get("showteam"):
@@ -222,6 +242,14 @@ def main() -> int:
                     our = st["our"]
                     act_species = [m["species"] if m else None for m in our["active"]]
                     bench_species = [m["species_id"] for m in our["bench"]]
+                    if r["decision_kind"] == "turn" and r["turn"] == 1:
+                        # Live play always lists the whole brought four; a short own
+                        # bench at turn 1 leaks that a back mon never appears.
+                        t.ok("B_turn1_own_bench_full")
+                        own_n = sum(1 for m in our["active"] if m) + len(bench_species)
+                        want = min(4, len(our.get("preview_species") or []))
+                        if own_n != want or len(set(act_species + bench_species)) != own_n:
+                            t.bad("B_turn1_own_bench_full", (rid, side, own_n, want, act_species, bench_species))
                     for slot in (0, 1):
                         dest = sv["targets"]["switch_destination"][slot]
                         if sv["masks"]["switch_destination"][slot]:
@@ -342,6 +370,10 @@ def main() -> int:
                         t.bad("C_opp_mega", (rid, side, turn, kind, mon["species"], at, log_line))
 
     out = {
+        "status": "fail" if t.violations else "pass",
+        "violations": dict(sorted(t.violations.items())),
+        "prepared": str(args.prepared.resolve()),
+        "verifier_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "counts": dict(sorted(t.counts.items())),
         "examples": t.examples,
         "outcome_balance": {f"{k[0]}:{k[1]}": v for k, v in sorted(outcome_balance.items())},
@@ -353,7 +385,7 @@ def main() -> int:
         print(f"{k:55s} {v}")
     print("outcome balance:", out["outcome_balance"])
     print("move option sizes:", out["move_option_sizes"])
-    return 0
+    return 1 if t.violations else 0
 
 
 if __name__ == "__main__":

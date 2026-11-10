@@ -400,6 +400,27 @@ def test_encode_state_preview_species_missing_defaults_to_all_pad() -> None:
     assert (state["species_idx_preview"] == SPECIES_TO_IDX["<pad>"]).all()
 
 
+def test_encode_state_teampreview_preview_key() -> None:
+    # Teampreview records carry each side's six under "preview" (turn records use
+    # "preview_species") -- they must not encode as all pad.
+    six = ["garchomp", "klefki", "incineroar", "charizard", "gholdengo", "pikachu"]
+    state = encode_state(
+        {
+            "state": {
+                "our": {"preview": list(six)},
+                "opp": {"preview": list(six)},
+                "field": {"turn": 0},
+            }
+        }
+    )
+    assert state["species_idx_preview"].shape == (12,)
+    for idx, species in enumerate(six):
+        assert state["species_idx_preview"][idx] == SPECIES_TO_IDX[species]
+        assert state["species_idx_preview"][idx + 6] == SPECIES_TO_IDX[species]
+    assert not set(state["species_idx_preview"].tolist()) & {
+        SPECIES_TO_IDX["<pad>"], SPECIES_TO_IDX["<unk>"]}
+
+
 def test_encode_state_preview_unseen_count_scaled_by_six() -> None:
     record = _turn_record(
         our_active=[_mon("garchomp"), None],

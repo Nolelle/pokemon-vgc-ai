@@ -38,7 +38,7 @@ from vgc.bc.encoding import MOVE_TO_IDX, SPECIES_TO_IDX, trunk_inputs  # noqa: E
 from vgc.bc.replay_pretrain import (  # noqa: E402
     COMBOS_4OF6, LEAD_PAIRS, SWITCH_IDX, PreviewPretrainNet, TurnPretrainNet,
 )
-from vgc.bc.replay_pretraining import iter_task_examples, load_sampling_plan  # noqa: E402
+from vgc.bc.replay_pretraining import file_hash, iter_task_examples, load_sampling_plan  # noqa: E402
 from vgc.bc.replay_sampling import sample_task_units  # noqa: E402
 from vgc.data import canonical_species_id  # noqa: E402
 from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary  # noqa: E402
@@ -61,6 +61,24 @@ def _bucket(t) -> str:
     return "1-2" if t <= 2 else "3-5" if t <= 5 else "6+"
 
 
+def _cache_fingerprint(prepared: Path, split: str) -> str:
+    summary_path = prepared / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    for name in (f"{split}.jsonl.gz", "sampling_broad.jsonl", "sampling_expert.jsonl"):
+        if file_hash(prepared / name) != summary["files_sha256"][name]:
+            raise ValueError(f"prepared artifact fingerprint mismatch: {name}")
+    paths = [Path(__file__), REPO_ROOT / "src/vgc/bc/encoding.py",
+             REPO_ROOT / "src/vgc/bc/replay_pretraining.py",
+             REPO_ROOT / "src/vgc/bc/replay_pretrain.py",
+             REPO_ROOT / "src/vgc/data.py",
+             REPO_ROOT / "data/champions/cosmetic_formes.json"]
+    return json.dumps({"prepared": str(prepared.resolve()), "split": split,
+                       "summary_sha256": file_hash(summary_path),
+                       "vocabulary": current_vocabulary(),
+                       "code_sha256": {str(p.relative_to(REPO_ROOT)): file_hash(p) for p in paths}},
+                      sort_keys=True)
+
+
 def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> dict:
     """Encode each referenced record once
     per-task contiguous arrays keyed by the
@@ -69,10 +87,14 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
     destination is not among the bench options are skipped and counted."""
     if split == "test":
         raise AssertionError("the test split is never opened for pretraining")
+    fingerprint = _cache_fingerprint(prepared, split)
     npz_path = (cache_dir / f"cache_{split}.npz") if cache_dir else None
     if npz_path and npz_path.exists():
         z = np.load(npz_path, allow_pickle=True)
-        return {"records": {k: z[f"rec_{k}"] for k in (
+        if "provenance_json" not in z or z["provenance_json"].item() != fingerprint:
+            z.close()
+            raise ValueError("encoded cache provenance mismatch; use a fresh cache directory")
+        cached = {"records": {k: z[f"rec_{k}"] for k in (
             "idx", "scalars", "move_opts", "move_mask", "dest_opts", "dest_mask",
             "own6", "opp6")},
             "lineup": z["rec_lineup"].tolist(), "meta": {k: z[f"meta_{k}"] for k in (
@@ -84,6 +106,8 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
                           for k2, v2 in d.items()}
                       for t, d in json.loads(z["tasks_json"].item()).items()},
             "split": split}
+        z.close()
+        return cached
     rec_rows = {}
     rec = collections.defaultdict(list)
     tasks = collections.defaultdict(
@@ -201,6 +225,7 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
            "tasks": tasks, "split": split, "built_seconds": round(time.time() - t0, 1)}
     if npz_path:
         np.savez(npz_path,
+                 provenance_json=np.array(fingerprint),
                  **{f"rec_{k}": v for k, v in out["records"].items()},
                  rec_lineup=np.array(out["lineup"], dtype=object),
                  **{f"meta_{k}": v for k, v in out["meta"].items()},

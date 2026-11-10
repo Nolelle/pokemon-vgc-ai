@@ -361,7 +361,9 @@ def _encode_side(side: dict | None) -> dict[str, object]:
     bench_species_idx, bench_hp_fraction = _encode_bench(bench_raw)
     conditions = set(side.get("side_conditions") or [])
     condition_flags = [1.0 if flag in conditions else 0.0 for flag in _SIDE_CONDITION_FLAGS]
-    preview_species_idx = _encode_preview(side.get("preview_species"))
+    # Teampreview records carry each side's six under "preview"; turn records use
+    # "preview_species".
+    preview_species_idx = _encode_preview(side.get("preview_species") or side.get("preview"))
 
     # v4 resource-state summary: "known" mons are exactly what's already in the state
     # (non-empty active slots + bench, which per vgc.replay_parse's docstring only ever

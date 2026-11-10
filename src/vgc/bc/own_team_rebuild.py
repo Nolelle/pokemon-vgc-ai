@@ -15,8 +15,8 @@ Layer 1 -- same game, raw protocol facts the player knew from the start:
 
 - Item: initial held item, evidenced by `-mega` (the mega stone), `-enditem`
   (consumed/popped/knocked off), `-item` without a transfer `[from]`, `[from] item: X`
-  effects attributed to that Pokemon (`[of]` wins over the position token, so a Rocky
-  Helmet's damage line credits the holder), and Frisk reveals. If ANY transfer-in for
+  effects attributed to that Pokemon (`[of]` identifies the holder on damage lines;
+  Shell Bell healing belongs to the healed subject), and Frisk reveals. If ANY transfer-in for
   that Pokemon (Trick, Switcheroo, Thief, Covet, Bestow, Symbiosis, Pickpocket,
   Magician, Pickup, Harvest, Recycle) precedes the first such evidence -> no item fact.
   Fill window: that Pokemon's snapshots (record `log_line`) before its first
@@ -44,7 +44,8 @@ Donor eligibility by time (prevents later-period information leaking into traini
 inputs): boundaries DEV_START / TEST_START come from the v3 selection manifest
 (earliest validation/test game start times). A train target may only use donors
 starting before DEV_START; validation before TEST_START; test may use any donor.
-Set-aside games (excluded/reserved) are allowed as donors under the same rule. The
+Excluded games may donate under the same rule; reserved-team games and rosters
+never donate or contribute to common-set priors. The
 target game is never its own donor. Acceptance: (1) prefer the nearest-in-time donor
 SHEET whose item/ability/moves are consistent with the target's Layer-1 facts; take
 its values for unknown fields. (2) Otherwise per-field: union of non-sheet donor
@@ -72,6 +73,7 @@ reads `own_info` -- a test proves its output is invariant to it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, field
@@ -463,11 +465,12 @@ def analyze_log(replay_id: str, log: str) -> GameFacts:
             continue
         side, slot, _name = _parse_position(parts[2])
         of_pos = _of_position(parts[3:])
-        target_pos = of_pos or (side, slot)
-        target = mon_at(*target_pos)
-        if target is None:
-            continue
         for kind, name in _from_kinds(parts[3:]):
+            target_pos = (of_pos if of_pos and (kind != "item" or tag == "-damage")
+                          else (side, slot))
+            target = mon_at(*target_pos)
+            if target is None:
+                continue
             if kind == "item" and name:
                 target.note_item_evidence(idx, name)
             elif kind == "ability" and name and not target.mega:
@@ -664,7 +667,17 @@ class RebuildContext:
         assert min(test_times) >= self.test_start, "test games start before TEST_START"
         self.donors: dict[tuple[str, tuple[str, ...]], dict[tuple[str, str], list[DonorFacts]]] = {}
         self.priors: dict[str, SpeciesPrior] = {}
+        test_rosters = {tuple(r) for game in games.values() if game["split"] == "test"
+                        for r in (game.get("rosters") or {}).values()}
+        reserved_count = max(1, round(len(test_rosters) * .05)) if test_rosters else 0
+        self.reserved_rosters = set(sorted(test_rosters, key=lambda r: hashlib.sha256(
+            ("20261102:" + ",".join(r)).encode()).hexdigest())[:reserved_count])
+        self.prior_game_ids: set[str] = set()
         self._build()
+
+    def _reserved_source(self, game: dict) -> bool:
+        return game.get("split") == "reserved_team_excluded" or any(
+            tuple(r) in self.reserved_rosters for r in (game.get("rosters") or {}).values())
 
     def _build(self) -> None:
         for game_id, game in self.games.items():
@@ -674,6 +687,7 @@ class RebuildContext:
                 or not game.get("time")
                 or game_flagged(game)
                 or illusion_affected(facts)
+                or self._reserved_source(game)
             ):
                 continue
             for side in ("p1", "p2"):
@@ -717,11 +731,13 @@ class RebuildContext:
 
         # Layer-3 priors: games starting before DEV_START only.
         for game_id, game in self.games.items():
-            if not game.get("time") or game["time"] >= self.dev_start or game_flagged(game):
+            if (not game.get("time") or game["time"] >= self.dev_start
+                    or game_flagged(game) or self._reserved_source(game)):
                 continue
             facts = self.game_facts.get(game_id)
             if facts is None or illusion_affected(facts):
                 continue
+            self.prior_game_ids.add(game_id)
             for side in ("p1", "p2"):
                 sheets = facts.sheets.get(side) or {}
                 species_set = {
@@ -777,6 +793,8 @@ class RebuildContext:
         """Donor facts for `species` in the (account, lineup) group, newer-first-free:
         eligible under `target`'s (split, time, game_id) time rule, never the target."""
         _target_split, target_time, target_id = target
+        if not target_time:
+            return []
         boundary = self.donor_boundary(target_time)
         entries = [
             donor
@@ -1043,6 +1061,24 @@ def _verify_rebuild_invariants(
                 raise AssertionError("rebuild removed a revealed move")
 
 
+def _guess_unseen_bench(
+    replay_id: str, side: str, preview: list[str], brought: set[str]
+) -> list[str]:
+    """Deterministic per-(game, side) picks among previewed-but-never-appeared
+    species, topping the bench up to the brought-four size. A brought mon that
+    never appears leaves the bench short otherwise -- a future leak, since a
+    short bench only happens when a slot never entered play. The sha256
+    ordering makes the same guess land on every record of the game.
+    """
+    missing = min(4, len(preview)) - len(brought)
+    candidates = [sp for sp in preview if sp not in brought]
+    ranked = sorted(
+        candidates,
+        key=lambda sp: hashlib.sha256(f"{replay_id}|{side}|{sp}".encode()).hexdigest(),
+    )
+    return ranked[: max(0, missing)]
+
+
 def rebuild_record(
     record: dict,
     game_facts: GameFacts,
@@ -1148,6 +1184,13 @@ def rebuild_record(
     bench = record["state"]["our"]["bench"]
     for species in sorted(additions):
         bench.append({"species_id": species, "hp_fraction": 1.0, "status": None})
+    # A brought mon that never appears is invisible to appearance tracking --
+    # fill the missing slots with a deterministic preview guess so the bench
+    # always reaches its true size.
+    preview = list(game_facts.preview.get(side) or [])
+    guessed = _guess_unseen_bench(record["replay_id"], side, preview, brought)
+    for species in guessed:
+        bench.append({"species_id": species, "hp_fraction": 1.0, "status": None})
     bench_complete = len(brought) >= 4
     fully = bench_complete and all(
         info is None
@@ -1160,9 +1203,13 @@ def rebuild_record(
         for info in slot_infos
     )
     # A slot with <4 resolved move slots leaves the rest unknown.
-    record["own_info"] = {"active": slot_infos, "bench_complete": bench_complete}
+    record["own_info"] = {
+        "active": slot_infos,
+        "bench_complete": bench_complete,
+        "bench_guessed": guessed,
+    }
     record["own_fully_confirmed"] = bool(fully)
-    _verify_rebuild_invariants(before, record, additions)
+    _verify_rebuild_invariants(before, record, additions | set(guessed))
     return record
 
 
@@ -1183,7 +1230,30 @@ def build_corpus_facts(manifest: dict, raw_dir: Path, cache_path: Path | None = 
     facts at `cache_path` (JSONL, one GameFacts per line) since this is the bulk of
     the corpus pre-pass.
     """
+    raw_hashes = {}
+    for game_id, game in sorted(manifest.items()):
+        path = raw_dir / f"{game_id}.json"
+        with path.open("rb") as handle:
+            actual = hashlib.file_digest(handle, "sha256").hexdigest()
+        if game.get("file_sha256") and actual != game["file_sha256"]:
+            raise ValueError(f"raw replay fingerprint mismatch: {game_id}")
+        raw_hashes[game_id] = actual
+    root = Path(__file__).resolve().parents[3]
+    code_paths = [Path(__file__).resolve(), root / "src/vgc/replay_parse.py",
+                  root / "src/vgc/data.py", root / "data/champions/species.json",
+                  root / "data/champions/cosmetic_formes.json"]
+    provenance = {
+        "raw_sha256": raw_hashes,
+        "code_sha256": {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                       for p in code_paths},
+    }
+    meta_path = cache_path.with_name(cache_path.name + ".meta.json") if cache_path else None
     if cache_path is not None and cache_path.exists():
+        metadata = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        with cache_path.open("rb") as handle:
+            cache_digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        if metadata.get("provenance") != provenance or metadata.get("cache_sha256") != cache_digest:
+            raise ValueError("own-team facts cache provenance mismatch; use a fresh cache path")
         facts: dict[str, GameFacts] = {}
         import gzip
 
@@ -1191,11 +1261,16 @@ def build_corpus_facts(manifest: dict, raw_dir: Path, cache_path: Path | None = 
         with opener(cache_path, "rt") as handle:
             for line in handle:
                 facts[replay_id_from_facts_line(line)] = game_facts_from_json(json.loads(line))
+        if set(facts) != set(manifest):
+            raise ValueError("own-team facts cache game membership mismatch")
         return facts
     facts = {}
     for game_id, game in sorted(manifest.items()):
         path = raw_dir / f"{game_id}.json"
-        payload = json.loads(path.read_text())
+        raw_bytes = path.read_bytes()
+        if hashlib.sha256(raw_bytes).hexdigest() != raw_hashes[game_id]:
+            raise ValueError(f"raw replay changed during extraction: {game_id}")
+        payload = json.loads(raw_bytes)
         log = payload.get("log") or ""
         facts[game_id] = analyze_log(game_id, log)
     if cache_path is not None:
@@ -1206,6 +1281,10 @@ def build_corpus_facts(manifest: dict, raw_dir: Path, cache_path: Path | None = 
         with opener(cache_path, "wt") as handle:
             for game_id in sorted(facts):
                 handle.write(game_facts_to_json(facts[game_id]) + "\n")
+        with cache_path.open("rb") as handle:
+            cache_digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        meta_path.write_text(json.dumps(
+            {"provenance": provenance, "cache_sha256": cache_digest}, sort_keys=True) + "\n")
     return facts
 
 

@@ -16,7 +16,7 @@ _TASKS = ("move", "target", "switch_destination", "preview_brought", "preview_le
 # Protocol effects that can prevent a fresh choice; move properties come from the
 # Champions catalog. Never search chat, nicknames, or usernames for move names.
 _LOCK_EFFECTS = {"encore", "lockedmove", "twoturnmove", "mustrecharge", "recharge",
-                 "bide", "uproar", "rollout", "iceball"}
+                 "bide", "uproar", "rollout", "iceball", "instruct"}
 
 
 def _id(value):
@@ -40,7 +40,7 @@ def _move_can_force_later_choice(move_id):
     return bool(move.get("flags", {}).get("charge") or move.get("flags", {}).get("recharge")
                 or move.get("selfVolatileStatus") in _LOCK_EFFECTS
                 or move.get("volatileStatus") in _LOCK_EFFECTS
-                or move_id in {"rollout", "iceball"})
+                or move_id in {"rollout", "iceball", "instruct"})
 
 
 def _identity(details, species):
@@ -66,10 +66,25 @@ def audit_raw_log(log: str) -> dict:
     species = _species_data()
     names, appeared, leads = {}, {s: [] for s in _SEATS}, {s: [] for s in _SEATS}
     turn = 0
+    origin_slots = {s: [0, 1] for s in _SEATS}
     # A game-wide exclusion is conservative when a lock begins before the current turn.
     locked = False
     blocked_switch = False
     winner_name = None
+    # Per-turn, per-origin-slot move locks: Encore's volatile and Instruct repeats
+    # carry no [from] on their move lines, so they need explicit state. (Charge
+    # and Outrage-style locks DO carry `[from] lockedmove` -- the event-level
+    # `called` flag already masks those.) `encored` holds (side, current
+    # position index) -- the volatile follows the mon through Ally Switch.
+    move_locks: dict[str, dict[str, list[str]]] = {}
+    encored: set[tuple[str, int]] = set()
+
+    def lock_slot(side: str, position_index: int) -> None:
+        if turn:
+            slots = move_locks.setdefault(str(turn), {}).setdefault(side, [])
+            origin = str(origin_slots[side][position_index])
+            if origin not in slots:
+                slots.append(origin)
     for line in log.splitlines():
         p = line.split("|")
         if len(p) < 2:
@@ -81,7 +96,7 @@ def audit_raw_log(log: str) -> dict:
                 locked = True
             if any(x.lower().startswith("[from]") for x in p[index + 1:]):
                 locked = True
-        if tag in ("-start", "-activate", "cant") and len(p) > 3:
+        if tag in ("-start", "-activate", "-singleturn", "cant") and len(p) > 3:
             effect = _id(p[3].removeprefix("move: "))
             if effect in _LOCK_EFFECTS:
                 locked = True
@@ -102,6 +117,35 @@ def audit_raw_log(log: str) -> dict:
                 result["diagnostics"].append("invalid_turn")
                 turn = 0
             blocked_switch = False
+            origin_slots = {s: [0, 1] for s in _SEATS}
+            for encore_side, encore_pos in sorted(encored):
+                lock_slot(encore_side, encore_pos)
+        elif tag == "swap" and len(p) > 3:
+            pos = re.match(r"^(p[12])([ab]):", p[2])
+            if pos and p[3] in ("0", "1"):
+                origins = origin_slots[pos.group(1)]
+                old, new = "ab".index(pos.group(2)), int(p[3])
+                origins[old], origins[new] = origins[new], origins[old]
+                side = pos.group(1)
+                if (side, 0) in encored and (side, 1) not in encored:
+                    encored.discard((side, 0))
+                    encored.add((side, 1))
+                elif (side, 1) in encored and (side, 0) not in encored:
+                    encored.discard((side, 1))
+                    encored.add((side, 0))
+        elif tag in ("-start", "-end") and len(p) > 3:
+            pos = re.match(r"^(p[12])([ab]):", p[2])
+            if pos and _id(p[3].removeprefix("move: ")) == "encore":
+                key = (pos.group(1), "ab".index(pos.group(2)))
+                if tag == "-start":
+                    encored.add(key)
+                    lock_slot(*key)
+                else:
+                    encored.discard(key)
+        elif tag == "-singleturn" and len(p) > 3:
+            pos = re.match(r"^(p[12])([ab]):", p[2])
+            if pos and _id(p[3].removeprefix("move: ")) == "instruct":
+                lock_slot(pos.group(1), "ab".index(pos.group(2)))
         elif tag == "win" and len(p) > 2:
             winner_name = _id(p[2])
         elif tag in ("switch", "drag", "replace") and len(p) > 3:
@@ -109,7 +153,9 @@ def audit_raw_log(log: str) -> dict:
             if not pos:
                 result["diagnostics"].append("invalid_position")
                 continue
-            side, slot = pos.group(1), str("ab".index(pos.group(2)))
+            side = pos.group(1)
+            encored.discard((side, "ab".index(pos.group(2))))
+            slot = str(origin_slots[side]["ab".index(pos.group(2))])
             identity = _identity(p[3], species)
             if identity and identity not in appeared[side]:
                 appeared[side].append(identity)
@@ -133,13 +179,18 @@ def audit_raw_log(log: str) -> dict:
             if cant_of is not None:
                 pos = cant_of
                 p = p[:3] + [p[4]] + p[5:]
+            if tag == "faint" and pos:
+                encored.discard((pos.group(1), "ab".index(pos.group(2))))
             if turn and pos:
-                ev = result["turns"].setdefault(str(turn), {}).setdefault(pos.group(1), {}).setdefault(str("ab".index(pos.group(2))), [])
+                side = pos.group(1)
+                slot = str(origin_slots[side]["ab".index(pos.group(2))])
+                ev = result["turns"].setdefault(str(turn), {}).setdefault(side, {}).setdefault(slot, [])
                 ev.append({"tag": tag, "move": _id(p[3]) if len(p) > 3 else None,
                            "called": any("[from]" in x.lower() for x in p[4:])})
             blocked_switch = True
     result["preview"] = {s: {"picked": appeared[s][:4], "lead_order": leads[s]} for s in _SEATS}
     result["locked_or_called"] = locked
+    result["move_locks"] = move_locks
     matches = [s for s in _SEATS if winner_name and names.get(s) == winner_name]
     result["winner"] = matches[0] if len(matches) == 1 else None
     if re.search(r"^\|-message\|[^\n]*(lost due to inactivity|lost by being offline)", log, re.M | re.I):
@@ -178,6 +229,7 @@ def build_supervision(record: dict, game_metadata: dict, audit: dict) -> dict:
         turn = record.get("turn")
         events = _mapping(_mapping(_mapping(audit.get("turns")).get(str(turn))).get(side))
         statuses = _mapping(record.get("action_status"))
+        locks = audit.get("move_locks")
         for i in range(2):
             key = f"slot{i}"
             a = action.get(key)
@@ -187,8 +239,12 @@ def build_supervision(record: dict, game_metadata: dict, audit: dict) -> dict:
             if not isinstance(a, dict) or statuses.get(key) != "observed":
                 continue
             if a.get("kind") == "move":
+                if a.get("move_id") == "struggle":
+                    reasons["move"][i] = "forced_struggle_not_choice"
+                    continue
                 matching = [x for x in ev if x.get("tag") == "move"]
-                if (not audit.get("locked_or_called", True) and len(matching) == 1
+                if (isinstance(locks, dict) and len(matching) == 1
+                        and str(i) not in locks.get(str(turn), {}).get(side, [])
                         and not matching[0].get("called") and _id(a.get("move_id"))
                         and _id(a.get("move_id")) in _move_data()
                         and _id(a.get("move_id")) == matching[0].get("move")):
