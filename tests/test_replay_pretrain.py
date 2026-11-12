@@ -304,6 +304,54 @@ def test_action_loss_is_pooled_mean() -> None:
     assert set(terms) == {"action", "destination", "value"}
 
 
+def test_train_destination_false_drops_dest_term_not_action() -> None:
+    """Frozen head: DESTINATION term gone, ACTION still covers switch units."""
+    import sys
+    sys.path.insert(0, "tools")
+    from train_replay_pretrain import step_losses  # noqa: PLC0415
+
+    cache = {"records": {
+        "idx": np.zeros((2, 10), dtype=np.int64),
+        "scalars": np.zeros((2, 12), dtype=np.float32),
+        "move_opts": np.tile(np.arange(5, dtype=np.int64), (2, 2, 1)),
+        "move_mask": np.ones((2, 2, 5), dtype=bool),
+        "dest_opts": np.arange(8, dtype=np.int64).reshape(1, -1).repeat(2, 0),
+        "dest_mask": np.ones((2, 8), dtype=bool)}}
+    cache["tasks"] = {
+        "move": {"row": [0], "component": [0], "label_pos": [1], "species": [0],
+                 "refs": {}, "skipped": 0},
+        "switch_destination": {"row": [1], "component": [1], "label_pos": [0],
+                               "species": [0], "refs": {}, "skipped": 0},
+        "outcome": {"row": [0], "component": [-1], "label_pos": [1.0], "species": [-1],
+                    "refs": {}, "skipped": 0}}
+
+    class Stub(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.p = torch.nn.Parameter(torch.tensor([0.1]))
+
+        def hidden(self, idx, sc):
+            return torch.zeros(len(idx), 4) + self.p
+
+        def action_logits(self, hidden, slot, opts, mask):
+            return torch.stack([self.p + torch.arange(5.) for _ in range(len(hidden))])
+
+        def destination_logits(self, hidden, slot, opts, mask):
+            return torch.stack([self.p + torch.arange(8.) for _ in range(len(hidden))])
+
+        def value_logit(self, hidden):
+            return self.p.expand(len(hidden)) + torch.tensor([0.5, -0.5][:len(hidden)])
+
+    net = Stub()
+    with_dest = step_losses(net, cache, [0], [0], [0], torch.device("cpu"))
+    without_dest = step_losses(net, cache, [0], [0], [0], torch.device("cpu"),
+                               train_destination=False)
+    assert "destination" in with_dest
+    assert "destination" not in without_dest
+    assert torch.equal(without_dest["action"], with_dest["action"])
+    assert torch.equal(without_dest["value"], with_dest["value"])
+
+
 def test_choose_combo_contains_leads_and_is_order_invariant() -> None:
     net = PreviewPretrainNet()
     own = ["incineroar", "rillaboom", "amoonguss", "kingambit", "ninetalesalola", "salamence"]

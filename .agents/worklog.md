@@ -683,3 +683,21 @@
 - Did: added tools/eval_replay_pretrain.py (327dd2b). Chosen seed 20261112 (lowest full-val loss sum 2.455). Validation: action 38.2% (rule 32.0%), dest 75.2% (unif 64.7%), value 68.0% ll 0.577, brought 19.1% (rule 10.3%), leads 13.3% (6.9%).
 - TEST (opened once, logged in runs/test_access_log.jsonl): action 37.0% (rule 31.0%), 1600+ 37.3%; dest 74.8% (unif 65.3%); value 67.3% ll 0.587 (turns 1-2 57.5%, 6+ 76.1%); brought 18.6% (rule 8.2%); leads 10.6% (6.6%). Turn-1 bias of the saved expert ckpt +1.8 val / +2.4 test (broad ckpt +4.9).
 - Next (not started): destination head early-stopping/regularization separate from the combined loss; step 6 (practice-game warm start + Showdown/env recheck). Test split must not be reopened for recipe tuning.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — dest-head own stopping + RL readiness
+- Did: turn-net selection loss now action+value (dest excluded, recorded as dest_val_loss per eval); per-phase destination tracker (dest_best/dest_bad, same patience) freezes destination_head when exhausted and restores its own best state at phase end; expert unfreezes/re-seeds at step 0; final_metrics gains dest_frozen_step + dest_val_loss_restored per phase; step_losses(train_destination=False) test added.
+- Files: tools/train_replay_pretrain.py, tests/test_replay_pretrain.py
+- Checks: 14 tests pass; ruff clean. Long run runs/long_s15_desthead_20261112 in flight (seed 20261112). RL readiness: warm start 8/8 stale 0, encoder identity max diff 0.0; all four readiness gates BLOCKED on upstream commit e5d26285a (sim/side.ts, inputlogs for overridden choices); live-replay parity running.
+- Next: compare desthead run vs runs/long_s15_20261112 on validation.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — desthead run + RL readiness results
+- Did: ran long_s15_desthead_20261112 (seed 20261112, 10k broad) — dest froze broad@2250 / expert@450; restored dest losses 0.4438/0.4421 beat REF 0.4614/0.4568; action+value also improved. Validation eval written; parity harness 99.7% excl-inherent; readiness gates all BLOCKED on upstream e5d26285a (no sync run).
+- Files: runs/long_s15_desthead_20261112/, runs/rl_readiness_s15/ (logs + parity summary)
+- Checks: 14 tests, ruff clean, eval parity vs final_metrics confirmed.
+- Next: owner decision on tools/sync_showdown.py for the blocking commit.
+
+## 2026-11-12 22:10 – Devin / Fable 5.2 — destination head on its own score + RL readiness checks
+- Did: trainer selects turn net on action+value; destination head tracked/frozen/restored on its own val loss. runs/long_s15_desthead_20261112 (same seed as long_s15_20261112), VALIDATION only: action 39.1% (was 38.2%), 1600+ 38.6% (37.5%), dest 75.4% loss 0.442 (75.2%, 0.457), value 68.3% ll 0.577 (68.0%, 0.577), turn-1 bias +0.5 pt (+1.8). Broad best 2500 (was 1750). Test NOT reopened.
+- RL readiness (runs/rl_readiness_s15/): warm start 8/8 tensors, 0 stale vocab, hidden identical (max diff 0.0). Live/replay parity 99.73% excl. inherent (1099 decisions; 3 non-inherent = boosts.spd), matches 11-05's 99.8%.
+- BLOCKED: all 4 gates, one upstream Showdown commit e5d26285a "Fix inputlogs for overridden choices" (sim/side.ts). tools/sync_showdown.py not run (pulls, rebuilds, re-exports, commits) -> needs owner OK.
+- Next: owner OK for sync_showdown.py, then rerun the 4 gates. Disk ~19 GB.

@@ -6,7 +6,8 @@ Loss = exactly three terms, weight 1.0 each:
                 only from the plan's draw ratio)
   DESTINATION = mean CE over switch units with a valid bench destination
   VALUE       = mean BCE over outcome units (logits head)
-Selection loss = the three validation means. Preview net trains separately
+Selection loss = action + value validation means; the destination head is
+selected on its own validation loss. Preview net trains separately
 (512/step, half brought / half leads). The test split is never opened.
 
     .venv/bin/python tools/train_replay_pretrain.py \
@@ -274,8 +275,11 @@ def _gather(cache, task, units, device):
     return rows, comp, lab, idx, sc
 
 
-def step_losses(net, cache, move_units, switch_units, outcome_units, device):
-    """Return the three weight-1.0 terms: ACTION (pooled), DESTINATION, VALUE."""
+def step_losses(net, cache, move_units, switch_units, outcome_units, device,
+                *, train_destination=True):
+    """Return the weight-1.0 terms: ACTION (pooled), DESTINATION, VALUE.
+    With train_destination=False the destination term is skipped while switch
+    units still feed the ACTION term."""
     rec = cache["records"]
     terms = {}
     action_units = [("move", u) for u in move_units] + [
@@ -304,7 +308,7 @@ def step_losses(net, cache, move_units, switch_units, outcome_units, device):
                             device=device)
         logits = net.action_logits(hidden, comp, opts, mask)
         terms["action"] = F.cross_entropy(logits, lab)
-    if switch_units:
+    if switch_units and train_destination:
         t = cache["tasks"]["switch_destination"]
         rows_np = np.array([t["row"][u] for u in switch_units])
         comp_np = np.array([t["component"][u] for u in switch_units])
@@ -615,7 +619,7 @@ def main() -> int:
         metrics_path.write(json.dumps({"step": step, "phase": phase, **kw}) + "\n")
         metrics_path.flush()
 
-    def draw_losses(plan, step, phase_i):
+    def draw_losses(plan, step, phase_i, train_destination):
         n_out = 1024 // 3
         n_move = int((1024 - n_out) * move_share)
         n_sw = 1024 - n_out - n_move
@@ -633,7 +637,8 @@ def main() -> int:
             print(f"  step {step}: {sum(missing.values())}/{drawn} refs skipped (skipped units)")
         t_start = time.time()
         terms = step_losses(net, train_cache, units["move"],
-                            units["switch_destination"], units["outcome"], device)
+                            units["switch_destination"], units["outcome"], device,
+                            train_destination=train_destination)
         loss = sum(terms.values()) if terms else None
         return loss, time.time() - t_start
 
@@ -645,7 +650,7 @@ def main() -> int:
         only_1600 = phase == "expert"
         m = evaluate_turn(net, val_cache, device, baselines, only_1600=only_1600,
                           policy_floor=policy_floor, outcome_floor=outcome_floor)
-        vals = [m[t].get("loss") for t in ("action", "destination", "value")]
+        vals = [m[t].get("loss") for t in ("action", "value")]
         return m, sum(v for v in vals if v is not None and math.isfinite(v))
 
     net = TurnPretrainNet().to(device)
@@ -660,19 +665,30 @@ def main() -> int:
             for g in opt.param_groups:
                 g["lr"] = 1e-3 * lr_scale
         best = {"loss": math.inf, "state": None, "step": -1}
+        dest_best = {"loss": math.inf, "state": None, "step": -1}
         bad = 0
+        dest_bad = 0
+        dest_frozen_step = None
+        train_dest = True
         eval_every = args.expert_eval_every if phase == "expert" else args.eval_every
         if phase == "expert":
+            # Unfreeze: the broad phase may have stopped the head on its own score.
+            net.destination_head.requires_grad_(True)
             # Seed with the broad-best weights' evaluation: if no expert step
             # improves on it the phase keeps the broad weights (best_step 0).
             metrics, vl = phase_val(phase)
-            record(0, phase, val=metrics, val_loss=vl)
+            record(0, phase, val=metrics, val_loss=vl,
+                   dest_val_loss=metrics["destination"].get("loss"))
             print(f"{phase} 0 val {vl:.3f}")
             best = {"loss": vl, "step": 0,
                     "state": {k: v.clone() for k, v in net.state_dict().items()},
                     "metrics": metrics}
+            dest_best = {"loss": metrics["destination"].get("loss") or math.inf, "step": 0,
+                         "state": {k: v.clone() for k, v in
+                                   net.destination_head.state_dict().items()}}
         for step in range(1, steps + 1):
-            loss, dt = draw_losses(plan, step, 0 if phase == "broad" else 1)
+            loss, dt = draw_losses(plan, step, 0 if phase == "broad" else 1,
+                                   train_dest)
             step_times.append(dt)
             if loss is None:
                 continue
@@ -681,8 +697,24 @@ def main() -> int:
             opt.step()
             if step % eval_every == 0 or step == steps:
                 metrics, vl = phase_val(phase)
-                record(step, phase, train_loss=loss.item(), val=metrics, val_loss=vl)
+                dest_vl = metrics["destination"].get("loss")
+                record(step, phase, train_loss=loss.item(), val=metrics,
+                       val_loss=vl, dest_val_loss=dest_vl)
                 print(f"{phase} {step} train {loss.item():.3f} val {vl:.3f}")
+                if train_dest and dest_vl is not None and math.isfinite(dest_vl):
+                    if dest_vl < dest_best["loss"]:
+                        dest_best = {"loss": dest_vl, "step": step,
+                                     "state": {k: v.clone() for k, v in
+                                               net.destination_head.state_dict().items()}}
+                        dest_bad = 0
+                    else:
+                        dest_bad += 1
+                        if dest_bad >= args.patience:
+                            train_dest = False
+                            dest_frozen_step = step
+                            net.destination_head.requires_grad_(False)
+                            print(f"  {phase} {step}: destination head frozen "
+                                  f"(val {dest_vl:.3f})")
                 if vl < best["loss"]:
                     best = {"loss": vl, "step": step,
                             "state": {k: v.clone() for k, v in net.state_dict().items()},
@@ -694,12 +726,19 @@ def main() -> int:
                         break
         if best["state"]:
             net.load_state_dict(best["state"])
+        if dest_best["state"] is not None:
+            net.destination_head.load_state_dict(dest_best["state"])
         results[phase] = {"best_step": best["step"], "val_loss": best["loss"],
-                          "metrics": best.get("metrics")}
+                          "metrics": best.get("metrics"),
+                          "dest_frozen_step": dest_frozen_step}
         if phase == "expert":
             results[phase]["val_full"] = evaluate_turn(
                 net, val_cache, device, baselines, only_1600=False,
                 policy_floor=policy_floor, outcome_floor=outcome_floor)
+            restored = results[phase]["val_full"]
+        else:
+            restored, _ = phase_val(phase)
+        results[phase]["dest_val_loss_restored"] = restored["destination"].get("loss")
         _save(net, args.out / ("turn_net.pt" if phase == "expert" else "turn_net_broad.pt"),
               provenance, phase)
 
