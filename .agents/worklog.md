@@ -641,3 +641,11 @@
 - Checks: see previous entry; evidence in runs/readiness_s15/smoke2 (run1/run2 logs, final_metrics_run1.json).
 - Next: owner go on commit and on the first s15 pilot. Each trainer --out dir stores a ~4.4 GB cache (disk had 29 GB free before smoke2).
 - Open: uncommitted: trainer, replay_pretraining.py, test, worklog. Preview expert phase / early stopping and bring-four reweighting deferred until after the first pilot.
+
+## 2026-11-12 05:10 – Devin / Fable 5.2 — first s15 pilot (runs/pilot_s15_1, default 2000 broad + 1000 expert steps, seed 20261112)
+- Did: ran tools/train_replay_pretrain.py at HEAD 2a1354d (cache hardlinked from readiness_s15/smoke2). Owner: no pass rule yet; pilots are for finding bugs.
+- Result (validation, broad ckpt step 1750): action 38.0% vs train-freq 32.0% / uniform 20.0%; destination 74.6% vs uniform 64.7%; value acc 67.4%, logloss 0.583 vs 0.693; preview brought 19.4% vs bring-rate rule 10.3%, leads 12.9% vs 6.9% (preview loss still falling at the end).
+- Finding 1: expert (1600+) phase overfits from its first eval (val 2.512 -> 2.816; train 1.87 -> 1.30). Saved turn_net.pt = expert step 250: value logloss on full val 0.614 vs broad 0.583, overconfident (pred 0.96 -> obs 0.87). Action gain on 1600+ 37.2% -> 37.7% only.
+- Finding 2 (confirmed mechanism, partial size): outcome sampling gives each (game, side) equal mass, so winners' rows (fewer per game) are drawn more: turn rows sampled 51.7% wins vs 50.0% raw (turn 1: 52.0%). Turn-1 mean pred on 1200+ val 55.7% vs 50.4% actual; ~2 of the 5 points explained, rest open.
+- Clean: turn-1 preds flat across bench_guessed (0.556-0.560) and item-source groups -> net does not read the rebuild fills. Destination val loss rises after step 250 at flat accuracy (overconfident; 105k units).
+- Probe: runs/pilot_s15_1/turn1_probe.py. Next: owner picks fixes (expert recipe; outcome sampling weight). Worklog uncommitted.
