@@ -655,3 +655,19 @@
 - Files: src/vgc/bc/replay_sampling.py, tools/train_replay_pretrain.py, tests/test_replay_sampling.py (+pool test)
 - Checks: 20 tests pass; ruff clean; smoke3 run finished "wrote" (243.7s cache rebuild), expert 0 val 2.578 -> best_step 100; preview_best_step 200; 0 missing refs.
 - Next: lead reviews; data/bc/pretraining_regmc_s15 untouched.
+
+## 2026-11-12 05:40 – Devin / Fable 5.2 — pilot 2 started
+- Did: committed 1774f60 (outcome sampling pooled within game; expert lr scale 0.1, eval every 50, step-0 broad baseline; preview up to 4000 steps with best-checkpoint). Smoke runs/readiness_s15/smoke3 OK, 20 tests pass, ruff clean.
+- Running: runs/pilot_s15_2 (seed 20261112, defaults, cache hardlinked from smoke3), log train.log.
+- Next: compare with pilot_s15_1; rerun runs/pilot_s15_1/turn1_probe.py on the new turn_net_broad.pt (turn-1 mean pred vs 50.4% actual).
+- Open: disk 18 GB free; old caches in runs/readiness_s15/{smoke,smoke2} could be deleted with owner OK.
+
+## 2026-11-12 06:30 – Devin / Fable 5.2 — pilot 2 results (runs/pilot_s15_2, HEAD 1774f60)
+- Expert fix works: best step 150 (of step-0 baseline 2.471 -> 2.448); full-val value logloss 0.578 (pilot 1 saved ckpt 0.614), calibration now matches (0.96 pred -> 0.93 obs). Action 38.2%, destination 75.0%, value acc 67.9%.
+- Preview: early-stopped at 1250 steps; brought 19.1% / leads 13.3% = same as pilot 1 -> it was NOT undertrained; it plateaus ~1000 steps.
+- OPEN BUG: turn-1 mean pred on 1200+ val still 55.2% vs 50.4% actual (pilot 1 55.7%), despite pooled sampling. Not explained. Next check: mean pred on train turn-1 rows and per-game p1+p2 prediction sum.
+- Deleted runs/readiness_s15/smoke2/*.npz (owner OK); freed nothing, hardlinked to runs/pilot_s15_1 (stale cache, fingerprint changed). 18 GB free.
+
+## 2026-11-12 06:50 – Devin / Fable 5.2 — turn-1 optimism diagnosed (model, not data)
+- Probes runs/pilot_s15_2/{turn1_pairs,bias_by_turn}.py on pilot-2 broad ckpt: overall val bias +0.8 pt (0.494 vs 0.486). By turn: +4.9/+6.2/+4.4 pts on turns 1-3, -1 to -3 from turn 5. Same on train turn-1 rows (+5.2). p1/p2 identical; per-game p1+p2 sum 1.10. Sampled targets are 50% per turn after pooling, so the net under-fits a turn-dependent bias. Not a label bug. Only the trunk transfers to RL, not this head.
+- Next: long runs (10k broad, early stop) x3 seeds from a clean worktree; check whether the bias shrinks.
