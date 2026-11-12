@@ -1,7 +1,11 @@
 """Critical split, seat, and influence boundaries of replay sampling."""
 import pytest
 
-from vgc.bc.replay_sampling import build_sampling_plan, sample_task_units
+from vgc.bc.replay_sampling import (
+    build_sampling_plan,
+    pool_task_within_game,
+    sample_task_units,
+)
 
 
 def game(a, b, *, split="train", ratings=None):
@@ -72,6 +76,34 @@ def test_empty_and_invalid_requests():
         sample_task_units(plan, "move", 1, 1)
     with pytest.raises(ValueError):
         build_sampling_plan({}, {}, phase="invalid")
+
+
+def test_pool_task_within_game_equalizes_per_unit_weights():
+    """The side with more units no longer draws each row less often: after
+    pooling every unit in a game carries the same share of that game's mass."""
+    games = {"a": game("common", "other"), "b": game("rare", "rarest")}
+    counts = {("a", "p1", "outcome"): 3, ("a", "p2", "outcome"): 5,
+              ("b", "p1", "outcome"): 2, ("b", "p2", "outcome"): 4,
+              ("a", "p1", "move"): 6}
+    plan = build_sampling_plan(games, counts)
+    w = plan.per_unit_weights
+    assert w[("a", "p1", "outcome")] != w[("a", "p2", "outcome")]
+    pooled = pool_task_within_game(plan, "outcome")
+    pw = pooled.per_unit_weights
+    for rid in ("a", "b"):
+        sides = [pw[(rid, side, "outcome")] for side in ("p1", "p2")]
+        assert sides[0] == sides[1]
+        before = sum(w[k] * counts[k] for k in counts
+                     if k[0] == rid and k[2] == "outcome")
+        after = sum(pw[k] * counts[k] for k in counts
+                    if k[0] == rid and k[2] == "outcome")
+        assert after == pytest.approx(before)
+    before = sum(w[k] * counts[k] for k in counts if k[2] == "outcome")
+    after = sum(pw[k] * counts[k] for k in counts if k[2] == "outcome")
+    assert after == pytest.approx(before) == pytest.approx(1.0)
+    assert pw[("a", "p1", "move")] == w[("a", "p1", "move")]
+    assert pooled.group_counts == plan.group_counts
+    assert pooled.method == plan.method
 
 
 def test_per_task_eligibility():

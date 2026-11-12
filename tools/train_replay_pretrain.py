@@ -39,7 +39,7 @@ from vgc.bc.replay_pretrain import (  # noqa: E402
     COMBOS_4OF6, LEAD_PAIRS, SWITCH_IDX, PreviewPretrainNet, TurnPretrainNet,
 )
 from vgc.bc.replay_pretraining import file_hash, iter_task_examples, load_sampling_plan  # noqa: E402
-from vgc.bc.replay_sampling import sample_task_units  # noqa: E402
+from vgc.bc.replay_sampling import pool_task_within_game, sample_task_units  # noqa: E402
 from vgc.data import canonical_species_id  # noqa: E402
 from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary  # noqa: E402
 
@@ -570,6 +570,9 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--broad-steps", type=int, default=2000)
     ap.add_argument("--expert-steps", type=int, default=1000)
+    ap.add_argument("--expert-lr-scale", type=float, default=0.1)
+    ap.add_argument("--expert-eval-every", type=int, default=50)
+    ap.add_argument("--preview-steps", type=int, default=4000)
     ap.add_argument("--eval-every", type=int, default=250)
     ap.add_argument("--patience", type=int, default=6)
     ap.add_argument("--seed", type=int, default=20261104)
@@ -594,6 +597,10 @@ def main() -> int:
 
     plan_broad = load_sampling_plan(args.prepared, phase="broad")
     plan_expert = load_sampling_plan(args.prepared, phase="expert")
+    # Outcome rows pool within each game: the side with more rows (the loser,
+    # via forced switches) no longer draws each row less often.
+    plan_broad = pool_task_within_game(plan_broad, "outcome")
+    plan_expert = pool_task_within_game(plan_expert, "outcome")
     eu = {t: plan_broad.diagnostics[t]["eligible_units"]
           for t in ("move", "switch_destination")}
     move_share = eu["move"] / max(eu["move"] + eu["switch_destination"], 1)
@@ -644,12 +651,22 @@ def main() -> int:
     step_times = []
     for phase, plan, steps, lr_scale in (
             ("broad", plan_broad, args.broad_steps, 1.0),
-            ("expert", plan_expert, args.expert_steps, 0.3)):
+            ("expert", plan_expert, args.expert_steps, args.expert_lr_scale)):
         if phase == "expert":
             for g in opt.param_groups:
                 g["lr"] = 1e-3 * lr_scale
         best = {"loss": math.inf, "state": None, "step": -1}
         bad = 0
+        eval_every = args.expert_eval_every if phase == "expert" else args.eval_every
+        if phase == "expert":
+            # Seed with the broad-best weights' evaluation: if no expert step
+            # improves on it the phase keeps the broad weights (best_step 0).
+            metrics, vl = phase_val(phase)
+            record(0, phase, val=metrics, val_loss=vl)
+            print(f"{phase} 0 val {vl:.3f}")
+            best = {"loss": vl, "step": 0,
+                    "state": {k: v.clone() for k, v in net.state_dict().items()},
+                    "metrics": metrics}
         for step in range(1, steps + 1):
             loss, dt = draw_losses(plan, step, 0 if phase == "broad" else 1)
             step_times.append(dt)
@@ -658,7 +675,7 @@ def main() -> int:
             opt.zero_grad()
             loss.backward()
             opt.step()
-            if step % args.eval_every == 0 or step == steps:
+            if step % eval_every == 0 or step == steps:
                 metrics, vl = phase_val(phase)
                 record(step, phase, train_loss=loss.item(), val=metrics, val_loss=vl)
                 print(f"{phase} {step} train {loss.item():.3f} val {vl:.3f}")
@@ -685,7 +702,9 @@ def main() -> int:
     # --- preview net (broad plan, separate) ---
     pnet = PreviewPretrainNet().to(device)
     popt = torch.optim.AdamW(pnet.parameters(), lr=1e-3, weight_decay=1e-4)
-    for step in range(1, args.broad_steps // 2 + 1):
+    best_preview = {"loss": math.inf, "state": None, "step": -1}
+    bad = 0
+    for step in range(1, args.preview_steps + 1):
         losses = []
         for task, n in (("preview_brought", 256), ("preview_leads", 256)):
             refs = sample_task_units(plan_broad, task, n, seed=args.seed * 3_000_000 + step)
@@ -706,10 +725,24 @@ def main() -> int:
         popt.zero_grad()
         total.backward()
         popt.step()
-        if step % args.eval_every == 0 or step == args.broad_steps // 2:
-            record(step, "preview", train_loss=total.item(),
-                   val=evaluate_preview(pnet, val_cache, device, baselines,
-                                        policy_floor=policy_floor))
+        if step % args.eval_every == 0 or step == args.preview_steps:
+            preview_val = evaluate_preview(pnet, val_cache, device, baselines,
+                                           policy_floor=policy_floor)
+            preview_losses = [m["loss"] for m in preview_val.values()
+                              if m.get("loss") is not None]
+            preview_vl = float(np.mean(preview_losses)) if preview_losses else math.inf
+            record(step, "preview", train_loss=total.item(), val=preview_val,
+                   val_loss=preview_vl)
+            if preview_vl < best_preview["loss"]:
+                best_preview = {"loss": preview_vl, "step": step,
+                                "state": {k: v.clone() for k, v in pnet.state_dict().items()}}
+                bad = 0
+            else:
+                bad += 1
+                if bad >= args.patience:
+                    break
+    if best_preview["state"] is not None:
+        pnet.load_state_dict(best_preview["state"])
     torch.save({"model_state_dict": pnet.state_dict(),
                 VOCABULARY_KEY: current_vocabulary(), "provenance": provenance},
                args.out / "preview_net.pt")
@@ -720,6 +753,8 @@ def main() -> int:
                                                 policy_floor=policy_floor),
          "cache_seconds": cache_seconds,
          "mean_step_seconds": float(np.mean(step_times)) if step_times else None,
+         "outcome_sampling": "pooled_within_game",
+         "preview_best_step": best_preview["step"],
          "skips": skips, "filtered": filtered}, indent=2))
     (args.out / "config.json").write_text(json.dumps(
         {"args": {k: str(v) for k, v in vars(args).items()},

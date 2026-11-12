@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import random
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping
 
 TASKS = ("move", "target", "switch_destination", "preview_brought", "preview_leads", "outcome")
@@ -158,3 +158,22 @@ def sample_task_units(
         plan.per_unit_weights[key] * plan.group_counts[key] for key in keys
     ], k=n)
     return [(*key, rng.randrange(plan.group_counts[key])) for key in chosen]
+
+
+def pool_task_within_game(plan: SamplingPlan, task: str) -> SamplingPlan:
+    """Same per-game mass for `task`, but every eligible unit in a game gets the same weight
+    (game mass / total eligible units in that game), so both sides' rows are drawn equally often."""
+    game_mass: dict[str, float] = {}
+    game_units: dict[str, int] = {}
+    for key, count in plan.group_counts.items():
+        rid, _side, key_task = key
+        if key_task != task:
+            continue
+        game_mass[rid] = game_mass.get(rid, 0.0) + plan.per_unit_weights[key] * count
+        game_units[rid] = game_units.get(rid, 0) + count
+    weights = dict(plan.per_unit_weights)
+    for key in plan.group_counts:
+        rid, _side, key_task = key
+        if key_task == task:
+            weights[key] = game_mass[rid] / game_units[rid]
+    return replace(plan, per_unit_weights=weights)

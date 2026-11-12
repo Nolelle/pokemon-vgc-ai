@@ -649,3 +649,9 @@
 - Finding 2 (confirmed mechanism, partial size): outcome sampling gives each (game, side) equal mass, so winners' rows (fewer per game) are drawn more: turn rows sampled 51.7% wins vs 50.0% raw (turn 1: 52.0%). Turn-1 mean pred on 1200+ val 55.7% vs 50.4% actual; ~2 of the 5 points explained, rest open.
 - Clean: turn-1 preds flat across bench_guessed (0.556-0.560) and item-source groups -> net does not read the rebuild fills. Destination val loss rises after step 250 at flat accuracy (overconfident; 105k units).
 - Probe: runs/pilot_s15_1/turn1_probe.py. Next: owner picks fixes (expert recipe; outcome sampling weight). Worklog uncommitted.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — s15 pilot trainer fixes A/B/C
+- Did: (A) pool_task_within_game in replay_sampling.py (equal per-unit outcome weights within a game, per-game/task mass unchanged) applied to both plans in main; (B) --expert-lr-scale 0.1, --expert-eval-every 50, expert seeds best with step-0 eval of broad-best weights; (C) --preview-steps 4000 + best-checkpoint selection on mean task val loss with patience. final_metrics gains outcome_sampling + preview_best_step.
+- Files: src/vgc/bc/replay_sampling.py, tools/train_replay_pretrain.py, tests/test_replay_sampling.py (+pool test)
+- Checks: 20 tests pass; ruff clean; smoke3 run finished "wrote" (243.7s cache rebuild), expert 0 val 2.578 -> best_step 100; preview_best_step 200; 0 missing refs.
+- Next: lead reviews; data/bc/pretraining_regmc_s15 untouched.
