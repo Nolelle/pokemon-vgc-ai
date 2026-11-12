@@ -677,3 +677,9 @@
 - Files: tools/train_replay_pretrain.py, tools/eval_replay_pretrain.py (new), tests/test_replay_pretrain.py
 - Checks: 13 tests pass; ruff clean; validation eval on pilot_s15_2: broad value 0.5815/0.6761 and turn 0.5783/0.6794 match final_metrics exactly; bias turn-1 "turn" 22420 n, pred 0.5491, observed 0.500.
 - Next: lead; --split test NEVER run.
+
+## 2026-11-12 19:40 – Devin / Fable 5.2 — long runs x3 seeds + one-time sealed test score
+- Did: runs/long_s15.sh (worktree at 1b80fb2, 10k broad steps, patience 6) -> runs/long_s15_{20261112,13,14}. All early-stopped at 2750-3250 (best 1250-1750): the DESTINATION head overfits from ~step 750 (val 0.45 -> 0.53) and drives the combined stop; action flat ~1.42 from 2000, value ~0.578. Seeds agree within 0.5 pt (action 38.2-38.3%, dest 74.7-75.2%, value 67.4-68.0%).
+- Did: added tools/eval_replay_pretrain.py (327dd2b). Chosen seed 20261112 (lowest full-val loss sum 2.455). Validation: action 38.2% (rule 32.0%), dest 75.2% (unif 64.7%), value 68.0% ll 0.577, brought 19.1% (rule 10.3%), leads 13.3% (6.9%).
+- TEST (opened once, logged in runs/test_access_log.jsonl): action 37.0% (rule 31.0%), 1600+ 37.3%; dest 74.8% (unif 65.3%); value 67.3% ll 0.587 (turns 1-2 57.5%, 6+ 76.1%); brought 18.6% (rule 8.2%); leads 10.6% (6.6%). Turn-1 bias of the saved expert ckpt +1.8 val / +2.4 test (broad ckpt +4.9).
+- Next (not started): destination head early-stopping/regularization separate from the combined loss; step 6 (practice-game warm start + Showdown/env recheck). Test split must not be reopened for recipe tuning.
