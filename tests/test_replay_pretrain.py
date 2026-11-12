@@ -175,6 +175,31 @@ def test_filtered_units_excluded_and_npz_roundtrips(tmp_path, monkeypatch):
         assert lt["filtered"] == t["filtered"]
 
 
+def test_test_split_requires_final_evaluation_and_no_disk_cache(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import sys
+
+    sys.path.insert(0, "tools")
+    import train_replay_pretrain as trainer
+
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    hashes = {}
+    for name in ("test.jsonl.gz", "sampling_broad.jsonl", "sampling_expert.jsonl"):
+        path = prepared / name
+        path.write_bytes(b"x")
+        hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (prepared / "summary.json").write_text(json.dumps({"files_sha256": hashes}))
+    monkeypatch.setattr(trainer, "iter_task_examples", lambda *a, **k: iter(()))
+    with pytest.raises(AssertionError):
+        trainer.build_cache(prepared, "test")
+    with pytest.raises(AssertionError):
+        trainer.build_cache(prepared, "test", tmp_path / "cache", final_evaluation=True)
+    cache = trainer.build_cache(prepared, "test", final_evaluation=True)
+    assert cache["split"] == "test"
+
+
 def test_label_not_in_options_skipped() -> None:
     # The option lookup returns empty -> the unit is dropped and counted, never trained.
     net = TurnPretrainNet()

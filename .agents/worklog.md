@@ -671,3 +671,9 @@
 ## 2026-11-12 06:50 – Devin / Fable 5.2 — turn-1 optimism diagnosed (model, not data)
 - Probes runs/pilot_s15_2/{turn1_pairs,bias_by_turn}.py on pilot-2 broad ckpt: overall val bias +0.8 pt (0.494 vs 0.486). By turn: +4.9/+6.2/+4.4 pts on turns 1-3, -1 to -3 from turn 5. Same on train turn-1 rows (+5.2). p1/p2 identical; per-game p1+p2 sum 1.10. Sampled targets are 50% per turn after pooling, so the net under-fits a turn-dependent bias. Not a label bug. Only the trunk transfers to RL, not this head.
 - Next: long runs (10k broad, early stop) x3 seeds from a clean worktree; check whether the bias shrinks.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — eval_replay_pretrain tool
+- Did: build_cache gains final_evaluation kwarg (test opens only with it AND cache_dir None, passed to iter_task_examples); new tools/eval_replay_pretrain.py (--split validation/test double-gated by --final-test, test access logged to runs/test_access_log.jsonl, never writes a test cache); value bias-by-turn table re-derived via iter_task_examples + trunk_inputs in 4096 batches; checkpoint vocabulary + prepared sha256 asserted; +1 test.
+- Files: tools/train_replay_pretrain.py, tools/eval_replay_pretrain.py (new), tests/test_replay_pretrain.py
+- Checks: 13 tests pass; ruff clean; validation eval on pilot_s15_2: broad value 0.5815/0.6761 and turn 0.5783/0.6794 match final_metrics exactly; bias turn-1 "turn" 22420 n, pred 0.5491, observed 0.500.
+- Next: lead; --split test NEVER run.

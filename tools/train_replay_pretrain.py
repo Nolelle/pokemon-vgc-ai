@@ -79,14 +79,17 @@ def _cache_fingerprint(prepared: Path, split: str) -> str:
                       sort_keys=True)
 
 
-def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> dict:
+def build_cache(prepared: Path, split: str, cache_dir: Path | None = None,
+                *, final_evaluation: bool = False) -> dict:
     """Encode each referenced record once
     per-task contiguous arrays keyed by the
     `iter_task_examples` reference. Labels are validated at cache time: a move
     unit whose label is not among that slot's options and a switch unit whose
     destination is not among the bench options are skipped and counted."""
-    if split == "test":
+    if split == "test" and not final_evaluation:
         raise AssertionError("the test split is never opened for pretraining")
+    if split == "test" and cache_dir is not None:
+        raise AssertionError("the test split's cache is never written to disk")
     fingerprint = _cache_fingerprint(prepared, split)
     npz_path = (cache_dir / f"cache_{split}.npz") if cache_dir else None
     if npz_path and npz_path.exists():
@@ -118,7 +121,8 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
                  "meta": collections.defaultdict(list)})
     t0 = time.time()
     for task in ("move", "switch_destination", "outcome", "preview_brought", "preview_leads"):
-        for ex in iter_task_examples(prepared, task, split=split):
+        for ex in iter_task_examples(prepared, task, split=split,
+                                     final_evaluation=final_evaluation):
             if ((task == "outcome" and ex["meta"].get("decision_kind") == "teampreview")
                     or (task == "switch_destination" and ex["meta"].get("bench_guessed"))):
                 tasks[task]["filtered"].add(ex["reference"])
