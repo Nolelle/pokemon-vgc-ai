@@ -101,10 +101,12 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
             "rating", "turn_bucket", "fully", "lineup", "rating_val")},
             "tasks": {t: {k2: ({tuple(r[:-1]): r[-1] for r in v2}
                              if k2 == "refs" else
+                             {tuple(r) for r in v2}
+                             if k2 == "filtered" else
                              collections.defaultdict(list, v2)
                              if k2 == "meta" else v2)
                           for k2, v2 in d.items()}
-                      for t, d in json.loads(z["tasks_json"].item()).items()},
+                      for t, d in json.loads(z["tasks_json"].tobytes().decode()).items()},
             "split": split}
         z.close()
         return cached
@@ -112,10 +114,15 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
     rec = collections.defaultdict(list)
     tasks = collections.defaultdict(
         lambda: {"row": [], "component": [], "label_pos": [], "refs": {},
-                 "skipped": 0, "species": [], "meta": collections.defaultdict(list)})
+                 "skipped": 0, "species": [], "filtered": set(),
+                 "meta": collections.defaultdict(list)})
     t0 = time.time()
     for task in ("move", "switch_destination", "outcome", "preview_brought", "preview_leads"):
         for ex in iter_task_examples(prepared, task, split=split):
+            if ((task == "outcome" and ex["meta"].get("decision_kind") == "teampreview")
+                    or (task == "switch_destination" and ex["meta"].get("bench_guessed"))):
+                tasks[task]["filtered"].add(ex["reference"])
+                continue
             record = ex["input"]
             key = (ex["reference"][0], ex["reference"][1], ex["source_line"])
             if key not in rec_rows:
@@ -229,19 +236,22 @@ def build_cache(prepared: Path, split: str, cache_dir: Path | None = None) -> di
                  **{f"rec_{k}": v for k, v in out["records"].items()},
                  rec_lineup=np.array(out["lineup"], dtype=object),
                  **{f"meta_{k}": v for k, v in out["meta"].items()},
-                 tasks_json=np.array(json.dumps(
+                 tasks_json=np.frombuffer(json.dumps(
                      {t: {k2: ([list(rk) + [rv] for rk, rv in v2.items()]
                                if k2 == "refs" else dict(v2)
                                if k2 == "meta" else v2)
                           for k2, v2 in d.items()}
-                      for t, d in tasks.items()}, default=list)))
+                      for t, d in tasks.items()}, default=list).encode(), dtype=np.uint8))
     return out
 
 
 def _units(cache, task, refs, missing_counts):
     refs_map = cache["tasks"][task]["refs"]
+    filtered = cache["tasks"][task].get("filtered") or ()
     units, miss = [], 0
     for r in refs:
+        if r in filtered:
+            continue
         if r in refs_map:
             units.append(refs_map[r])
         else:
@@ -576,9 +586,11 @@ def main() -> int:
     val_cache["_train_lineups"] = train_cache["_train_lineups"]
     cache_seconds = round(time.time() - t0, 1)
     skips = {t: train_cache["tasks"][t]["skipped"] for t in train_cache["tasks"]}
+    filtered = {t: len(train_cache["tasks"][t].get("filtered") or ())
+                for t in train_cache["tasks"]}
     print("cache built in", cache_seconds, "s; units:",
           {t: len(train_cache["tasks"][t]["row"]) for t in train_cache["tasks"]},
-          "skips:", skips)
+          "skips:", skips, "filtered:", filtered)
 
     plan_broad = load_sampling_plan(args.prepared, phase="broad")
     plan_expert = load_sampling_plan(args.prepared, phase="expert")
@@ -696,17 +708,19 @@ def main() -> int:
         popt.step()
         if step % args.eval_every == 0 or step == args.broad_steps // 2:
             record(step, "preview", train_loss=total.item(),
-                   val=evaluate_preview(pnet, val_cache, device, baselines))
+                   val=evaluate_preview(pnet, val_cache, device, baselines,
+                                        policy_floor=policy_floor))
     torch.save({"model_state_dict": pnet.state_dict(),
                 VOCABULARY_KEY: current_vocabulary(), "provenance": provenance},
                args.out / "preview_net.pt")
     metrics_path.close()
     (args.out / "final_metrics.json").write_text(json.dumps(
         {"broad": results["broad"], "expert": results["expert"],
-         "preview_validation": evaluate_preview(pnet, val_cache, device, baselines),
+         "preview_validation": evaluate_preview(pnet, val_cache, device, baselines,
+                                                policy_floor=policy_floor),
          "cache_seconds": cache_seconds,
          "mean_step_seconds": float(np.mean(step_times)) if step_times else None,
-         "skips": skips}, indent=2))
+         "skips": skips, "filtered": filtered}, indent=2))
     (args.out / "config.json").write_text(json.dumps(
         {"args": {k: str(v) for k, v in vars(args).items()},
          "provenance": provenance}, indent=2))

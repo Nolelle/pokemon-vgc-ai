@@ -114,6 +114,67 @@ def test_encoded_cache_rejects_changed_dataset_and_legacy_cache(tmp_path, monkey
         trainer.build_cache(prepared, "train", cache_dir)
 
 
+def test_filtered_units_excluded_and_npz_roundtrips(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import sys
+
+    sys.path.insert(0, "tools")
+    import train_replay_pretrain as trainer
+
+    prepared, cache_dir = tmp_path / "prepared", tmp_path / "cache"
+    prepared.mkdir()
+    cache_dir.mkdir()
+    hashes = {}
+    for name in ("train.jsonl.gz", "sampling_broad.jsonl", "sampling_expert.jsonl"):
+        path = prepared / name
+        path.write_bytes(b"x")
+        hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (prepared / "summary.json").write_text(json.dumps({"files_sha256": hashes}))
+
+    def ex(task, ordinal, meta, target, component=None):
+        return {"input": _record(), "reference": ("g", "p1", task, ordinal),
+                "source_line": 1, "component": component, "target": target,
+                "meta": meta}
+
+    turn = {"pre_rating": 1300, "turn": 1, "decision_kind": "turn",
+            "bench_guessed": False}
+    preview = {"pre_rating": 1300, "turn": 0, "decision_kind": "teampreview",
+               "bench_guessed": False}
+    guessed = {"pre_rating": 1300, "turn": 1, "decision_kind": "turn",
+               "bench_guessed": True}
+    examples = {
+        "move": [ex("move", 0, turn, "fakeout", 0)],
+        "switch_destination": [ex("switch_destination", 0, guessed, "amoonguss", 0),
+                               ex("switch_destination", 1, turn, "amoonguss", 0)],
+        "outcome": [ex("outcome", 0, preview, "win"), ex("outcome", 1, turn, "win")],
+        "preview_brought": [],
+        "preview_leads": [],
+    }
+
+    def gen(directory, task, **kwargs):
+        yield from examples[task]
+
+    monkeypatch.setattr(trainer, "iter_task_examples", gen)
+    built = trainer.build_cache(prepared, "train", cache_dir)
+    # (a) teampreview outcome rows are filtered before encoding, never cached.
+    assert built["tasks"]["outcome"]["refs"] == {("g", "p1", "outcome", 1): 0}
+    assert built["tasks"]["outcome"]["filtered"] == {("g", "p1", "outcome", 0)}
+    # (b) a switch row whose bench contains a hash-guessed mon is filtered.
+    assert built["tasks"]["switch_destination"]["filtered"] == {
+        ("g", "p1", "switch_destination", 0)}
+    assert built["tasks"]["switch_destination"]["refs"] == {
+        ("g", "p1", "switch_destination", 1): 0}
+    # (c) a second build_cache call loads the npz and round-trips every task.
+    loaded = trainer.build_cache(prepared, "train", cache_dir)
+    for task, t in built["tasks"].items():
+        lt = loaded["tasks"][task]
+        assert lt["row"] == t["row"]
+        assert lt["label_pos"] == t["label_pos"]
+        assert lt["refs"] == t["refs"]
+        assert lt["filtered"] == t["filtered"]
+
+
 def test_label_not_in_options_skipped() -> None:
     # The option lookup returns empty -> the unit is dropped and counted, never trained.
     net = TurnPretrainNet()

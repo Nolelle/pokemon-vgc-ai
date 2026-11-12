@@ -320,7 +320,9 @@ def iter_task_examples(directory: Path, task: str, *, split="train", phase="broa
                        "meta": {"pre_rating": row.get("pre_rating"), "turn": row.get("turn"),
                                 "decision_kind": row.get("decision_kind"),
                                 "showteam": row.get("showteam"),
-                                "own_fully_confirmed": row.get("own_fully_confirmed")},
+                                "own_fully_confirmed": row.get("own_fully_confirmed"),
+                                "bench_guessed": bool(
+                                    (row.get("own_info") or {}).get("bench_guessed"))},
                        "sampling_probability": groups[group_key]["probability_per_unit"] if split == "train" else None}
     if split == "train" and any(ordinals[k] != g["units"] for k, g in groups.items()):
         raise ValueError("prepared label counts no longer match the sampler")

@@ -617,3 +617,27 @@
 - Checks: full unit suite 1640 pass + ruff clean (run before commit, code unchanged since). Not pushed.
 - Next: owner go/no-go on pretraining pilots using data/bc/pretraining_regmc_s15.
 - Open: `runs/` and `data/bc/` are gitignored, so the rebuild recipe (runs/rebuild_s15.sh), scan scripts (runs/dataset_bug_scan_s15/) and datasets live only on this machine. 2 known dropped labels (see previous entry); bring-four label skew open; s11-s14 datasets superseded, delete only with owner OK.
+
+## 2026-11-12 02:45 – Devin / Fable 5.2 — s15 readiness check (analysis only, no code changed)
+- Did: probes on s15 train+validation (`runs/readiness_s15/probe.py` -> probe.json) and a real-trainer smoke (600 broad + 100 expert steps, `runs/readiness_s15/smoke/`).
+- Result data: turn-1 value rows show no structural win signal (bench/unseen/active all constant, 50.0%); smoke value acc turns 1-2 = 55%, calibrated; move options always sorted, label position spread; 0 cache skips in all 5 tasks; leads labels 50/50.
+- BLOCKER (trainer, not data): `tools/train_replay_pretrain.py` build_cache crashes saving the cache on full-size train (`np.array(json.dumps(tasks))` -> "string too large", line 232). Smoke only ran via `runs/readiness_s15/smoke_nocache.py` (cache_dir=None; build 204 s train + 23 s val).
+- Open (data, not blocking a pilot): 18,593 of 208,659 train destination labels (8.9%) are "one real + one guessed bench mon" -> label is always the real one (artifact; suggest masking); 56,123 (27%) have a single option (zero loss). Bring-four labels 56.9% from losers (96,269 vs 72,994). Item fill source tracks outcome weakly (both leads common_set: 37.7% win, n=14.8k) but source is not an input. 2 known dropped labels.
+- Next: owner decides: fix cache save; mask guessed-bench destination units; reweight bring-four by outcome. Then pilots. Worklog entry uncommitted.
+
+## 2026-11-12 03:00 – Devin / Fable 5.2 — compared a second (Cursor) s15 readiness review with mine
+- Did: checked its claims against code and my probe. Confirmed: 215,264 of 2,045,715 train outcome units are teampreview rows (encoded as both actives empty); `evaluate_preview` is called without `policy_floor` (lines 699, 706); preview net has no expert phase / early stopping. Its neural leak-probe numbers are unverified: no scripts or outputs for it under runs/.
+- Disagree: its "ready, 0 skips" verdict misses the cache-save crash (line 232) and the 18,593 guessed-bench destination labels.
+- Next: owner go on one trainer patch: cache save, guessed-bench destination mask, teampreview value filter, preview policy_floor. No code changed.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — s15 trainer cache + filters
+- Did: tasks_json saved as uint8 bytes (fixes np-2.5 string-too-large crash on 3.9GB cache); build_cache filters teampreview outcome rows + bench_guessed switch_destination rows into per-task `filtered` sets (serialized via default=list, reloaded as sets of tuples); _units drops filtered refs silently; meta gains bench_guessed; policy_floor passed to both evaluate_preview calls; "cache built" print + final_metrics.json gain filtered counts.
+- Files: tools/train_replay_pretrain.py, src/vgc/bc/replay_pretraining.py, tests/test_replay_pretrain.py (+1 roundtrip test)
+- Checks: 12 tests pass; ruff clean; 2 real s15 runs (300b/100e): run1 built cache 250.5s, run2 loaded 10.9s; outcome units 1,830,451 / filtered 215,264 / val value n 192,739 all match spec; final_metrics identical apart from cache_seconds/mean_step_seconds; 0 missing refs all steps.
+- Next: lead reviews; data/bc/pretraining_regmc_s15 untouched on disk.
+
+## 2026-11-12 03:40 – Devin / Fable 5.2 — trainer patch reviewed (previous entry's date should read 2026-11-12)
+- Did: reviewed the four-change diff (cache save, guessed-bench destination filter, teampreview value filter, preview policy_floor); accepted as is.
+- Checks: see previous entry; evidence in runs/readiness_s15/smoke2 (run1/run2 logs, final_metrics_run1.json).
+- Next: owner go on commit and on the first s15 pilot. Each trainer --out dir stores a ~4.4 GB cache (disk had 29 GB free before smoke2).
+- Open: uncommitted: trainer, replay_pretraining.py, test, worklog. Preview expert phase / early stopping and bring-four reweighting deferred until after the first pilot.
