@@ -1885,6 +1885,20 @@ def parse_args() -> argparse.Namespace:
             "threat, switching, uncertainty, and two-slot synergy facts"
         ),
     )
+    parser.add_argument(
+        "--save-checkpoints-at-games",
+        default="",
+        help=(
+            "comma-separated cumulative game counts at which to save an extra "
+            "checkpoint copy (same payload as latest.pt) to "
+            "out_dir/checkpoints/games_NNNNN.pt. 0 saves right after init/warm "
+            "start, before iteration 1; any other N saves at the end of the first "
+            "iteration where games_seen >= N (games_seen may overshoot N, and the "
+            "payload records the real count). Existing files are never overwritten, "
+            "so --resume cannot clobber earlier saves. Empty (default) leaves "
+            "behavior byte-for-byte unchanged."
+        ),
+    )
     add_wandb_arguments(parser)
     args = parser.parse_args()
     # Which PpoConfig-backed knobs the caller actually set on the command line. --resume
@@ -1991,6 +2005,16 @@ def main() -> int:
         raise SystemExit("holdout-teams-per-archetype must be nonnegative")
     if not args.team.exists():
         raise SystemExit(f"team does not exist: {args.team}")
+    try:
+        save_checkpoint_at_games = {
+            int(part)
+            for part in args.save_checkpoints_at_games.split(",")
+            if part.strip()
+        }
+    except ValueError:
+        raise SystemExit("save-checkpoints-at-games must be comma-separated integers")
+    if any(target < 0 for target in save_checkpoint_at_games):
+        raise SystemExit("save-checkpoints-at-games values must be nonnegative")
     torch.manual_seed(args.seed)
 
     model = CandidatePolicyValueNet(
@@ -2040,6 +2064,48 @@ def main() -> int:
     )
     print(f"reward shaping coef: {ppo_config.reward_shaping_coef}")
     print(f"head dropout: {model.head_dropout_p}")
+
+    game_checkpoints_dir = args.out_dir / "checkpoints"
+
+    def save_due_game_checkpoints(*, iteration: int, games_seen: int) -> None:
+        """Save ``out_dir/checkpoints/games_NNNNN.pt`` for each due target.
+
+        Target 0 is only ever a true init snapshot: it fires solely when
+        ``games_seen == 0`` (the call before iteration 1, right after init/warm
+        start). Any other target saves at the first call where ``games_seen >=
+        target``. A target whose file already exists is skipped, never
+        overwritten, so ``--resume`` cannot clobber earlier saves.
+        """
+
+        for target in sorted(save_checkpoint_at_games):
+            if games_seen < target:
+                continue
+            save_checkpoint_at_games.discard(target)
+            if target == 0 and games_seen != 0:
+                continue
+            path = game_checkpoints_dir / f"games_{target:05d}.pt"
+            if path.exists():
+                print(f"games checkpoint already exists, skipping: {path}")
+                continue
+            save_checkpoint(
+                path,
+                model,
+                optimizer,
+                iteration=iteration,
+                games_seen=games_seen,
+                ppo_config=ppo_config,
+            )
+            print(
+                f"saved games checkpoint: {path} "
+                f"(iteration={iteration} games_seen={games_seen})"
+            )
+
+    # The games_00000 checkpoint captures the model exactly as training starts --
+    # after --resume/--bc-checkpoint resolution, before any PPO update. On a resume
+    # (games_seen > 0) target 0 can no longer be a true init state, so the helper
+    # drops it unsaved unless its file already exists.
+    save_due_game_checkpoints(iteration=last_iteration, games_seen=games_seen)
+
     team = args.team.read_text().strip()
     eval_jobs = args.eval_jobs or args.jobs
     diverse_teams = load_diverse_opponent_teams(
@@ -2430,6 +2496,7 @@ def main() -> int:
                 games_seen=games_seen,
                 ppo_config=ppo_config,
             )
+            save_due_game_checkpoints(iteration=iteration, games_seen=games_seen)
             print(
                 f"iteration {iteration} (+{offset}/{args.iterations} this run): "
                 f"games={result['games']} wins={result['wins']} steps={result['steps']} "

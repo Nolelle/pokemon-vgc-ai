@@ -723,3 +723,41 @@
 - Result: endpoint vs heuristic pooled WARM-FRESH -0.0052 [-0.057,+0.047] — null. Endpoint maxpower +0.013 [-0.010,+0.039]. AUC-vs-heuristic -0.0005 [-0.021,+0.020] with strong per-seed sign disagreement (+0.105 s31122 / -0.073 s31133). Warm start = no measurable effect at 2k games.
 - Files: runs/rl_warmstart_exp1/main_*, main_summary.{py,md,json}, replay_eval_games.py, replay_games/, replay_logs/
 - Next: owner decision on warm start.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — status check of warm-start experiment 1
+- Did: confirmed main run finished (no training processes running); read runs/rl_warmstart_exp1/main_summary.md. Primary endpoint vs heuristic warm-fresh -0.005 [-0.057,+0.047], null.
+- Checks: none run (read-only).
+- Next: owner decision on warm start (drop it, or test a longer horizon / different question).
+
+## 2026-11-13 – Claude Code / Fable 5.2 — why warm start = fresh in RL experiment 1 (analysis, no source changed)
+- Did: knock-out evals on final snapshots (iter 64, seed 31111, 128 games vs heuristic; `runs/pretrain_review/ablate_eval.py`, abl_*.json). Unchanged: fresh 108 / warm 106 (matches eval.jsonl). Trunk output frozen to one constant board: 109 / 107. Trunk zeroed: 68 / 94. Tactical (damage/KO/Speed) features zeroed: 4 / 7.
+- Reading: the trained policy plays off the per-action tactical features; the state trunk (the only 8 tensors pretraining fills) carries no used board information on this task, so the experiment could not show a pretraining effect either way. Warm trunk drifted only ~10% (not destroyed, just unused).
+- Design gaps: one fixed team mirror + fixed leads (`phase2_mirror`, "team 1234"); pretrained action/destination/value heads and the whole preview net are discarded; 3 seeds with per-seed curve swings of +-10 pts.
+- Checks: "none" arm reproduces recorded counts exactly. One seed pair only.
+- Next: owner picks: rerun without tactical features (cheap), multi-team train/holdout-team eval, or carry the pretrained policy into RL (teacher anchor / head transfer). Worklog uncommitted.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — verified Fable's ablation review
+- Did: checked runs/pretrain_review/abl_*.json; counts match the review (fresh/warm: normal 108/106, trunk constant 109/107, trunk zero 68/94, tactical zero 4/7). Experiment 1's null is uninformative about pretraining (trunk unused on fixed-mirror task).
+- Recommendation to owner: 20-min no-tactical rerun first (decides whether warm arm is worth carrying), then first real RL run = multi-team train / holdout-team eval, harder opponents, search checks.
+- Next: owner picks.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — no-tactical warm-start rerun launched
+- Did: gates PASS at 14a8495 (worklog stashed for the check, then restored). Launched 6 runs runs/rl_warmstart_exp1/notac_{fresh,warm}_s{31111,31122,31133}: same as main (64 iters x 32 games vs heuristic, evals x128 @0/256/512/1024/1536/2048 vs heuristic+maxpower, --information-features) but --no-tactical-features. Warm logs 8/8 tensors.
+- Checks: in flight.
+- Next: when done, pooled warm-fresh @2048 vs heuristic + AUC, compare to main runs.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — no-tactical rerun results
+- Did: 6 notac runs finished clean (0 errors). @2048 vs heuristic pooled warm-fresh -0.010 (eval-noise CI [-0.077,+0.056]) but seed-to-seed SD 0.17 (s31111 +0.19, s31122 -0.14, s31133 -0.08) -> null, very underpowered. AUC +0.034 (seed SD 0.12, not credible). maxpower endpoint -0.044 (one seed). Bots still learn without tactical: fresh 65% / warm 64% vs heuristic @2048 (main 82%).
+- Key: board-reader freeze ablation on notac ckpts: fresh_s31122 97->100, warm_s31111 86->81 => trunk STILL unused without tactical features. Fixed-mirror task cannot test pretraining at all.
+- Files: runs/rl_warmstart_exp1/notac_*, notac_summary.{py,txt}; runs/pretrain_review/abl_notac_*.json
+- Next: owner decision; recommend multi-team train / holdout-team design (where board reading is needed), with a trunk-freeze ablation as a built-in check.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — many-teams RL experiment designed (draft prereg)
+- Did: draft docs/prereg/rl_multiteam_warmstart.md (train_ppo pool mode on mc_sheet_pool_v2 train 226 / eval holdout 88; warm vs fresh; pilot 2 seeds x 2048 with trunk-freeze validity gate; main 8192 games; primary = holdout-vs-heuristic AUC diff).
+- Smoke: train_ppo default teacher-anchor 0.05 -> 32 games 8.5 min, 7/8 worker TimeoutErrors, 15/32 games; with --teacher-anchor-weight 0 -> 40 s, 0 errors. evaluate_learned_policy vs vgc ~20 s per 10 games. Logs runs/rl_multiteam_design/.
+- Next: owner approves design -> build eval wrapper + pool freeze check, then pilot.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — many-teams pilot tooling built, prereg locked
+- Did: train_ppo `--save-checkpoints-at-games` (default off); new offline/evaluate_pool_checkpoint.py (paired, shard-invariant, trunkc freeze). Prereg locked with seeds 41101/41102, eval seeds 70001-3, fresh = `--bc-checkpoint /nonexistent` (default warm-starts from bc_policy_v4!).
+- Checks: warm 8/8, resume keeps anchor 0 + checkpoints untouched, shared server OK, eval rows identical jobs 1/4 (none+trunkc); 123 tests pass. Logs runs/rl_multiteam/tooling_check/.
+- Next: commit, gates on clean tree, launch pilot (4 runs x 2048), eval, apply validity gate.
