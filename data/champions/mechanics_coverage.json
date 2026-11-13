@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "catalog_schema_version": 1,
-  "catalog_sha256": "c3fa440bb03ba3480854d36dcb21cc68e3e1f1e6b51e7e2f0129cdab6d9fc7ee",
+  "catalog_sha256": "bf5f788756f022538f1ba69c046b1f768bc73f5ef20b7e6561843db51794063c",
   "release_ready": true,
   "release_rule": "Every required family must be resolved by the official Showdown engine on every gated decision path. Strategic weights that rank exactly-simulated outcomes are policy, listed under policy_approximations, and are deliberately not gated here.",
   "readiness_scopes": {
