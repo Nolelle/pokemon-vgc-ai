@@ -706,3 +706,8 @@
 - Did: tools/sync_showdown.py pulled 11 upstream commits to 965a535ef (blocking: e5d26285a inputlogs fix), rebuilt dist/sim, committed 94a7550ad — only mechanics_catalog.json + mechanics_coverage.json changed; vocabulary files untouched.
 - Checks: all 4 readiness gates PASS (logs runs/rl_readiness_s15/post_sync/); warm start on desthead ckpt 8/8, stale 0, diff 0.0; 38 tests pass.
 - Next: owner reviews the auto-commit; nothing pushed.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — desthead confirmation runs 13/14
+- Did: seed 20261113 rebuilt cache (270s, counts identical: move 1102318/switch 104996/outcome 1830451/brought 86401/leads 107945, filtered 9352/215264); hardlinked its npz into 20261114 (loaded 14.2s). All 6 runs now have eval_validation.json; six-run table at runs/long_s15_desthead_summary.md — desthead beats baseline on every seed (action 0.391-0.400 vs 0.382-0.383; dest loss 0.440-0.442 vs 0.451-0.457; t1 pred nearer 0.500).
+- Note: old cache inode 206650738/206650850 is stale under current fingerprint (pre-desthead code hash); 5 links: long_s15_2026111{2,3,4}, pilot_s15_2, readiness_s15/smoke3 — removing all frees ~4.38 GB. Nothing deleted.
+- Next: owner review of summary; nothing committed, no processes running.
