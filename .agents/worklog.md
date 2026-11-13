@@ -701,3 +701,8 @@
 - RL readiness (runs/rl_readiness_s15/): warm start 8/8 tensors, 0 stale vocab, hidden identical (max diff 0.0). Live/replay parity 99.73% excl. inherent (1099 decisions; 3 non-inherent = boosts.spd), matches 11-05's 99.8%.
 - BLOCKED: all 4 gates, one upstream Showdown commit e5d26285a "Fix inputlogs for overridden choices" (sim/side.ts). tools/sync_showdown.py not run (pulls, rebuilds, re-exports, commits) -> needs owner OK.
 - Next: owner OK for sync_showdown.py, then rerun the 4 gates. Disk ~19 GB.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — Showdown sync to 965a535ef
+- Did: tools/sync_showdown.py pulled 11 upstream commits to 965a535ef (blocking: e5d26285a inputlogs fix), rebuilt dist/sim, committed 94a7550ad — only mechanics_catalog.json + mechanics_coverage.json changed; vocabulary files untouched.
+- Checks: all 4 readiness gates PASS (logs runs/rl_readiness_s15/post_sync/); warm start on desthead ckpt 8/8, stale 0, diff 0.0; 38 tests pass.
+- Next: owner reviews the auto-commit; nothing pushed.
