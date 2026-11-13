@@ -711,3 +711,15 @@
 - Did: seed 20261113 rebuilt cache (270s, counts identical: move 1102318/switch 104996/outcome 1830451/brought 86401/leads 107945, filtered 9352/215264); hardlinked its npz into 20261114 (loaded 14.2s). All 6 runs now have eval_validation.json; six-run table at runs/long_s15_desthead_summary.md — desthead beats baseline on every seed (action 0.391-0.400 vs 0.382-0.383; dest loss 0.440-0.442 vs 0.451-0.457; t1 pred nearer 0.500).
 - Note: old cache inode 206650738/206650850 is stale under current fingerprint (pre-desthead code hash); 5 links: long_s15_2026111{2,3,4}, pilot_s15_2, readiness_s15/smoke3 — removing all frees ~4.38 GB. Nothing deleted.
 - Next: owner review of summary; nothing committed, no processes running.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — RL warm-start pilot s31101
+- Did: ran paired pilot pilot_{fresh,warm}_s31101 (32 iters, 1024 games, evals 0/256/512/1024 vs heuristic+maxpower). Gate artifacts had staled on git_commit (94a7550 vs new HEAD) — refreshed via the three check_*_readiness scripts, then both arms ran clean. Warm trunk verified 8/8 from desthead_20261114 ckpt; all 34 non-trunk params identical to fresh init.
+- Result @1024: fresh pool 0.719 (heur .531 / max .906), warm pool 0.703 (heur .438 / max .969) — no significant delta; warm was ahead at 512 (0.211 vs 0.156). Zero health-check hits; wall ~15.5/16.0 min.
+- Files: runs/rl_warmstart_exp1/ (logs, eval.jsonl, arm_diff_check.py+log); recheck logs in runs/rl_readiness_s15/post_sync/recheck_*.log
+- Next: owner decides whether warm-start matters at longer horizons.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — warm-start experiment-1 MAIN
+- Did: 6 concurrent runs (fresh/warm × 31111/22/33, 2048 games, evals x128 at 0..2048). Warm logs all 8/8, fresh none; zero health hits; 0 nonfinite. Replayed eval games from snapshots for index-paired bootstrap — all 36 replayed cells exactly match recorded counts.
+- Result: endpoint vs heuristic pooled WARM-FRESH -0.0052 [-0.057,+0.047] — null. Endpoint maxpower +0.013 [-0.010,+0.039]. AUC-vs-heuristic -0.0005 [-0.021,+0.020] with strong per-seed sign disagreement (+0.105 s31122 / -0.073 s31133). Warm start = no measurable effect at 2k games.
+- Files: runs/rl_warmstart_exp1/main_*, main_summary.{py,md,json}, replay_eval_games.py, replay_games/, replay_logs/
+- Next: owner decision on warm start.
