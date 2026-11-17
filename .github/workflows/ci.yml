@@ -65,6 +65,8 @@ jobs:
         with:
           path: ${{ env.VGC_SHOWDOWN_REPO }}
           key: showdown-${{ steps.pin.outputs.commit }}-node22
+      - name: Install Showdown parser TypeScript fallback
+        run: npm ci --prefix tools/parser_deps
       - name: Check out and build pinned Showdown
         run: .github/scripts/checkout_pinned_showdown.sh "$VGC_SHOWDOWN_REPO" --build
       - name: Rebuild the 160-team pool (seeded, byte-identical to local)

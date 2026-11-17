@@ -30,6 +30,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Showdown parser TypeScript fallback
+        run: npm ci --prefix tools/parser_deps
       - name: Check out pinned Showdown with history
         run: |
           echo "VGC_SHOWDOWN_REPO=$RUNNER_TEMP/showdown" >> "$GITHUB_ENV"
