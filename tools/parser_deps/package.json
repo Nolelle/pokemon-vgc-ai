@@ -1,0 +1,8 @@
+{
+  "name": "vgc-showdown-parser-deps",
+  "private": true,
+  "description": "Pinned TypeScript 5 compiler API for parse_showdown_entries.mjs when Showdown ships TS 7 (API-only export).",
+  "dependencies": {
+    "typescript": "5.7.3"
+  }
+}

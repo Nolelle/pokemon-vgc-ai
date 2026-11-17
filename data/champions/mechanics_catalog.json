@@ -3,8 +3,8 @@
   "generated_from": {
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
-    "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "3a766f2cfb5e51c1e428cfe87d0dba91a8f01640"
+    "showdown_repo": "/home/ubuntu/pokemon-showdown",
+    "showdown_commit": "f827a1d41064e0dec4c19c6ea0394fcf0c23479c"
   },
   "format": {
     "game_type": "doubles",
@@ -55,7 +55,7 @@
     "legal_species_and_formes": 390,
     "legal_base_species": 293,
     "legal_moves": 510,
-    "legal_abilities": 222,
+    "legal_abilities": 223,
     "legal_items": 166,
     "merged_conditions": 35
   },
@@ -973,6 +973,7 @@
       "anticipation",
       "armortail",
       "aromaveil",
+      "auraguard",
       "battlearmor",
       "battlebond",
       "berserk",
@@ -1537,7 +1538,8 @@
           "minimize",
           "powertrick",
           "smackdown",
-          "stockpile"
+          "stockpile",
+          "wish"
         ],
         "condition.onStart": [
           "allyswitch",
@@ -1980,12 +1982,12 @@
         "condition.onTrapPokemon": [
           "fairylock",
           "ingrain",
-          "noretreat",
           "octolock"
         ],
         "onDisableMove": [
           "fakeout",
-          "firstimpression"
+          "firstimpression",
+          "lastresort"
         ],
         "onAfterMoveSecondarySelf": [
           "fellstinger"
@@ -2174,6 +2176,15 @@
           "aromaveil",
           "flowerveil",
           "sweetveil"
+        ],
+        "onSourceModifyDamage": [
+          "auraguard",
+          "filter",
+          "fluffy",
+          "multiscale",
+          "punkrock",
+          "ripen",
+          "solidrock"
         ],
         "onModifyMove": [
           "battlebond",
@@ -2364,14 +2375,6 @@
         ],
         "onAnyBasePower": [
           "fairyaura"
-        ],
-        "onSourceModifyDamage": [
-          "filter",
-          "fluffy",
-          "multiscale",
-          "punkrock",
-          "ripen",
-          "solidrock"
         ],
         "condition.onEnd": [
           "flashfire"
@@ -3020,6 +3023,11 @@
         "onModifyMove": [
           "frz"
         ],
+        "onRestart": [
+          "futuremove",
+          "lockedmove",
+          "stall"
+        ],
         "onBasePower": [
           "gem",
           "rolloutstorage"
@@ -3046,10 +3054,6 @@
         "onLockMove": [
           "lockedmove",
           "twoturnmove"
-        ],
-        "onRestart": [
-          "lockedmove",
-          "stall"
         ],
         "onModifySpe": [
           "par"
@@ -6442,6 +6446,7 @@
       "breakable": [
         "armortail",
         "aromaveil",
+        "auraguard",
         "battlearmor",
         "bigpecks",
         "bulletproof",

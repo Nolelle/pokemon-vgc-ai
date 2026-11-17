@@ -255,7 +255,7 @@ function measure(setPacked, moveIndex, condition, profile, seed, mega) {
 			dummy.faint();
 		}
 	}
-	battle.faintMessages();
+	battle.resolveFaints();
 	battle.clearRequest();
 	battle.makeRequest("move");
 	const scale = REAL_HP_MOVES.has(ours.moveSlots[moveIndex]?.id) ? 1 : HP_SCALE;

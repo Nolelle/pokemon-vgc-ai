@@ -403,7 +403,7 @@ def test_mirror_reproduces_choice_lock_from_snapshot() -> None:
 
     from vgc.damage import to_id
 
-    pool_team = POOL / "gardevoir_maushold" / "team_17.packed.txt"
+    pool_team = POOL / "rain_offense" / "team_17.packed.txt"
     if not DEFAULT_SHOWDOWN_REPO.exists():
         pytest.skip("local Pokemon Showdown checkout is unavailable")
     if not pool_team.is_file():
@@ -427,7 +427,7 @@ def test_mirror_reproduces_choice_lock_from_snapshot() -> None:
         )
         mirror: LiveExactMirror | None = None
         try:
-            source.step({"p1": "team 3124", "p2": "team 1234"})
+            source.step({"p1": "team 3241", "p2": "team 1234"})
             live = source.battles["p1"]
             locked_slot = next(
                 index
@@ -446,7 +446,8 @@ def test_mirror_reproduces_choice_lock_from_snapshot() -> None:
                         if locked_slot == 0
                         else f"move protect, move {first_move} 1"
                     ),
-                    "p2": "move protect, move protect",
+                    # Opponent preview 1234 leads Pelipper (no Protect) + Archaludon.
+                    "p2": "move wideguard, move protect",
                 }
             )
             live = source.battles["p1"]
@@ -588,7 +589,7 @@ def test_mirror_activates_custom_mega_forme_by_base_species() -> None:
     """
     from vgc.rl.distill import public_information_exact_search
 
-    pool_team = POOL / "gardevoir_maushold" / "team_06.packed.txt"
+    pool_team = POOL / "charizard_sun_offense" / "team_02.packed.txt"
     if not DEFAULT_SHOWDOWN_REPO.exists():
         pytest.skip("local Pokemon Showdown checkout is unavailable")
     if not pool_team.is_file():
@@ -611,7 +612,7 @@ def test_mirror_activates_custom_mega_forme_by_base_species() -> None:
             seed=[71, 72, 73, 74],
         )
         try:
-            source.step({"p1": "team 4123", "p2": "team 1234"})
+            source.step({"p1": "team 2134", "p2": "team 1234"})
             source.step(
                 {
                     "p1": "move dazzlinggleam mega, move protect",

@@ -238,7 +238,7 @@ function makeBattle(oursSet, foeSet, seed, scale, megas = [true, true], script =
 	instrument(battle, recorder, script);
 	battle.makeChoices("team 12", "team 12");
 	for (const side of battle.sides) side.pokemon[1].faint();
-	battle.faintMessages();
+	battle.resolveFaints();
 	battle.clearRequest();
 	battle.makeRequest("move");
 	const ours = battle.sides[0].pokemon[0];
