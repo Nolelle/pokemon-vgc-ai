@@ -3454,6 +3454,33 @@
     "slotCondition": null,
     "isNonstandard": null
   },
+  "lastresort": {
+    "id": "lastresort",
+    "name": "Last Resort",
+    "num": 387,
+    "type": "Normal",
+    "category": "Physical",
+    "basePower": 140,
+    "accuracy": 100,
+    "pp": 5,
+    "priority": 0,
+    "target": "normal",
+    "flags": {
+      "contact": 1,
+      "protect": 1,
+      "mirror": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": null,
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
+  },
   "leafage": {
     "id": "leafage",
     "name": "Leafage",
@@ -4349,6 +4376,31 @@
     "sideCondition": null,
     "slotCondition": null,
     "isNonstandard": "Future"
+  },
+  "noretreat": {
+    "id": "noretreat",
+    "name": "No Retreat",
+    "num": 748,
+    "type": "Fighting",
+    "category": "Status",
+    "basePower": 0,
+    "accuracy": true,
+    "pp": 5,
+    "priority": 0,
+    "target": "self",
+    "flags": {
+      "snatch": 1,
+      "metronome": 1
+    },
+    "secondary": null,
+    "secondaries": null,
+    "volatileStatus": "noretreat",
+    "selfVolatileStatus": null,
+    "secondaryVolatileStatuses": [],
+    "secondarySelfVolatileStatuses": [],
+    "sideCondition": null,
+    "slotCondition": null,
+    "isNonstandard": null
   },
   "noxioustorque": {
     "id": "noxioustorque",
@@ -16655,33 +16707,6 @@
     "slotCondition": null,
     "isNonstandard": null
   },
-  "lastresort": {
-    "id": "lastresort",
-    "name": "Last Resort",
-    "num": 387,
-    "type": "Normal",
-    "category": "Physical",
-    "basePower": 140,
-    "accuracy": 100,
-    "pp": 5,
-    "priority": 0,
-    "target": "normal",
-    "flags": {
-      "contact": 1,
-      "protect": 1,
-      "mirror": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
   "lastrespects": {
     "id": "lastrespects",
     "name": "Last Respects",
@@ -19096,31 +19121,6 @@
     "secondary": null,
     "secondaries": null,
     "volatileStatus": null,
-    "selfVolatileStatus": null,
-    "secondaryVolatileStatuses": [],
-    "secondarySelfVolatileStatuses": [],
-    "sideCondition": null,
-    "slotCondition": null,
-    "isNonstandard": null
-  },
-  "noretreat": {
-    "id": "noretreat",
-    "name": "No Retreat",
-    "num": 748,
-    "type": "Fighting",
-    "category": "Status",
-    "basePower": 0,
-    "accuracy": true,
-    "pp": 5,
-    "priority": 0,
-    "target": "self",
-    "flags": {
-      "snatch": 1,
-      "metronome": 1
-    },
-    "secondary": null,
-    "secondaries": null,
-    "volatileStatus": "noretreat",
     "selfVolatileStatus": null,
     "secondaryVolatileStatuses": [],
     "secondarySelfVolatileStatuses": [],
