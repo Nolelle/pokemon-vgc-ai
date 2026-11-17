@@ -1,0 +1,156 @@
+{
+  "scope": "diagnostic only; sections 5-8 not executed; no release approval",
+  "runs": [
+    {
+      "name": "endgames_hard_seed11",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_hard_seed11.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_hard_seed11/checkpoint.pt",
+      "checkpoint_sha256": "a1dd3e04a2e9aa9ee6623a00dc9c990bed2cf1e916f7519cef5f927eb0a312d0",
+      "initial": 0.51953125,
+      "final": 0.98828125,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_hard_seed22",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_hard_seed22.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_hard_seed22/checkpoint.pt",
+      "checkpoint_sha256": "de43dfe1d1eef4d2ee6fca789c8d7706ea57af9d036c35efde17b2cfe7b5b6a3",
+      "initial": 0.515625,
+      "final": 0.91796875,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_hard_seed33",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_hard_seed33.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_hard_seed33/checkpoint.pt",
+      "checkpoint_sha256": "a21a54895a78b01891451b4dad99bd5c6f24cd19b51c22807e286a4b97884c3f",
+      "initial": 0.515625,
+      "final": 1.0,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_lr3e4_seed11",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_lr3e4_seed11.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_lr3e4_seed11/checkpoint.pt",
+      "checkpoint_sha256": "e7efddf3682cade89d271a0bd0efa4a2fc4b8f06b0a73996d7bab8f0bc70736e",
+      "initial": 0.51953125,
+      "final": 0.978515625,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_lr3e4_seed22",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_lr3e4_seed22.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_lr3e4_seed22/checkpoint.pt",
+      "checkpoint_sha256": "426d16d723e764f3684edae5f6a978cba0533b97db92345fc265ce437eef5029",
+      "initial": 0.515625,
+      "final": 0.9921875,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_lr3e4_seed33",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_lr3e4_seed33.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_lr3e4_seed33/checkpoint.pt",
+      "checkpoint_sha256": "1f661684bb3aa602b8cdb426bd3a530c2f86a4b8eff7288b3e3e13d433dfe72f",
+      "initial": 0.515625,
+      "final": 1.0,
+      "task_subset": null,
+      "learning_rate": 0.0003
+    },
+    {
+      "name": "endgames_seed11",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_seed11.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_seed11/checkpoint.pt",
+      "checkpoint_sha256": "ff896b4cc38f0414d39faeefe1ac400f16ef5dcaa6dfa9c966c04a04755615e9",
+      "initial": 0.51953125,
+      "final": 0.962890625,
+      "task_subset": null,
+      "learning_rate": 0.001
+    },
+    {
+      "name": "endgames_seed22",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_seed22.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_seed22/checkpoint.pt",
+      "checkpoint_sha256": "45cc49e80c8dac635606d236661765641deb885485c0941a452f6d4e5ef13315",
+      "initial": 0.515625,
+      "final": 1.0,
+      "task_subset": null,
+      "learning_rate": 0.001
+    },
+    {
+      "name": "endgames_seed33",
+      "report": "data/research/rl_sections_1_4_20261028/endgames_seed33.json",
+      "checkpoint": "runs/rl_sections_1_8/endgames_seed33/checkpoint.pt",
+      "checkpoint_sha256": "df3dde7d267f92b92d58cd50853ba02f99202db51cd8324f58fa54f65319ead0",
+      "initial": 0.515625,
+      "final": 1.0,
+      "task_subset": null,
+      "learning_rate": 0.001
+    },
+    {
+      "name": "task6_seed11",
+      "report": "data/research/rl_sections_1_4_20261028/task6_seed11.json",
+      "checkpoint": "runs/rl_sections_1_8/task6_seed11/checkpoint.pt",
+      "checkpoint_sha256": "b689550c447070dbdc199c147607c11dc577cdaa810b5af69a0dee28a3889cb9",
+      "initial": 0.5625,
+      "final": 0.984375,
+      "task_subset": 6,
+      "learning_rate": 0.001
+    }
+  ],
+  "confirmations": [
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm22.json",
+      "passed_point_target": true,
+      "wins": 1020,
+      "games": 1024,
+      "minimum_task_rate": 0.96875
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm33.json",
+      "passed_point_target": true,
+      "wins": 1019,
+      "games": 1024,
+      "minimum_task_rate": 0.9609375
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm_hard_11.json",
+      "passed_point_target": false,
+      "wins": 1005,
+      "games": 1024,
+      "minimum_task_rate": 0.9375
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm_hard_22.json",
+      "passed_point_target": false,
+      "wins": 923,
+      "games": 1024,
+      "minimum_task_rate": 0.765625
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm_hard_33.json",
+      "passed_point_target": true,
+      "wins": 1018,
+      "games": 1024,
+      "minimum_task_rate": 0.9609375
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm_lr3e4_11.json",
+      "passed_point_target": false,
+      "wins": 1002,
+      "games": 1024,
+      "minimum_task_rate": 0.8671875
+    },
+    {
+      "report": "data/research/rl_sections_1_4_20261028/confirm_task6_11.json",
+      "passed_point_target": true,
+      "wins": 126,
+      "games": 128,
+      "minimum_task_rate": 0.984375
+    }
+  ]
+}

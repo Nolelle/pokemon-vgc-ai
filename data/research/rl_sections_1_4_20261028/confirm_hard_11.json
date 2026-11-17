@@ -1,0 +1,56 @@
+{
+  "checkpoint_sha256": "a1dd3e04a2e9aa9ee6623a00dc9c990bed2cf1e916f7519cef5f927eb0a312d0",
+  "fixture_sha256": "0fd27d4ca5c7bed759ed24814d648ea24bdf9aceb0857b6519575eee8bc4526e",
+  "future_seed_base": 2900000,
+  "tasks": [
+    {
+      "task": 0,
+      "wins": 126,
+      "games": 128,
+      "reference_wins": 128
+    },
+    {
+      "task": 1,
+      "wins": 128,
+      "games": 128,
+      "reference_wins": 128
+    },
+    {
+      "task": 2,
+      "wins": 127,
+      "games": 128,
+      "reference_wins": 114
+    },
+    {
+      "task": 3,
+      "wins": 120,
+      "games": 128,
+      "reference_wins": 122
+    },
+    {
+      "task": 4,
+      "wins": 125,
+      "games": 128,
+      "reference_wins": 128
+    },
+    {
+      "task": 5,
+      "wins": 127,
+      "games": 128,
+      "reference_wins": 128
+    },
+    {
+      "task": 6,
+      "wins": 125,
+      "games": 128,
+      "reference_wins": 113
+    },
+    {
+      "task": 7,
+      "wins": 127,
+      "games": 128,
+      "reference_wins": 128
+    }
+  ],
+  "passed_point_target": false
+}

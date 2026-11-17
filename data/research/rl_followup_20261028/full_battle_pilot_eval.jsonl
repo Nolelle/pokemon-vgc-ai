@@ -1,0 +1,4 @@
+{"draws": 0, "games": 64, "games_seen": 0, "iteration": 0, "losses": 4, "opponent": "random", "wilson": [0.8500230335750312, 0.9754291963252071], "win_rate": 0.9375, "wins": 60}
+{"games_seen": 0, "iteration": 0, "kind": "pool", "mean_win_rate": 0.9375, "min_opponent": "random", "min_win_rate": 0.9375, "win_rates": {"random": 0.9375}}
+{"draws": 0, "games": 64, "games_seen": 64, "iteration": 2, "losses": 7, "opponent": "random", "wilson": [0.7910113670806147, 0.9459995524731695], "win_rate": 0.890625, "wins": 57}
+{"games_seen": 64, "iteration": 2, "kind": "pool", "mean_win_rate": 0.890625, "min_opponent": "random", "min_win_rate": 0.890625, "win_rates": {"random": 0.890625}}

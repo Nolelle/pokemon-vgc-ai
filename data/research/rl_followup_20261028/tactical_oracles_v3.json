@@ -1,0 +1,2151 @@
+{
+  "status": "oracle_diagnostic_only",
+  "games_per_task": 128,
+  "tasks": [
+    {
+      "name": "setup",
+      "witness_wins": 128,
+      "random_wins": 57,
+      "random_draws": 0,
+      "witness_decisions": [
+        4
+      ],
+      "native_oracle_evidence": {
+        "unboosted": {
+          "source": [
+            0,
+            1
+          ],
+          "target": [
+            1,
+            1
+          ],
+          "move": "earthquake",
+          "context": {
+            "sourceSpeed": 154,
+            "targetSpeed": 50,
+            "sourceHP": 185,
+            "targetHP": 202,
+            "targetMaxHP": 202,
+            "accuracy": 100,
+            "sourceBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "targetBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "sourceStatus": "",
+            "targetStatus": "",
+            "sourceItem": "",
+            "targetItem": "",
+            "sourceAbility": "roughskin",
+            "targetAbility": "owntempo",
+            "sourceVolatiles": [
+              "stall"
+            ],
+            "targetVolatiles": [
+              "stall"
+            ]
+          },
+          "damages": [
+            {
+              "crit": false,
+              "roll": 85,
+              "damage": 64
+            },
+            {
+              "crit": false,
+              "roll": 86,
+              "damage": 64
+            },
+            {
+              "crit": false,
+              "roll": 87,
+              "damage": 66
+            },
+            {
+              "crit": false,
+              "roll": 88,
+              "damage": 66
+            },
+            {
+              "crit": false,
+              "roll": 89,
+              "damage": 67
+            },
+            {
+              "crit": false,
+              "roll": 90,
+              "damage": 67
+            },
+            {
+              "crit": false,
+              "roll": 91,
+              "damage": 69
+            },
+            {
+              "crit": false,
+              "roll": 92,
+              "damage": 69
+            },
+            {
+              "crit": false,
+              "roll": 93,
+              "damage": 70
+            },
+            {
+              "crit": false,
+              "roll": 94,
+              "damage": 70
+            },
+            {
+              "crit": false,
+              "roll": 95,
+              "damage": 72
+            },
+            {
+              "crit": false,
+              "roll": 96,
+              "damage": 72
+            },
+            {
+              "crit": false,
+              "roll": 97,
+              "damage": 73
+            },
+            {
+              "crit": false,
+              "roll": 98,
+              "damage": 73
+            },
+            {
+              "crit": false,
+              "roll": 99,
+              "damage": 75
+            },
+            {
+              "crit": false,
+              "roll": 100,
+              "damage": 76
+            },
+            {
+              "crit": true,
+              "roll": 85,
+              "damage": 96
+            },
+            {
+              "crit": true,
+              "roll": 86,
+              "damage": 97
+            },
+            {
+              "crit": true,
+              "roll": 87,
+              "damage": 99
+            },
+            {
+              "crit": true,
+              "roll": 88,
+              "damage": 99
+            },
+            {
+              "crit": true,
+              "roll": 89,
+              "damage": 100
+            },
+            {
+              "crit": true,
+              "roll": 90,
+              "damage": 102
+            },
+            {
+              "crit": true,
+              "roll": 91,
+              "damage": 103
+            },
+            {
+              "crit": true,
+              "roll": 92,
+              "damage": 103
+            },
+            {
+              "crit": true,
+              "roll": 93,
+              "damage": 105
+            },
+            {
+              "crit": true,
+              "roll": 94,
+              "damage": 106
+            },
+            {
+              "crit": true,
+              "roll": 95,
+              "damage": 108
+            },
+            {
+              "crit": true,
+              "roll": 96,
+              "damage": 108
+            },
+            {
+              "crit": true,
+              "roll": 97,
+              "damage": 109
+            },
+            {
+              "crit": true,
+              "roll": 98,
+              "damage": 111
+            },
+            {
+              "crit": true,
+              "roll": 99,
+              "damage": 112
+            },
+            {
+              "crit": true,
+              "roll": 100,
+              "damage": 114
+            }
+          ]
+        },
+        "boosted": {
+          "source": [
+            0,
+            1
+          ],
+          "target": [
+            1,
+            1
+          ],
+          "move": "earthquake",
+          "context": {
+            "sourceSpeed": 154,
+            "targetSpeed": 50,
+            "sourceHP": 185,
+            "targetHP": 202,
+            "targetMaxHP": 202,
+            "accuracy": 100,
+            "sourceBoosts": {
+              "atk": 6,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "targetBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "sourceStatus": "",
+            "targetStatus": "",
+            "sourceItem": "",
+            "targetItem": "",
+            "sourceAbility": "roughskin",
+            "targetAbility": "owntempo",
+            "sourceVolatiles": [],
+            "targetVolatiles": []
+          },
+          "damages": [
+            {
+              "crit": false,
+              "roll": 85,
+              "damage": 253
+            },
+            {
+              "crit": false,
+              "roll": 86,
+              "damage": 256
+            },
+            {
+              "crit": false,
+              "roll": 87,
+              "damage": 259
+            },
+            {
+              "crit": false,
+              "roll": 88,
+              "damage": 262
+            },
+            {
+              "crit": false,
+              "roll": 89,
+              "damage": 265
+            },
+            {
+              "crit": false,
+              "roll": 90,
+              "damage": 268
+            },
+            {
+              "crit": false,
+              "roll": 91,
+              "damage": 271
+            },
+            {
+              "crit": false,
+              "roll": 92,
+              "damage": 274
+            },
+            {
+              "crit": false,
+              "roll": 93,
+              "damage": 277
+            },
+            {
+              "crit": false,
+              "roll": 94,
+              "damage": 280
+            },
+            {
+              "crit": false,
+              "roll": 95,
+              "damage": 283
+            },
+            {
+              "crit": false,
+              "roll": 96,
+              "damage": 286
+            },
+            {
+              "crit": false,
+              "roll": 97,
+              "damage": 289
+            },
+            {
+              "crit": false,
+              "roll": 98,
+              "damage": 292
+            },
+            {
+              "crit": false,
+              "roll": 99,
+              "damage": 295
+            },
+            {
+              "crit": false,
+              "roll": 100,
+              "damage": 298
+            },
+            {
+              "crit": true,
+              "roll": 85,
+              "damage": 379
+            },
+            {
+              "crit": true,
+              "roll": 86,
+              "damage": 384
+            },
+            {
+              "crit": true,
+              "roll": 87,
+              "damage": 388
+            },
+            {
+              "crit": true,
+              "roll": 88,
+              "damage": 393
+            },
+            {
+              "crit": true,
+              "roll": 89,
+              "damage": 397
+            },
+            {
+              "crit": true,
+              "roll": 90,
+              "damage": 402
+            },
+            {
+              "crit": true,
+              "roll": 91,
+              "damage": 406
+            },
+            {
+              "crit": true,
+              "roll": 92,
+              "damage": 411
+            },
+            {
+              "crit": true,
+              "roll": 93,
+              "damage": 415
+            },
+            {
+              "crit": true,
+              "roll": 94,
+              "damage": 420
+            },
+            {
+              "crit": true,
+              "roll": 95,
+              "damage": 424
+            },
+            {
+              "crit": true,
+              "roll": 96,
+              "damage": 429
+            },
+            {
+              "crit": true,
+              "roll": 97,
+              "damage": 433
+            },
+            {
+              "crit": true,
+              "roll": 98,
+              "damage": 438
+            },
+            {
+              "crit": true,
+              "roll": 99,
+              "damage": 442
+            },
+            {
+              "crit": true,
+              "roll": 100,
+              "damage": 447
+            }
+          ]
+        },
+        "foe_hp_before_payoff": 202,
+        "minimum_boosted_damage": 253,
+        "proof_scope": "three real Swords Dances, then guaranteed KO on all native rolls"
+      }
+    },
+    {
+      "name": "replacement",
+      "witness_wins": 128,
+      "random_wins": 58,
+      "random_draws": 0,
+      "witness_decisions": [
+        5
+      ],
+      "native_oracle_evidence": {
+        "unboosted": {
+          "source": [
+            0,
+            0
+          ],
+          "target": [
+            1,
+            1
+          ],
+          "move": "earthquake",
+          "context": {
+            "sourceSpeed": 154,
+            "targetSpeed": 50,
+            "sourceHP": 185,
+            "targetHP": 202,
+            "targetMaxHP": 202,
+            "accuracy": 100,
+            "sourceBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "targetBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "sourceStatus": "",
+            "targetStatus": "",
+            "sourceItem": "",
+            "targetItem": "",
+            "sourceAbility": "roughskin",
+            "targetAbility": "owntempo",
+            "sourceVolatiles": [],
+            "targetVolatiles": [
+              "stall"
+            ]
+          },
+          "damages": [
+            {
+              "crit": false,
+              "roll": 85,
+              "damage": 64
+            },
+            {
+              "crit": false,
+              "roll": 86,
+              "damage": 64
+            },
+            {
+              "crit": false,
+              "roll": 87,
+              "damage": 66
+            },
+            {
+              "crit": false,
+              "roll": 88,
+              "damage": 66
+            },
+            {
+              "crit": false,
+              "roll": 89,
+              "damage": 67
+            },
+            {
+              "crit": false,
+              "roll": 90,
+              "damage": 67
+            },
+            {
+              "crit": false,
+              "roll": 91,
+              "damage": 69
+            },
+            {
+              "crit": false,
+              "roll": 92,
+              "damage": 69
+            },
+            {
+              "crit": false,
+              "roll": 93,
+              "damage": 70
+            },
+            {
+              "crit": false,
+              "roll": 94,
+              "damage": 70
+            },
+            {
+              "crit": false,
+              "roll": 95,
+              "damage": 72
+            },
+            {
+              "crit": false,
+              "roll": 96,
+              "damage": 72
+            },
+            {
+              "crit": false,
+              "roll": 97,
+              "damage": 73
+            },
+            {
+              "crit": false,
+              "roll": 98,
+              "damage": 73
+            },
+            {
+              "crit": false,
+              "roll": 99,
+              "damage": 75
+            },
+            {
+              "crit": false,
+              "roll": 100,
+              "damage": 76
+            },
+            {
+              "crit": true,
+              "roll": 85,
+              "damage": 96
+            },
+            {
+              "crit": true,
+              "roll": 86,
+              "damage": 97
+            },
+            {
+              "crit": true,
+              "roll": 87,
+              "damage": 99
+            },
+            {
+              "crit": true,
+              "roll": 88,
+              "damage": 99
+            },
+            {
+              "crit": true,
+              "roll": 89,
+              "damage": 100
+            },
+            {
+              "crit": true,
+              "roll": 90,
+              "damage": 102
+            },
+            {
+              "crit": true,
+              "roll": 91,
+              "damage": 103
+            },
+            {
+              "crit": true,
+              "roll": 92,
+              "damage": 103
+            },
+            {
+              "crit": true,
+              "roll": 93,
+              "damage": 105
+            },
+            {
+              "crit": true,
+              "roll": 94,
+              "damage": 106
+            },
+            {
+              "crit": true,
+              "roll": 95,
+              "damage": 108
+            },
+            {
+              "crit": true,
+              "roll": 96,
+              "damage": 108
+            },
+            {
+              "crit": true,
+              "roll": 97,
+              "damage": 109
+            },
+            {
+              "crit": true,
+              "roll": 98,
+              "damage": 111
+            },
+            {
+              "crit": true,
+              "roll": 99,
+              "damage": 112
+            },
+            {
+              "crit": true,
+              "roll": 100,
+              "damage": 114
+            }
+          ]
+        },
+        "boosted": {
+          "source": [
+            0,
+            0
+          ],
+          "target": [
+            1,
+            1
+          ],
+          "move": "earthquake",
+          "context": {
+            "sourceSpeed": 154,
+            "targetSpeed": 50,
+            "sourceHP": 185,
+            "targetHP": 202,
+            "targetMaxHP": 202,
+            "accuracy": 100,
+            "sourceBoosts": {
+              "atk": 6,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "targetBoosts": {
+              "atk": 0,
+              "def": 0,
+              "spa": 0,
+              "spd": 0,
+              "spe": 0,
+              "accuracy": 0,
+              "evasion": 0
+            },
+            "sourceStatus": "",
+            "targetStatus": "",
+            "sourceItem": "",
+            "targetItem": "",
+            "sourceAbility": "roughskin",
+            "targetAbility": "owntempo",
+            "sourceVolatiles": [],
+            "targetVolatiles": []
+          },
+          "damages": [
+            {
+              "crit": false,
+              "roll": 85,
+              "damage": 253
+            },
+            {
+              "crit": false,
+              "roll": 86,
+              "damage": 256
+            },
+            {
+              "crit": false,
+              "roll": 87,
+              "damage": 259
+            },
+            {
+              "crit": false,
+              "roll": 88,
+              "damage": 262
+            },
+            {
+              "crit": false,
+              "roll": 89,
+              "damage": 265
+            },
+            {
+              "crit": false,
+              "roll": 90,
+              "damage": 268
+            },
+            {
+              "crit": false,
+              "roll": 91,
+              "damage": 271
+            },
+            {
+              "crit": false,
+              "roll": 92,
+              "damage": 274
+            },
+            {
+              "crit": false,
+              "roll": 93,
+              "damage": 277
+            },
+            {
+              "crit": false,
+              "roll": 94,
+              "damage": 280
+            },
+            {
+              "crit": false,
+              "roll": 95,
+              "damage": 283
+            },
+            {
+              "crit": false,
+              "roll": 96,
+              "damage": 286
+            },
+            {
+              "crit": false,
+              "roll": 97,
+              "damage": 289
+            },
+            {
+              "crit": false,
+              "roll": 98,
+              "damage": 292
+            },
+            {
+              "crit": false,
+              "roll": 99,
+              "damage": 295
+            },
+            {
+              "crit": false,
+              "roll": 100,
+              "damage": 298
+            },
+            {
+              "crit": true,
+              "roll": 85,
+              "damage": 379
+            },
+            {
+              "crit": true,
+              "roll": 86,
+              "damage": 384
+            },
+            {
+              "crit": true,
+              "roll": 87,
+              "damage": 388
+            },
+            {
+              "crit": true,
+              "roll": 88,
+              "damage": 393
+            },
+            {
+              "crit": true,
+              "roll": 89,
+              "damage": 397
+            },
+            {
+              "crit": true,
+              "roll": 90,
+              "damage": 402
+            },
+            {
+              "crit": true,
+              "roll": 91,
+              "damage": 406
+            },
+            {
+              "crit": true,
+              "roll": 92,
+              "damage": 411
+            },
+            {
+              "crit": true,
+              "roll": 93,
+              "damage": 415
+            },
+            {
+              "crit": true,
+              "roll": 94,
+              "damage": 420
+            },
+            {
+              "crit": true,
+              "roll": 95,
+              "damage": 424
+            },
+            {
+              "crit": true,
+              "roll": 96,
+              "damage": 429
+            },
+            {
+              "crit": true,
+              "roll": 97,
+              "damage": 433
+            },
+            {
+              "crit": true,
+              "roll": 98,
+              "damage": 438
+            },
+            {
+              "crit": true,
+              "roll": 99,
+              "damage": 442
+            },
+            {
+              "crit": true,
+              "roll": 100,
+              "damage": 447
+            }
+          ]
+        },
+        "foe_hp_before_payoff": 202,
+        "minimum_boosted_damage": 253,
+        "proof_scope": "three real Swords Dances, then guaranteed KO on all native rolls"
+      }
+    },
+    {
+      "name": "target",
+      "witness_wins": 128,
+      "random_wins": 33,
+      "random_draws": 0,
+      "witness_decisions": [
+        2,
+        3
+      ],
+      "native_oracle_evidence": {
+        "bounds": [
+          {
+            "source": [
+              0,
+              1
+            ],
+            "target": [
+              1,
+              0
+            ],
+            "move": "dragonclaw",
+            "context": {
+              "sourceSpeed": 154,
+              "targetSpeed": 135,
+              "sourceHP": 185,
+              "targetHP": 39,
+              "targetMaxHP": 135,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": 0,
+                "def": 1,
+                "spa": 0,
+                "spd": 1,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "",
+              "targetItem": "",
+              "sourceAbility": "roughskin",
+              "targetAbility": "naturalcure",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 58
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 58
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 60
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 60
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 60
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 61
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 61
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 63
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 63
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 64
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 64
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 66
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 66
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 67
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 67
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 69
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 127
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 129
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 130
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 132
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 133
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 135
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 136
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 138
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 139
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 141
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 142
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 144
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 145
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 147
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 148
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 150
+              }
+            ]
+          },
+          {
+            "source": [
+              0,
+              1
+            ],
+            "target": [
+              1,
+              1
+            ],
+            "move": "poisonjab",
+            "context": {
+              "sourceSpeed": 154,
+              "targetSpeed": 80,
+              "sourceHP": 185,
+              "targetHP": 170,
+              "targetMaxHP": 170,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": -2,
+                "def": 0,
+                "spa": -2,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "",
+              "targetItem": "",
+              "sourceAbility": "roughskin",
+              "targetAbility": "magicguard",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 130
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 132
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 132
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 134
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 136
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 138
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 140
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 140
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 142
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 144
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 146
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 146
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 148
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 150
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 152
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 154
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 194
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 196
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 200
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 202
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 204
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 206
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 208
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 210
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 212
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 216
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 218
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 220
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 222
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 224
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 226
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 230
+              }
+            ]
+          },
+          {
+            "source": [
+              1,
+              0
+            ],
+            "target": [
+              0,
+              1
+            ],
+            "move": "icebeam",
+            "context": {
+              "sourceSpeed": 135,
+              "targetSpeed": 154,
+              "sourceHP": 39,
+              "targetHP": 185,
+              "targetMaxHP": 185,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 1,
+                "spa": 0,
+                "spd": 1,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "",
+              "targetItem": "",
+              "sourceAbility": "naturalcure",
+              "targetAbility": "roughskin",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 216
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 220
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 220
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 224
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 224
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 228
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 232
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 232
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 236
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 240
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 240
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 244
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 248
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 248
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 252
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 256
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 324
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 328
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 332
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 336
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 340
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 344
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 348
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 352
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 356
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 360
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 364
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 368
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 372
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 376
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 380
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 384
+              }
+            ]
+          }
+        ],
+        "hp": [
+          185,
+          39,
+          170
+        ],
+        "proof_scope": "KO Starmie before lethal Ice Beam; two Poison Jabs beat Clefable's Life Dew"
+      }
+    },
+    {
+      "name": "sacrifice",
+      "witness_wins": 128,
+      "random_wins": 4,
+      "random_draws": 0,
+      "witness_decisions": [
+        1
+      ],
+      "native_oracle_evidence": {
+        "bounds": [
+          {
+            "source": [
+              0,
+              0
+            ],
+            "target": [
+              1,
+              0
+            ],
+            "move": "explosion",
+            "spread": true,
+            "context": {
+              "sourceSpeed": 92,
+              "targetSpeed": 135,
+              "sourceHP": 187,
+              "targetHP": 135,
+              "targetMaxHP": 135,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "lifeorb",
+              "targetItem": "",
+              "sourceAbility": "clearbody",
+              "targetAbility": "naturalcure",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 175
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 177
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 179
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 181
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 183
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 186
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 187
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 190
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 191
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 194
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 196
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 198
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 200
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 201
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 204
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 207
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 263
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 265
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 269
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 272
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 274
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 278
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 281
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 283
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 287
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 290
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 294
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 296
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 299
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 303
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 305
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 309
+              }
+            ]
+          },
+          {
+            "source": [
+              0,
+              0
+            ],
+            "target": [
+              1,
+              1
+            ],
+            "move": "explosion",
+            "spread": true,
+            "context": {
+              "sourceSpeed": 92,
+              "targetSpeed": 80,
+              "sourceHP": 187,
+              "targetHP": 170,
+              "targetMaxHP": 170,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "lifeorb",
+              "targetItem": "",
+              "sourceAbility": "clearbody",
+              "targetAbility": "magicguard",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 201
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 204
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 207
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 209
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 211
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 213
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 216
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 218
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 221
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 224
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 225
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 227
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 230
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 233
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 235
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 238
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 302
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 305
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 309
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 313
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 316
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 320
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 324
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 328
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 330
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 334
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 338
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 342
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 344
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 348
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 352
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 356
+              }
+            ]
+          },
+          {
+            "source": [
+              1,
+              0
+            ],
+            "target": [
+              0,
+              1
+            ],
+            "move": "icebeam",
+            "context": {
+              "sourceSpeed": 135,
+              "targetSpeed": 154,
+              "sourceHP": 135,
+              "targetHP": 185,
+              "targetMaxHP": 185,
+              "accuracy": 100,
+              "sourceBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "targetBoosts": {
+                "atk": 0,
+                "def": 0,
+                "spa": 0,
+                "spd": 0,
+                "spe": 0,
+                "accuracy": 0,
+                "evasion": 0
+              },
+              "sourceStatus": "",
+              "targetStatus": "",
+              "sourceItem": "",
+              "targetItem": "",
+              "sourceAbility": "naturalcure",
+              "targetAbility": "roughskin",
+              "sourceVolatiles": [],
+              "targetVolatiles": []
+            },
+            "damages": [
+              {
+                "crit": false,
+                "roll": 85,
+                "damage": 216
+              },
+              {
+                "crit": false,
+                "roll": 86,
+                "damage": 220
+              },
+              {
+                "crit": false,
+                "roll": 87,
+                "damage": 220
+              },
+              {
+                "crit": false,
+                "roll": 88,
+                "damage": 224
+              },
+              {
+                "crit": false,
+                "roll": 89,
+                "damage": 224
+              },
+              {
+                "crit": false,
+                "roll": 90,
+                "damage": 228
+              },
+              {
+                "crit": false,
+                "roll": 91,
+                "damage": 232
+              },
+              {
+                "crit": false,
+                "roll": 92,
+                "damage": 232
+              },
+              {
+                "crit": false,
+                "roll": 93,
+                "damage": 236
+              },
+              {
+                "crit": false,
+                "roll": 94,
+                "damage": 240
+              },
+              {
+                "crit": false,
+                "roll": 95,
+                "damage": 240
+              },
+              {
+                "crit": false,
+                "roll": 96,
+                "damage": 244
+              },
+              {
+                "crit": false,
+                "roll": 97,
+                "damage": 248
+              },
+              {
+                "crit": false,
+                "roll": 98,
+                "damage": 248
+              },
+              {
+                "crit": false,
+                "roll": 99,
+                "damage": 252
+              },
+              {
+                "crit": false,
+                "roll": 100,
+                "damage": 256
+              },
+              {
+                "crit": true,
+                "roll": 85,
+                "damage": 324
+              },
+              {
+                "crit": true,
+                "roll": 86,
+                "damage": 328
+              },
+              {
+                "crit": true,
+                "roll": 87,
+                "damage": 332
+              },
+              {
+                "crit": true,
+                "roll": 88,
+                "damage": 336
+              },
+              {
+                "crit": true,
+                "roll": 89,
+                "damage": 340
+              },
+              {
+                "crit": true,
+                "roll": 90,
+                "damage": 344
+              },
+              {
+                "crit": true,
+                "roll": 91,
+                "damage": 348
+              },
+              {
+                "crit": true,
+                "roll": 92,
+                "damage": 352
+              },
+              {
+                "crit": true,
+                "roll": 93,
+                "damage": 356
+              },
+              {
+                "crit": true,
+                "roll": 94,
+                "damage": 360
+              },
+              {
+                "crit": true,
+                "roll": 95,
+                "damage": 364
+              },
+              {
+                "crit": true,
+                "roll": 96,
+                "damage": 368
+              },
+              {
+                "crit": true,
+                "roll": 97,
+                "damage": 372
+              },
+              {
+                "crit": true,
+                "roll": 98,
+                "damage": 376
+              },
+              {
+                "crit": true,
+                "roll": 99,
+                "damage": 380
+              },
+              {
+                "crit": true,
+                "roll": 100,
+                "damage": 384
+              }
+            ]
+          }
+        ],
+        "foe_hp": [
+          135,
+          170
+        ],
+        "proof_scope": "first-use Protect shields Garchomp; Explosion KOs both foes on every roll"
+      }
+    }
+  ],
+  "source_sha256": "b0013f9f6e6c4a6526211e36bd7c51414de0d34edab1c80035ede90f0d016f74"
+}

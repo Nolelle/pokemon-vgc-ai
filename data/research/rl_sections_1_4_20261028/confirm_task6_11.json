@@ -1,0 +1,14 @@
+{
+  "checkpoint_sha256": "b689550c447070dbdc199c147607c11dc577cdaa810b5af69a0dee28a3889cb9",
+  "fixture_sha256": "0fd27d4ca5c7bed759ed24814d648ea24bdf9aceb0857b6519575eee8bc4526e",
+  "future_seed_base": 1900000,
+  "tasks": [
+    {
+      "task": 6,
+      "wins": 126,
+      "games": 128,
+      "reference_wins": 102
+    }
+  ],
+  "passed_point_target": true
+}

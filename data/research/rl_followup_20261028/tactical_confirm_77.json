@@ -1,0 +1,40 @@
+{
+  "tasks": [
+    {
+      "task": "setup",
+      "wins": 128,
+      "draws": 0,
+      "games": 128
+    },
+    {
+      "task": "replacement",
+      "wins": 128,
+      "draws": 0,
+      "games": 128
+    },
+    {
+      "task": "target",
+      "wins": 126,
+      "draws": 0,
+      "games": 128
+    },
+    {
+      "task": "sacrifice",
+      "wins": 126,
+      "draws": 0,
+      "games": 128
+    }
+  ],
+  "passed_point_target": true,
+  "checkpoint_sha256": "8b9ffee59e21c8250f69bd4c12a4a9a9790c93ada84419f91deeaf26f38cd1e2",
+  "future_seed_base": 9100000,
+  "source_sha256": "f4142c29586da6338e660f0610ececf63a2a7738727da0ef1bc0c5e57ad46b32",
+  "provenance": {
+    "source_bundle_sha256": "5c2ad3d132f218be817d7912338a0020ecb02b3bf4b97371fd7fd91cca5b6f1c",
+    "showdown_head": "3a766f2cfb5e51c1e428cfe87d0dba91a8f01640",
+    "catalog_sha256": "e34f67d8edd354953627aa31ea5929961861c9a8ea7f846faa09626bf3887a1d",
+    "torch_version": "2.13.0"
+  },
+  "fixture_sha256": "e6abc1d869a1ea44f0a8498b313d6e5d8ac6995a5edbe6e3b9954f660e47b28f",
+  "elapsed_seconds": 17.05690974999925
+}

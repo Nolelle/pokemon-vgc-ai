@@ -29,7 +29,7 @@ from vgc.bc.encoding import (
     encode_state,
     flatten_state,
 )
-from vgc.bc.policy import battle_state_record
+from vgc.bc.policy import _bench_list, battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
 from vgc.battle_memory import BattleMemory
 from vgc.damage import PokemonState, damage_range, to_id
@@ -128,6 +128,16 @@ def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
     """
 
     record = battle_state_record(battle, config)
+    # poke-env retains the whole preview six in `team`, but the private request
+    # lists the brought four. Unbrought Pokemon are metadata, not live reserves.
+    request = getattr(battle, "last_request", None)
+    entries = (request.get("side") or {}).get("pokemon") if isinstance(request, dict) else None
+    if entries and not getattr(battle, "teampreview", False):
+        identities = {entry["ident"] for entry in entries}
+        team = {ident: mon for ident, mon in battle.team.items() if ident in identities}
+        if len(team) != len(identities):
+            raise ValueError("cannot map every brought Pokemon from the private request")
+        record["state"]["our"]["bench"] = _bench_list(team, list(battle.active_pokemon))
     index_array, scalars = flatten_state(encode_state(record))
     return index_array, np.concatenate((scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)))
 

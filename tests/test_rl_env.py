@@ -172,6 +172,81 @@ def test_legal_orders_receive_finite_first_principles_features(worker, team: str
 
 
 @pytest.mark.integration
+def test_research_neural_resources_count_only_the_brought_four(worker):
+    from vgc.config import REPO_ROOT
+    from vgc.bc.encoding import encode_state, flatten_state
+    from vgc.bc.policy import battle_state_record
+    from vgc.rl.encoding import encode_live_state
+
+    team = (REPO_ROOT / "teams/phase2_mirror.packed.txt").read_text().strip()
+    battle = DirectBattle.start(worker, "brought-resources", team, team, seed=[28] * 4)
+    try:
+        battle.step({s: "team 1234" for s in battle.sides_to_move()})
+        view = battle.battles["p1"]
+        assert len(view.team) == 6  # reproduce the parser's retained preview metadata
+        record = battle_state_record(view)
+        assert len(record["state"]["our"]["bench"]) == 4
+        record["state"]["our"]["bench"] = record["state"]["our"]["bench"][:2]
+        expected_indices, expected_scalars = flatten_state(encode_state(record))
+        indices, scalars = encode_live_state(view)
+        np.testing.assert_array_equal(indices, expected_indices)
+        np.testing.assert_array_equal(scalars[:-2], expected_scalars)
+    finally:
+        battle.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("side", ["p1", "p2"])
+def test_research_actor_inputs_ignore_hidden_spreads_and_private_roots(worker, side):
+    import torch
+    from vgc.config import REPO_ROOT
+    from vgc.rl.agents import DirectAgent
+    from vgc.rl.model import CandidatePolicyValueNet
+    from vgc.rl.player import PpoVgcPlayer
+    from vgc.rl.ppo import PpoConfig, RolloutBuffer
+
+    team = (REPO_ROOT / "teams/phase2_mirror.packed.txt").read_text().strip()
+    changed = team.replace("|Modest|2,,,32,,32|", "|Timid|32,,,32,,2|")
+    assert changed != team
+    torch.manual_seed(28)
+    model = CandidatePolicyValueNet(use_information_features=True,
+                                    use_tactical_features=True, use_mechanics_features=True)
+    samples = []
+    for index, foe in enumerate((team, changed)):
+        other = "p2" if side == "p1" else "p1"
+        teams = {side: team, other: foe}
+        battle = DirectBattle.start(worker, f"hidden-{side}-{index}",
+                                   teams["p1"], teams["p2"], seed=[28] * 4)
+        buffer = RolloutBuffer()
+        player = PpoVgcPlayer(model=model, rollout_buffer=buffer, team=team,
+                             ppo_config=PpoConfig(teacher_anchor_weight=0.0),
+                             policy_seed=28, start_listening=False)
+        agent = DirectAgent(player)
+        try:
+            agent.observe(battle.battle_id, battle.last_lines[side])
+            result = battle.step({s: "team 1234" for s in battle.sides_to_move()})
+            agent.observe(battle.battle_id, result.lines[side])
+            view = battle.battles[side]
+            view._vgc_direct_root = {"private_truth": index}
+            agent.choose(view)
+            assert player.fallback_count == 0
+            assert len(buffer.steps) == 1
+            samples.append(buffer.steps[0])
+        finally:
+            battle.close()
+    first, second = samples
+    for key in ("state_indices", "state_scalars", "history_scalars"):
+        np.testing.assert_array_equal(getattr(first, key), getattr(second, key))
+    for key in ("indices", "scalars"):
+        np.testing.assert_array_equal(getattr(first.information, key),
+                                      getattr(second.information, key))
+    np.testing.assert_array_equal(first.mechanics.tokens, second.mechanics.tokens)
+    np.testing.assert_array_equal(first.candidates.tactical, second.candidates.tactical)
+    assert first.action_index == second.action_index
+    assert first.old_log_prob == second.old_log_prob
+
+
+@pytest.mark.integration
 def test_same_sim_and_policy_seeds_reproduce_the_battle_exactly(worker, team: str) -> None:
     first = _play(worker, team, "t-seed-a", seed=11, policy_seed=5)
     second = _play(worker, team, "t-seed-b", seed=11, policy_seed=5)
@@ -351,6 +426,45 @@ def test_direct_env_parses_a_battle_identically_to_poke_envs_own_pump(worker, te
     # PolicyConfig can independently select true or fallback spreads.
     assert all(pokemon.evs is None for pokemon in theirs.team.values())
     assert all(pokemon.evs is None for pokemon in ours.team.values())
+
+
+@pytest.mark.integration
+def test_research_live_pump_matches_neural_inputs_at_nonterminal_cutoff(worker, team):
+    from vgc.rl.encoding import encode_live_state, encode_information_context
+    from vgc.rl.mechanics_encoding import encode_mechanics_context
+
+    tag = f"battle-{DEFAULT_FORMAT}-9028"
+    battle = DirectBattle.start(worker, tag, team, team, seed=[28] * 4,
+                               usernames={"p1": "alpha", "p2": "beta"})
+    try:
+        bursts = [list(battle.last_lines["p1"])]
+        result = battle.step({s: "team 1234" for s in battle.sides_to_move()})
+        bursts.append(list(result.lines["p1"]))
+        direct = battle.battles["p1"]
+        live = _replay_through_poke_env(tag, bursts, team)
+        for view in (direct, live):
+            apply_own_spreads(view)
+        direct_state, live_state = encode_live_state(direct), encode_live_state(live)
+        for x, y in zip(direct_state, live_state, strict=True):
+            np.testing.assert_array_equal(x, y)
+        memory = BattleMemory(tag, our_role="p1")
+        for lines in bursts:
+            memory.observe_protocol([line.split("|") for line in lines])
+        a, b = (encode_information_context(v, memory) for v in (direct, live))
+        np.testing.assert_array_equal(a.indices, b.indices)
+        np.testing.assert_array_equal(a.scalars, b.scalars)
+        direct_mechanics = encode_mechanics_context(direct).decoded()
+        live_mechanics = encode_mechanics_context(live).decoded()
+        def differences(a, b, path=""):
+            if isinstance(a, dict) and isinstance(b, dict):
+                return [d for key in a for d in differences(a[key], b[key], f"{path}.{key}")]
+            if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+                return [d for i, (x, y) in enumerate(zip(a, b, strict=True))
+                        for d in differences(x, y, f"{path}[{i}]")]
+            return [] if a == b else [(path, a, b)]
+        assert direct_mechanics == live_mechanics, differences(direct_mechanics, live_mechanics)
+    finally:
+        battle.close()
 
 
 @pytest.mark.integration

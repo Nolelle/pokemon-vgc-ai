@@ -1,0 +1,46 @@
+{
+  "kind": "supervised_representability_only",
+  "seed": 88,
+  "curve": [
+    {
+      "iteration": 0,
+      "winning_action_probabilities": [
+        0.16910648345947266,
+        0.49872592091560364,
+        0.12500210106372833,
+        0.0627811923623085
+      ]
+    },
+    {
+      "iteration": 50,
+      "winning_action_probabilities": [
+        1.0,
+        1.0,
+        1.0,
+        0.9999994039535522
+      ]
+    },
+    {
+      "iteration": 100,
+      "winning_action_probabilities": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "iteration": 200,
+      "winning_action_probabilities": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "passed": true,
+  "source_sha256": "b0013f9f6e6c4a6526211e36bd7c51414de0d34edab1c80035ede90f0d016f74",
+  "fixture_sha256": "e6abc1d869a1ea44f0a8498b313d6e5d8ac6995a5edbe6e3b9954f660e47b28f",
+  "elapsed_seconds": 3.411061958000573
+}

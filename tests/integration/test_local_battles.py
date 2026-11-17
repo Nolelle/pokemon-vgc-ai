@@ -542,7 +542,9 @@ def local_server():
     """
     node = find_node()
     process = subprocess.Popen(
-        [node, "pokemon-showdown", "start", "--no-security"],
+        # The pinned simulator is built by setup/parity checks. Do not rebuild a
+        # sibling checkout as a side effect of a read-only integration test.
+        [node, "pokemon-showdown", "start", "--skip-build", "--no-security"],
         cwd=str(SHOWDOWN_REPO),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

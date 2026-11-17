@@ -1,0 +1,78 @@
+training_environment_transitions: exact (2 test(s))
+fogged_protocol_observations: exact (1 test(s))
+exact_showdown_branch_oracle: exact (1 test(s))
+format_legality: exact (1 test(s))
+open_team_sheet_knowledge: exact (3 test(s))
+observable_battle_state: exact (1 test(s))
+stats_and_stat_points: exact (1 test(s))
+ordinary_type_and_damage_formula: exact (4 test(s))
+legal_action_enumeration: exact (1 test(s))
+mega_evolution: exact (2 test(s))
+turn_priority_and_speed: exact (3 test(s))
+speed_ties: exact (1 test(s))
+targeting_and_retargeting: exact (3 test(s))
+accuracy_and_evasion: exact (1 test(s))
+critical_hits: exact (2 test(s))
+damage_roll_distribution: exact (1 test(s))
+variable_and_fixed_damage: exact (6 test(s))
+one_hit_knockout_moves: exact (1 test(s))
+multi_hit_moves: exact (1 test(s))
+secondary_effects: exact (1 test(s))
+recoil_drain_and_crash: exact (1 test(s))
+survival_effects: exact (1 test(s))
+protect_family: exact (2 test(s))
+side_wide_guards: exact (1 test(s))
+redirection: exact (1 test(s))
+sleep: exact (2 test(s))
+paralysis: exact (2 test(s))
+freeze: exact (2 test(s))
+burn: exact (1 test(s))
+poison_and_toxic: exact (1 test(s))
+confusion: exact (2 test(s))
+flinch_and_fake_out: exact (1 test(s))
+move_restrictions: exact (1 test(s))
+charge_recharge_and_locks: exact (1 test(s))
+stat_stage_changes: exact (1 test(s))
+weather: exact (5 test(s))
+terrain_and_groundedness: exact (2 test(s))
+rooms_and_field_conditions: exact (1 test(s))
+screens_tailwind_and_side_conditions: exact (3 test(s))
+entry_hazards: exact (1 test(s))
+switching_trapping_and_phazing: exact (1 test(s))
+items: exact (3 test(s))
+abilities: exact (12 test(s))
+form_transform_and_illusion: exact (1 test(s))
+move_flags_and_interactions: exact (1 test(s))
+residual_and_end_of_turn_order: exact (1 test(s))
+faint_and_replacement_order: exact (1 test(s))
+random_branch_order: exact (1 test(s))
+neural_mechanics_encoding: exact (1 test(s))
+oracle_teacher_migration: exact (1 test(s))
+live_exact_transition_access: exact (1 test(s))
+live_mirror_branch_execution: exact (7 test(s))
+live_mirror_seat_parity: exact (1 test(s))
+mirror_move_availability: exact (2 test(s))
+exact_branch_effect_polarity: exact (8 test(s))
+catalog current: True
+declared ready: True
+exact (55): abilities, accuracy_and_evasion, burn, charge_recharge_and_locks, confusion, critical_hits, damage_roll_distribution, entry_hazards, exact_branch_effect_polarity, exact_showdown_branch_oracle, faint_and_replacement_order, flinch_and_fake_out, fogged_protocol_observations, form_transform_and_illusion, format_legality, freeze, items, legal_action_enumeration, live_exact_transition_access, live_mirror_branch_execution, live_mirror_seat_parity, mega_evolution, mirror_move_availability, move_flags_and_interactions, move_restrictions, multi_hit_moves, neural_mechanics_encoding, observable_battle_state, one_hit_knockout_moves, open_team_sheet_knowledge, oracle_teacher_migration, ordinary_type_and_damage_formula, paralysis, poison_and_toxic, protect_family, random_branch_order, recoil_drain_and_crash, redirection, residual_and_end_of_turn_order, rooms_and_field_conditions, screens_tailwind_and_side_conditions, secondary_effects, side_wide_guards, sleep, speed_ties, stat_stage_changes, stats_and_stat_points, survival_effects, switching_trapping_and_phazing, targeting_and_retargeting, terrain_and_groundedness, training_environment_transitions, turn_priority_and_speed, variable_and_fixed_damage, weather
+partial (0): 
+missing (0): 
+scopes: live_decisions=READY, neural_input=READY, observable_state=READY, teacher_labels=READY, training_environment=READY
+local_head: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+local_dirty: False
+pinned_commit: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+pinned_matches_head: True
+upstream_ref: origin/master
+fetched: False
+fetch_error: None
+missing_upstream_commits (block -- affect Reg M-C or unproven):
+  (none)
+irrelevant_upstream_commits (behind, but cannot affect Reg M-C):
+  (none)
+running 110 gate test node(s)
+........................................................................ [ 55%]
+.........................................................                [100%]
+129 passed in 36.75s
+artifact current: True
+verdict: PASS

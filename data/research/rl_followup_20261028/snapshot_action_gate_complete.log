@@ -1,0 +1,28 @@
+team_preview_enumeration: exact (2 test(s))
+joint_move_enumeration: exact (4 test(s))
+forced_switch_enumeration: exact (2 test(s))
+mutual_exclusion: exact (4 test(s))
+wire_roundtrip: exact (7 test(s))
+fallback_accounting: exact (2 test(s))
+target_coverage: exact (1 test(s))
+declared ready: True
+exact (7): fallback_accounting, forced_switch_enumeration, joint_move_enumeration, mutual_exclusion, target_coverage, team_preview_enumeration, wire_roundtrip
+partial (0): 
+missing (0): 
+scopes: forced_switch=READY, logging=READY, move=READY, team_preview=READY
+local_head: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+local_dirty: False
+pinned_commit: 3a766f2cfb5e51c1e428cfe87d0dba91a8f01640
+pinned_matches_head: True
+upstream_ref: origin/master
+fetched: False
+fetch_error: None
+missing_upstream_commits (block -- affect Reg M-C or unproven):
+  (none)
+irrelevant_upstream_commits (behind, but cannot affect Reg M-C):
+  (none)
+running 19 gate test node(s)
+...................                                                      [100%]
+19 passed in 13.42s
+artifact current: True
+verdict: PASS
