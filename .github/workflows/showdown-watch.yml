@@ -59,7 +59,13 @@ jobs:
           # error, timeout, broken checkout) fails this run without touching the issue.
           if ! grep -qx 'fetch_error: None' parity.txt \
             || ! grep -qx 'pinned_matches_head: True' parity.txt \
-            || grep -qx '  (none)' parity.txt; then
+            || ! grep -qx 'verdict: BLOCKED' parity.txt; then
+            echo "::error::parity check failed for a reason other than upstream drift"
+            exit 1
+          fi
+          # Empty blocking list under missing_upstream_commits is not drift (do not match
+          # irrelevant_upstream_commits' "  (none)" placeholder).
+          if awk '/^missing_upstream_commits /{getline; exit ($0 == "  (none)") ? 0 : 1}' parity.txt; then
             echo "::error::parity check failed for a reason other than upstream drift"
             exit 1
           fi
