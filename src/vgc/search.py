@@ -142,6 +142,7 @@ from vgc.evaluator import (
     ScoredOrder,
     build_context,
     field_effective_speed,
+    human_like_speed_control_utility_bonus,
     mega_evolved_state,
     resolves_before,
     score_joint_orders,
@@ -1022,7 +1023,10 @@ def _build_our_actions(
                             move_id=move_id,
                             targets=side_tagged,
                             priority=int(move_data.get("priority", 0)),
-                            utility_value=config.search_opp_utility_weight * utility_scale,
+                            utility_value=(
+                                config.search_opp_utility_weight * utility_scale
+                                + human_like_speed_control_utility_bonus(move_id, slot, ctx, config)
+                            ),
                             spread=not single_target,
                         )
                     )

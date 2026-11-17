@@ -219,6 +219,60 @@ def likely_ko(result: DamageResult, target_hp: int) -> bool:
     return target_hp > 0 and result.expected_damage >= target_hp
 
 
+def ko_roll_probability(result: DamageResult, target_hp: int) -> float:
+    """Fraction of the 16 damage rolls (`result.breakdown["rolls"]`) that KO `target_hp`.
+
+    Falls back to `1.0` (`guaranteed_ko`), `0.5` (`likely_ko`), or `0.0` if `rolls` is
+    absent (e.g. a synthetic test `DamageResult`).
+    """
+    if target_hp <= 0:
+        return 0.0
+    rolls = (result.breakdown or {}).get("rolls")
+    if isinstance(rolls, Sequence) and len(rolls) > 0:
+        return sum(1 for roll in rolls if int(roll) >= target_hp) / len(rolls)
+    if guaranteed_ko(result, target_hp):
+        return 1.0
+    if likely_ko(result, target_hp):
+        return 0.5
+    return 0.0
+
+
+def _smooth_ko_bonus(roll_ko_prob: float, config: PolicyConfig) -> float:
+    """Piecewise-linear KO bonus over `roll_ko_prob` in [0, 1]:
+    `(0.0, 0.0) -> (0.5, likely_ko_bonus) -> (1.0, guaranteed_ko_bonus)`.
+    Matches legacy `0.0`, `likely_ko_bonus`, and `guaranteed_ko_bonus` at `0.0`, `0.5`,
+    and `1.0` respectively while pricing intermediate roll probabilities smoothly.
+    """
+    if roll_ko_prob <= 0.0:
+        return 0.0
+    if roll_ko_prob >= 1.0:
+        return config.guaranteed_ko_bonus
+    if roll_ko_prob <= 0.5:
+        return (roll_ko_prob / 0.5) * config.likely_ko_bonus
+    return config.likely_ko_bonus + ((roll_ko_prob - 0.5) / 0.5) * (
+        config.guaranteed_ko_bonus - config.likely_ko_bonus
+    )
+
+
+def _continuous_threat_severity(
+    threat_pct: float, actor_hp_pct: float, floor_ratio: float
+) -> float:
+    """Continuous threat severity relative to `actor_hp_pct` (in % of max HP).
+
+    Returns 0.0 when `threat_pct < floor_ratio * actor_hp_pct`, ramps linearly from
+    0.0 to 1.0 across `[floor_ratio * actor_hp_pct, actor_hp_pct]`, and continues
+    linearly up to 2.0 at `2 * actor_hp_pct` (mirroring the legacy `min(200.0, threat) / 100.0`
+    cap at full HP).
+    """
+    hp_pct = max(1.0, float(actor_hp_pct))
+    floor_pct = max(0.0, min(0.99, float(floor_ratio))) * hp_pct
+    if threat_pct <= floor_pct:
+        return 0.0
+    if threat_pct < hp_pct:
+        return (threat_pct - floor_pct) / max(1e-6, hp_pct - floor_pct)
+    return min(2.0, threat_pct / hp_pct)
+
+
 def _opp_protect_probability(
     has_self_protect_move: bool, pressure_percent: float, protect_counter: int, config: PolicyConfig
 ) -> float:
@@ -983,7 +1037,7 @@ def score_joint_orders_in_context(
     for order in joint_orders:
         first_info = _score_single(order.first_order, 0, ctx, config)
         second_info = _score_single(order.second_order, 1, ctx, config)
-        cross = _cross_slot_adjustments(first_info, second_info, config)
+        cross = _cross_slot_adjustments(first_info, second_info, config, ctx=ctx)
         total = first_info["score"] + second_info["score"] + cross
         breakdown: dict[str, object] = {
             "slot0": first_info,
@@ -1835,6 +1889,12 @@ def _score_attack_order(
     speed_drop_targets: list[int] = []
     flinch_targets: list[int] = []
     hit_probability_by_target: dict[int, float] = {}
+    ko_roll_prob_by_target: dict[int, float] = {}
+    actor_hp_pct = (
+        100.0 * attacker_state.hp_or_max() / attacker_state.max_hp()
+        if attacker_state is not None
+        else 100.0
+    )
     field_vs_opp = ctx.field_state(
         defender_is_ours=False, num_targets=num_hit, weather=weather_for_this_order
     )
@@ -1865,6 +1925,8 @@ def _score_attack_order(
         target_hp = defender_state.hp_or_max()
         is_guaranteed = guaranteed_ko(result, target_hp)
         is_likely = likely_ko(result, target_hp)
+        roll_ko_prob = ko_roll_probability(result, target_hp)
+        ko_roll_prob_by_target[idx] = roll_ko_prob
         ko_bonus = 0.0
         if is_guaranteed:
             guaranteed_ko_slots.append(idx)
@@ -1872,7 +1934,13 @@ def _score_attack_order(
             ko_bonus += config.guaranteed_ko_bonus
         elif is_likely:
             ko_slots.append(idx)
-            ko_bonus += config.likely_ko_bonus
+            ko_bonus += (
+                _smooth_ko_bonus(roll_ko_prob, config)
+                if config.smooth_ko_roll_bonus
+                else config.likely_ko_bonus
+            )
+        elif config.smooth_ko_roll_bonus and roll_ko_prob > 0.0:
+            ko_bonus += _smooth_ko_bonus(roll_ko_prob, config)
         # A "guaranteed" KO with a 90% move is a 90% KO: credit it in expectation.
         ko_bonus *= hit_p
 
@@ -1887,9 +1955,21 @@ def _score_attack_order(
                 ctx.our_speed[actor_slot],
                 ctx.trick_room,
             )
-            if opp_moves_first and threat.percent >= 100.0:
-                damage_term *= config.threatened_output_discount
-                ko_bonus *= config.threatened_output_discount
+            if opp_moves_first:
+                if config.continuous_expected_death:
+                    threat_sev = min(
+                        1.0,
+                        _continuous_threat_severity(
+                            threat.percent, actor_hp_pct, config.continuous_threat_floor_ratio
+                        ),
+                    )
+                    if threat_sev > 0.0:
+                        discount = 1.0 - threat_sev * (1.0 - config.threatened_output_discount)
+                        damage_term *= discount
+                        ko_bonus *= discount
+                elif threat.percent >= 100.0:
+                    damage_term *= config.threatened_output_discount
+                    ko_bonus *= config.threatened_output_discount
             we_move_first = resolves_before(
                 actor_priority,
                 ctx.our_speed[actor_slot],
@@ -1902,6 +1982,8 @@ def _score_attack_order(
             # Boolean flag: "the KO more likely than not lands before the threat" (the same
             # modal-branch convention the search uses for probabilistic effects).
             resolves_threat_before_it_lands = resolves_threat_before_it_lands or hit_p > 0.5
+        elif config.smooth_ko_roll_bonus and we_move_first and roll_ko_prob > 0.0:
+            ko_bonus += config.outspeed_ko_bonus * roll_ko_prob * hit_p
 
         # An opponent pivoting out under heavy pressure with weak own output still eats
         # our damage on the replacement, but any KO-dependent bonus evaporates -- only the
@@ -2065,24 +2147,29 @@ def _score_attack_order(
     # which passes through this function) was available. Only fires when this order
     # ITSELF doesn't already remove the threat first (resolves_threat_before_it_lands).
     win_con_preservation_penalty = 0.0
+    preservation_threat = max(
+        ctx.threat_on_us[actor_slot].percent,
+        ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
+    )
     if (
         ctx.gameplan is not None
         and ctx.gameplan.primary_win_con_species is not None
         and actor_mon is not None
         and to_id(actor_mon.species) == ctx.gameplan.primary_win_con_species
-        and max(
-            ctx.threat_on_us[actor_slot].percent,
-            ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
-        )
-        >= 100.0
         and not resolves_threat_before_it_lands
     ):
-        preservation_threat = max(
-            ctx.threat_on_us[actor_slot].percent,
-            ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
-        )
-        win_con_preservation_penalty = config.win_con_preservation_weight * preservation_threat
-        score -= win_con_preservation_penalty
+        if config.continuous_expected_death:
+            pres_sev = _continuous_threat_severity(
+                preservation_threat, actor_hp_pct, config.continuous_threat_floor_ratio
+            )
+            if pres_sev > 0.0:
+                win_con_preservation_penalty = (
+                    config.win_con_preservation_weight * 100.0 * pres_sev
+                )
+                score -= win_con_preservation_penalty
+        elif preservation_threat >= 100.0:
+            win_con_preservation_penalty = config.win_con_preservation_weight * preservation_threat
+            score -= win_con_preservation_penalty
 
     # Expected-death cost for ANY actor staying in under a lethal threat (see the
     # PolicyConfig comment for the block-2 postmortem behind this): a stay-in order that
@@ -2097,9 +2184,17 @@ def _score_attack_order(
         ctx.threat_on_us[actor_slot].percent,
         ctx.double_target_threat[actor_slot] * config.double_target_threat_weight,
     )
-    if lethal_threat >= 100.0 and not resolves_threat_before_it_lands:
-        expected_death_cost = config.expected_death_cost_weight * min(200.0, lethal_threat)
-        score -= expected_death_cost
+    if not resolves_threat_before_it_lands:
+        if config.continuous_expected_death:
+            death_sev = _continuous_threat_severity(
+                lethal_threat, actor_hp_pct, config.continuous_threat_floor_ratio
+            )
+            if death_sev > 0.0:
+                expected_death_cost = config.expected_death_cost_weight * 100.0 * death_sev
+                score -= expected_death_cost
+        elif lethal_threat >= 100.0:
+            expected_death_cost = config.expected_death_cost_weight * min(200.0, lethal_threat)
+            score -= expected_death_cost
 
     single_target_slot = (
         opp_targets[0]
@@ -2113,6 +2208,7 @@ def _score_attack_order(
             "single_target_slot": single_target_slot,
             "expected_percent_by_target": expected_percent_by_target,
             "hit_probability_by_target": hit_probability_by_target,
+            "ko_roll_prob_by_target": ko_roll_prob_by_target,
             "current_hp_percent_by_target": current_hp_percent_by_target,
             "guaranteed_ko_slots": guaranteed_ko_slots,
             "ko_slots": ko_slots,
@@ -2181,7 +2277,7 @@ def _score_status_move(
         ):
             return 0.0, {"reason": "psychic_terrain_blocks_priority"}
     if move_id == "trickroom":
-        return _score_trick_room(ctx, config)
+        return _score_trick_room(ctx, config, actor_slot=actor_slot)
     if move_id in SLEEP_MOVES:
         return _score_sleep_move(move_id, move_data, single, actor_slot, ctx, config)
     if move_id == "helpinghand":
@@ -2189,7 +2285,7 @@ def _score_status_move(
     if move_id == "partingshot":
         return _score_parting_shot(actor_slot, ctx, config)
     if move_id in _SCREEN_MOVE_TO_SIDE_CONDITION or move_id == "tailwind":
-        return _score_screen(move_id, ctx, config)
+        return _score_screen(move_id, ctx, config, actor_slot=actor_slot)
     if move_id in REDIRECTION_MOVES:
         partner_slot = 1 - actor_slot
         partner_threat = max(
@@ -2273,6 +2369,22 @@ def _score_field_setter_move(
     }
 
 
+def _slot_hp_percent(slot: int, ctx: _Context) -> float:
+    """Current HP percentage (0..100) for our ``slot``, preferring poke-env's exact
+    ``current_hp_fraction`` when populated and falling back to ``state.hp_or_max() /
+    state.max_hp()`` for synthetic test states."""
+    if 0 <= slot < len(ctx.our_pokemon):
+        mon = ctx.our_pokemon[slot]
+        frac = getattr(mon, "current_hp_fraction", None) if mon is not None else None
+        if isinstance(frac, (int, float)) and not isinstance(frac, bool) and frac > 0:
+            return min(100.0, 100.0 * float(frac))
+    if 0 <= slot < len(ctx.our_states):
+        state = ctx.our_states[slot]
+        if state is not None and state.max_hp() > 0:
+            return min(100.0, 100.0 * state.hp_or_max() / state.max_hp())
+    return 100.0
+
+
 def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
     threat = ctx.threat_on_us[actor_slot]
     pokemon = ctx.our_pokemon[actor_slot]
@@ -2317,6 +2429,17 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
     reposition_value = config.protect_reposition_bonus if has_reposition else 0.0
     bonus_scale = success_prob if config.protect_bonuses_scale_with_odds else 1.0
     score += (information_value + stall_value + reposition_value) * bonus_scale
+    human_like_protect_bonus = 0.0
+    if config.human_like_tactical_mode and protect_counter == 0:
+        actor_hp_pct = _slot_hp_percent(actor_slot, ctx)
+        single_lethal = threat.percent >= config.human_like_protect_threat_ratio * actor_hp_pct
+        double_lethal = (
+            ctx.double_target_threat[actor_slot] >= 1.25 * actor_hp_pct
+            and threat.percent >= 0.55 * actor_hp_pct
+        )
+        if single_lethal or double_lethal:
+            human_like_protect_bonus = config.human_like_defensive_protect_bonus
+            score += human_like_protect_bonus
     return score, {
         "threat_percent": threat.percent,
         "combined_threat_percent": combined_threat,
@@ -2326,6 +2449,7 @@ def _score_protect(actor_slot: int, ctx: _Context, config: PolicyConfig) -> tupl
         "information_value": information_value,
         "stall_value": stall_value,
         "reposition_value": reposition_value,
+        "human_like_defensive_protect_bonus": human_like_protect_bonus,
         "utility_kind": "protect",
         "actor_slot": actor_slot,
         "threat_source_slot": threat.source_slot,
@@ -2392,7 +2516,72 @@ def _speed_control_flip_value(
     }
 
 
-def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
+def _human_like_early_speed_control_bonus(
+    ctx: _Context,
+    config: PolicyConfig,
+    actor_slot: int | None,
+    flip_info: dict,
+    base_positive: bool,
+    move_priority: int = 0,
+) -> float:
+    """B1: Turn 1-2 speed-control priority bonus when Tailwind or Trick Room is
+    un-set, beneficial for our active speed tier, and the setter is not facing a
+    pre-move OHKO without Focus Sash / Sturdy."""
+    if not config.human_like_tactical_mode:
+        return 0.0
+    turn = int(getattr(ctx.battle, "turn", 1) or 1)
+    if turn > 2:
+        return 0.0
+    if not (bool(flip_info.get("benefiting_slots")) or base_positive):
+        return 0.0
+    if actor_slot is not None and 0 <= actor_slot < len(ctx.our_states):
+        state = ctx.our_states[actor_slot]
+        threat = ctx.threat_on_us[actor_slot]
+        actor_hp_pct = _slot_hp_percent(actor_slot, ctx)
+        has_sash_or_sturdy = (
+            state is not None
+            and actor_hp_pct >= 99.9
+            and (
+                (state.item == "focussash" and not state.item_lost)
+                or state.ability == "sturdy"
+            )
+        )
+        if (
+            threat.source_slot is not None
+            and threat.percent >= actor_hp_pct
+            and not has_sash_or_sturdy
+            and not resolves_before(
+                move_priority,
+                ctx.our_speed[actor_slot],
+                threat.priority,
+                ctx.opp_speed[threat.source_slot],
+                ctx.trick_room,
+            )
+        ):
+            return 0.0
+    return config.human_like_early_speed_control_bonus
+
+
+def human_like_speed_control_utility_bonus(
+    move_id: str, actor_slot: int, ctx: _Context, config: PolicyConfig
+) -> float:
+    """Return the B1 turn 1-2 speed-control bonus for ``move_id`` (Tailwind / Trick Room)
+    when ``config.human_like_tactical_mode`` is enabled and the condition is un-set and
+    beneficial."""
+    if not config.human_like_tactical_mode:
+        return 0.0
+    if move_id == "trickroom":
+        _score, extra = _score_trick_room(ctx, config, actor_slot=actor_slot)
+        return float(extra.get("human_like_early_speed_control_bonus", 0.0))
+    if move_id == "tailwind":
+        _score, extra = _score_screen("tailwind", ctx, config, actor_slot=actor_slot)
+        return float(extra.get("human_like_early_speed_control_bonus", 0.0))
+    return 0.0
+
+
+def _score_trick_room(
+    ctx: _Context, config: PolicyConfig, actor_slot: int | None = None
+) -> tuple[float, dict]:
     if ctx.trick_room:
         return -config.trick_room_teardown_penalty, {"reason": "already_active"}
     our_alive, opp_alive = ctx.our_alive(), ctx.opp_alive()
@@ -2408,10 +2597,14 @@ def _score_trick_room(ctx: _Context, config: PolicyConfig) -> tuple[float, dict]
         hypothetical_our_speed=lambda slot: ctx.our_speed[slot],
         trick_room_hypothetical=True,
     )
-    return base + flip_value, {
+    early_bonus = _human_like_early_speed_control_bonus(
+        ctx, config, actor_slot, flip_info, base > 0.0, move_priority=-7
+    )
+    return base + flip_value + early_bonus, {
         "our_avg_speed": our_avg,
         "opp_avg_speed": opp_avg,
         "base_value": round(base, 3),
+        "human_like_early_speed_control_bonus": round(early_bonus, 3),
         **flip_info,
     }
 
@@ -2539,7 +2732,9 @@ def _score_parting_shot(actor_slot: int, ctx: _Context, config: PolicyConfig) ->
     return debuff_value + pivot_value, {"threat_percent": threat.percent}
 
 
-def _score_screen(move_id: str, ctx: _Context, config: PolicyConfig) -> tuple[float, dict]:
+def _score_screen(
+    move_id: str, ctx: _Context, config: PolicyConfig, actor_slot: int | None = None
+) -> tuple[float, dict]:
     if move_id == "tailwind":
         already_active = SideCondition.TAILWIND in ctx.battle.side_conditions
         if already_active:
@@ -2555,8 +2750,25 @@ def _score_screen(move_id: str, ctx: _Context, config: PolicyConfig) -> tuple[fl
             hypothetical_our_speed=lambda slot: ctx.our_speed[slot] * 2.0,
             trick_room_hypothetical=ctx.trick_room,
         )
-        return config.screen_setup_weight + flip_value, {
+        tailwind_flips_pair = (not ctx.trick_room) and any(
+            ctx.our_speed[i] <= ctx.opp_speed[j] < ctx.our_speed[i] * 2.0
+            for i in ctx.our_alive()
+            for j in ctx.opp_alive()
+        )
+        tw_priority = (
+            1
+            if actor_slot is not None
+            and 0 <= actor_slot < len(ctx.our_states)
+            and ctx.our_states[actor_slot] is not None
+            and ctx.our_states[actor_slot].ability == "prankster"
+            else 0
+        )
+        early_bonus = _human_like_early_speed_control_bonus(
+            ctx, config, actor_slot, flip_info, tailwind_flips_pair, move_priority=tw_priority
+        )
+        return config.screen_setup_weight + flip_value + early_bonus, {
             "utility_kind": "speed_control",
+            "human_like_early_speed_control_bonus": round(early_bonus, 3),
             **flip_info,
         }
     already_active = _SCREEN_MOVE_TO_SIDE_CONDITION[move_id] in ctx.our_side_screens
@@ -2681,7 +2893,12 @@ def _score_switch(
     }
 
 
-def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyConfig) -> float:
+def _cross_slot_adjustments(
+    first_info: dict,
+    second_info: dict,
+    config: PolicyConfig,
+    ctx: _Context | None = None,
+) -> float:
     bonus = 0.0
     if first_info.get("move_id") == "helpinghand" and second_info.get("raw_damage_score"):
         bonus += float(second_info["raw_damage_score"]) * config.helping_hand_weight
@@ -2814,6 +3031,16 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
             if first_expected < target_hp and second_expected < target_hp:
                 if first_expected + second_expected >= target_hp:
                     bonus += config.focus_fire_ko_bonus
+                    if config.human_like_tactical_mode:
+                        high_threat_mult = 1.0
+                        if (
+                            ctx is not None
+                            and 0 <= target < len(ctx.opp_threat_score)
+                            and ctx.opp_threat_score[target] > 0.0
+                            and ctx.opp_threat_score[target] >= max(ctx.opp_threat_score)
+                        ):
+                            high_threat_mult = 1.25
+                        bonus += config.human_like_focus_fire_bonus * high_threat_mult
 
     # Spread-plus-cleanup is the other canonical focus-fire pattern. It never enters the
     # same-single-target branch above because a spread move has no single_target_slot.
@@ -2835,4 +3062,6 @@ def _cross_slot_adjustments(first_info: dict, second_info: dict, config: PolicyC
                 and first_expected + second_expected >= target_hp
             ):
                 bonus += config.focus_fire_ko_bonus
+                if config.human_like_tactical_mode:
+                    bonus += 0.5 * config.human_like_focus_fire_bonus
     return bonus

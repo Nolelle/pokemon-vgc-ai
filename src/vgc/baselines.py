@@ -8,6 +8,7 @@ knowing which poke-env class backs it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from poke_env.player.baselines import MaxBasePowerPlayer, RandomPlayer, SimpleHeuristicsPlayer
@@ -73,6 +74,31 @@ def _make_vgc_shallow(team: str, battle_format: str, **kwargs) -> Player:
     return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
 
 
+def _make_human_like(team: str, battle_format: str, **kwargs) -> Player:
+    """Human-like tactical practice opponent (B1): turn 1-2 speed-control priority,
+    focus-fire double-targeting on KO-able threats, and defensive Protect under heavy
+    pressure when protect_counter == 0."""
+
+    passed = kwargs.pop("config", None)
+    if passed is None:
+        config = PolicyConfig(
+            format_id=battle_format,
+            human_like_tactical_mode=True,
+            continuous_expected_death=True,
+            smooth_ko_roll_bonus=True,
+        )
+    elif passed.human_like_tactical_mode:
+        config = passed
+    else:
+        config = replace(
+            passed,
+            human_like_tactical_mode=True,
+            continuous_expected_death=True,
+            smooth_ko_roll_bonus=True,
+        )
+    return VgcPlayer(config=config, team=team, battle_format=battle_format, **kwargs)
+
+
 def _make_vgc_exact(team: str, battle_format: str, **kwargs) -> Player:
     """Every move from the public-information exact Showdown search (slow; offline A/Bs).
 
@@ -94,6 +120,7 @@ BASELINES: dict[str, PlayerFactory] = {
     "vgc_horizon": _make_vgc_horizon,
     "vgc_myopic": _make_vgc_myopic,
     "vgc_shallow": _make_vgc_shallow,
+    "human_like": _make_human_like,
 }
 
 
