@@ -4,7 +4,7 @@
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
     "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
-    "showdown_commit": "7e743761cd13cdb361fc0f58eb5a866284894f5b"
+    "showdown_commit": "5b88c476113d51a939bddbcd00b5cd182a5d8058"
   },
   "format": {
     "game_type": "doubles",
@@ -1986,7 +1986,8 @@
         ],
         "onDisableMove": [
           "fakeout",
-          "firstimpression"
+          "firstimpression",
+          "lastresort"
         ],
         "onAfterMoveSecondarySelf": [
           "fellstinger"
