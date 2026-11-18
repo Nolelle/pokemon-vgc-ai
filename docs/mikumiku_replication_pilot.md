@@ -95,6 +95,26 @@ The saved 32-game model can play over the Showdown server connection. With the p
 
 Add `--search` for the reduced lookahead check. Both modes completed full local server games.
 
+### Parallel PPO training, resource profiles, resume, and W&B
+
+`selfplay/train_replication_league.py` now supports parallel `pikapro` battle workers, two resource profiles (`--profile desktop` for active computer use at low CPU priority and `--profile afk` for unattended/overnight runs), `--resume`, periodic held-out baseline evaluation (`--eval-every`, `--eval-games`, `--eval-opponents`), and optional Weights & Biases logging (`--wandb-project`):
+
+```sh
+# While actively using the computer (desktop profile: half CPU cores, low priority)
+.venv/bin/python -m selfplay.train_replication_league \
+  --out runs/replica_m128_37101 --profile desktop \
+  --width 128 --layers 4 --games 4096 --games-per-update 64 \
+  --snapshot-games 256 --eval-every 256 --eval-games 20 \
+  --wandb-project pokemon-vgc-ai
+
+# Resume overnight in AFK mode (uses most cores)
+.venv/bin/python -m selfplay.train_replication_league \
+  --out runs/replica_m128_37101 --resume --profile afk \
+  --width 128 --layers 4 --games 16384 --games-per-update 64 \
+  --snapshot-games 256 --eval-every 256 --eval-games 20 \
+  --wandb-project pokemon-vgc-ai
+```
+
 ### Upstream Reg M-C Last Resort fix and ladder runner support
 
 - Showdown was synced to `5b88c4761` (including `41ba4797f`, which disables Last Resort in Champions until all other move slots have been used) and all three readiness gates passed.

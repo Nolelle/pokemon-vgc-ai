@@ -798,3 +798,13 @@
 - Updated `ladder/run_ladder.py` with `--policy-mode replica` and `--policy-mode replica-search` (plus search budget flags) for both `--local-smoke` and public ladder play (keeping all 4 readiness/parity gates and vocabulary validation).
 - Tests: 42/42 passed (`test_replica_engine.py`, `test_replica_search.py`, `test_replication_policy.py`, `test_ladder.py`); Ruff clean.
 - Next: scale up RL PPO training of the replication transformer on `pikapro 0.1.0+regmc.3`, then test on local smoke and public ladder.
+
+## 2026-11-18 – Phase 1 PPO trainer upgrade (parallel workers, desktop/afk profiles, resume, eval, W&B)
+- Upgraded `selfplay/train_replication_league.py` with:
+  - `--profile desktop` (half CPU cores, `nice=10`, `threads=2`) and `--profile afk` (cpus-2, `nice=2`, `threads=4`) with optional `--workers`/`--threads` overrides.
+  - Parallel `spawn` worker pool running persistent `ReplicaRustWorker` instances and cached opponent snapshots.
+  - Atomic `trainer_state.pt` saving and `--resume` (restores model, optimizer, RNG states, league history, and `wandb_run_id`).
+  - PPO health metrics (`policy_loss`, `value_loss`, `entropy`, `approx_kl`, `value_accuracy`, `games_per_sec`, `decisions_per_sec`).
+  - Periodic paired held-out baseline evaluation (`--eval-every`, `--eval-games`, `--eval-opponents`, default `maxpower,heuristic`).
+  - Optional Weights & Biases logging (`--wandb-project`, `--wandb-run-name`, `--wandb-entity`, `--wandb-mode`).
+- Next: refresh readiness gates on clean commit, run parallel + resume + W&B smoke verification, then start main PPO training.
