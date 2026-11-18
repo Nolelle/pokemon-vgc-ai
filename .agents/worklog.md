@@ -761,3 +761,32 @@
 - Did: train_ppo `--save-checkpoints-at-games` (default off); new offline/evaluate_pool_checkpoint.py (paired, shard-invariant, trunkc freeze). Prereg locked with seeds 41101/41102, eval seeds 70001-3, fresh = `--bc-checkpoint /nonexistent` (default warm-starts from bc_policy_v4!).
 - Checks: warm 8/8, resume keeps anchor 0 + checkpoints untouched, shared server OK, eval rows identical jobs 1/4 (none+trunkc); 123 tests pass. Logs runs/rl_multiteam/tooling_check/.
 - Next: commit, gates on clean tree, launch pilot (4 runs x 2048), eval, apply validity gate.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — many-teams pilot: validity gate FAILED
+- Did: Showdown sync -> 7e743761c (b9e34ee, owner OK; Pursuit PP fix); gates PASS; 4 runs (fresh/warm x 41101/41102) to 2048 games, 0 errors, ~34 min each; 40 evals, 0 errors.
+- Result: trunk-freeze cost fresh pooled +2.1 pts [+0.8,+3.4] < 5 -> stop per prereg. Warm +2.0. Holdout vs heur @2048 fresh 69% / warm 67%; vs vgc 27% / 30%; train-holdout gap ~0.
+- Files: runs/rl_multiteam/pilot_*; prereg result section appended.
+- Next: owner decides how to make board reading matter (learned team preview, drop per-move tactical shortcut, longer horizon) before any main run.
+- Open: worklog + prereg result note uncommitted.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — pilot follow-up: which inputs the bots use (analysis only)
+- Did: runs/rl_multiteam/branch_ablate.py freezes one input branch at a time (paired with pilot holdout-vs-heuristic rows, seed 70001; reproduces tool trunkc 349 exactly). Results in branch_ablate.jsonl.
+- Result @2048 (pooled 4 runs): WHOLE context frozen costs ~2.1 pts (same as trunk alone); info/mechanics/history ~0; tactical zeroed costs ~30-40 pts. @1024 whole-context cost ~0. So bots play off per-action tactical numbers; board use is ~0 -> ~2 pts and rising slowly.
+- Correction: my earlier "freeze cost barely moved between checkpoints" had no data behind it; measured now (0 -> 2 pts).
+- Next: owner call. Recommend closing trunk-transfer question (use fresh), not running main; see chat for options.
+- Open: worklog + prereg result note uncommitted.
+
+## 2026-11-18 – Local mikumiku37 replication pilot
+- Ran terminal-only from-scratch league training on pikapro 0.1.0. The 8,694,191-parameter model completed 32 games; a smaller model completed 128. Main saved model: runs/replication_8m7_37101/policy_0000032.pt. No public play.
+- Search ran in Showdown. Default opening visited 8 worlds, 8 actions per side, 4 seeds per cell. Reduced two-game holdout comparison finished; plain model won both. Pilot only.
+- Engine comparison: 94/100 agreed through finish on unpatched pikapro 0.1.0; six first divergences logged in runs/replication_rust_37101/engine_comparison.json. All 226 training teams validate. Seven focused checks passed; Ruff clean.
+- Guide and repeat commands: docs/mikumiku_replication_pilot.md.
+
+## 2026-11-18 – pikapro 0.1.0+regmc.2 parity fixes (600/600 match vs Showdown 7e743761c)
+- Fixed two upstream RNG-order bugs in pikapro 0.1.0:
+  1. `patches/pikapro/0001-update-before-forced-switch.patch`: run `each_update` before forced switches for living pivot Pokémon (and set `skip_before_switch_out` on Shed Tail). Fixed all 6 original mismatches.
+  2. `patches/pikapro/0002-keep-status-without-replacement.patch`: skip `check_fainted` status clearing when `can_switch == 0` so fainted statused Pokémon still participate in speed-tie handler sorts. Fixed remaining holdout mismatches (187/200 -> 200/200).
+- Packaged locally as `patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz` via `tools/package_replica_engine.py`, wired into `pyproject.toml` (`replica` extra) and `uv.lock`, installed in `.venv`.
+- Verified 600/600 parity vs pinned Showdown `7e743761c` (`runs/replica_parity_20261118/{original_after,holdout_after,new_training_teams}.json`: 100/100, 200/200, 300/300), 8/8 unit tests pass, and `offline/replica_live_smoke.py` completes full local Showdown games with and without search.
+- Confirmed both bugs are still present on upstream `spedr/pikapro-engine` `main` (`2611ea9`) with no open issues for them.
+- Next: sync Showdown for upstream Reg M-C Last Resort fix (`41ba4797f`) + check pikapro parity, then wire public ladder runner to the replication transformer architecture.

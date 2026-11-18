@@ -1,0 +1,19 @@
+diff --git a/crates/pikapro/src/resolve/switching.rs b/crates/pikapro/src/resolve/switching.rs
+--- a/crates/pikapro/src/resolve/switching.rs
++++ b/crates/pikapro/src/resolve/switching.rs
+@@ -192,10 +192,13 @@ fn drag_in(battle: &mut Battle, side: SideId, slot: usize) -> bool {
+ 
+ /// Showdown's `checkFainted` (when the queue has run dry): fainted active
+ /// Pokémon are flagged to be replaced and lose their status (it becomes
+-/// `fnt`). Until then a fainted Pokémon keeps its status, and its status
+-/// handlers still take part in handler sorts.
++/// `fnt`) when a replacement is available. A fainted Pokémon that keeps
++/// its status still takes part in handler sorts, but its handler never runs.
+ pub(crate) fn check_fainted(battle: &mut Battle) {
+     for side in SideId::BOTH {
++        if can_switch(battle, side) == 0 {
++            continue;
++        }
+         for slot in 0..filled_slots(battle, side) {
+             let s = battle.state.side_mut(side);
+             if s.active[slot].is_none() {

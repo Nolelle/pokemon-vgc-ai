@@ -661,6 +661,38 @@ wheels = [
 ]
 
 [[package]]
+name = "pikapro"
+version = "0.1.0+regmc.2"
+source = { path = "patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { hash = "sha256:8e8aa4ae94ea807a899d64f5be824dc912d48658d1a3992280fa71968f7964b9" }
+
+[package.metadata]
+requires-dist = [
+    { name = "gymnasium", marker = "extra == 'all'", specifier = ">=1.0" },
+    { name = "gymnasium", marker = "extra == 'gym'", specifier = ">=1.0" },
+    { name = "gymnasium", marker = "extra == 'pettingzoo'", specifier = ">=1.0" },
+    { name = "gymnasium", marker = "extra == 'sb3'", specifier = ">=1.0" },
+    { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.9.4,<2" },
+    { name = "numpy", specifier = ">=1.21" },
+    { name = "pettingzoo", marker = "extra == 'all'", specifier = ">=1.24" },
+    { name = "pettingzoo", marker = "extra == 'pettingzoo'", specifier = ">=1.24" },
+    { name = "poke-env", marker = "extra == 'all'", specifier = ">=0.16,<0.17" },
+    { name = "poke-env", marker = "extra == 'poke-env'", specifier = ">=0.16,<0.17" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "sb3-contrib", marker = "extra == 'all'", specifier = ">=2.3" },
+    { name = "sb3-contrib", marker = "extra == 'sb3'", specifier = ">=2.3" },
+    { name = "stable-baselines3", marker = "extra == 'all'", specifier = ">=2.3" },
+    { name = "stable-baselines3", marker = "extra == 'sb3'", specifier = ">=2.3" },
+    { name = "websockets", marker = "extra == 'all'", specifier = ">=13" },
+    { name = "websockets", marker = "extra == 'showdown'", specifier = ">=13" },
+]
+provides-extras = ["gym", "pettingzoo", "sb3", "poke-env", "showdown", "all", "test", "dev"]
+
+[[package]]
 name = "platformdirs"
 version = "4.11.8"
 source = { registry = "https://pypi.org/simple" }
@@ -713,6 +745,9 @@ dev = [
 llm = [
     { name = "openai" },
 ]
+replica = [
+    { name = "pikapro" },
+]
 train = [
     { name = "torch" },
     { name = "wandb" },
@@ -722,13 +757,14 @@ train = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=3.24.0" },
+    { name = "pikapro", marker = "extra == 'replica'", path = "patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz" },
     { name = "poke-env", specifier = ">=0.15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "torch", marker = "extra == 'train'", specifier = ">=2.13.0" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.19.0" },
 ]
-provides-extras = ["dev", "train", "llm"]
+provides-extras = ["dev", "train", "llm", "replica"]
 
 [[package]]
 name = "protobuf"

@@ -1,0 +1,60 @@
+diff --git a/crates/pikapro/src/resolve/conditions.rs b/crates/pikapro/src/resolve/conditions.rs
+index 8c74077..2461729 100644
+--- a/crates/pikapro/src/resolve/conditions.rs
++++ b/crates/pikapro/src/resolve/conditions.rs
+@@ -760,6 +760,9 @@ pub(crate) fn on_hit(battle: &mut Battle, target: Position, user: Position, move
+         ids::SHED_TAIL => {
+             let max_hp = mon(battle, target).max_hp() as u32;
+             direct_damage(battle, target, max_hp.div_ceil(2));
++            if let Some(mon) = battle.state.at_mut(user) {
++                mon.skip_before_switch_out = true;
++            }
+         }
+         ids::BLOCK | ids::MEAN_LOOK => {
+             return volatiles::add_volatile(battle, target, "trapped", Some(user), false) == Some(true);
+diff --git a/crates/pikapro/src/resolve/switching.rs b/crates/pikapro/src/resolve/switching.rs
+index 193d532..a5733b1 100644
+--- a/crates/pikapro/src/resolve/switching.rs
++++ b/crates/pikapro/src/resolve/switching.rs
+@@ -31,7 +31,7 @@ use pikapro_data::{MoveData, MoveId, StatBoosts};
+ 
+ use super::queue::MonRef;
+ use super::targeting::Targets;
+-use super::{boosts, switch_in};
++use super::{boosts, each_update, switch_in};
+ use crate::battle::Battle;
+ use crate::request::Request;
+ use crate::state::{MAX_ACTIVE, MAX_TEAM, Position, SideId, Status, SwitchFlag, Volatiles};
+@@ -232,10 +232,9 @@ pub(crate) fn make_switch_request(battle: &mut Battle) -> bool {
+         let reviving: [bool; MAX_ACTIVE] = core::array::from_fn(|slot| {
+             slot < filled && super::slots::reviving(battle, Position::new(side, slot as u8))
+         });
+-        let s = battle.state.side_mut(side);
+         let mut slots = [false; MAX_ACTIVE];
+         for (slot, flag) in slots.iter_mut().enumerate().take(filled) {
+-            let mon = &mut s.team[slot];
++            let mon = &mut battle.state.side_mut(side).team[slot];
+             if mon.switch_flag == SwitchFlag::None {
+                 continue;
+             }
+@@ -248,12 +247,14 @@ pub(crate) fn make_switch_request(battle: &mut Battle) -> bool {
+                 continue;
+             }
+             if mon.hp > 0 && !mon.skip_before_switch_out {
+-                // `runEvent('BeforeSwitchOut')`: only Dynamax and Pursuit
+-                // handle it, neither in Gen 9 or Champions; the
+-                // `faintMessages` after it has nothing left to report (the
+-                // action's were just run, and `Update` and `EmergencyExit`
+-                // faint no one).
+-                mon.skip_before_switch_out = true;
++                // Showdown's `runPursuitActivation`: there are no
++                // `BeforeSwitchOut` handlers in the supported formats,
++                // but the following Update still sorts tied active speeds
++                // and consumes a random draw before issuing the request.
++                each_update(battle);
++                let mon = &mut battle.state.side_mut(side).team[slot];
++                mon.skip_before_switch_out = mon.hp == 0 || mon.switch_flag != SwitchFlag::None;
++                *flag = mon.switch_flag != SwitchFlag::None;
+             }
+         }
+         if slots.iter().any(|&f| f) {
