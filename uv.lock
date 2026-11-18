@@ -662,12 +662,12 @@ wheels = [
 
 [[package]]
 name = "pikapro"
-version = "0.1.0+regmc.2"
-source = { path = "patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz" }
+version = "0.1.0+regmc.3"
+source = { path = "patches/pikapro/pikapro-0.1.0+regmc.3.tar.gz" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { hash = "sha256:8e8aa4ae94ea807a899d64f5be824dc912d48658d1a3992280fa71968f7964b9" }
+sdist = { hash = "sha256:0028b19732ccada4f298319251c19d8837d39ceaf11ac33615ea3fe1418c6510" }
 
 [package.metadata]
 requires-dist = [
@@ -757,7 +757,7 @@ train = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=3.24.0" },
-    { name = "pikapro", marker = "extra == 'replica'", path = "patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz" },
+    { name = "pikapro", marker = "extra == 'replica'", path = "patches/pikapro/pikapro-0.1.0+regmc.3.tar.gz" },
     { name = "poke-env", specifier = ">=0.15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },

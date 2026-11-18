@@ -2,7 +2,7 @@
 
 The local bot starts from scratch, picks its own four Pokémon and learns from wins, losses and draws. It plays the current version half the time. The other half, it draws an older version, giving more chances to opponents it has struggled against. A transformer (a model that compares the pieces of a position to one another) scores legal plays and estimates the final outcome. The training rule is proximal policy optimization, which limits how quickly updated move preferences depart from the ones that produced the games.
 
-The project uses a locally patched version of `pikapro` (`0.1.0+regmc.2`, built from the public Rust simulator `pikapro 0.1.0` identified by the author’s project). One run through the protocol bridge plays games sequentially. The original system collected decisions across 8,192 simultaneous battles. The model sees its side’s observation and the project’s Champions data. Games use 226 training teams from previously revealed team sheets. Human move choices and search are excluded from training. [Simulator](https://github.com/spedr/pikapro-engine) · [Author’s method and follow-up](https://www.smogon.com/forums/threads/mikumiku37-a-self-play-vgc-bot-reached-1-on-the-vgc-reg-m-c-ladder.3789199/)
+The project uses a locally patched version of `pikapro` (`0.1.0+regmc.3`, built from the public Rust simulator `pikapro 0.1.0` identified by the author’s project). One run through the protocol bridge plays games sequentially. The original system collected decisions across 8,192 simultaneous battles. The model sees its side’s observation and the project’s Champions data. Games use 226 training teams from previously revealed team sheets. Human move choices and search are excluded from training. [Simulator](https://github.com/spedr/pikapro-engine) · [Author’s method and follow-up](https://www.smogon.com/forums/threads/mikumiku37-a-self-play-vgc-bot-reached-1-on-the-vgc-reg-m-c-ladder.3789199/)
 
 ## Local transformer architecture
 
@@ -93,4 +93,17 @@ The saved 32-game model can play over the Showdown server connection. With the p
   --opponent-team data/selfplay/mc_sheet_pool_v2/team_005.packed.txt
 ```
 
-Add `--search` for the reduced lookahead check. Both modes completed full local server games. The fetched upstream check on November 18 found a later relevant change, `41ba4797f`, disabling Last Resort when unavailable. The project’s public learned-player release path also expects a different saved-model format and approved release evidence. The local checks establish compatibility with the specified local server.
+Add `--search` for the reduced lookahead check. Both modes completed full local server games.
+
+### Upstream Reg M-C Last Resort fix and ladder runner support
+
+- Showdown was synced to `5b88c4761` (including `41ba4797f`, which disables Last Resort in Champions until all other move slots have been used) and all three readiness gates passed.
+- `patches/pikapro/0003-champions-disable-last-resort.patch` adds the matching Champions `onDisableMove` rule to `pikapro`, packaged as `pikapro 0.1.0+regmc.3`. Both engines match on a dedicated Last Resort test and 100/100 full-game parity checks (`runs/replica_parity_20261118/regmc3_100.json`).
+- `ladder/run_ladder.py` now supports `--policy-mode replica` (plain neural policy + neural preview) and `--policy-mode replica-search` (neural policy + one-turn sampled-world lookahead) for both `--local-smoke` and public ladder play (with all four readiness and Showdown-parity gates still enforced):
+
+```sh
+.venv/bin/python ladder/run_ladder.py --local-smoke --n 1 \
+  --team data/selfplay/mc_sheet_pool_v2/team_003.packed.txt \
+  --policy-checkpoint runs/replication_8m7_37101/policy_0000032.pt \
+  --policy-mode replica
+```

@@ -22,11 +22,11 @@ llm = [
     "openai>=3.24.0",
 ]
 replica = [
-    "pikapro==0.1.0+regmc.2",
+    "pikapro==0.1.0+regmc.3",
 ]
 
 [tool.uv.sources]
-pikapro = { path = "patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz" }
+pikapro = { path = "patches/pikapro/pikapro-0.1.0+regmc.3.tar.gz" }
 
 [tool.ruff]
 line-length = 100

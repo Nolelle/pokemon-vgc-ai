@@ -200,9 +200,13 @@ class LadderPlayer(VgcPlayer):
         }
         learned_checkpoint = getattr(self, "learned_checkpoint_path", None)
         if learned_checkpoint is not None:
-            record["policy"] = (
-                "learned-hybrid" if getattr(self, "hybrid_mode", False) else "learned"
-            )
+            replica_mode = getattr(self, "replica_mode", None)
+            if replica_mode is not None:
+                record["policy"] = replica_mode
+            else:
+                record["policy"] = (
+                    "learned-hybrid" if getattr(self, "hybrid_mode", False) else "learned"
+                )
             record["checkpoint_path"] = str(learned_checkpoint.resolve())
             record["checkpoint_sha256"] = self.learned_checkpoint_sha256
         if battle.lost:
@@ -228,6 +232,11 @@ def _make_session_player(
     device: str,
     policy_mode: str = "deterministic",
     safety_slots: int = 4,
+    replica_worlds: int = 4,
+    replica_actions: int = 4,
+    replica_seeds: int = 2,
+    replica_iterations: int = 400,
+    replica_seed: int = 1,
     **player_kwargs,
 ) -> LadderPlayer:
     """Construct the heuristic logger or an explicitly selected learned logger.
@@ -236,15 +245,89 @@ def _make_session_player(
     optional training dependency installed. ``policy_mode="hybrid"`` swaps WHO picks
     the search shortlist (neural ranking inside the deployed safety-slot selector)
     while search still chooses every move -- see `vgc.rl.guided_selection`.
+    ``policy_mode="replica"`` and ``"replica-search"`` run the from-scratch
+    replication transformer (`vgc.rl.replication_policy.ReplicationPolicy`), with or
+    without one-turn sampled-world lookahead search.
     """
 
-    if policy_mode not in ("deterministic", "hybrid"):
+    if policy_mode not in ("deterministic", "hybrid", "replica", "replica-search"):
         raise ValueError(f"unknown policy_mode {policy_mode!r}")
-    if policy_mode == "hybrid" and checkpoint_path is None:
-        raise ValueError("policy_mode='hybrid' requires a policy checkpoint")
+    if policy_mode in ("hybrid", "replica", "replica-search") and checkpoint_path is None:
+        raise ValueError(f"policy_mode={policy_mode!r} requires a policy checkpoint")
 
     if checkpoint_path is None:
         return LadderPlayer(**player_kwargs)
+
+    if policy_mode in ("replica", "replica-search"):
+        import numpy as np
+
+        from vgc.actions import enumerate_joint_orders
+        from vgc.rl.env import choice_string
+        from vgc.rl.replication_policy import load_replication_policy
+
+        use_search = policy_mode == "replica-search"
+
+        class ReplicaLadderPlayer(LadderPlayer):
+            def __init__(self, *, replica_checkpoint: Path, replica_device: str, **kwargs) -> None:
+                self.learned_checkpoint_path = replica_checkpoint
+                self.learned_checkpoint_sha256 = checkpoint_sha256(replica_checkpoint)
+                self.replica_mode = policy_mode
+                self.packed_team = str(kwargs["team"])
+                self.policy = load_replication_policy(replica_checkpoint, device=replica_device)
+                self.use_replica_search = use_search
+                self.replica_rng = np.random.default_rng(replica_seed)
+                super().__init__(**kwargs)
+
+            def decide_teampreview(self, battle: AbstractBattle) -> str:
+                order = self.policy.choose_preview(battle)
+                prefix, slots = order.split()
+                request = battle.last_request or {}
+                team_size = len((request.get("side") or {}).get("pokemon", []))
+                max_chosen = int(request.get("maxChosenTeamSize", 4))
+                if (
+                    prefix != "/team"
+                    or len(slots) != max_chosen
+                    or len(set(slots)) != len(slots)
+                    or any(not 1 <= int(slot) <= team_size for slot in slots)
+                ):
+                    raise ValueError(f"replication model selected an illegal preview: {order}")
+                return order
+
+            def decide(self, battle: AbstractBattle):
+                legal = enumerate_joint_orders(battle)
+                if not legal:
+                    raise ValueError("Showdown request has no enumerated legal orders")
+                if self.use_replica_search:
+                    from offline.replica_search_probe import search_public_decision
+
+                    result, _ = search_public_decision(
+                        battle,
+                        self.packed_team,
+                        self.policy,
+                        worlds=replica_worlds,
+                        actions=replica_actions,
+                        seeds=replica_seeds,
+                        iterations=replica_iterations,
+                        seed=int(self.replica_rng.integers(0, 2**31)),
+                    )
+                    chosen = result.actions[int(np.argmax(result.probabilities))]
+                else:
+                    logits, _ = self.policy.score(battle, legal)
+                    if len(logits) != len(legal) or not np.isfinite(logits).all():
+                        raise ValueError("replication model returned invalid order scores")
+                    chosen = legal[int(np.argmax(logits))]
+                wire = choice_string(chosen)
+                if wire not in {choice_string(order) for order in legal}:
+                    raise ValueError(
+                        f"replication model selected an order absent from request: {wire}"
+                    )
+                return chosen
+
+        return ReplicaLadderPlayer(
+            replica_checkpoint=checkpoint_path,
+            replica_device=device,
+            **player_kwargs,
+        )
 
     from vgc.rl.opponents import load_snapshot
 
@@ -534,6 +617,11 @@ async def run_local_smoke(
     timeout_seconds: float = 60.0,
     policy_mode: str = "deterministic",
     safety_slots: int = 4,
+    replica_worlds: int = 4,
+    replica_actions: int = 4,
+    replica_seeds: int = 2,
+    replica_iterations: int = 400,
+    replica_seed: int = 1,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
@@ -544,6 +632,11 @@ async def run_local_smoke(
         device=device,
         policy_mode=policy_mode,
         safety_slots=safety_slots,
+        replica_worlds=replica_worlds,
+        replica_actions=replica_actions,
+        replica_seeds=replica_seeds,
+        replica_iterations=replica_iterations,
+        replica_seed=replica_seed,
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
@@ -587,6 +680,11 @@ async def run_live_session(
     device: str = "cpu",
     policy_mode: str = "deterministic",
     safety_slots: int = 4,
+    replica_worlds: int = 4,
+    replica_actions: int = 4,
+    replica_seeds: int = 2,
+    replica_iterations: int = 400,
+    replica_seed: int = 1,
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
@@ -607,6 +705,11 @@ async def run_live_session(
                     device=device,
                     policy_mode=policy_mode,
                     safety_slots=safety_slots,
+                    replica_worlds=replica_worlds,
+                    replica_actions=replica_actions,
+                    replica_seeds=replica_seeds,
+                    replica_iterations=replica_iterations,
+                    replica_seed=replica_seed,
                     artifacts_dir=artifacts_dir,
                     log_path=log_path,
                     session_id=session_id,
@@ -794,12 +897,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy-mode",
-        choices=("deterministic", "hybrid"),
+        choices=("deterministic", "hybrid", "replica", "replica-search"),
         default="deterministic",
         help=(
-            "with --policy-checkpoint: 'deterministic' plays the network's argmax; "
-            "'hybrid' keeps the exchange search as the decider but lets the network "
-            "pick which candidates enter the safety-slotted shortlist"
+            "with --policy-checkpoint: 'deterministic' plays the legacy network's argmax; "
+            "'hybrid' keeps exchange search with neural shortlist guidance; 'replica' runs "
+            "the from-scratch replication transformer directly; 'replica-search' adds "
+            "one-turn sampled-world lookahead search"
         ),
     )
     parser.add_argument(
@@ -807,6 +911,36 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4,
         help="hybrid mode only: heuristic-reserved slots inside the shortlist budget",
+    )
+    parser.add_argument(
+        "--replica-worlds",
+        type=int,
+        default=4,
+        help="replica-search mode only: sampled hidden-information worlds per decision",
+    )
+    parser.add_argument(
+        "--replica-actions",
+        type=int,
+        default=4,
+        help="replica-search mode only: top candidate actions per side in lookahead",
+    )
+    parser.add_argument(
+        "--replica-seeds",
+        type=int,
+        default=2,
+        help="replica-search mode only: RNG rollouts per action pairing",
+    )
+    parser.add_argument(
+        "--replica-iterations",
+        type=int,
+        default=400,
+        help="replica-search mode only: game-solver iterations per decision",
+    )
+    parser.add_argument(
+        "--replica-seed",
+        type=int,
+        default=1,
+        help="replica-search mode only: base RNG seed for world sampling",
     )
     parser.add_argument("--device", default="cpu", help="learned-policy inference device")
     parser.add_argument(
@@ -838,10 +972,10 @@ def main() -> int:
     config = session_config(args.search, args.bc, args.value, args.horizon, args.exact_judge, args.llm_preview)
     if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
         raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
-    if args.policy_mode == "hybrid" and args.policy_checkpoint is None:
-        raise SystemExit("--policy-mode hybrid requires --policy-checkpoint")
+    if args.policy_mode in ("hybrid", "replica", "replica-search") and args.policy_checkpoint is None:
+        raise SystemExit(f"--policy-mode {args.policy_mode} requires --policy-checkpoint")
     selected_policy = (
-        f"learned checkpoint {args.policy_checkpoint}"
+        f"{args.policy_mode} checkpoint {args.policy_checkpoint}"
         if args.policy_checkpoint is not None
         else policy_label(config)
     )
@@ -860,6 +994,11 @@ def main() -> int:
                 device=args.device,
                 policy_mode=args.policy_mode,
                 safety_slots=args.safety_slots,
+                replica_worlds=args.replica_worlds,
+                replica_actions=args.replica_actions,
+                replica_seeds=args.replica_seeds,
+                replica_iterations=args.replica_iterations,
+                replica_seed=args.replica_seed,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -871,29 +1010,35 @@ def main() -> int:
         enforce_action_gate_for_cli("public ladder play")
         enforce_showdown_parity_for_cli("public ladder play")
         if args.policy_checkpoint is not None:
-            if args.policy_mode != "hybrid":
-                raise SystemExit(
-                    "public ladder play with a learned checkpoint requires --policy-mode hybrid "
-                    "and --model-release"
-                )
-            import torch
+            if args.policy_mode in ("replica", "replica-search"):
+                from vgc.rl.replication_policy import load_replication_policy
 
-            checkpoint_payload = torch.load(
-                args.policy_checkpoint, map_location="cpu", weights_only=False
-            )
-            if checkpoint_payload.get("use_mechanics_features") is not True:
-                raise SystemExit(
-                    "public ladder play requires a checkpoint trained with the complete "
-                    "mechanics input"
-                )
-            from vgc.model_release import enforce_model_release_for_cli
+                # Fail closed if the checkpoint version or Champions vocabulary mismatches.
+                load_replication_policy(args.policy_checkpoint, device="cpu")
+            else:
+                if args.policy_mode != "hybrid":
+                    raise SystemExit(
+                        "public ladder play with a learned checkpoint requires --policy-mode "
+                        "hybrid (with --model-release) or --policy-mode replica/replica-search"
+                    )
+                import torch
 
-            enforce_model_release_for_cli(
-                args.model_release,
-                args.policy_checkpoint,
-                config,
-                safety_slots=args.safety_slots,
-            )
+                checkpoint_payload = torch.load(
+                    args.policy_checkpoint, map_location="cpu", weights_only=False
+                )
+                if checkpoint_payload.get("use_mechanics_features") is not True:
+                    raise SystemExit(
+                        "public ladder play requires a checkpoint trained with the complete "
+                        "mechanics input"
+                    )
+                from vgc.model_release import enforce_model_release_for_cli
+
+                enforce_model_release_for_cli(
+                    args.model_release,
+                    args.policy_checkpoint,
+                    config,
+                    safety_slots=args.safety_slots,
+                )
         credentials = load_credentials(args.credentials_file)
         records = asyncio.run(
             run_live_session(
@@ -907,6 +1052,11 @@ def main() -> int:
                 device=args.device,
                 policy_mode=args.policy_mode,
                 safety_slots=args.safety_slots,
+                replica_worlds=args.replica_worlds,
+                replica_actions=args.replica_actions,
+                replica_seeds=args.replica_seeds,
+                replica_iterations=args.replica_iterations,
+                replica_seed=args.replica_seed,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )

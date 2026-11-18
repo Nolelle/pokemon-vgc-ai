@@ -113,6 +113,37 @@ def test_tyranitar_survives_high_horsepower_after_two_uturn_switches():
             assert game.request_state == "move", label
 
 
+def test_champions_disables_last_resort_until_other_moves_used(engine_teams):
+    first, second = engine_teams
+    eevee = "Eevee||SilkScarf|Adaptability|Protect,LastResort|Jolly|2,32,,,,32|M|||50|"
+    p1_team = "]".join([eevee, *first.split("]")[1:]])
+    with SimWorker(DEFAULT_SHOWDOWN_REPO) as official, ReplicaRustWorker() as rust:
+        for label, worker in (("Showdown", official), ("Rust", rust)):
+            game = DirectBattle.start(worker, "replica-lastresort", p1_team, second, seed=[1, 2, 3, 4])
+            game.step({"p1": "team 1234", "p2": "team 1234"})
+            turn1_moves = {
+                entry["id"]: entry.get("disabled", False)
+                for entry in game.battles["p1"].last_request["active"][0]["moves"]
+            }
+            assert turn1_moves["lastresort"] is True, label
+            assert turn1_moves["protect"] is False, label
+
+            # After using Protect (the only other move), Last Resort becomes legal.
+            p1_choice = next(
+                choice_string(order)
+                for order in enumerate_joint_orders(game.battles["p1"])
+                if choice_string(order).startswith("move protect,")
+            )
+            p2_choice = choice_string(enumerate_joint_orders(game.battles["p2"])[0])
+            game.step({"p1": p1_choice, "p2": p2_choice})
+            assert not game.ended and game.request_state == "move", label
+            turn2_moves = {
+                entry["id"]: entry.get("disabled", False)
+                for entry in game.battles["p1"].last_request["active"][0]["moves"]
+            }
+            assert turn2_moves["lastresort"] is False, label
+
+
 def _visible_info(game, side):
     view = game.battles[side]
     return [

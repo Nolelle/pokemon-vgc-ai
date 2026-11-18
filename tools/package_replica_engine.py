@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_SHA256 = "a1d4be6eec408e8ec1d8540a85178d8efddd0a207865278f5c5d3c119e1722c0"
-VERSION = "0.1.0+regmc.2"
+VERSION = "0.1.0+regmc.3"
 
 
 def change_once(path, old, new):

@@ -790,3 +790,11 @@
 - Verified 600/600 parity vs pinned Showdown `7e743761c` (`runs/replica_parity_20261118/{original_after,holdout_after,new_training_teams}.json`: 100/100, 200/200, 300/300), 8/8 unit tests pass, and `offline/replica_live_smoke.py` completes full local Showdown games with and without search.
 - Confirmed both bugs are still present on upstream `spedr/pikapro-engine` `main` (`2611ea9`) with no open issues for them.
 - Next: sync Showdown for upstream Reg M-C Last Resort fix (`41ba4797f`) + check pikapro parity, then wire public ladder runner to the replication transformer architecture.
+
+## 2026-11-18 – Upstream issue, Showdown 5b88c4761 sync, pikapro 0.1.0+regmc.3, and ladder runner support
+- Opened upstream issue https://github.com/spedr/pikapro-engine/issues/2 documenting both switching.rs RNG-order bugs and patches.
+- Stashed unrelated Nov 13–17 uncommitted files (`wip: nov13-17 prereg and floette preview trial`), synced Showdown to `5b88c4761` (`cb4f3baa1`, adding Champions `lastresort` `onDisableMove` from `41ba4797f`), and passed all 3 readiness gates.
+- Added `patches/pikapro/0003-champions-disable-last-resort.patch`, packaged and installed `pikapro 0.1.0+regmc.3`, and verified both a dedicated Last Resort test and 100/100 full-game parity vs Showdown `5b88c4761` (`runs/replica_parity_20261118/regmc3_100.json`).
+- Updated `ladder/run_ladder.py` with `--policy-mode replica` and `--policy-mode replica-search` (plus search budget flags) for both `--local-smoke` and public ladder play (keeping all 4 readiness/parity gates and vocabulary validation).
+- Tests: 42/42 passed (`test_replica_engine.py`, `test_replica_search.py`, `test_replication_policy.py`, `test_ladder.py`); Ruff clean.
+- Next: scale up RL PPO training of the replication transformer on `pikapro 0.1.0+regmc.3`, then test on local smoke and public ladder.
