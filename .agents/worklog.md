@@ -808,3 +808,11 @@
   - Periodic paired held-out baseline evaluation (`--eval-every`, `--eval-games`, `--eval-opponents`, default `maxpower,heuristic`).
   - Optional Weights & Biases logging (`--wandb-project`, `--wandb-run-name`, `--wandb-entity`, `--wandb-mode`).
 - Next: refresh readiness gates on clean commit, run parallel + resume + W&B smoke verification, then start main PPO training.
+
+## 2026-11-19 – Upgraded to official PyPI pikapro 0.2.0 and Phase 2/3 PPO runs
+- `spedr/pikapro-engine#2` was fixed and closed upstream in `pikapro 0.2.0` (commit `0bfff72`, released on PyPI).
+- Switched `pyproject.toml` `replica` extra to official `pikapro>=0.2.0`, removed local `patches/pikapro/` tarball and `tools/package_replica_engine.py`, and synced `.venv`.
+- Verified `pikapro 0.2.0` against Showdown `5b88c4761`: 42/42 unit tests pass (including Last Resort and Tyranitar speed-tie) and 100/100 full-game parity matches.
+- Phase 2 bake-off (`desktop` mode, 2,048 games): Medium (`width=128, L=4`, 1.16M params) beat Full (`width=268, L=12`, 8.69M params) on speed (112s vs 331s), stability (`approx_kl` 0.027 vs 0.148), and maxpower win rate (45% vs 36%).
+- Phase 3 (`afk` mode, 20,000 games, `runs/replica_m128_l4_37101`, W&B `x41s0ucp`): completed in 10.3 min (~25–30 g/s); held-out win rates climbed to ~60% vs `maxpower` (peak 75%) and ~40% vs `heuristic` (peak 57.5% at game 13,824), then plateaued as `approx_kl` rose to 0.081 at `lr=3e-4`, `games_per_update=64`.
+- Next: Phase 3b (resume with `lr=1e-4`, `games_per_update=256`) or Phase 4 local Showdown lookahead test.
