@@ -468,6 +468,8 @@ def train(args):
             )
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
+        for group in optimizer.param_groups:
+            group["lr"] = args.learning_rate
         rng.setstate(state["rng_state"])
         torch.set_rng_state(state["torch_rng_state"])
         completed = int(state["completed"])
