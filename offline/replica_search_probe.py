@@ -62,13 +62,23 @@ def resolve_rejected_choices(clone, choices, select, *, max_retries=8):
 
 
 def search_public_decision(
-    battle, packed_team, policy, *, worlds=16, actions=8, seeds=4, iterations=20000, seed=1
+    battle,
+    packed_team,
+    policy,
+    *,
+    worlds=16,
+    actions=8,
+    seeds=4,
+    iterations=20000,
+    seed=1,
+    mirror=None,
 ):
     """Search one player-view decision and return original legal orders and statistics.
 
     The mirror guesses hidden information using only this player's observation and
     team. Network calls see only the appropriate player's parsed observation, never
     the simulator object. A forced-switch request may require only one player's input.
+    Pass a reusable ``mirror`` to avoid spawning a new worker on every turn.
     """
     if not 1 <= worlds <= 16 or not 1 <= actions <= 8 or seeds < 1:
         raise ValueError("worlds/actions/seeds must be within 1..16/1..8/positive")
@@ -87,9 +97,10 @@ def search_public_decision(
         for key in ("_vgc_direct_root", "_vgc_direct_side")
         if key in vars(battle)
     }
-    mirror = None
+    owns_mirror = mirror is None
     try:
-        mirror = LiveExactMirror(packed_team, config)
+        if owns_mirror:
+            mirror = LiveExactMirror(packed_team, config)
         hypotheses = mirror.hypotheses(battle)
         sampled = []
         for hypothesis in hypotheses:
@@ -117,10 +128,11 @@ def search_public_decision(
 
         def matrix(root, our_orders, opponent_orders):
             nonlocal retry_count
-            result = np.empty((len(our_orders), len(opponent_orders)))
+            cells = [[[] for _ in opponent_orders] for _ in our_orders]
+            pending_positions = []
+            pending_battles = []
             for i, our_order in enumerate(our_orders):
                 for j, opponent_order in enumerate(opponent_orders):
-                    scores = []
                     for future_seed in future_seeds:
                         clone = root.clone(f"replica-probe-{next(counter)}", seed=future_seed)
                         try:
@@ -148,15 +160,26 @@ def search_public_decision(
                                     "one-turn search exceeded eight replacement requests"
                                 )
                             if clone.ended:
-                                value = clone.outcome(side)
+                                cells[i][j].append(clone.outcome(side))
                             else:
-                                value = float(policy.value(clone.battles[side]))
-                                if not np.isfinite(value):
-                                    raise ValueError("network returned a non-finite value")
-                            scores.append(value)
+                                pending_positions.append((i, j))
+                                pending_battles.append(clone.battles[side])
                         finally:
                             clone.close()
-                    result[i, j] = np.mean(scores)
+            if pending_battles:
+                batch_values = (
+                    policy.values(pending_battles)
+                    if hasattr(policy, "values")
+                    else [float(policy.value(b)) for b in pending_battles]
+                )
+                for (i, j), value in zip(pending_positions, batch_values, strict=True):
+                    if not np.isfinite(value):
+                        raise ValueError("network returned a non-finite value")
+                    cells[i][j].append(float(value))
+            result = np.empty((len(our_orders), len(opponent_orders)))
+            for i in range(len(our_orders)):
+                for j in range(len(opponent_orders)):
+                    result[i, j] = float(np.mean(cells[i][j]))
             return result
 
         result = search_sampled_worlds(
@@ -173,97 +196,111 @@ def search_public_decision(
     finally:
         for root in roots:
             root.close()
-        if mirror is not None:
+        if owns_mirror and mirror is not None:
             mirror.close()
         vars(battle).update(private)
 
 
 def paired_match(policy, team, opponent_team, *, pairs, worlds, actions, seeds, iterations, seed):
-    """Play seat-swapped local pairs with identical weights and fixed team assignments."""
+    """Play seat-swapped local pairs on pikapro with reusable search mirrors."""
+    from vgc.rl.replica_engine import ReplicaRustWorker
+
+    config = dataclasses.replace(PolicyConfig(), exact_search_total_hypotheses=worlds)
+    mirrors = {
+        "p1": LiveExactMirror(team, config),
+        "p2": LiveExactMirror(opponent_team, config),
+    }
     outcomes = []
-    for pair in range(pairs):
-        sim_rng = np.random.default_rng(seed + pair)
-        sim_seed = tuple(map(int, sim_rng.integers(0, 2**16, size=4)))
-        for search_side in ("p1", "p2"):
-            teams = {"p1": team, "p2": opponent_team}
-            policy_rng = np.random.default_rng(seed + pair)
-            counters = {
-                "search_decisions": 0,
-                "actual_worlds": 0,
-                "rejected_choice_retries": 0,
-                "errors": 0,
-            }
-            with SimWorker() as worker:
-                battle = DirectBattle.start(
-                    worker,
-                    f"replica-pair-{pair}-{search_side}",
-                    teams["p1"],
-                    teams["p2"],
-                    seed=sim_seed,
-                )
-                try:
-                    decisions = 0
-                    while not battle.ended:
-                        choices = {}
-                        for side in battle.sides_to_move():
-                            view = battle.battles[side]
-                            if view.teampreview:
-                                choices[side] = choice_string(policy.choose_preview(view))
-                            elif side == search_side:
-                                result, audit = search_public_decision(
-                                    view,
-                                    teams[side],
-                                    policy,
-                                    worlds=worlds,
-                                    actions=actions,
-                                    seeds=seeds,
-                                    iterations=iterations,
-                                    seed=int(policy_rng.integers(0, 2**31)),
-                                )
-                                selected = int(
-                                    policy_rng.choice(len(result.actions), p=result.probabilities)
-                                )
-                                choices[side] = choice_string(result.actions[selected])
-                                counters["search_decisions"] += 1
-                                counters["actual_worlds"] += audit["searched"]
-                                counters["rejected_choice_retries"] += audit[
-                                    "rejected_choice_retries"
-                                ]
-                            else:
-                                legal = enumerate_joint_orders(view)
-                                if not legal:
-                                    raise ValueError("plain policy has no legal joint choices")
-                                logits, _ = policy.score(view, legal)
-                                choices[side] = choice_string(legal[int(np.argmax(logits))])
-                        battle.step(choices)
-                        decisions += 1
-                        if decisions > 1000:
-                            raise RuntimeError("local game exceeded 1000 decisions")
-                    outcomes.append(
-                        {
-                            "pair": pair,
-                            "search_side": search_side,
-                            "sim_seed": sim_seed,
-                            "outcome": battle.outcome(search_side),
-                            "decisions": decisions,
-                            **counters,
-                        }
+    try:
+        with ReplicaRustWorker() as worker:
+            for pair in range(pairs):
+                sim_rng = np.random.default_rng(seed + pair)
+                sim_seed = tuple(map(int, sim_rng.integers(0, 2**16, size=4)))
+                for search_side in ("p1", "p2"):
+                    teams = {"p1": team, "p2": opponent_team}
+                    policy_rng = np.random.default_rng(seed + pair)
+                    counters = {
+                        "search_decisions": 0,
+                        "actual_worlds": 0,
+                        "rejected_choice_retries": 0,
+                        "errors": 0,
+                    }
+                    battle = DirectBattle.start(
+                        worker,
+                        f"replica-pair-{pair}-{search_side}",
+                        teams["p1"],
+                        teams["p2"],
+                        seed=sim_seed,
                     )
-                except Exception as exc:
-                    counters["errors"] += 1
-                    outcomes.append(
-                        {
-                            "pair": pair,
-                            "search_side": search_side,
-                            "sim_seed": sim_seed,
-                            "outcome": None,
-                            "decisions": decisions,
-                            "error": str(exc),
-                            **counters,
-                        }
-                    )
-                finally:
-                    battle.close()
+                    try:
+                        decisions = 0
+                        while not battle.ended:
+                            choices = {}
+                            for side in battle.sides_to_move():
+                                view = battle.battles[side]
+                                if view.teampreview:
+                                    choices[side] = choice_string(policy.choose_preview(view))
+                                elif side == search_side:
+                                    result, audit = search_public_decision(
+                                        view,
+                                        teams[side],
+                                        policy,
+                                        worlds=worlds,
+                                        actions=actions,
+                                        seeds=seeds,
+                                        iterations=iterations,
+                                        seed=int(policy_rng.integers(0, 2**31)),
+                                        mirror=mirrors[side],
+                                    )
+                                    selected = int(
+                                        policy_rng.choice(
+                                            len(result.actions), p=result.probabilities
+                                        )
+                                    )
+                                    choices[side] = choice_string(result.actions[selected])
+                                    counters["search_decisions"] += 1
+                                    counters["actual_worlds"] += audit["searched"]
+                                    counters["rejected_choice_retries"] += audit[
+                                        "rejected_choice_retries"
+                                    ]
+                                else:
+                                    legal = enumerate_joint_orders(view)
+                                    if not legal:
+                                        raise ValueError("plain policy has no legal joint choices")
+                                    logits, _ = policy.score(view, legal)
+                                    choices[side] = choice_string(legal[int(np.argmax(logits))])
+                            battle.step(choices)
+                            decisions += 1
+                            if decisions > 1000:
+                                raise RuntimeError("local game exceeded 1000 decisions")
+                        outcomes.append(
+                            {
+                                "pair": pair,
+                                "search_side": search_side,
+                                "sim_seed": sim_seed,
+                                "outcome": battle.outcome(search_side),
+                                "decisions": decisions,
+                                **counters,
+                            }
+                        )
+                    except Exception as exc:
+                        counters["errors"] += 1
+                        outcomes.append(
+                            {
+                                "pair": pair,
+                                "search_side": search_side,
+                                "sim_seed": sim_seed,
+                                "outcome": None,
+                                "decisions": decisions,
+                                "error": str(exc),
+                                **counters,
+                            }
+                        )
+                    finally:
+                        battle.close()
+    finally:
+        for mirror in mirrors.values():
+            mirror.close()
     return outcomes
 
 

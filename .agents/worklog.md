@@ -816,3 +816,11 @@
 - Phase 2 bake-off (`desktop` mode, 2,048 games): Medium (`width=128, L=4`, 1.16M params) beat Full (`width=268, L=12`, 8.69M params) on speed (112s vs 331s), stability (`approx_kl` 0.027 vs 0.148), and maxpower win rate (45% vs 36%).
 - Phase 3 (`afk` mode, 20,000 games, `runs/replica_m128_l4_37101`, W&B `x41s0ucp`): completed in 10.3 min (~25–30 g/s); held-out win rates climbed to ~60% vs `maxpower` (peak 75%) and ~40% vs `heuristic` (peak 57.5% at game 13,824), then plateaued as `approx_kl` rose to 0.081 at `lr=3e-4`, `games_per_update=64`.
 - Next: Phase 3b (resume with `lr=1e-4`, `games_per_update=256`) or Phase 4 local Showdown lookahead test.
+
+## 2026-11-20 – 500k-game PPO run, search speedup, and 17/20 (85%) A/B win for lookahead
+- Completed Phase 3b (20k -> 60k, `desktop`, `lr=1e-4`, `gpu=256`), Phase 3c (60k -> 150k, `afk`, `lr=5e-5`), and Phase 3d (150k -> 500k, `afk`, `lr=2e-5`, `gpu=512`) on `runs/replica_m128_l4_37101` (W&B `x41s0ucp`, `pikapro 0.2.0`).
+- Held-out progression (plain neural, zero search): `heuristic` 21.9% -> 63.1% avg (final 70.0%, peak 80.0%); `vgc` (2-ply search) 26.4% -> 36.8% avg (final 40.0%, peak 50.0% at 444,912); value accuracy 53.4% -> 72.6% avg (peak 75.7%).
+- Phase 4 local Showdown smoke (`ladder/run_ladder.py --local-smoke`): 0 fallbacks, 0 errors for both `replica` and `replica-search`.
+- Upgraded `replica-search` (`src/vgc/rl/replication_policy.py`, `offline/replica_search_probe.py`, `ladder/run_ladder.py`): persistent reusable `LiveExactMirror`, batched `policy.values(...)` leaf scoring, mixed-strategy sampling in `ReplicaLadderPlayer`, and `ReplicaRustWorker` (`pikapro 0.2.0`) for `paired_match`.
+- 20-game paired A/B (`policy_0500000.pt`, unseen `team_003` vs `team_005`, `4w x 4a x 2s`, `runs/phase4_smoke/ab_search_vs_plain_20.json`): `replica-search` beat plain `replica` **17–3 (85.0%)** (10/10 as p1, 7/10 as p2), 0 errors, ~0.7s/turn (~95s total for 134 search decisions).
+- Next: refresh readiness gates if needed and test `replica-search` against `vgc` or a small public Reg M-C ladder session.

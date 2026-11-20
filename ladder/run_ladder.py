@@ -276,7 +276,23 @@ def _make_session_player(
                 self.policy = load_replication_policy(replica_checkpoint, device=replica_device)
                 self.use_replica_search = use_search
                 self.replica_rng = np.random.default_rng(replica_seed)
+                self._replica_mirror = None
                 super().__init__(**kwargs)
+
+            def _get_replica_mirror(self):
+                if self._replica_mirror is None:
+                    from vgc.rl.live_mirror import LiveExactMirror
+
+                    mirror_config = replace(
+                        PolicyConfig(), exact_search_total_hypotheses=replica_worlds
+                    )
+                    self._replica_mirror = LiveExactMirror(self.packed_team, mirror_config)
+                return self._replica_mirror
+
+            def close_replica_mirror(self) -> None:
+                if self._replica_mirror is not None:
+                    self._replica_mirror.close()
+                    self._replica_mirror = None
 
             def decide_teampreview(self, battle: AbstractBattle) -> str:
                 order = self.policy.choose_preview(battle)
@@ -309,8 +325,12 @@ def _make_session_player(
                         seeds=replica_seeds,
                         iterations=replica_iterations,
                         seed=int(self.replica_rng.integers(0, 2**31)),
+                        mirror=self._get_replica_mirror(),
                     )
-                    chosen = result.actions[int(np.argmax(result.probabilities))]
+                    selected = int(
+                        self.replica_rng.choice(len(result.actions), p=result.probabilities)
+                    )
+                    chosen = result.actions[selected]
                 else:
                     logits, _ = self.policy.score(battle, legal)
                     if len(logits) != len(legal) or not np.isfinite(logits).all():
@@ -408,6 +428,10 @@ async def _safe_stop_listening(player: Player, timeout_seconds: float = 15.0) ->
     don't care, we're discarding this client regardless, so swallow (and log) any
     failure here rather than let it propagate and abort session-level retry logic.
     """
+    close_mirror = getattr(player, "close_replica_mirror", None)
+    if close_mirror is not None:
+        with suppress(Exception):
+            close_mirror()
     try:
         await asyncio.wait_for(player.ps_client.stop_listening(), timeout=timeout_seconds)
     except Exception:  # noqa: BLE001 - teardown of a dead client must never propagate

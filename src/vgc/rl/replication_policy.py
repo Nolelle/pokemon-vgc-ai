@@ -334,6 +334,13 @@ class ReplicationPolicy(nn.Module):
         return float(value.item())
 
     @torch.no_grad()
+    def values(self, battles):
+        if not battles:
+            return []
+        _, values = self(*stack_decisions([encode_decision(b) for b in battles], self.device))
+        return [float(v) for v in values.cpu().tolist()]
+
+    @torch.no_grad()
     def choose_preview(self, battle):
         state = encode_decision(battle, preview=True)
         logits, _ = self(*stack_decisions([state], self.device), preview=True)
