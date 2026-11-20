@@ -6,6 +6,7 @@ import argparse
 import atexit
 import copy
 import json
+import math
 import multiprocessing
 import os
 import random
@@ -68,6 +69,23 @@ def resolve_profile(
         threads if threads is not None else default_threads,
         nice,
     )
+
+
+def scheduled_lr(
+    completed: int,
+    total_games: int,
+    *,
+    max_lr: float,
+    min_lr: float,
+    schedule: str,
+) -> float:
+    """Compute the learning rate for the current game count."""
+    if schedule == "constant":
+        return max_lr
+    if schedule == "cosine":
+        progress = min(max(completed / max(total_games, 1), 0.0), 1.0)
+        return min_lr + 0.5 * (max_lr - min_lr) * (1.0 + math.cos(math.pi * progress))
+    raise ValueError(f"unknown lr_schedule {schedule!r}")
 
 
 @dataclass(frozen=True)
@@ -646,6 +664,16 @@ def train(args):
                     else None
                 )
 
+                current_lr = scheduled_lr(
+                    completed,
+                    args.games,
+                    max_lr=args.learning_rate,
+                    min_lr=args.min_learning_rate,
+                    schedule=args.lr_schedule,
+                )
+                for group in optimizer.param_groups:
+                    group["lr"] = current_lr
+
                 ppo = update_policy_with_metrics(
                     model,
                     optimizer,
@@ -714,6 +742,7 @@ def train(args):
                     "value_loss": ppo["value_loss"],
                     "entropy": ppo["entropy"],
                     "approx_kl": ppo["approx_kl"],
+                    "learning_rate": current_lr,
                     "value_accuracy": round(value_accuracy, 4)
                     if value_accuracy is not None
                     else None,
@@ -734,6 +763,7 @@ def train(args):
                         "train/value_loss": ppo["value_loss"],
                         "train/entropy": ppo["entropy"],
                         "train/approx_kl": ppo["approx_kl"],
+                        "train/learning_rate": current_lr,
                         "train/mean_turns": mean_turns / games,
                         "perf/games_per_sec": games / step_elapsed,
                         "perf/decisions_per_sec": len(samples) / step_elapsed,
@@ -798,6 +828,18 @@ def main():
     parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument(
+        "--lr-schedule",
+        choices=("constant", "cosine"),
+        default="constant",
+        help="learning-rate schedule across total --games (default: constant)",
+    )
+    parser.add_argument(
+        "--min-learning-rate",
+        type=float,
+        default=1.5e-5,
+        help="final learning rate for --lr-schedule cosine",
+    )
     parser.add_argument("--seed", type=int, default=37101)
     parser.add_argument(
         "--eval-every",
