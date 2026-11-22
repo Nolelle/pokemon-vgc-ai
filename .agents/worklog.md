@@ -865,3 +865,13 @@
   - Added exact move-order & team-slot equivariance regression test (`test_rust_policy_is_equivariant_to_move_order_and_team_slot_order`) to `tests/test_rust_pipeline.py`: 48/48 tests pass, Ruff clean.
   - 2,063-game MPS GPU smoke on `width=192, layers=6`: **63.2 games/sec** (`1,108 dec/sec`) on 9.26-turn early games (~95–110 g/s at mature 6-turn games), `value_accuracy` 49.0% -> 61.1% and `vs_snapshots_score` 51.6% -> 59.5% in 1 update, `approx_kl` 0.0072.
 - Next: commit audit #2 fixes, refresh the 3 training readiness gates, and plan/launch the v3 run.
+
+## 2026-11-22 – Completed 3,000,004-game Rust v3 training run (`runs/rust_v3_m192_l6_379t`)
+- Finished full 3M-game AFK PPO league run (`train_rust_vec.py`, `RustFactoredPolicy` v2 equivariant, `width=192, layers=6`, 3.32M params, 379 clean Reg M-C teams, W&B `gci7x7w5`, ~8.9h total wall time at ~95–104 games/sec on M4 Pro MPS GPU).
+- Final held-out results on 88 unseen Reg M-C teams (plain neural policy, zero lookahead):
+  - vs Python `vgc` 2-ply search (40 unseen games): **62.5% final**, **64.0% last-5 avg**, **72.5% peak** (at 2.76M) — roughly 2x v1's ~36.8% and v2's ~29.8%.
+  - vs Rust `simple_heuristics` (100 unseen games): **75.0% final**, **76.2% last-5 avg** (peak **79.0%**).
+  - vs Rust `max_base_power` (100 unseen games): **90.0% final**, **85.8% last-5 avg**.
+  - Win-chance prediction (`value_accuracy`): **77.3% final**, **75.5% last-50 avg**, **77.9% peak** (up from 72.6% in v1 / 69.3% in v2); `approx_kl` ~0.0025–0.0028 throughout late training.
+- Final checkpoint: `runs/rust_v3_m192_l6_379t/policy_3000004.pt`.
+- Next: paired A/B of plain `rust` vs `rust-search` (`8w x 8a x 4s`), then live Reg M-C public ladder test.
