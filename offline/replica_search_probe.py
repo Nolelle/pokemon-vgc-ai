@@ -72,11 +72,14 @@ def search_public_decision(
     iterations=20000,
     seed=1,
     mirror=None,
+    memory=None,
+    use_policy_prior=True,
 ):
     """Search one player-view decision and return original legal orders and statistics.
 
     The mirror guesses hidden information using only this player's observation and
-    team. Network calls see only the appropriate player's parsed observation, never
+    team (plus optional ``BattleMemory`` for posterior speed/damage belief updates).
+    Network calls see only the appropriate player's parsed observation, never
     the simulator object. A forced-switch request may require only one player's input.
     Pass a reusable ``mirror`` to avoid spawning a new worker on every turn.
     """
@@ -101,7 +104,7 @@ def search_public_decision(
     try:
         if owns_mirror:
             mirror = LiveExactMirror(packed_team, config)
-        hypotheses = mirror.hypotheses(battle)
+        hypotheses = mirror.hypotheses(battle, memory=memory)
         sampled = []
         for hypothesis in hypotheses:
             root = mirror.build(battle, hypothesis)
@@ -110,6 +113,11 @@ def search_public_decision(
                 raise ValueError("player is not asked to choose in reconstructed world")
             opponent_view = root.battles[other] if other in root.sides_to_move() else None
             sampled.append(SampledWorld(root, opponent_view, hypothesis.weight))
+
+        scored_probs: dict[int, dict[str, float]] = {}
+
+        def key(order):
+            return "<wait>" if order is None else choice_string(order)
 
         def select(view):
             if view is None:
@@ -121,10 +129,22 @@ def search_public_decision(
             logits = np.asarray(logits, dtype=float).reshape(-1)
             if len(logits) != len(legal) or not np.isfinite(logits).all():
                 raise ValueError("network returned invalid action scores")
+            shifted = logits - float(np.max(logits))
+            probs = np.exp(shifted)
+            probs /= float(np.sum(probs))
+            scored_probs[id(view)] = {
+                key(order): float(prob) for order, prob in zip(legal, probs, strict=True)
+            }
             return [legal[i] for i in np.argsort(-logits, kind="stable")]
 
-        def key(order):
-            return "<wait>" if order is None else choice_string(order)
+        def opponent_priors(view, opp_orders):
+            if view is None or len(opp_orders) <= 1:
+                return [1.0] * len(opp_orders)
+            by_key = scored_probs.get(id(view))
+            if not by_key:
+                return [1.0] * len(opp_orders)
+            weights = [max(by_key.get(key(order), 0.0), 1e-9) for order in opp_orders]
+            return weights
 
         def matrix(root, our_orders, opponent_orders):
             nonlocal retry_count
@@ -191,6 +211,7 @@ def search_public_decision(
             max_actions=actions,
             max_worlds=worlds,
             iterations=iterations,
+            opponent_priors=opponent_priors if use_policy_prior else None,
         )
         return result, {**mirror.last_hypothesis_audit, "rejected_choice_retries": retry_count}
     finally:

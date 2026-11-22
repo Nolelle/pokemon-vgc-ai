@@ -250,13 +250,174 @@ def _make_session_player(
     without one-turn sampled-world lookahead search.
     """
 
-    if policy_mode not in ("deterministic", "hybrid", "replica", "replica-search"):
+    if policy_mode not in (
+        "deterministic",
+        "hybrid",
+        "replica",
+        "replica-search",
+        "rust",
+        "rust-search",
+    ):
         raise ValueError(f"unknown policy_mode {policy_mode!r}")
-    if policy_mode in ("hybrid", "replica", "replica-search") and checkpoint_path is None:
+    if (
+        policy_mode in ("hybrid", "replica", "replica-search", "rust", "rust-search")
+        and checkpoint_path is None
+    ):
         raise ValueError(f"policy_mode={policy_mode!r} requires a policy checkpoint")
 
     if checkpoint_path is None:
         return LadderPlayer(**player_kwargs)
+
+    if policy_mode in ("rust", "rust-search"):
+        import numpy as np
+        import pikapro
+        import pikapro.rl as rl
+
+        from vgc.actions import enumerate_joint_orders
+        from vgc.rl.rust_policy import load_rust_policy
+        from vgc.rl.rust_search import (
+            RustExactMirror,
+            match_pikapro_choice_to_order,
+            search_public_rust,
+        )
+
+        use_search = policy_mode == "rust-search"
+        resolved_dev = (
+            "mps"
+            if device == "auto" and __import__("torch").backends.mps.is_available()
+            else ("cpu" if device == "auto" else device)
+        )
+
+        class RustLadderPlayer(LadderPlayer):
+            def __init__(self, *, rust_checkpoint: Path, rust_device: str, **kwargs) -> None:
+                self.learned_checkpoint_path = rust_checkpoint
+                self.learned_checkpoint_sha256 = checkpoint_sha256(rust_checkpoint)
+                self.replica_mode = policy_mode
+                self.packed_team = str(kwargs["team"])
+                self.policy = load_rust_policy(rust_checkpoint, device=rust_device)
+                self.space = pikapro.ActionSpace("championsvgc")
+                self.use_rust_search = use_search
+                self.rust_rng = np.random.default_rng(replica_seed)
+                self._rust_mirror: RustExactMirror | None = None
+                self._rust_sessions: dict[str, rl.ChannelSession] = {}
+                super().__init__(**kwargs)
+
+            def _get_rust_mirror(self) -> RustExactMirror:
+                if self._rust_mirror is None:
+                    mirror_config = replace(
+                        PolicyConfig(), exact_search_total_hypotheses=replica_worlds
+                    )
+                    self._rust_mirror = RustExactMirror(self.packed_team, mirror_config)
+                return self._rust_mirror
+
+            def _session_for(self, battle_tag: str) -> rl.ChannelSession:
+                sess = self._rust_sessions.get(battle_tag)
+                if sess is None:
+                    sess = rl.ChannelSession(
+                        "championsvgc",
+                        observation="rich",
+                        masks="factored",
+                        team=self.packed_team,
+                        username=self.username,
+                    )
+                    self._rust_sessions[battle_tag] = sess
+                return sess
+
+            async def _handle_battle_message(self, split_messages: list[list[str]]) -> None:
+                if split_messages and split_messages[0] and split_messages[0][0].startswith(">"):
+                    battle_tag = split_messages[0][0][1:]
+                    sess = self._session_for(battle_tag)
+                    lines = [
+                        "|" + "|".join(parts[1:])
+                        for parts in split_messages[1:]
+                        if len(parts) > 1
+                    ]
+                    if lines:
+                        sess.feed_many(lines)
+                await super()._handle_battle_message(split_messages)
+
+            def _battle_finished_callback(self, battle: AbstractBattle) -> None:
+                self._rust_sessions.pop(battle.battle_tag, None)
+                super()._battle_finished_callback(battle)
+
+            def decide_teampreview(self, battle: AbstractBattle) -> str:
+                sess = self._session_for(battle.battle_tag)
+                if sess.needs_action:
+                    s = self.space.slot_size
+                    pv_mask = sess.mask[2 * s :]
+                    pv_idx = self.policy.choose_preview_index(sess.obs, pv_mask)
+                    choice_str = str(sess.choice([pv_idx]))
+                    # Showdown expects "/team 1234" from decide_teampreview.
+                    digits = choice_str.replace("team", "").strip()
+                    if len(digits) == 4 and digits.isdigit():
+                        return f"/team {digits}"
+                return "/team 1234"
+
+            def decide(self, battle: AbstractBattle):
+                legal = enumerate_joint_orders(battle)
+                if not legal:
+                    raise ValueError("Showdown request has no enumerated legal orders")
+                if self.use_rust_search:
+                    result, audit = search_public_rust(
+                        battle,
+                        self.packed_team,
+                        self.policy,
+                        worlds=replica_worlds,
+                        actions=replica_actions,
+                        seeds=replica_seeds,
+                        iterations=replica_iterations,
+                        seed=int(self.rust_rng.integers(0, 2**31)),
+                        mirror=self._get_rust_mirror(),
+                        memory=self._memory_for(battle),
+                    )
+                    selected = int(
+                        self.rust_rng.choice(len(result.actions), p=result.probabilities)
+                    )
+                    chosen_wire = result.actions[selected]
+                    matched = match_pikapro_choice_to_order(
+                        chosen_wire,
+                        battle,
+                        legal,
+                        slot_moves=audit.get("root_slot_moves"),
+                        team_species=audit.get("root_team_species"),
+                    )
+                    if matched is not None:
+                        return matched
+                    for fallback_wire in result.actions:
+                        matched = match_pikapro_choice_to_order(
+                            fallback_wire,
+                            battle,
+                            legal,
+                            slot_moves=audit.get("root_slot_moves"),
+                            team_species=audit.get("root_team_species"),
+                        )
+                        if matched is not None:
+                            return matched
+                    raise ValueError(
+                        f"rust-search selected an order absent from Showdown request: {chosen_wire!r}"
+                    )
+                sess = self._session_for(battle.battle_tag)
+                if not sess.needs_action:
+                    raise ValueError("ChannelSession did not observe Showdown request")
+                pairs, _, _ = self.policy.top_joint_actions(
+                    sess.obs, sess.mask, sess.min_switches, self.space, limit=4
+                )
+                if not pairs:
+                    raise ValueError("rust policy returned no legal joint actions")
+                a0, a1 = pairs[0]
+                chosen_wire = str(sess.choice([a0, a1]))
+                matched = match_pikapro_choice_to_order(chosen_wire, battle, legal)
+                if matched is not None:
+                    return matched
+                raise ValueError(
+                    f"rust policy selected an order absent from Showdown request: {chosen_wire!r}"
+                )
+
+        return RustLadderPlayer(
+            rust_checkpoint=checkpoint_path,
+            rust_device=resolved_dev,
+            **player_kwargs,
+        )
 
     if policy_mode in ("replica", "replica-search"):
         import numpy as np
@@ -326,6 +487,7 @@ def _make_session_player(
                         iterations=replica_iterations,
                         seed=int(self.replica_rng.integers(0, 2**31)),
                         mirror=self._get_replica_mirror(),
+                        memory=self._memory_for(battle),
                     )
                     selected = int(
                         self.replica_rng.choice(len(result.actions), p=result.probabilities)
@@ -921,13 +1083,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy-mode",
-        choices=("deterministic", "hybrid", "replica", "replica-search"),
+        choices=("deterministic", "hybrid", "replica", "replica-search", "rust", "rust-search"),
         default="deterministic",
         help=(
             "with --policy-checkpoint: 'deterministic' plays the legacy network's argmax; "
             "'hybrid' keeps exchange search with neural shortlist guidance; 'replica' runs "
             "the from-scratch replication transformer directly; 'replica-search' adds "
-            "one-turn sampled-world lookahead search"
+            "one-turn sampled-world lookahead search; 'rust' / 'rust-search' run the "
+            "native Rust VecEnv/ChannelSession policy with or without Rust pikapro search"
         ),
     )
     parser.add_argument(
@@ -996,7 +1159,10 @@ def main() -> int:
     config = session_config(args.search, args.bc, args.value, args.horizon, args.exact_judge, args.llm_preview)
     if args.policy_checkpoint is not None and not args.policy_checkpoint.is_file():
         raise FileNotFoundError(f"learned policy checkpoint not found: {args.policy_checkpoint}")
-    if args.policy_mode in ("hybrid", "replica", "replica-search") and args.policy_checkpoint is None:
+    if (
+        args.policy_mode in ("hybrid", "replica", "replica-search", "rust", "rust-search")
+        and args.policy_checkpoint is None
+    ):
         raise SystemExit(f"--policy-mode {args.policy_mode} requires --policy-checkpoint")
     selected_policy = (
         f"{args.policy_mode} checkpoint {args.policy_checkpoint}"
@@ -1039,6 +1205,10 @@ def main() -> int:
 
                 # Fail closed if the checkpoint version or Champions vocabulary mismatches.
                 load_replication_policy(args.policy_checkpoint, device="cpu")
+            elif args.policy_mode in ("rust", "rust-search"):
+                from vgc.rl.rust_policy import load_rust_policy
+
+                load_rust_policy(args.policy_checkpoint, device="cpu")
             else:
                 if args.policy_mode != "hybrid":
                     raise SystemExit(

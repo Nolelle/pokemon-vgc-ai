@@ -26,9 +26,10 @@ from vgc.battle_state_gate import enforce_battle_state_gate_for_cli
 from vgc.config import FORMAT_ID
 from vgc.mechanics_gate import enforce_mechanics_gate_for_cli
 from vgc.rl.agents import make_direct_agent
-from vgc.rl.env import SimWorker, choice_string
-from vgc.rl.match import play_battle
+from vgc.rl.env import DirectBattle, SimWorker, choice_string
+from vgc.rl.match import MAX_DECISIONS, play_battle
 from vgc.rl.replication_policy import (
+    CHECKPOINT_VERSION,
     EncodedDecision,
     ReplicationPolicy,
     encode_decision,
@@ -96,6 +97,38 @@ class Decision:
     value: float
 
 
+def resolve_device(requested: str) -> str:
+    if requested == "auto":
+        if torch.backends.mps.is_available():
+            return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    return requested
+
+
+def compute_trajectory_samples(
+    steps: list[Decision],
+    reward: float,
+    *,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+) -> list[tuple[Decision, float, float]]:
+    """Compute per-step (decision, terminal_return, gae_advantage) for one player's episode."""
+    n = len(steps)
+    if n == 0:
+        return []
+    advantages = [0.0] * n
+    gae = 0.0
+    for t in range(n - 1, -1, -1):
+        next_value = 0.0 if t == n - 1 else steps[t + 1].value
+        step_reward = reward if t == n - 1 else 0.0
+        delta = step_reward + gamma * next_value - steps[t].value
+        gae = delta + gamma * gae_lambda * gae
+        advantages[t] = gae
+    return [(steps[t], reward, advantages[t]) for t in range(n)]
+
+
 class LeagueAgent:
     def __init__(self, name, model, seed, *, record, deterministic=False):
         self.name = name
@@ -111,7 +144,7 @@ class LeagueAgent:
         orders = None if preview else enumerate_joint_orders(battle)
         if orders == []:
             return "default"
-        encoded = encode_decision(battle, orders, preview=preview)
+        encoded = encode_decision(battle, orders, preview=preview, version=self.model.version)
         logits, value = self.model(*stack_decisions([encoded], self.model.device), preview=preview)
         log_probs = logits[0].log_softmax(dim=0)
         if self.deterministic:
@@ -154,7 +187,7 @@ def _make_worker(engine: str):
     return SimWorker()
 
 
-def _init_rollout_worker(engine: str, width: int, layers: int, nice: int) -> None:
+def _init_rollout_worker(engine: str, width: int, layers: int, version_num: int, nice: int) -> None:
     if nice > 0 and hasattr(os, "nice"):
         try:
             os.nice(nice)
@@ -166,7 +199,7 @@ def _init_rollout_worker(engine: str, width: int, layers: int, nice: int) -> Non
     atexit.register(worker.__exit__, None, None, None)
     _WORKER_STATE.clear()
     _WORKER_STATE["worker"] = worker
-    _WORKER_STATE["learner"] = ReplicationPolicy(width, layers).eval()
+    _WORKER_STATE["learner"] = ReplicationPolicy(width, layers, version=version_num).eval()
     _WORKER_STATE["snapshots"] = {}
 
 
@@ -181,56 +214,218 @@ def _load_cached_snapshot(path_str: str) -> ReplicationPolicy:
     return model
 
 
+@dataclass
+class _ActiveGame:
+    battle_id: str
+    battle: DirectBattle
+    learner_side: str
+    opp_side: str
+    opp_kind: str  # "self", "snapshot", or "anchor"
+    opp_model_key: str | None  # None for learner/self, path for snapshot
+    opp_anchor: object | None
+    snap_game_count: int | None
+    anchor_name: str | None
+    learner_rng: torch.Generator
+    opp_rng: torch.Generator
+    learner_steps: list[Decision]
+    opp_steps: list[Decision]
+    decisions: int = 0
+
+
+@torch.no_grad()
 def _play_rollout_jobs(
     worker,
     learner_model: ReplicationPolicy,
     jobs: list[tuple],
     snapshot_loader,
-) -> tuple[list[tuple[Decision, float]], list[tuple[float, int, int | None]]]:
-    samples: list[tuple[Decision, float]] = []
-    summaries: list[tuple[float, int, int | None]] = []
-    for (
-        game_idx,
-        team_p1,
-        team_p2,
-        learner_is_p1,
-        sim_seed,
-        learner_seed,
-        opponent_seed,
-        snap_game_count,
-        snap_path,
-    ) in jobs:
-        opp_model = learner_model if snap_path is None else snapshot_loader(snap_path)
-        learner = LeagueAgent("learner", learner_model, learner_seed, record=True)
-        opponent = LeagueAgent(
-            "opponent",
-            opp_model,
+    *,
+    rollout_batch_size: int = 16,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+) -> tuple[list[tuple[Decision, float, float]], list[tuple[float, int, int | None, str | None]]]:
+    """Run up to ``rollout_batch_size`` battles concurrently and batch neural forward passes."""
+    samples: list[tuple[Decision, float, float]] = []
+    summaries: list[tuple[float, int, int | None, str | None]] = []
+    batch_limit = max(1, int(rollout_batch_size))
+    queue = list(jobs)
+    active: list[_ActiveGame] = []
+
+    def _start_next() -> None:
+        (
+            game_idx,
+            team_p1,
+            team_p2,
+            learner_is_p1,
+            sim_seed,
+            learner_seed,
             opponent_seed,
-            record=snap_path is None,
+            snap_game_count,
+            snap_path,
+            anchor_name,
+        ) = queue.pop(0)
+        battle_id = f"replication-{game_idx}"
+        learner_side = "p1" if learner_is_p1 else "p2"
+        opp_side = "p2" if learner_is_p1 else "p1"
+        battle = DirectBattle.start(worker, battle_id, team_p1, team_p2, seed=sim_seed)
+        if anchor_name is not None:
+            opp_kind = "anchor"
+            opp_team = team_p2 if learner_is_p1 else team_p1
+            opp_anchor = make_direct_agent(anchor_name, opp_team)
+            opp_anchor.observe(battle_id, battle.last_lines[opp_side])
+            opp_model_key = None
+        elif snap_path is not None:
+            opp_kind = "snapshot"
+            opp_anchor = None
+            opp_model_key = snap_path
+        else:
+            opp_kind = "self"
+            opp_anchor = None
+            opp_model_key = None
+        active.append(
+            _ActiveGame(
+                battle_id=battle_id,
+                battle=battle,
+                learner_side=learner_side,
+                opp_side=opp_side,
+                opp_kind=opp_kind,
+                opp_model_key=opp_model_key,
+                opp_anchor=opp_anchor,
+                snap_game_count=snap_game_count,
+                anchor_name=anchor_name,
+                learner_rng=torch.Generator(device="cpu").manual_seed(learner_seed),
+                opp_rng=torch.Generator(device="cpu").manual_seed(opponent_seed),
+                learner_steps=[],
+                opp_steps=[],
+            )
         )
-        pair = (learner, opponent) if learner_is_p1 else (opponent, learner)
-        result = play_battle(
-            worker,
-            f"replication-{game_idx}",
-            {"p1": pair[0], "p2": pair[1]},
-            {"p1": team_p1, "p2": team_p2},
-            seed=sim_seed,
-        )
-        reward = result.result_for("learner")
-        samples.extend((step, reward) for step in learner.steps)
-        samples.extend((step, -reward) for step in opponent.steps)
-        summaries.append((reward, result.turns, snap_game_count))
+
+    try:
+        while queue or active:
+            while queue and len(active) < batch_limit:
+                _start_next()
+
+            # Collect all pending choices across active games, batching neural calls by
+            # (model_key, is_preview).
+            choices_by_game: list[dict[str, str]] = [{} for _ in active]
+            neural_groups: dict[tuple[str | None, bool], list[tuple]] = {}
+
+            for g_idx, game in enumerate(active):
+                to_move = game.battle.sides_to_move()
+                for side in to_move:
+                    view = game.battle.battles[side]
+                    is_learner = side == game.learner_side
+                    if not is_learner and game.opp_kind == "anchor":
+                        view._vgc_direct_root = game.battle
+                        view._vgc_direct_side = side
+                        choices_by_game[g_idx][side] = game.opp_anchor.choose(view)  # type: ignore[union-attr]
+                        continue
+                    preview = bool(view.teampreview)
+                    orders = None if preview else enumerate_joint_orders(view)
+                    if orders == []:
+                        choices_by_game[g_idx][side] = "default"
+                        continue
+                    model_key = None if (is_learner or game.opp_kind == "self") else game.opp_model_key
+                    model = learner_model if model_key is None else snapshot_loader(model_key)
+                    encoded = encode_decision(view, orders, preview=preview, version=model.version)
+                    record = is_learner or game.opp_kind == "self"
+                    rng = game.learner_rng if is_learner else game.opp_rng
+                    steps_list = game.learner_steps if is_learner else game.opp_steps
+                    neural_groups.setdefault((model_key, preview), []).append(
+                        (g_idx, side, encoded, orders, record, rng, steps_list)
+                    )
+
+            for (model_key, preview), items in neural_groups.items():
+                model = learner_model if model_key is None else snapshot_loader(model_key)
+                batch_encoded = [item[2] for item in items]
+                logits, values = model(
+                    *stack_decisions(batch_encoded, model.device), preview=preview
+                )
+                logits_cpu = logits.cpu()
+                values_cpu = values.cpu()
+                for row_idx, (g_idx, side, encoded, orders, record, rng, steps_list) in enumerate(
+                    items
+                ):
+                    n_cands = len(encoded.candidates)
+                    row_logits = logits_cpu[row_idx, :n_cands]
+                    log_probs = row_logits.log_softmax(dim=0)
+                    probs = log_probs.exp()
+                    index = int(torch.multinomial(probs, 1, generator=rng).item())
+                    if record:
+                        steps_list.append(
+                            Decision(
+                                encoded,
+                                index,
+                                float(log_probs[index].item()),
+                                float(values_cpu[row_idx].item()),
+                            )
+                        )
+                    choice = (
+                        preview_order(encoded.candidates[index]) if preview else orders[index]
+                    )
+                    choices_by_game[g_idx][side] = choice_string(choice)
+
+            still_active: list[_ActiveGame] = []
+            for g_idx, game in enumerate(active):
+                choices = choices_by_game[g_idx]
+                game.decisions += len(choices)
+                result = game.battle.step(choices)
+                if game.opp_anchor is not None:
+                    game.opp_anchor.observe(game.battle_id, result.lines[game.opp_side])  # type: ignore[union-attr]
+                if game.decisions > MAX_DECISIONS:
+                    raise RuntimeError(
+                        f"battle {game.battle_id} exceeded {MAX_DECISIONS} decisions"
+                    )
+                if game.battle.ended:
+                    if game.opp_anchor is not None:
+                        game.opp_anchor.finish(game.battle.battles[game.opp_side])  # type: ignore[union-attr]
+                    winner = game.battle.winner
+                    if winner is None:
+                        reward = 0.0
+                    else:
+                        reward = 1.0 if winner == game.learner_side else -1.0
+                    turns = int(getattr(game.battle.battles["p1"], "turn", 0) or 0)
+                    samples.extend(
+                        compute_trajectory_samples(
+                            game.learner_steps, reward, gamma=gamma, gae_lambda=gae_lambda
+                        )
+                    )
+                    if game.opp_steps:
+                        samples.extend(
+                            compute_trajectory_samples(
+                                game.opp_steps, -reward, gamma=gamma, gae_lambda=gae_lambda
+                            )
+                        )
+                    summaries.append((reward, turns, game.snap_game_count, game.anchor_name))
+                    game.battle.close()
+                else:
+                    still_active.append(game)
+            active = still_active
+    finally:
+        for game in active:
+            game.battle.close()
+
     return samples, summaries
 
 
 def _run_rollout_chunk(
     learner_state: dict[str, torch.Tensor],
     jobs: list[tuple],
-) -> tuple[list[tuple[Decision, float]], list[tuple[float, int, int | None]]]:
+    rollout_batch_size: int = 16,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+) -> tuple[list[tuple[Decision, float, float]], list[tuple[float, int, int | None, str | None]]]:
     learner_model: ReplicationPolicy = _WORKER_STATE["learner"]  # type: ignore[assignment]
     learner_model.load_state_dict(learner_state)
     learner_model.eval()
-    return _play_rollout_jobs(_WORKER_STATE["worker"], learner_model, jobs, _load_cached_snapshot)
+    return _play_rollout_jobs(
+        _WORKER_STATE["worker"],
+        learner_model,
+        jobs,
+        _load_cached_snapshot,
+        rollout_batch_size=rollout_batch_size,
+        gamma=gamma,
+        gae_lambda=gae_lambda,
+    )
 
 
 def _play_eval_jobs(
@@ -271,16 +466,29 @@ def _split_chunks(items: list, n_chunks: int) -> list[list]:
 
 
 def update_policy_with_metrics(
-    model, optimizer, samples, rng, *, epochs, batch_size
+    model,
+    optimizer,
+    samples,
+    rng,
+    *,
+    epochs,
+    batch_size,
+    target_kl: float = 0.025,
 ) -> dict[str, float]:
-    """PPO with clipped likelihood ratios and undiscounted final battle outcomes."""
+    """PPO with clipped likelihood ratios, GAE advantages, calibrated value loss, and KL stop."""
     if not samples:
         raise ValueError("cannot train without recorded decisions")
     device = model.device
-    advantages = np.asarray([reward - step.value for step, reward in samples], dtype=np.float32)
+    normalized_samples = [
+        (item[0], float(item[1]), float(item[2]))
+        if len(item) == 3
+        else (item[0], float(item[1]), float(item[1]) - item[0].value)
+        for item in samples
+    ]
+    advantages = np.asarray([adv for _, _, adv in normalized_samples], dtype=np.float32)
     advantages = (advantages - advantages.mean()) / max(advantages.std(), 1e-6)
     groups = [
-        [idx for idx, (step, _) in enumerate(samples) if step.encoded.preview == preview]
+        [idx for idx, (step, _, _) in enumerate(normalized_samples) if step.encoded.preview == preview]
         for preview in (False, True)
     ]
     loss_sum = 0.0
@@ -289,8 +497,13 @@ def update_policy_with_metrics(
     entropy_sum = 0.0
     kl_sum = 0.0
     updates = 0
+    epochs_run = 0
+    use_bce_value = getattr(model, "version", 1) >= 2
     model.train()
     for _ in range(epochs):
+        epochs_run += 1
+        epoch_kl_sum = 0.0
+        epoch_updates = 0
         batches = []
         for group in groups:
             rng.shuffle(group)
@@ -299,9 +512,14 @@ def update_policy_with_metrics(
             )
         rng.shuffle(batches)
         for rows in batches:
-            steps, rewards = zip(*(samples[i] for i in rows), strict=True)
+            steps = [normalized_samples[i][0] for i in rows]
+            rewards = [normalized_samples[i][1] for i in rows]
             states = [step.encoded for step in steps]
-            logits, value = model(*stack_decisions(states, device), preview=states[0].preview)
+            logits, value, value_logit = model(
+                *stack_decisions(states, device),
+                preview=states[0].preview,
+                return_value_logit=True,
+            )
             distribution = torch.distributions.Categorical(logits=logits)
             indices = torch.tensor([step.index for step in steps], dtype=torch.long, device=device)
             old = torch.tensor(
@@ -315,7 +533,11 @@ def update_policy_with_metrics(
             policy_loss = -torch.minimum(
                 ratio * advantage, ratio.clamp(0.8, 1.2) * advantage
             ).mean()
-            value_loss = F.mse_loss(value, returns)
+            if use_bce_value and value_logit is not None:
+                win_prob_target = (returns + 1.0) * 0.5
+                value_loss = F.binary_cross_entropy_with_logits(value_logit, win_prob_target)
+            else:
+                value_loss = F.mse_loss(value, returns)
             entropy = distribution.entropy().mean()
             loss = policy_loss + 0.5 * value_loss - 0.01 * entropy
             if not torch.isfinite(loss):
@@ -325,13 +547,18 @@ def update_policy_with_metrics(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
             optimizer.step()
             updates += 1
+            epoch_updates += 1
             loss_sum += float(loss.detach().item())
             policy_sum += float(policy_loss.detach().item())
             value_sum += float(value_loss.detach().item())
             entropy_sum += float(entropy.detach().item())
             with torch.no_grad():
                 approx_kl = ((ratio - 1.0) - log_ratio).mean()
-                kl_sum += float(approx_kl.item())
+                kl_val = float(approx_kl.item())
+                kl_sum += kl_val
+                epoch_kl_sum += kl_val
+        if target_kl > 0 and epoch_updates > 0 and (epoch_kl_sum / epoch_updates) > 1.5 * target_kl:
+            break
     model.eval()
     return {
         "loss": loss_sum / updates,
@@ -339,13 +566,14 @@ def update_policy_with_metrics(
         "value_loss": value_sum / updates,
         "entropy": entropy_sum / updates,
         "approx_kl": kl_sum / updates,
+        "epochs_run": float(epochs_run),
     }
 
 
 def update_policy(model, optimizer, samples, rng, *, epochs, batch_size) -> float:
     """Backwards-compatible wrapper returning the scalar PPO training loss."""
     return update_policy_with_metrics(
-        model, optimizer, samples, rng, epochs=epochs, batch_size=batch_size
+        model, optimizer, samples, rng, epochs=epochs, batch_size=batch_size, target_kl=0.0
     )["loss"]
 
 
@@ -381,9 +609,10 @@ def save_trainer_state(
     payload = {
         "width": model.width,
         "layers": model.layers,
+        "version": model.version,
         "completed": completed,
         "snapshot_index": snapshot_index,
-        "model": model.state_dict(),
+        "model": _cpu_state_dict(model),
         "optimizer": optimizer.state_dict(),
         "rng_state": rng.getstate(),
         "torch_rng_state": torch.get_rng_state(),
@@ -454,6 +683,7 @@ def train(args):
     enforce_action_gate_for_cli("model training")
     teams = load_teams(args.team_manifest)
     eval_opponents = [name.strip() for name in args.eval_opponents.split(",") if name.strip()]
+    anchor_opponents = [name.strip() for name in args.anchor_opponents.split(",") if name.strip()]
     holdout_teams: list[str] = []
     if args.eval_every > 0 and args.eval_games > 0 and eval_opponents:
         holdout_teams = load_teams(args.holdout_manifest)
@@ -461,6 +691,7 @@ def train(args):
     workers, threads, nice = resolve_profile(
         args.profile, workers=args.workers, threads=args.threads
     )
+    resolved_device = resolve_device(args.device)
     if nice > 0 and hasattr(os, "nice"):
         try:
             os.nice(nice)
@@ -469,9 +700,6 @@ def train(args):
     torch.set_num_threads(threads)
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
-
-    model = ReplicationPolicy(args.width, args.layers).to(args.device).eval()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     wandb_run_id: str | None = None
     if args.resume:
@@ -484,6 +712,13 @@ def train(args):
                 f"resume mismatch: saved model is width={state['width']} layers={state['layers']}, "
                 f"requested width={args.width} layers={args.layers}"
             )
+        model_version = int(state.get("version", 1))
+        model = (
+            ReplicationPolicy(args.width, args.layers, version=model_version)
+            .to(resolved_device)
+            .eval()
+        )
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         for group in optimizer.param_groups:
@@ -497,7 +732,9 @@ def train(args):
         for entry in state["league"]:
             snap_path = args.out / entry["path"]
             snap_model = (
-                load_replication_policy(snap_path, device=args.device) if workers == 1 else None
+                load_replication_policy(snap_path, device=resolved_device)
+                if workers == 1
+                else None
             )
             league.append(
                 Snapshot(
@@ -510,6 +747,13 @@ def train(args):
             )
         metrics_mode = "a"
     else:
+        model_version = int(args.model_version)
+        model = (
+            ReplicationPolicy(args.width, args.layers, version=model_version)
+            .to(resolved_device)
+            .eval()
+        )
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
         args.out.mkdir(parents=True, exist_ok=False)
         snap0 = save_snapshot(args.out, model, 0)
         league = [Snapshot(0, snap0, copy.deepcopy(model) if workers == 1 else None)]
@@ -530,6 +774,8 @@ def train(args):
             mode=args.wandb_mode,
             config={
                 **{k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+                "resolved_device": resolved_device,
+                "model_version": model_version,
                 "resolved_workers": workers,
                 "resolved_threads": threads,
                 "resolved_nice": nice,
@@ -556,6 +802,8 @@ def train(args):
             json.dumps(
                 {
                     **vars(args),
+                    "resolved_device": resolved_device,
+                    "model_version": model_version,
                     "resolved_workers": workers,
                     "resolved_threads": threads,
                     "resolved_nice": nice,
@@ -581,7 +829,7 @@ def train(args):
             max_workers=workers,
             mp_context=ctx,
             initializer=_init_rollout_worker,
-            initargs=(args.engine, args.width, args.layers, nice),
+            initargs=(args.engine, args.width, args.layers, model_version, nice),
         )
     else:
         direct_worker = _make_worker(args.engine)
@@ -596,7 +844,10 @@ def train(args):
                 snapshot_by_count = {s.game_count: s for s in league}
                 for game in range(completed, completed + games):
                     snapshot = None
-                    if game % 2 == 1:
+                    anchor_name = None
+                    if anchor_opponents and args.anchor_fraction > 0 and rng.random() < args.anchor_fraction:
+                        anchor_name = rng.choice(anchor_opponents)
+                    elif game % 2 == 1:
                         snapshot = rng.choices(league, weights=[s.priority for s in league], k=1)[0]
                     learner_is_p1 = (game // 2) % 2 == 0
                     team_p1, team_p2 = rng.sample(teams, k=2)
@@ -612,6 +863,7 @@ def train(args):
                             rng.getrandbits(32),
                             None if snapshot is None else snapshot.game_count,
                             None if snapshot is None else str(snapshot.path),
+                            anchor_name,
                         )
                     )
 
@@ -619,10 +871,18 @@ def train(args):
                     learner_state = _cpu_state_dict(model)
                     chunks = _split_chunks(jobs, workers)
                     futures = [
-                        pool.submit(_run_rollout_chunk, learner_state, chunk) for chunk in chunks
+                        pool.submit(
+                            _run_rollout_chunk,
+                            learner_state,
+                            chunk,
+                            args.rollout_batch_size,
+                            args.gamma,
+                            args.gae_lambda,
+                        )
+                        for chunk in chunks
                     ]
-                    samples: list[tuple[Decision, float]] = []
-                    summaries: list[tuple[float, int, int | None]] = []
+                    samples: list[tuple[Decision, float, float]] = []
+                    summaries: list[tuple[float, int, int | None, str | None]] = []
                     for future in futures:
                         chunk_samples, chunk_summaries = future.result()
                         samples.extend(chunk_samples)
@@ -634,17 +894,25 @@ def train(args):
                         model,
                         jobs,
                         lambda path_str: path_to_model[path_str],
+                        rollout_batch_size=args.rollout_batch_size,
+                        gamma=args.gamma,
+                        gae_lambda=args.gae_lambda,
                     )
 
                 opponents_played: dict[int, int] = {}
                 current_games = 0
+                anchor_games = 0
+                anchor_score = 0.0
                 historical_score = 0.0
                 draws = 0
                 mean_turns = 0
-                for reward, turns, snap_game_count in summaries:
+                for reward, turns, snap_game_count, anchor_name in summaries:
                     draws += int(reward == 0)
                     mean_turns += turns
-                    if snap_game_count is None:
+                    if anchor_name is not None:
+                        anchor_games += 1
+                        anchor_score += (reward + 1.0) / 2.0
+                    elif snap_game_count is None:
                         current_games += 1
                     else:
                         points = (reward + 1.0) / 2.0
@@ -656,7 +924,7 @@ def train(args):
                             opponents_played.get(snap_game_count, 0) + 1
                         )
 
-                non_draws = [(step, reward) for step, reward in samples if reward != 0]
+                non_draws = [(step, reward) for step, reward, _ in samples if reward != 0]
                 value_accuracy = (
                     sum((step.value > 0) == (reward > 0) for step, reward in non_draws)
                     / len(non_draws)
@@ -681,6 +949,7 @@ def train(args):
                     rng,
                     epochs=args.epochs,
                     batch_size=args.batch_size,
+                    target_kl=args.target_kl,
                 )
                 completed += games
                 if completed >= snapshot_index + args.snapshot_games or completed == args.games:
@@ -724,11 +993,15 @@ def train(args):
                     last_eval = completed
 
                 step_elapsed = max(time.monotonic() - step_started, 1e-6)
-                historical_games = games - current_games
+                historical_games = games - current_games - anchor_games
                 row: dict[str, object] = {
                     "games": completed,
                     "batch_games": games,
                     "vs_current": current_games,
+                    "vs_anchors": anchor_games,
+                    "vs_anchors_score": round(anchor_score / anchor_games, 4)
+                    if anchor_games
+                    else None,
                     "vs_snapshots": opponents_played,
                     "vs_snapshots_score": historical_score / historical_games
                     if historical_games
@@ -736,12 +1009,13 @@ def train(args):
                     "draws": draws,
                     "mean_turns": mean_turns / games,
                     "decisions": len(samples),
-                    "preview_decisions": sum(step.encoded.preview for step, _ in samples),
+                    "preview_decisions": sum(step.encoded.preview for step, _, _ in samples),
                     "training_loss": ppo["loss"],
                     "policy_loss": ppo["policy_loss"],
                     "value_loss": ppo["value_loss"],
                     "entropy": ppo["entropy"],
                     "approx_kl": ppo["approx_kl"],
+                    "ppo_epochs_run": int(ppo["epochs_run"]),
                     "learning_rate": current_lr,
                     "value_accuracy": round(value_accuracy, 4)
                     if value_accuracy is not None
@@ -763,6 +1037,7 @@ def train(args):
                         "train/value_loss": ppo["value_loss"],
                         "train/entropy": ppo["entropy"],
                         "train/approx_kl": ppo["approx_kl"],
+                        "train/ppo_epochs_run": ppo["epochs_run"],
                         "train/learning_rate": current_lr,
                         "train/mean_turns": mean_turns / games,
                         "perf/games_per_sec": games / step_elapsed,
@@ -774,6 +1049,8 @@ def train(args):
                         log_payload["train/vs_snapshots_score"] = (
                             historical_score / historical_games
                         )
+                    if anchor_games:
+                        log_payload["train/vs_anchors_score"] = anchor_score / anchor_games
                     for key, value in eval_metrics.items():
                         log_payload[f"eval/{key.removeprefix('eval_')}"] = value
                     wandb_run.log(log_payload, step=completed)
@@ -826,7 +1103,23 @@ def main():
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--width", type=int, default=128)
     parser.add_argument("--layers", type=int, default=4)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--model-version",
+        type=int,
+        default=CHECKPOINT_VERSION,
+        help="replication architecture/feature version (1=legacy, 2=timers+protect+bce)",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="training device: auto (uses MPS/CUDA if available), cpu, mps, or cuda",
+    )
+    parser.add_argument(
+        "--rollout-batch-size",
+        type=int,
+        default=16,
+        help="concurrent battles stepped in lockstep per worker for batched neural inference",
+    )
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
         "--lr-schedule",
@@ -839,6 +1132,25 @@ def main():
         type=float,
         default=1.5e-5,
         help="final learning rate for --lr-schedule cosine",
+    )
+    parser.add_argument("--gamma", type=float, default=0.99, help="GAE discount factor")
+    parser.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
+    parser.add_argument(
+        "--target-kl",
+        type=float,
+        default=0.025,
+        help="PPO KL early-stopping threshold (0 disables)",
+    )
+    parser.add_argument(
+        "--anchor-opponents",
+        default="",
+        help="comma-separated fixed anchor opponents mixed into training (e.g. heuristic,vgc)",
+    )
+    parser.add_argument(
+        "--anchor-fraction",
+        type=float,
+        default=0.0,
+        help="fraction of training games played against anchor opponents (0..1)",
     )
     parser.add_argument("--seed", type=int, default=37101)
     parser.add_argument(

@@ -14,8 +14,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from poke_env.battle.field import Field
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
+from poke_env.battle.side_condition import SideCondition
 from poke_env.data import to_id_str
 from torch import nn
 
@@ -25,7 +27,22 @@ STATS = ("hp", "atk", "def", "spa", "spd", "spe")
 BOOSTS = (*STATS[1:], "accuracy", "evasion")
 PREVIEW_COUNT = 6
 CONDITION_BINS = 64
-CHECKPOINT_VERSION = 1
+CHECKPOINT_VERSION = 2
+SUPPORTED_CHECKPOINT_VERSIONS = (1, 2)
+_V1_POKEMON_SCALARS = 16
+_V2_POKEMON_SCALARS = 22
+_V2_FIELD_TIMERS = 16
+_TERRAIN_FIELDS = (
+    Field.ELECTRIC_TERRAIN,
+    Field.GRASSY_TERRAIN,
+    Field.MISTY_TERRAIN,
+    Field.PSYCHIC_TERRAIN,
+)
+_SCREEN_CONDITIONS = (
+    SideCondition.REFLECT,
+    SideCondition.LIGHT_SCREEN,
+    SideCondition.AURORA_VEIL,
+)
 
 
 def _species_id(mon):
@@ -138,11 +155,92 @@ class EncodedDecision:
     preview: bool = False
 
 
-def encode_decision(battle, orders=None, *, preview=False):
+def _remaining_fraction(start_turn: int | None, current_turn: int, duration: int) -> float:
+    if start_turn is None:
+        return 0.0
+    elapsed = max(0, current_turn - int(start_turn))
+    return max(0.0, float(duration - elapsed) / float(duration))
+
+
+def _field_timer_features(battle) -> np.ndarray:
+    """Explicit zero-collision active flags and remaining-turn fractions for core VGC timers."""
+    turn = int(getattr(battle, "turn", 0) or 0)
+    weather = getattr(battle, "weather", None) or {}
+    fields = getattr(battle, "fields", None) or {}
+    ours = getattr(battle, "side_conditions", None) or {}
+    theirs = getattr(battle, "opponent_side_conditions", None) or {}
+
+    weather_active = float(bool(weather))
+    weather_rem = (
+        max(_remaining_fraction(start, turn, 5) for start in weather.values()) if weather else 0.0
+    )
+
+    tr_start = fields.get(Field.TRICK_ROOM)
+    tr_active = float(tr_start is not None)
+    tr_rem = _remaining_fraction(tr_start, turn, 5)
+
+    terrain_starts = [fields[t] for t in _TERRAIN_FIELDS if t in fields]
+    terrain_active = float(bool(terrain_starts))
+    terrain_rem = (
+        max(_remaining_fraction(start, turn, 5) for start in terrain_starts)
+        if terrain_starts
+        else 0.0
+    )
+
+    our_tw_start = ours.get(SideCondition.TAILWIND)
+    our_tw_active = float(our_tw_start is not None)
+    our_tw_rem = _remaining_fraction(our_tw_start, turn, 4)
+
+    opp_tw_start = theirs.get(SideCondition.TAILWIND)
+    opp_tw_active = float(opp_tw_start is not None)
+    opp_tw_rem = _remaining_fraction(opp_tw_start, turn, 4)
+
+    our_screens = [ours[s] for s in _SCREEN_CONDITIONS if s in ours]
+    our_screen_active = float(bool(our_screens))
+    our_screen_rem = (
+        max(_remaining_fraction(start, turn, 5) for start in our_screens) if our_screens else 0.0
+    )
+
+    opp_screens = [theirs[s] for s in _SCREEN_CONDITIONS if s in theirs]
+    opp_screen_active = float(bool(opp_screens))
+    opp_screen_rem = (
+        max(_remaining_fraction(start, turn, 5) for start in opp_screens) if opp_screens else 0.0
+    )
+
+    our_safeguard = float(SideCondition.SAFEGUARD in ours)
+    opp_safeguard = float(SideCondition.SAFEGUARD in theirs)
+
+    return np.asarray(
+        [
+            weather_active,
+            weather_rem,
+            tr_active,
+            tr_rem,
+            terrain_active,
+            terrain_rem,
+            our_tw_active,
+            our_tw_rem,
+            opp_tw_active,
+            opp_tw_rem,
+            our_screen_active,
+            our_screen_rem,
+            opp_screen_active,
+            opp_screen_rem,
+            our_safeguard,
+            opp_safeguard,
+        ],
+        dtype=np.float32,
+    )
+
+
+def encode_decision(battle, orders=None, *, preview=False, version: int = CHECKPOINT_VERSION):
+    if version not in SUPPORTED_CHECKPOINT_VERSIONS:
+        raise ValueError(f"unsupported replication encoding version: {version}")
     species, moves, items, abilities = _dex()[0]
     rows, active_at = _pokemon_rows(battle)
     pokemon = np.zeros((12, 8), dtype=np.int64)
-    scalars = np.zeros((12, 16 + CONDITION_BINS), dtype=np.float32)
+    scalar_base = _V2_POKEMON_SCALARS if version >= 2 else _V1_POKEMON_SCALARS
+    scalars = np.zeros((12, scalar_base + CONDITION_BINS), dtype=np.float32)
     positions = {}
     active_rows = {}
     for i, (mon, request_entry, revealed) in enumerate(rows):
@@ -167,21 +265,36 @@ def encode_decision(battle, orders=None, *, preview=False):
             (status.value / 10) if revealed and status is not None else 0,
             float(mon.fainted and revealed),
         ]
+        if version >= 2:
+            scalars[i, 21] = float(i < 6)
         if revealed:
             scalars[i, 4:11] = [mon.boosts.get(name, 0) / 6 for name in BOOSTS]
             scalars[i, 11:16] = [
                 ((request_entry or {}).get("stats") or {}).get(name, 0) / 255 for name in STATS[1:]
             ]
-            scalars[i, 16:] = _conditions(mon.effects)
-    field = np.concatenate(
+            if version >= 2:
+                scalars[i, 16:21] = [
+                    min(int(getattr(mon, "protect_counter", 0) or 0), 4) / 4.0,
+                    float(bool(getattr(mon, "first_turn", False))),
+                    float(bool(getattr(mon, "must_recharge", False))),
+                    float(bool(getattr(mon, "preparing", False))),
+                    min(int(getattr(mon, "status_counter", 0) or 0), 6) / 6.0,
+                ]
+            scalars[i, scalar_base:] = _conditions(mon.effects)
+    field_parts = [
+        np.asarray([battle.turn / 100, float(battle.teampreview)], dtype=np.float32),
+    ]
+    if version >= 2:
+        field_parts.append(_field_timer_features(battle))
+    field_parts.extend(
         (
-            np.asarray([battle.turn / 100, float(battle.teampreview)], dtype=np.float32),
             _conditions(battle.weather),
             _conditions(battle.fields),
             _conditions(battle.side_conditions),
             _conditions(battle.opponent_side_conditions),
         )
     )
+    field = np.concatenate(field_parts)
     candidates = None
     if preview:
         own_count = sum(mon is not None for mon, _, _ in rows[:PREVIEW_COUNT])
@@ -234,10 +347,13 @@ def stack_decisions(observations, device):
 
 
 class ReplicationPolicy(nn.Module):
-    def __init__(self, width=48, layers=2):
+    def __init__(self, width=48, layers=2, *, version: int = CHECKPOINT_VERSION):
         super().__init__()
+        if version not in SUPPORTED_CHECKPOINT_VERSIONS:
+            raise ValueError(f"unsupported replication policy version: {version}")
         self.width = width
         self.layers = layers
+        self.version = version
         (species, moves, items, abilities), species_rows, move_rows = _dex()
         self.register_buffer("species_dex", torch.from_numpy(species_rows))
         self.register_buffer("move_dex", torch.from_numpy(move_rows))
@@ -245,12 +361,32 @@ class ReplicationPolicy(nn.Module):
         self.moves = nn.Embedding(len(moves) + 1, width, padding_idx=0)
         self.items = nn.Embedding(len(items) + 1, width, padding_idx=0)
         self.abilities = nn.Embedding(len(abilities) + 1, width, padding_idx=0)
-        self.positions = nn.Embedding(12, width)
+        if version >= 2:
+            self.side_embedding = nn.Embedding(2, width)
+            self.own_slot_embedding = nn.Embedding(PREVIEW_COUNT + 1, width, padding_idx=0)
+            self.register_buffer(
+                "side_ids",
+                torch.tensor([0] * PREVIEW_COUNT + [1] * PREVIEW_COUNT, dtype=torch.long),
+                persistent=False,
+            )
+            self.register_buffer(
+                "own_slot_ids",
+                torch.tensor(
+                    list(range(1, PREVIEW_COUNT + 1)) + [0] * PREVIEW_COUNT, dtype=torch.long
+                ),
+                persistent=False,
+            )
+            pokemon_scalar_dim = _V2_POKEMON_SCALARS + CONDITION_BINS
+            field_dim = 2 + _V2_FIELD_TIMERS + 4 * CONDITION_BINS
+        else:
+            self.positions = nn.Embedding(12, width)
+            pokemon_scalar_dim = _V1_POKEMON_SCALARS + CONDITION_BINS
+            field_dim = 2 + 4 * CONDITION_BINS
         self.active = nn.Embedding(3, width)
         self.move_features = nn.Linear(move_rows.shape[1], width, bias=False)
         self.species_features = nn.Linear(species_rows.shape[1], width, bias=False)
-        self.pokemon_features = nn.Linear(16 + CONDITION_BINS, width)
-        self.field_features = nn.Linear(2 + 4 * CONDITION_BINS, width)
+        self.pokemon_features = nn.Linear(pokemon_scalar_dim, width)
+        self.field_features = nn.Linear(field_dim, width)
         block = nn.TransformerEncoderLayer(
             width,
             4,
@@ -260,7 +396,10 @@ class ReplicationPolicy(nn.Module):
             norm_first=True,
         )
         self.board = nn.TransformerEncoder(block, layers, enable_nested_tensor=False)
-        self.value_head = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, 1), nn.Tanh())
+        if version >= 2:
+            self.value_head = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, 1))
+        else:
+            self.value_head = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, 1), nn.Tanh())
         self.action_kind = nn.Embedding(3, width)
         self.mega = nn.Embedding(2, width)
         self.action = nn.Sequential(nn.Linear(4 * width, width), nn.GELU())
@@ -274,7 +413,22 @@ class ReplicationPolicy(nn.Module):
     def _move_repr(self, ids):
         return self.moves(ids) + self.move_features(self.move_dex[ids])
 
-    def forward(self, pokemon, scalars, field, candidates=None, mask=None, *, preview=False):
+    def _slot_embeddings(self):
+        if self.version >= 2:
+            return self.side_embedding(self.side_ids) + self.own_slot_embedding(self.own_slot_ids)
+        return self.positions.weight
+
+    def forward(
+        self,
+        pokemon,
+        scalars,
+        field,
+        candidates=None,
+        mask=None,
+        *,
+        preview=False,
+        return_value_logit=False,
+    ):
         species, items, abilities, active = pokemon[..., :4].unbind(-1)
         tokens = (
             self.species(species)
@@ -282,14 +436,22 @@ class ReplicationPolicy(nn.Module):
             + self.items(items)
             + self.abilities(abilities)
             + self.active(active)
-            + self.positions.weight
+            + self._slot_embeddings()
             + self._move_repr(pokemon[..., 4:]).sum(dim=-2)
             + self.pokemon_features(scalars)
         )
         encoded = self.board(torch.cat((self.field_features(field)[:, None], tokens), dim=1))
         context = encoded[:, 0]
-        value = self.value_head(context).squeeze(-1)
+        raw_value = self.value_head(context).squeeze(-1)
+        if self.version >= 2:
+            value_logit = raw_value
+            value = 2.0 * torch.sigmoid(value_logit) - 1.0
+        else:
+            value_logit = None
+            value = raw_value
         if candidates is None:
+            if return_value_logit:
+                return None, value, value_logit
             return None, value
         entities = torch.cat((torch.zeros_like(encoded[:, :1]), encoded[:, 1:]), dim=1)
 
@@ -316,7 +478,10 @@ class ReplicationPolicy(nn.Module):
                 )
             ).flatten(start_dim=-2)
             logits = self.turn_policy(torch.cat((global_context, parts), dim=-1))
-        return logits.squeeze(-1).masked_fill(~mask, -torch.inf), value
+        masked_logits = logits.squeeze(-1).masked_fill(~mask, -torch.inf)
+        if return_value_logit:
+            return masked_logits, value, value_logit
+        return masked_logits, value
 
     @property
     def device(self):
@@ -324,31 +489,39 @@ class ReplicationPolicy(nn.Module):
 
     @torch.no_grad()
     def score(self, battle, orders):
-        inputs = stack_decisions([encode_decision(battle, orders)], self.device)
+        inputs = stack_decisions(
+            [encode_decision(battle, orders, version=self.version)], self.device
+        )
         logits, value = self(*inputs)
         return logits[0].cpu().numpy(), float(value.item())
 
     @torch.no_grad()
     def value(self, battle):
-        _, value = self(*stack_decisions([encode_decision(battle)], self.device))
+        _, value = self(
+            *stack_decisions([encode_decision(battle, version=self.version)], self.device)
+        )
         return float(value.item())
 
     @torch.no_grad()
     def values(self, battles):
         if not battles:
             return []
-        _, values = self(*stack_decisions([encode_decision(b) for b in battles], self.device))
+        _, values = self(
+            *stack_decisions(
+                [encode_decision(b, version=self.version) for b in battles], self.device
+            )
+        )
         return [float(v) for v in values.cpu().tolist()]
 
     @torch.no_grad()
     def choose_preview(self, battle):
-        state = encode_decision(battle, preview=True)
+        state = encode_decision(battle, preview=True, version=self.version)
         logits, _ = self(*stack_decisions([state], self.device), preview=True)
         return preview_order(state.candidates[logits[0].argmax().item()])
 
     def checkpoint(self):
         return {
-            "replication_version": CHECKPOINT_VERSION,
+            "replication_version": self.version,
             "width": self.width,
             "layers": self.layers,
             "model": self.state_dict(),
@@ -362,10 +535,13 @@ def preview_order(choice):
 
 def load_replication_policy(path: str | Path, device: str = "cpu") -> ReplicationPolicy:
     checkpoint = torch.load(path, map_location=device, weights_only=True)
-    if checkpoint.get("replication_version") != CHECKPOINT_VERSION:
+    version = checkpoint.get("replication_version")
+    if version not in SUPPORTED_CHECKPOINT_VERSIONS:
         raise ValueError(f"unsupported replication policy checkpoint: {path}")
     if checkpoint.get("vocabularies") != _dex()[0]:
         raise ValueError(f"Champions vocabulary differs from the checkpoint: {path}")
-    model = ReplicationPolicy(width=checkpoint["width"], layers=checkpoint["layers"]).to(device)
+    model = ReplicationPolicy(
+        width=checkpoint["width"], layers=checkpoint["layers"], version=version
+    ).to(device)
     model.load_state_dict(checkpoint["model"])
     return model.eval()

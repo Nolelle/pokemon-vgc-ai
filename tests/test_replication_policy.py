@@ -122,3 +122,67 @@ def test_terminal_updates_train_preview_and_round_trip_for_search(local_battle, 
         assert loaded.value(view) == value
     finally:
         battle.close()
+
+
+def test_v2_encodes_field_timers_protect_and_gae_and_v1_roundtrips(tmp_path):
+    from types import SimpleNamespace
+
+    from poke_env.battle.field import Field
+    from poke_env.battle.side_condition import SideCondition
+    from selfplay.train_replication_league import Decision, compute_trajectory_samples
+
+    mon = SimpleNamespace(
+        species="incineroar",
+        item="sitrusberry",
+        ability="intimidate",
+        moves={},
+        status=None,
+        current_hp_fraction=0.75,
+        fainted=False,
+        boosts={},
+        effects={},
+        protect_counter=2,
+        first_turn=True,
+        must_recharge=False,
+        preparing=False,
+        status_counter=0,
+    )
+    battle = SimpleNamespace(
+        teampreview=False,
+        turn=4,
+        active_pokemon=[mon, None],
+        opponent_active_pokemon=[None, None],
+        last_request={},
+        team={"p1a: Incineroar": mon},
+        opponent_team={},
+        teampreview_opponent_team=[],
+        weather={},
+        fields={Field.TRICK_ROOM: 2},
+        side_conditions={SideCondition.TAILWIND: 3},
+        opponent_side_conditions={},
+    )
+    enc = encode_decision(battle, version=2)
+    assert enc.scalars[0, 16] == pytest.approx(0.5)  # protect_counter=2 / 4
+    assert enc.scalars[0, 17] == pytest.approx(1.0)  # first_turn=True
+    assert enc.field[4] == pytest.approx(1.0)  # Trick Room active
+    assert enc.field[5] == pytest.approx(3 / 5)  # 3 turns remaining
+    assert enc.field[8] == pytest.approx(1.0)  # our Tailwind active
+    assert enc.field[9] == pytest.approx(3 / 4)  # 3 turns remaining
+
+    # GAE produces step-by-step advantages that differ from raw terminal reward - value.
+    steps = [
+        Decision(enc, 0, -1.0, 0.2),
+        Decision(enc, 0, -1.0, -0.4),
+    ]
+    traj = compute_trajectory_samples(steps, 1.0, gamma=0.99, gae_lambda=0.95)
+    assert len(traj) == 2
+    assert traj[1][2] == pytest.approx(1.4)
+    assert traj[0][2] < 0.8  # penalized by drop from 0.2 -> -0.4 before win
+
+    # Both v1 and v2 checkpoints round-trip cleanly.
+    for ver in (1, 2):
+        m = ReplicationPolicy(width=16, layers=1, version=ver).eval()
+        p = tmp_path / f"v{ver}.pt"
+        torch.save(m.checkpoint(), p)
+        loaded = load_replication_policy(p)
+        assert loaded.version == ver

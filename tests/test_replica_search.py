@@ -103,3 +103,21 @@ def test_rejected_switch_is_retried_once_without_an_extra_step():
     )
     assert retries == 1
     assert clone.calls == [{"p1": "switch 3", "p2": "move 1"}, {"p1": "move 2"}]
+
+
+def test_opponent_priors_weights_expected_payoff_over_uniform():
+    # Action "a" wins vs "x" (+1) and loses vs "y" (-1); action "b" does the opposite.
+    # Under a strong prior on "x" (0.9 vs 0.1) with worst_case_weight=0, "a" strictly dominates.
+    worlds = [SampledWorld([[1.0, -1.0], [-1.0, 1.0]], ["x", "y"])]
+    result = search_sampled_worlds(
+        ["a", "b"],
+        worlds,
+        lambda obs: obs,
+        lambda state, _a, _b: state,
+        action_key=str,
+        worst_case_weight=0.0,
+        iterations=500,
+        opponent_priors=lambda _obs, replies: [0.9 if r == "x" else 0.1 for r in replies],
+    )
+    assert result.probabilities[0] > 0.99
+    assert result.value == pytest.approx(0.8, abs=0.02)

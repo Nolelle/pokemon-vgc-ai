@@ -94,6 +94,7 @@ def search_sampled_worlds(
     max_worlds: int = 16,
     iterations: int = 20000,
     worst_case_weight: float = 0.5,
+    opponent_priors: Callable[[Obs, tuple[A, ...]], Sequence[float]] | None = None,
 ) -> ReplicaSearchResult[A]:
     """Find a shared root strategy from at most 16 possible worlds and 8 actions.
 
@@ -102,10 +103,12 @@ def search_sampled_worlds(
     turn for each action pair and return values from the root player's perspective;
     it is responsible for hiding private state from any value network it uses.
     Each matrix entry must average several independent engine seeds. Opponent replies
-    have a uniform prior; ``worst_case_weight`` blends the worst response with that
-    average (default 50/50). When every world has the same reply keys, matrices
-    are averaged before solving, so the opponent cannot identify the sampled world.
-    No worlds are silently discarded: callers must sample or limit them beforehand.
+    use ``opponent_priors`` when supplied (normalized over the selected replies), or
+    a uniform prior otherwise; ``worst_case_weight`` blends the worst response with
+    that expected payoff (default 50/50). When every world has the same reply keys,
+    matrices are averaged before solving, so the opponent cannot identify the sampled
+    world. No worlds are silently discarded: callers must sample or limit them
+    beforehand.
     """
     if not 0 <= worst_case_weight <= 1:
         raise ValueError("worst_case_weight must be between 0 and 1")
@@ -118,20 +121,34 @@ def search_sampled_worlds(
         raise ValueError("world weights must be finite, nonnegative and have positive sum")
     weights /= weights.sum()
     actions = _actions(public_observation, select_actions, action_key, max_actions)
-    opponents, matrices = [], []
+    opponents, matrices, priors = [], [], []
     for world in worlds:
         opponent = _actions(world.opponent_observation, select_actions, action_key, max_actions)
         matrix = np.asarray(evaluate_matrix(world.state, actions, opponent), dtype=float)
         if matrix.shape != (len(actions), len(opponent)) or not np.all(np.isfinite(matrix)):
             raise ValueError("payoff matrix has invalid shape or non-finite values")
+        if opponent_priors is not None:
+            raw_prior = np.asarray(
+                opponent_priors(world.opponent_observation, opponent), dtype=float
+            ).reshape(-1)
+            if (
+                len(raw_prior) != len(opponent)
+                or not np.all(np.isfinite(raw_prior))
+                or np.any(raw_prior < 0)
+                or raw_prior.sum() <= 0
+            ):
+                raise ValueError("opponent_priors must return finite nonnegative weights")
+            prior = raw_prior / raw_prior.sum()
+        else:
+            prior = np.full(len(opponent), 1.0 / len(opponent), dtype=float)
         opponents.append(opponent)
         matrices.append(matrix)
-    # A row's mean is the expected payoff under a uniform reply prior. Adding it
-    # to each column preserves the simultaneous game's dimensions and blends the
-    # expected and worst-response objectives without exposing the sampled world.
+        priors.append(prior)
+    # Blend the game-theoretic worst-response payoff with the expected payoff under the
+    # opponent's reply prior without exposing the sampled world.
     matrices = [
-        worst_case_weight * m + (1 - worst_case_weight) * m.mean(axis=1, keepdims=True)
-        for m in matrices
+        worst_case_weight * m + (1 - worst_case_weight) * (m @ prior)[:, None]
+        for m, prior in zip(matrices, priors)
     ]
     reply_keys = [tuple(map(action_key, o)) for o in opponents]
     aligned = all(set(keys) == set(reply_keys[0]) for keys in reply_keys)
