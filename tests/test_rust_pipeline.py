@@ -226,3 +226,76 @@ def test_rust_mirror_preserves_own_items_mask_parity_and_order_matching_both_sea
                 assert match_pikapro_choice_to_order(wire, battle, legal) is not None
         finally:
             live.close()
+
+
+def test_rust_policy_is_equivariant_to_move_order_and_team_slot_order() -> None:
+    """Swapping two moves on our active Pokémon or two bench Pokémon must leave value
+    unchanged and swap the corresponding move/switch logits identically (generalizes to
+    unseen teams regardless of move or team-slot ordering).
+    """
+    t1 = TEAM_PATH.read_text().strip()
+    t2 = (TEAM_PATH.parent / "mc_ladder_02.packed.txt").read_text().strip()
+    b = pikapro.Battle("championsvgc", [t1, t2], seed=[1, 2, 3, 4], log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    obs = b.encode_rich(0)
+
+    # Also verify encode_state_rich populates all 6 opponent preview rows (fog-safe).
+    obs_state = b.encode_state_rich(0)
+    foe_rows = obs_state[6 * 80 : 12 * 80].reshape(6, 80)
+    assert np.all(foe_rows[:, 8] == 1.0), "all 6 foe preview rows must be present"
+    assert np.all(foe_rows[:, 0] > 0.0), "all 6 foe preview species must be populated"
+    assert np.all(foe_rows[4:, 1] == 0.0), "unbrought foe items must stay hidden"
+    assert np.all(foe_rows[4:, 2] == 0.0), "unbrought foe abilities must stay hidden"
+    assert np.all(foe_rows[4:, 4:8] == 0.0), "unbrought foe moves must stay hidden"
+    assert np.all(foe_rows[4:, 48:54] == 0.0), "unbrought foe exact stats must stay hidden"
+
+    torch.manual_seed(17)
+    policy = RustFactoredPolicy(width=64, layers=2).eval()
+
+    # 1. Swap Move 0 and Move 3 on active slot 0 (own row 0)
+    obs_mv = obs.copy()
+    for a, c in ((4, 7), (66, 69), (70, 73)):
+        obs_mv[a], obs_mv[c] = obs_mv[c], obs_mv[a]
+
+    with torch.no_grad():
+        enc_orig = policy.encode_board(torch.from_numpy(obs).unsqueeze(0))
+        enc_mv = policy.encode_board(torch.from_numpy(obs_mv).unsqueeze(0))
+        v_orig, _ = policy.value_from_context(enc_orig.context)
+        v_mv, _ = policy.value_from_context(enc_mv.context)
+        assert float((v_orig - v_mv).abs().max()) < 1e-5
+
+        l0_orig = policy.slot0_logits(enc_orig)[0]
+        l0_mv = policy.slot0_logits(enc_mv)[0]
+        assert float((l0_orig[0:10] - l0_mv[30:40]).abs().max()) < 1e-5
+        assert float((l0_orig[30:40] - l0_mv[0:10]).abs().max()) < 1e-5
+        assert float((l0_orig[10:30] - l0_mv[10:30]).abs().max()) < 1e-5
+        assert float((l0_orig[40:] - l0_mv[40:]).abs().max()) < 1e-5
+
+        # Semantic Slot-1 conditioning must also follow the swapped move!
+        l1_orig = policy.slot1_logits(enc_orig, torch.tensor([2]))[0]
+        l1_mv = policy.slot1_logits(enc_mv, torch.tensor([32]))[0]
+        assert float((l1_orig - l1_mv).abs().max()) < 1e-5
+
+    # 2. Swap bench Pokémon rows 2 and 3 on our own side
+    obs_sw = obs.copy()
+    r2 = obs_sw[2 * 80 : 3 * 80].copy()
+    r3 = obs_sw[3 * 80 : 4 * 80].copy()
+    obs_sw[2 * 80 : 3 * 80] = r3
+    obs_sw[3 * 80 : 4 * 80] = r2
+
+    with torch.no_grad():
+        enc_sw = policy.encode_board(torch.from_numpy(obs_sw).unsqueeze(0))
+        v_sw, _ = policy.value_from_context(enc_sw.context)
+        assert float((v_orig - v_sw).abs().max()) < 1e-5
+
+        l0_sw = policy.slot0_logits(enc_sw)[0]
+        assert float((l0_orig[42] - l0_sw[43]).abs()) < 1e-5
+        assert float((l0_orig[43] - l0_sw[42]).abs()) < 1e-5
+        assert float((l0_orig[:40] - l0_sw[:40]).abs().max()) < 1e-5
+
+        l1_sw_orig = policy.slot1_logits(enc_orig, torch.tensor([42]))[0]
+        l1_sw_swap = policy.slot1_logits(enc_sw, torch.tensor([43]))[0]
+        assert float((l1_sw_orig[:40] - l1_sw_swap[:40]).abs().max()) < 1e-5
+        assert float((l1_sw_orig[42] - l1_sw_swap[43]).abs()) < 1e-5
+        assert float((l1_sw_orig[43] - l1_sw_swap[42]).abs()) < 1e-5

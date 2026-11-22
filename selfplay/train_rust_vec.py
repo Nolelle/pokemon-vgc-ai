@@ -193,8 +193,8 @@ def _select_batch_actions(
     lp_out = np.zeros(n, dtype=np.float32)
 
     x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
-    ctx, own_tokens, act0, act1 = model.encode_board(x)
-    val_t, _ = model.value_from_context(ctx)
+    enc = model.encode_board(x)
+    val_t, _ = model.value_from_context(enc.context)
     val_out = val_t.cpu().numpy().astype(np.float32)
 
     pv_masks = masks_np[:, 2 * s :]
@@ -203,7 +203,7 @@ def _select_batch_actions(
     if is_pv.any():
         pv_idx = np.flatnonzero(is_pv)
         pv_idx_t = torch.from_numpy(pv_idx).to(dev)
-        pv_logits = model.preview_logits(ctx[pv_idx_t], own_tokens[pv_idx_t])
+        pv_logits = model.preview_logits(enc.index(pv_idx_t))
         pv_m_t = torch.from_numpy(np.ascontiguousarray(pv_masks[pv_idx], dtype=bool)).to(dev)
         pv_logits = pv_logits.masked_fill(~pv_m_t, -1e9)
         pv_lp = F.log_softmax(pv_logits, dim=-1)
@@ -224,8 +224,9 @@ def _select_batch_actions(
             valid_local = np.flatnonzero(has_m0)
             v_global = turn_idx[valid_local]
             v_t = torch.from_numpy(v_global).to(dev)
+            enc_v = enc.index(v_t)
             m0_t = torch.from_numpy(np.ascontiguousarray(m0_np[valid_local], dtype=bool)).to(dev)
-            l0 = model.slot0_logits(ctx[v_t], act0[v_t]).masked_fill(~m0_t, -1e9)
+            l0 = model.slot0_logits(enc_v).masked_fill(~m0_t, -1e9)
             lp0_all = F.log_softmax(l0, dim=-1)
             if deterministic:
                 a0_t = l0.argmax(dim=-1)
@@ -246,9 +247,9 @@ def _select_batch_actions(
                 m1_ok = np.flatnonzero(has_m1)
                 m1_ok_t = torch.from_numpy(m1_ok).to(dev)
                 m1_t = torch.from_numpy(np.ascontiguousarray(m1_np[m1_ok], dtype=bool)).to(dev)
-                l1 = model.slot1_logits(
-                    ctx[v_t[m1_ok_t]], act1[v_t[m1_ok_t]], a0_t[m1_ok_t]
-                ).masked_fill(~m1_t, -1e9)
+                l1 = model.slot1_logits(enc_v.index(m1_ok_t), a0_t[m1_ok_t]).masked_fill(
+                    ~m1_t, -1e9
+                )
                 lp1_all = F.log_softmax(l1, dim=-1)
                 if deterministic:
                     a1_t = l1.argmax(dim=-1)
@@ -340,18 +341,18 @@ def ppo_update(
 
         for is_pv_group, rows in minibatches:
             idx_t = torch.tensor(rows, dtype=torch.long, device=dev)
-            ctx, own_tokens, act0, act1 = model.encode_board(obs_t[idx_t])
-            _, value_logit = model.value_from_context(ctx)
+            enc = model.encode_board(obs_t[idx_t])
+            _, value_logit = model.value_from_context(enc.context)
 
             if is_pv_group:
-                pv_logits = model.preview_logits(ctx, own_tokens)
+                pv_logits = model.preview_logits(enc)
                 pv_mask = mask_t[idx_t, 2 * s :]
                 new_lp, ent = masked_log_prob_and_entropy(pv_logits, pv_mask, a0_t[idx_t])
             else:
-                l0 = model.slot0_logits(ctx, act0)
+                l0 = model.slot0_logits(enc)
                 m0 = mask_t[idx_t, :s]
                 lp0, ent0 = masked_log_prob_and_entropy(l0, m0, a0_t[idx_t])
-                l1 = model.slot1_logits(ctx, act1, a0_t[idx_t])
+                l1 = model.slot1_logits(enc, a0_t[idx_t])
                 m1 = m1_t[idx_t]
                 lp1, ent1 = masked_log_prob_and_entropy(l1, m1, a1_t[idx_t])
                 new_lp = lp0 + lp1
@@ -411,7 +412,10 @@ def eval_rust_opponents(
 ) -> dict[str, float]:
     """Fast native Rust evaluation on unseen holdout teams (100 games in <1s)."""
     results: dict[str, float] = {}
-    batch_n = min(64, max(8, games_per_opponent))
+    batch_n = min(64, max(1, games_per_opponent))
+    # Assign exact per-slot quotas so slow games are never dropped (zero fast-game bias).
+    base_q, rem = divmod(games_per_opponent, batch_n)
+    quotas = np.asarray([base_q + (1 if i < rem else 0) for i in range(batch_n)], dtype=np.int64)
     for opp_idx, opp_name in enumerate(opponents):
         if opp_name not in rl.BUILTIN_POLICIES:
             continue
@@ -429,10 +433,10 @@ def eval_rust_opponents(
             side_randomization=True,
         )
         step = env.reset()
-        done_count = 0
+        done_per_env = np.zeros(batch_n, dtype=np.int64)
         points = 0.0
-        while done_count < games_per_opponent:
-            needs = step.needs_action[:, 0]
+        while int(done_per_env.sum()) < games_per_opponent:
+            needs = step.needs_action[:, 0] & (done_per_env < quotas)
             act = np.full((batch_n, 2), -1, dtype=np.int64)
             idx = np.flatnonzero(needs)
             if len(idx) > 0:
@@ -446,14 +450,19 @@ def eval_rust_opponents(
                 )
                 act[idx, 0] = a0
                 act[idx, 1] = a1
+            # Still step completed envs with random action if they wait for slower peers.
+            idle_needs = step.needs_action[:, 0] & (done_per_env >= quotas)
+            if idle_needs.any():
+                act[idle_needs, 0] = rl.RANDOM_ACTION
+                act[idle_needs, 1] = rl.RANDOM_ACTION
             step = env.step(act)
             finished = np.flatnonzero(step.done)
             for i in finished:
-                if done_count >= games_per_opponent:
-                    break
+                if done_per_env[i] >= quotas[i]:
+                    continue
                 points += (float(step.reward[i, 0]) + 1.0) * 0.5
-                done_count += 1
-        results[f"eval_win_rate_{opp_name}"] = round(points / max(done_count, 1), 4)
+                done_per_env[i] += 1
+        results[f"eval_win_rate_{opp_name}"] = round(points / max(games_per_opponent, 1), 4)
     return results
 
 

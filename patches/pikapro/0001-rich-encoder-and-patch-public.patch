@@ -453,8 +453,8 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +}
 diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
 --- a/crates/pikapro-py/src/python.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro-py/src/python.rs	2026-11-21 18:28:17
-@@ -1365,6 +1365,337 @@
++++ b/crates/pikapro-py/src/python.rs	2026-11-21 22:18:21
+@@ -1365,6 +1365,338 @@
          )
      }
  
@@ -507,6 +507,7 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.r
 +            side,
 +            &tables,
 +            Some(&self.game.team[side.index()]),
++            Some(&self.game.team[side.foe().index()]),
 +            &items,
 +            &abilities,
 +            &moves,
@@ -844,8 +845,8 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/m
  
 diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
 --- a/crates/pikapro-rl/src/encode/rich.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-21 18:28:15
-@@ -0,0 +1,625 @@
++++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-21 22:18:20
+@@ -0,0 +1,659 @@
 +//! The `rich` observation: structured token-ready features for transformer policies.
 +//!
 +//! Layout (`SIZE = 1028` floats per player):
@@ -1223,6 +1224,7 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +    me: SideId,
 +    tables: &Tables,
 +    own_team: Option<&pikapro_view::OwnTeam>,
++    foe_team: Option<&pikapro_view::OwnTeam>,
 +    foe_known_items: &[Option<ItemId>],
 +    foe_known_abilities: &[Option<AbilityId>],
 +    foe_known_moves: &[Vec<MoveId>],
@@ -1233,6 +1235,7 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +    let dex = tables.dex;
 +    let sides = [me, me.foe()];
 +    let mut own_written = [false; ROWS];
++    let mut foe_written = [false; ROWS];
 +    for (ego, side_id) in sides.into_iter().enumerate() {
 +        let side = state.side(side_id);
 +        let is_own = ego == 0;
@@ -1240,6 +1243,8 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +            let row = (mon.id as usize).min(ROWS - 1);
 +            if is_own {
 +                own_written[row] = true;
++            } else {
++                foe_written[row] = true;
 +            }
 +            let o = &mut out[(ego * ROWS + row) * RICH_MON_WIDTH..][..RICH_MON_WIDTH];
 +            let active_slot = (0..MAX_ACTIVE).find(|&s| side.active[s] == Some(idx as u8));
@@ -1396,6 +1401,36 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +            }
 +            for (k, v) in tm.stats.into_iter().enumerate() {
 +                o[48 + k] = f32::from(v) / 255.0;
++            }
++            let bs = sp_data.base_stats;
++            o[54] = f32::from(bs[Stat::Hp]) / 255.0;
++            o[55] = f32::from(bs[Stat::Atk]) / 255.0;
++            o[56] = f32::from(bs[Stat::Def]) / 255.0;
++            o[57] = f32::from(bs[Stat::SpA]) / 255.0;
++            o[58] = f32::from(bs[Stat::SpD]) / 255.0;
++            o[59] = f32::from(bs[Stat::Spe]) / 255.0;
++        }
++    }
++
++    // Fill unbrought opponent preview Pokémon with strictly public preview info only
++    // (species, types, base stats — never hidden items, abilities, moves, or exact stats).
++    if let Some(team) = foe_team {
++        for (row, written) in foe_written.iter().enumerate() {
++            if *written {
++                continue;
++            }
++            let Some(tm) = team.get(row as u8) else { continue };
++            if tm.level == 0 {
++                continue;
++            }
++            let o = &mut out[(ROWS + row) * RICH_MON_WIDTH..][..RICH_MON_WIDTH];
++            o[0] = (tm.species.index() + 1) as f32;
++            o[8] = 1.0; // present
++            o[15] = 1.0; // public unrevealed hp_frac
++            let sp_data = dex.species(tm.species);
++            one_hot(&mut o[30..48], sp_data.types.primary as usize);
++            if let Some(s) = sp_data.types.secondary {
++                one_hot(&mut o[30..48], s as usize);
 +            }
 +            let bs = sp_data.base_stats;
 +            o[54] = f32::from(bs[Stat::Hp]) / 255.0;
