@@ -3,8 +3,8 @@
   "generated_from": {
     "format_id": "gen9championsvgc2026regmc",
     "mod": "champions",
-    "showdown_repo": "/home/ubuntu/pokemon-showdown",
-    "showdown_commit": "f827a1d41064e0dec4c19c6ea0394fcf0c23479c"
+    "showdown_repo": "/Users/edmundyu/code/projects/pokemon-showdown",
+    "showdown_commit": "e7f50cd7bcb36348c631534a97ae8323b8189541"
   },
   "format": {
     "game_type": "doubles",

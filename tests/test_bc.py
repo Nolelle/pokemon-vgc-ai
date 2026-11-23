@@ -400,6 +400,27 @@ def test_encode_state_preview_species_missing_defaults_to_all_pad() -> None:
     assert (state["species_idx_preview"] == SPECIES_TO_IDX["<pad>"]).all()
 
 
+def test_encode_state_teampreview_preview_key() -> None:
+    # Teampreview records carry each side's six under "preview" (turn records use
+    # "preview_species") -- they must not encode as all pad.
+    six = ["garchomp", "klefki", "incineroar", "charizard", "gholdengo", "pikachu"]
+    state = encode_state(
+        {
+            "state": {
+                "our": {"preview": list(six)},
+                "opp": {"preview": list(six)},
+                "field": {"turn": 0},
+            }
+        }
+    )
+    assert state["species_idx_preview"].shape == (12,)
+    for idx, species in enumerate(six):
+        assert state["species_idx_preview"][idx] == SPECIES_TO_IDX[species]
+        assert state["species_idx_preview"][idx + 6] == SPECIES_TO_IDX[species]
+    assert not set(state["species_idx_preview"].tolist()) & {
+        SPECIES_TO_IDX["<pad>"], SPECIES_TO_IDX["<unk>"]}
+
+
 def test_encode_state_preview_unseen_count_scaled_by_six() -> None:
     record = _turn_record(
         our_active=[_mon("garchomp"), None],
@@ -1105,3 +1126,65 @@ def test_train_without_extra_data_reports_zero_extra_samples(tmp_path) -> None:
 
     assert result["extra_train_samples"] == 0
     assert result["train_samples_total"] == result["train_samples"]
+
+
+def test_live_opponent_mega_forme_and_ability() -> None:
+    """Per-mon mega evidence: Charizard->Y gets mega/drought; Salamence keeps a
+    revealed Intimidate; Golisopod stays None -- no cross-mon leakage."""
+    import vgc.poke_env_compat  # noqa: F401  -- installs the repair patches
+    from vgc.poke_env_compat import normalize_for_poke_env
+    from poke_env.battle.double_battle import DoubleBattle
+
+    battle = DoubleBattle(battle_tag="t", username="me", logger=None, gen=9)
+    battle.player_role = "p1"
+    battle._opponent_role = "p2"
+    for line in (
+        "|switch|p2a: Charizard|Charizard, L50|100/100",
+        "|switch|p2b: Salamence|Salamence, L50|100/100",
+        "|detailschange|p2a: Charizard|Charizard-Mega-Y, L50",
+        "|-mega|p2a: Charizard|Charizard|Charizardite Y",
+        "|-ability|p2b: Salamence|Intimidate",
+        "|switch|p1a: Golisopod|Golisopod, L50|100/100",
+    ):
+        battle.parse_message(normalize_for_poke_env(line.split("|")))
+    czard, sala = battle.opponent_active_pokemon[0], battle.opponent_active_pokemon[1]
+    goli = battle.active_pokemon[0]
+
+    from vgc.bc.policy import _active_mon_dict
+
+    cz = _active_mon_dict(czard)
+    assert cz["mega"] is True and cz["species"] == "charizard"
+    assert cz["ability"] == "drought"
+    sa = _active_mon_dict(sala)
+    assert sa["mega"] is False and sa["ability"] == "intimidate"
+    go = _active_mon_dict(goli)
+    assert go["mega"] is False and go["ability"] == "emergencyexit"
+
+
+def test_live_post_mega_ability_line_does_not_revert() -> None:
+    """After an in-battle mega, a later [from]/-ability line must not demote the
+    mega ability back to the stale revealed base ability."""
+    import vgc.poke_env_compat  # noqa: F401
+    from vgc.bc.policy import _active_mon_dict
+    from vgc.poke_env_compat import normalize_for_poke_env
+    from poke_env.battle.double_battle import DoubleBattle
+
+    battle = DoubleBattle(battle_tag="t", username="me", logger=None, gen=9)
+    battle.player_role = "p1"
+    battle._opponent_role = "p2"
+    for line in (
+        "|switch|p2a: Salamence|Salamence, L50|100/100",
+        "|-ability|p2a: Salamence|Intimidate|boost",
+        "|detailschange|p2a: Salamence|Salamence-Mega, L50",
+        "|-mega|p2a: Salamence|Salamence|Salamencite",
+        "|-ability|p2a: Salamence|Moxie|[from] move: Skill Swap",
+        "|-ability|p2a: Salamence|Intimidate",
+    ):
+        battle.parse_message(normalize_for_poke_env(line.split("|")))
+    mon = battle.opponent_active_pokemon[0]
+    assert mon.forme_change_ability == "aerilate"
+    assert mon._ability == "intimidate"  # stale base stays base, not overwritten
+    d = _active_mon_dict(mon)
+    assert d["mega"] is True
+    # Skill Swap lands in temporary_ability while active (effective), base intact.
+    assert mon.temporary_ability in (None, "moxie", "intimidate")

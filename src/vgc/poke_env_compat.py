@@ -1176,8 +1176,28 @@ def _is_mega_forme(species_id: str) -> bool:
     return "mega" in species_id
 
 
+def detailschange_details(battle: AbstractBattle | None, mon: Pokemon) -> str | None:
+    """Exact details string from the latest `|detailschange|` on `mon`, if any."""
+    if battle is None:
+        return None
+    mapping = vars(battle).get("_vgc_detailschanged_details")
+    return mapping.get(id(mon)) if isinstance(mapping, dict) else None
+
+
 def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:
     mon = _find_mon(battle, split[2])
+    # Record the exact announced forme on `battle` (NOT poke-env's internal
+    # `_last_details` slot: mutating `_last_details` tricks
+    # `Pokemon._update_from_details` into either skipping a Mega `|request|` update
+    # or reverting a temporary `-formechange` like Morpeko-Hangry on the next request).
+    if mon is not None and len(split) > 3:
+        if split[1] == "detailschange":
+            vars(battle).setdefault("_vgc_detailschanged_details", {})[id(mon)] = split[3]
+            if split[2][:2] != battle.player_role:
+                mon._last_details = split[3]
+        # Track mons that forme-changed in-battle: a stale pre-forme `_ability`
+        # must not be allowed to resurface over `forme_change_ability` later.
+        vars(battle).setdefault("_vgc_detailschanged", set()).add(id(mon))
     if mon is not None and fix_enabled("forme_change_resets_types"):
         # Showdown's `formeChange` sets the new forme's types, wiping Soak / Trick-or-Treat /
         # Reflect Type results; poke-env kept them through a Mega Evolution.
@@ -1361,7 +1381,27 @@ def _parse_message_with_repairs(self: AbstractBattle, split_message: list[str]) 
         else None
     )
     item_reveal = _item_before(self, split_message) if len(split_message) > 3 else None
+    # `-ability` reveals write `_ability` only while it is None (post-forme reveals
+    # otherwise route to `temporary_ability`). A GENUINE base-ability announcement
+    # landing on a pre-mega'd entry ("Salamence-Mega" holding a Champions base
+    # ability) is fresher than the dex fill and must win. The demotion is narrow:
+    # no `[from]` tag (not a copy/swap), the announced ability is what `_ability`
+    # now holds, and the mon never forme-changed via an observed `|detailschange|`
+    # -- otherwise a post-mega Trace/Skill Swap line would revert the real mega
+    # ability to the stale base.
+    ability_mon = (
+        _find_mon(self, split_message[2])
+        if split_message[1] == "-ability" and "[from]" not in "|".join(split_message[3:])
+        else None
+    )
     _original_parse_message(self, split_message)
+    if (
+        ability_mon is not None
+        and _to_id(split_message[3]) == ability_mon._ability
+        and ability_mon.forme_change_ability is not None
+        and id(ability_mon) not in vars(self).get("_vgc_detailschanged", set())
+    ):
+        ability_mon.forme_change_ability = None
     if after is not None:
         after()
     if reveal is not None:

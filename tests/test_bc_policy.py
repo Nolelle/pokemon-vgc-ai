@@ -207,7 +207,9 @@ def test_battle_state_record_opp_side_is_revealed_only() -> None:
     assert opp0["species"] == "gholdengo"
     assert opp0["status"] == "brn"
     assert opp0["item"] is None  # never revealed
-    assert opp0["ability"] is None  # never revealed
+    # Never announced, but Gholdengo has exactly one legal ability, so the species
+    # alone reveals it (replay parsing applies the same Champions-data rule).
+    assert opp0["ability"] == "goodasgold"
     assert opp0["revealed_moves"] == ["shadowball"]
     assert record["state"]["opp"]["active"][1] is None  # empty slot
 
@@ -410,7 +412,8 @@ def test_battle_state_record_encodes_identically_to_schema4_fixture() -> None:
                         "status": "brn",
                         "boosts": {},
                         "item": None,
-                        "ability": None,
+                        # single legal ability -> filled on both live and replay paths
+                        "ability": "goodasgold",
                         "mega": False,
                         "revealed_moves": ["shadowball"],
                     },

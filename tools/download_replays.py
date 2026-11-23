@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import re
 import sys
@@ -57,6 +58,9 @@ REPLAY_URL_TEMPLATE = "https://replay.pokemonshowdown.com/{id}.json"
 PAGE_SIZE = 50
 # How long to wait before the single retry on a transient HTTP/JSON failure.
 RETRY_SLEEP_SECONDS = 5.0
+# Network/parse failures worth one retry. OSError covers URLError, timeouts and dropped
+# connections (RemoteDisconnected is also an HTTPException).
+TRANSIENT_ERRORS = (OSError, http.client.HTTPException, json.JSONDecodeError)
 
 DEFAULT_MIN_RATING = 1100
 DEFAULT_MAX_PAGES = 100
@@ -150,7 +154,7 @@ def _fetch_json(url: str, timeout: float = 30.0) -> object:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except TRANSIENT_ERRORS as exc:
         print(
             f"  request failed ({exc}); retrying once in {RETRY_SLEEP_SECONDS}s: {url}",
             file=sys.stderr,
@@ -270,7 +274,7 @@ def main() -> int:
         url = _search_page_url(args.format, before)
         try:
             entries = _fetch_json(url)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except TRANSIENT_ERRORS as exc:
             print(f"search page request failed after retry ({exc}); stopping here", file=sys.stderr)
             break
         pages_walked += 1
@@ -293,7 +297,7 @@ def main() -> int:
             entry_id = entry["id"]
             try:
                 replay = _fetch_json(REPLAY_URL_TEMPLATE.format(id=entry_id))
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            except TRANSIENT_ERRORS as exc:
                 print(f"  replay {entry_id} failed after retry ({exc}); skipping", file=sys.stderr)
                 time.sleep(args.sleep)
                 continue

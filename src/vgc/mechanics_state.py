@@ -435,6 +435,7 @@ def snapshot_pokemon(
     request_pp: Mapping[str, tuple[int, int]] | None = None,
     recharge_pending: bool | None = None,
     mega_forme_hint: str | None = None,
+    selected_in_preview: bool | None = None,
 ) -> PokemonMechanicsState:
     moves = getattr(pokemon, "moves", None) or {}
     move_entries = (
@@ -502,7 +503,8 @@ def snapshot_pokemon(
         fainted=bool(getattr(pokemon, "fainted", False)),
         active=bool(getattr(pokemon, "active", False)),
         revealed=bool(getattr(pokemon, "revealed", not opponent)),
-        selected_in_preview=bool(getattr(pokemon, "selected_in_teampreview", False)),
+        selected_in_preview=(bool(getattr(pokemon, "selected_in_teampreview", False))
+                             if selected_in_preview is None else selected_in_preview),
         stats=tuple(sorted((str(key), _optional_int(value)) for key, value in raw_stats.items())),
         stat_points=stat_points,
         individual_values=(
@@ -672,6 +674,13 @@ def _side_snapshot(
     while len(active) < 2:
         active.append(None)
     revealed_items = _revealed_items_for(battle) if opponent else None
+    selected_by_id: dict[int, bool] = {}
+    request = getattr(battle, "last_request", None)
+    if not opponent and not getattr(battle, "teampreview", False) and isinstance(request, Mapping):
+        entries = (request.get("side") or {}).get("pokemon") or []
+        if entries and isinstance(team, Mapping):
+            identities = {entry.get("ident") for entry in entries}
+            selected_by_id = {id(mon): ident in identities for ident, mon in team.items()}
     memory = getattr(battle, "_vgc_battle_memory", None)
     memory_role = None
     if memory is not None:
@@ -680,6 +689,7 @@ def _side_snapshot(
         snapshot_pokemon(
             mon,
             opponent=opponent,
+            selected_in_preview=selected_by_id.get(id(mon)),
             revealed_items=revealed_items,
             item_lost_this_stint=(
                 memory.item_lost_this_stint(memory_role, getattr(mon, "species", None))

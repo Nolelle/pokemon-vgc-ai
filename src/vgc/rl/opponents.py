@@ -16,7 +16,7 @@ except ImportError as exc:  # pragma: no cover - train extra is optional
 from vgc.model_vocabulary import VOCABULARY_KEY, current_vocabulary, require_current_vocabulary
 from vgc.rl.model import CandidatePolicyValueNet
 
-RL_ARCHITECTURE_VERSION = "candidate-policy-value-v4-mechanics"
+RL_ARCHITECTURE_VERSION = "candidate-policy-value-v5-brought-resources"
 
 
 @dataclass(frozen=True)

@@ -280,6 +280,46 @@ def test_ppo_update_changes_parameters_and_returns_finite_metrics() -> None:
     )
 
 
+def test_ppo_unchanged_policy_has_unit_ratios_with_dropout() -> None:
+    """Training must score the same policy that generated the stored actions."""
+    torch.manual_seed(20261028)
+    model = CandidatePolicyValueNet(head_dropout=0.5)
+    model.eval()
+    indices, scalars = _state()
+    candidates = _distinct_candidates()
+    moves, targets, species, flags, mask = pad_candidate_features([candidates])
+    buffer = RolloutBuffer()
+    for outcome in (1.0, -1.0) * 8:
+        with torch.no_grad():
+            action, log_prob, value = select_action(
+                model,
+                torch.as_tensor(indices[None, :]),
+                torch.as_tensor(scalars[None, :]),
+                torch.as_tensor(_history()[None, :]),
+                torch.as_tensor(moves),
+                torch.as_tensor(targets),
+                torch.as_tensor(species),
+                torch.as_tensor(flags),
+                torch.as_tensor(mask),
+            )
+        buffer.add(RolloutStep(
+            state_indices=indices.copy(), state_scalars=scalars.copy(),
+            history_scalars=_history(), candidates=candidates,
+            action_index=int(action.item()), old_log_prob=float(log_prob.item()),
+            old_value=float(value.item()),
+        ))
+        buffer.finish_episode(outcome, PpoConfig(gamma=1.0))
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0)
+    metrics = ppo_update(
+        model, optimizer, buffer,
+        PpoConfig(epochs=2, minibatch_size=4, teacher_anchor_weight=0.0),
+        rng=np.random.default_rng(20261028),
+    )
+    assert abs(metrics["approx_kl"]) < 1e-6
+    assert metrics["clip_fraction"] == 0.0
+    assert metrics["grad_norm"] > 0.0  # eval mode must still permit learning
+
+
 def test_teacher_anchor_increases_probability_of_search_action() -> None:
     torch.manual_seed(4)
     model = CandidatePolicyValueNet()
@@ -1866,3 +1906,74 @@ def test_distill_policy_without_val_samples_runs_full_epochs_and_keeps_existing_
     # val is unused here (val_samples not passed) -- keep the split alive only so
     # this test documents the "legacy, no honest gating" call shape it's guarding.
     assert val
+
+
+@pytest.mark.parametrize("outcome", [-1.0, 0.0, 1.0])
+def test_research_multistep_returns_do_not_cross_episode_boundaries(outcome):
+    indices, scalars = _state()
+    buffer = RolloutBuffer()
+    for result in (outcome, -outcome):
+        for value in (0.2, -0.1, 0.4):
+            buffer.add(RolloutStep(
+                indices, scalars, _history(), _distinct_candidates(), 0, -1.0, value,
+            ))
+        buffer.finish_episode(result, PpoConfig(gamma=1.0, gae_lambda=1.0))
+    assert [s.return_value for s in buffer.steps] == pytest.approx(
+        [outcome] * 3 + [-outcome] * 3)
+    assert [s.advantage for s in buffer.steps[:3]] == pytest.approx(
+        [outcome - 0.2, outcome + 0.1, outcome - 0.4])
+
+
+def test_research_candidate_permutation_and_exact_optimizer_resume(tmp_path):
+    import copy
+
+    from vgc.rl.ppo import _tensor_batch
+
+    torch.manual_seed(28)
+    model = CandidatePolicyValueNet()
+    model.eval()
+    indices, scalars = _state()
+    candidates = _distinct_candidates()
+    sample = RolloutStep(indices, scalars, _history(), candidates, 0, 0.0, 0.0)
+    batch = _tensor_batch([sample], "cpu")
+
+    def forward(m, b):
+        return m(*[b[k] for k in (
+            "state_indices", "state_scalars", "history_scalars", "move_indices",
+            "target_indices", "switch_species_indices", "flags", "candidate_mask")])
+
+    with torch.no_grad():
+        logits, value = forward(model, batch)
+        permutation = torch.tensor([2, 0, 1])
+        permuted = dict(batch)
+        for key in ("move_indices", "target_indices", "switch_species_indices",
+                    "flags", "candidate_mask"):
+            permuted[key] = batch[key][:, permutation]
+        shuffled_logits, shuffled_value = forward(model, permuted)
+    torch.testing.assert_close(shuffled_logits, logits[:, permutation])
+    torch.testing.assert_close(shuffled_value, value)
+    sample.old_log_prob = float(logits.log_softmax(-1)[0, 0])
+    sample.old_value = float(value.item())
+    buffer = RolloutBuffer()
+    buffer.add(sample)
+    config = PpoConfig(gamma=1.0, teacher_anchor_weight=0.0, epochs=1)
+    buffer.finish_episode(1.0, config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    rng = np.random.default_rng(28)
+    ppo_update(model, optimizer, copy.deepcopy(buffer), config, rng=rng)
+    path = tmp_path / "resume.pt"
+    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                "torch_rng": torch.get_rng_state(), "numpy_rng": rng.bit_generator.state}, path)
+    ppo_update(model, optimizer, copy.deepcopy(buffer), config, rng=rng)
+    expected = copy.deepcopy(model.state_dict())
+    saved = torch.load(path, weights_only=False)
+    restored = CandidatePolicyValueNet()
+    restored.load_state_dict(saved["model"])
+    restored_optimizer = torch.optim.Adam(restored.parameters(), lr=1e-3)
+    restored_optimizer.load_state_dict(saved["optimizer"])
+    torch.set_rng_state(saved["torch_rng"])
+    restored_rng = np.random.default_rng()
+    restored_rng.bit_generator.state = saved["numpy_rng"]
+    ppo_update(restored, restored_optimizer, copy.deepcopy(buffer), config, rng=restored_rng)
+    for key, tensor in expected.items():
+        torch.testing.assert_close(restored.state_dict()[key], tensor, rtol=0, atol=0)

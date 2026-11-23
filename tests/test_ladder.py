@@ -536,3 +536,44 @@ def test_make_session_player_defaults_and_unknown_modes(tmp_path):
             battle_format="gen9championsvgc2026regmb",
             start_listening=False,
         )
+
+
+def test_make_session_player_replica_modes_build_replication_ladder_player(tmp_path):
+    pytest.importorskip("torch")
+    import torch
+
+    from vgc.models import PolicyConfig
+    from vgc.rl.replication_policy import ReplicationPolicy
+
+    checkpoint = tmp_path / "replica.pt"
+    torch.save(ReplicationPolicy(width=16, layers=1).checkpoint(), checkpoint)
+
+    for mode, expected_search in (("replica", False), ("replica-search", True)):
+        player = run_ladder_module._make_session_player(
+            checkpoint_path=checkpoint,
+            device="cpu",
+            policy_mode=mode,
+            artifacts_dir=tmp_path / f"artifacts-{mode}",
+            log_path=tmp_path / f"{mode}.jsonl",
+            session_id=f"unit-{mode}",
+            config=PolicyConfig(),
+            team="fake-team",
+            battle_format="gen9championsvgc2026regmc",
+            start_listening=False,
+        )
+        assert player.replica_mode == mode
+        assert player.use_replica_search is expected_search
+        assert player.learned_checkpoint_sha256 == run_ladder_module.checkpoint_sha256(checkpoint)
+
+    with pytest.raises(ValueError, match="requires a policy checkpoint"):
+        run_ladder_module._make_session_player(
+            checkpoint_path=None,
+            device="cpu",
+            policy_mode="replica",
+            artifacts_dir=tmp_path / "a3",
+            log_path=tmp_path / "log3.jsonl",
+            session_id="unit3",
+            team="fake-team",
+            battle_format="gen9championsvgc2026regmc",
+            start_listening=False,
+        )

@@ -1,0 +1,499 @@
+{
+  "seed": 22,
+  "learning_rate": 0.001,
+  "config": {
+    "gamma": 1.0,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "value_clip_ratio": 0.2,
+    "value_loss_weight": 0.5,
+    "entropy_weight": 0.01,
+    "teacher_anchor_weight": 0.0,
+    "max_grad_norm": 0.5,
+    "epochs": 4,
+    "minibatch_size": 64,
+    "reward_shaping_coef": 0.0
+  },
+  "task_subset": null,
+  "hard_task": null,
+  "games_per_update": 128,
+  "eval_every_updates": 4,
+  "architecture": "candidate-policy-value-v5-brought-resources",
+  "status": "diagnostic_unapproved",
+  "source_sha256": "c9be96c1780abac0a24352302618ed19d7e4381106ef0024858f999d8d45a3b5",
+  "fixture_sha256": "0fd27d4ca5c7bed759ed24814d648ea24bdf9aceb0857b6519575eee8bc4526e",
+  "evaluations": [
+    {
+      "iteration": 0,
+      "tasks": [
+        {
+          "task": 0,
+          "wins": 48,
+          "games": 64
+        },
+        {
+          "task": 1,
+          "wins": 60,
+          "games": 64
+        },
+        {
+          "task": 2,
+          "wins": 22,
+          "games": 64
+        },
+        {
+          "task": 3,
+          "wins": 37,
+          "games": 64
+        },
+        {
+          "task": 4,
+          "wins": 13,
+          "games": 64
+        },
+        {
+          "task": 5,
+          "wins": 14,
+          "games": 64
+        },
+        {
+          "task": 6,
+          "wins": 32,
+          "games": 64
+        },
+        {
+          "task": 7,
+          "wins": 38,
+          "games": 64
+        }
+      ],
+      "win_rate": 0.515625
+    },
+    {
+      "iteration": 4,
+      "tasks": [
+        {
+          "task": 0,
+          "wins": 63,
+          "games": 64
+        },
+        {
+          "task": 1,
+          "wins": 60,
+          "games": 64
+        },
+        {
+          "task": 2,
+          "wins": 55,
+          "games": 64
+        },
+        {
+          "task": 3,
+          "wins": 59,
+          "games": 64
+        },
+        {
+          "task": 4,
+          "wins": 58,
+          "games": 64
+        },
+        {
+          "task": 5,
+          "wins": 53,
+          "games": 64
+        },
+        {
+          "task": 6,
+          "wins": 59,
+          "games": 64
+        },
+        {
+          "task": 7,
+          "wins": 55,
+          "games": 64
+        }
+      ],
+      "win_rate": 0.90234375
+    },
+    {
+      "iteration": 8,
+      "tasks": [
+        {
+          "task": 0,
+          "wins": 63,
+          "games": 64
+        },
+        {
+          "task": 1,
+          "wins": 61,
+          "games": 64
+        },
+        {
+          "task": 2,
+          "wins": 62,
+          "games": 64
+        },
+        {
+          "task": 3,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 4,
+          "wins": 63,
+          "games": 64
+        },
+        {
+          "task": 5,
+          "wins": 60,
+          "games": 64
+        },
+        {
+          "task": 6,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 7,
+          "wins": 60,
+          "games": 64
+        }
+      ],
+      "win_rate": 0.970703125
+    },
+    {
+      "iteration": 12,
+      "tasks": [
+        {
+          "task": 0,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 1,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 2,
+          "wins": 63,
+          "games": 64
+        },
+        {
+          "task": 3,
+          "wins": 62,
+          "games": 64
+        },
+        {
+          "task": 4,
+          "wins": 63,
+          "games": 64
+        },
+        {
+          "task": 5,
+          "wins": 62,
+          "games": 64
+        },
+        {
+          "task": 6,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 7,
+          "wins": 62,
+          "games": 64
+        }
+      ],
+      "win_rate": 0.984375
+    },
+    {
+      "iteration": 16,
+      "tasks": [
+        {
+          "task": 0,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 1,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 2,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 3,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 4,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 5,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 6,
+          "wins": 64,
+          "games": 64
+        },
+        {
+          "task": 7,
+          "wins": 64,
+          "games": 64
+        }
+      ],
+      "win_rate": 1.0
+    }
+  ],
+  "updates": [
+    {
+      "iteration": 1,
+      "loss": 0.1595998102799058,
+      "policy_loss": -0.03377915001474321,
+      "value_loss": 0.42752827852964403,
+      "entropy": 2.0385177612304686,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.018844983738381414,
+      "clip_fraction": 0.22060032784938813,
+      "grad_norm": 0.44202290922403337,
+      "steps": 275.0
+    },
+    {
+      "iteration": 2,
+      "loss": 0.0801803519949317,
+      "policy_loss": -0.09411743795499206,
+      "value_loss": 0.38804222643375397,
+      "entropy": 1.972332489490509,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": -0.004153116513043642,
+      "clip_fraction": 0.35,
+      "grad_norm": 0.5538765013217926,
+      "steps": 264.0
+    },
+    {
+      "iteration": 3,
+      "loss": 0.07009454560466111,
+      "policy_loss": -0.05975594534538686,
+      "value_loss": 0.29518633987754583,
+      "entropy": 1.7742679417133331,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.04631345462985337,
+      "clip_fraction": 0.4286726457066834,
+      "grad_norm": 0.6273468378931284,
+      "steps": 243.0
+    },
+    {
+      "iteration": 4,
+      "loss": 0.08085894060786813,
+      "policy_loss": -0.048120289109647274,
+      "value_loss": 0.2918469160795212,
+      "entropy": 1.6944227442145348,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.024054754292592406,
+      "clip_fraction": 0.36777935549616814,
+      "grad_norm": 0.6382886227220297,
+      "steps": 225.0
+    },
+    {
+      "iteration": 5,
+      "loss": 0.04690967220813036,
+      "policy_loss": -0.07451574329752475,
+      "value_loss": 0.27123912051320076,
+      "entropy": 1.4194139912724495,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.09268876240821555,
+      "clip_fraction": 0.5760323628783226,
+      "grad_norm": 0.7505960240960121,
+      "steps": 220.0
+    },
+    {
+      "iteration": 6,
+      "loss": 0.0970850512967445,
+      "policy_loss": 0.015477187000215054,
+      "value_loss": 0.18973703682422638,
+      "entropy": 1.3260651305317879,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.06039479072205722,
+      "clip_fraction": 0.3701171875,
+      "grad_norm": 0.8035456016659737,
+      "steps": 200.0
+    },
+    {
+      "iteration": 7,
+      "loss": 0.12577163992682472,
+      "policy_loss": 0.07505359535571188,
+      "value_loss": 0.12256420648191124,
+      "entropy": 1.0564055852591991,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.13676591031253338,
+      "clip_fraction": 0.3695312514901161,
+      "grad_norm": 1.3970319088548422,
+      "steps": 197.0
+    },
+    {
+      "iteration": 8,
+      "loss": 0.0022440103348344564,
+      "policy_loss": -0.018099999870173633,
+      "value_loss": 0.06556295906193554,
+      "entropy": 1.243747316300869,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.025365906563820317,
+      "clip_fraction": 0.21347656310535967,
+      "grad_norm": 1.0022096186876297,
+      "steps": 212.0
+    },
+    {
+      "iteration": 9,
+      "loss": 0.0029930751770734787,
+      "policy_loss": -0.022600830416195095,
+      "value_loss": 0.0703602108405903,
+      "entropy": 0.958619263023138,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.1294336273567751,
+      "clip_fraction": 0.3857421875,
+      "grad_norm": 0.5351194096729159,
+      "steps": 196.0
+    },
+    {
+      "iteration": 10,
+      "loss": -0.03055377141572535,
+      "policy_loss": -0.05481677129864693,
+      "value_loss": 0.06893246764957439,
+      "entropy": 1.0203233771026134,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.015587839647196233,
+      "clip_fraction": 0.2399088554084301,
+      "grad_norm": 0.69365802872926,
+      "steps": 195.0
+    },
+    {
+      "iteration": 11,
+      "loss": -0.013684369390830398,
+      "policy_loss": -0.02078316218103282,
+      "value_loss": 0.03351996525695237,
+      "entropy": 0.9661189963420233,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.016973484540358186,
+      "clip_fraction": 0.19305555584530035,
+      "grad_norm": 0.4421325239042441,
+      "steps": 188.0
+    },
+    {
+      "iteration": 12,
+      "loss": -0.011430032551288605,
+      "policy_loss": -0.01689860919335236,
+      "value_loss": 0.029371598808211274,
+      "entropy": 0.9217223227024078,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.011004614178091288,
+      "clip_fraction": 0.18668927003939947,
+      "grad_norm": 0.38926889064411324,
+      "steps": 181.0
+    },
+    {
+      "iteration": 13,
+      "loss": -0.021613505358497303,
+      "policy_loss": -0.019407314869264763,
+      "value_loss": 0.012624689552467316,
+      "entropy": 0.8518536140521368,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.012928838764006892,
+      "clip_fraction": 0.048129734583199024,
+      "grad_norm": 0.5872799667219321,
+      "steps": 183.0
+    },
+    {
+      "iteration": 14,
+      "loss": -0.015002039882043997,
+      "policy_loss": -0.006164771970361471,
+      "value_loss": 0.0007829349730551863,
+      "entropy": 0.9228735764821371,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.01637992829394837,
+      "clip_fraction": 0.23277889688809714,
+      "grad_norm": 0.7859378258387247,
+      "steps": 190.0
+    },
+    {
+      "iteration": 15,
+      "loss": -0.011109584632019201,
+      "policy_loss": -0.009022233542054892,
+      "value_loss": 0.012494411241884032,
+      "entropy": 0.8334557463725408,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": -0.008808307815343142,
+      "clip_fraction": 0.11034564378981788,
+      "grad_norm": 0.3186263386160135,
+      "steps": 183.0
+    },
+    {
+      "iteration": 16,
+      "loss": -0.01409135510524114,
+      "policy_loss": -0.012300162576138973,
+      "value_loss": 0.011364211353793507,
+      "entropy": 0.7473297913869222,
+      "teacher_anchor_loss": 0.0,
+      "teacher_probability": 0.0,
+      "teacher_agreement": 0.0,
+      "teacher_coverage": 0.0,
+      "approx_kl": 0.017415048050073285,
+      "clip_fraction": 0.1325520840473473,
+      "grad_norm": 0.4926167353987694,
+      "steps": 188.0
+    }
+  ]
+}

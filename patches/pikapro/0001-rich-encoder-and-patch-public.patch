@@ -1,0 +1,1522 @@
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/battle.rs b/crates/pikapro/src/battle.rs
+--- a/crates/pikapro/src/battle.rs	2006-07-23 19:21:28
++++ b/crates/pikapro/src/battle.rs	2026-11-21 18:23:09
+@@ -339,7 +339,7 @@
+     }
+ 
+     /// Recomputes the cached legal actions after the requests changed.
+-    fn refresh_legal(&mut self) {
++    pub(crate) fn refresh_legal(&mut self) {
+         // Filled in a local pair and copied in once (returned by value,
+         // each side's would be copied out of `legal_actions` and again into
+         // place).
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/lib.rs b/crates/pikapro/src/lib.rs
+--- a/crates/pikapro/src/lib.rs	2006-07-23 19:21:28
++++ b/crates/pikapro/src/lib.rs	2026-11-21 18:21:38
+@@ -95,6 +95,7 @@
+ pub mod event;
+ pub mod format;
+ pub mod legal;
++pub mod patch;
+ pub mod request;
+ pub(crate) mod resolve;
+ pub mod result;
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/crates/pikapro/src/patch.rs
+--- a/crates/pikapro/src/patch.rs	1969-12-31 17:00:00
++++ b/crates/pikapro/src/patch.rs	2026-11-21 18:23:08
+@@ -0,0 +1,426 @@
++//! Direct public-state patching for fast search roots (`Battle::patch_public`).
++//!
++//! Lets a search mirror start a `Battle` with our known team and a hypothesized
++//! opponent team, then jump straight to the current public turn state without
++//! replaying prior turns through Node.js Showdown.
++
++use pikapro_data::{AbilityId, ItemId, MoveId, SpeciesId, Stat};
++
++use crate::battle::Battle;
++use crate::format::Gimmick;
++use crate::request::Request;
++use crate::resolve;
++use crate::state::{
++    Boosts, MAX_ACTIVE, PseudoWeather, SideCondition, SideConditions, SideId, Status, SwitchFlag, Terrain, Volatiles,
++    Weather,
++};
++use crate::util::StackVec;
++
++/// Patch for one Pokémon on a side.
++#[derive(Clone, Debug, Default)]
++pub struct MonPatch {
++    /// Species name or ID to match in the side's team (base or current forme).
++    pub match_species: Option<SpeciesId>,
++    /// Optional target Mega/battle forme to transform into permanently.
++    pub forme_species: Option<SpeciesId>,
++    /// Exact HP if known (own side).
++    pub hp_exact: Option<u16>,
++    /// Public HP percent (`0..=100`, foe side when exact HP is unknown).
++    pub hp_pct: Option<u16>,
++    /// Explicit fainted flag.
++    pub fainted: bool,
++    /// Non-volatile status.
++    pub status: Status,
++    /// Stat stages (applied to active Pokémon).
++    pub boosts: Boosts,
++    /// `Some(Some(id))` sets item, `Some(None)` clears item, `None` leaves as built.
++    pub item: Option<Option<ItemId>>,
++    /// Optional ability override.
++    pub ability: Option<AbilityId>,
++    /// Consecutive Protect count (`0` = none).
++    pub protect_counter: u8,
++    /// Turns spent active since switching in.
++    pub active_turns: u16,
++    /// Move actions taken since switching in (Fake Out checks `== 0`).
++    pub active_move_actions: u8,
++    /// Trapped flag.
++    pub trapped: bool,
++    /// Choice lock move, if known.
++    pub choice_lock: Option<MoveId>,
++    /// Encore move and remaining turns (`0` = none).
++    pub encore: Option<(MoveId, u8)>,
++    /// Disable move and remaining turns (`0` = none).
++    pub disable: Option<(MoveId, u8)>,
++    /// Taunt remaining turns (`0` = none).
++    pub taunt_turns: u8,
++    /// Confusion remaining checks (`0` = none).
++    pub confusion_turns: u8,
++    /// Substitute active.
++    pub substitute: bool,
++    /// Must recharge active.
++    pub must_recharge: bool,
++    /// Unburden active (lost item this stint).
++    pub unburden: bool,
++    /// Per-move PP overrides `(move_id, pp)`.
++    pub move_pp: Vec<(MoveId, u8)>,
++    /// Explicitly disabled moves.
++    pub disabled_moves: Vec<MoveId>,
++}
++
++/// Patch for one side.
++#[derive(Clone, Debug, Default)]
++pub struct SidePatch {
++    /// Per-Pokémon patches.
++    pub mons: Vec<MonPatch>,
++    /// Species IDs currently in active slots `0..MAX_ACTIVE` (`None` if empty/fainted).
++    pub active_species: [Option<SpeciesId>; MAX_ACTIVE],
++    /// Whether each active slot requires a forced switch right now.
++    pub force_switch: [bool; MAX_ACTIVE],
++    /// Whether this side has already used Mega Evolution.
++    pub mega_used: bool,
++    /// Total fainted Pokémon count.
++    pub total_fainted: u8,
++    /// Whether a teammate fainted last turn.
++    pub fainted_last_turn: bool,
++    /// Side conditions and their turns/layers.
++    pub side_conditions: Vec<(SideCondition, u8)>,
++}
++
++/// Complete public-state patch for a `Battle`.
++#[derive(Clone, Debug, Default)]
++pub struct PublicPatch {
++    /// Current turn number (`>= 1`).
++    pub turn: u16,
++    /// Active weather and turns remaining.
++    pub weather: Option<(Weather, u8)>,
++    /// Active terrain and turns remaining.
++    pub terrain: Option<(Terrain, u8)>,
++    /// Trick Room turns remaining (`0` = inactive).
++    pub trick_room_turns: u8,
++    /// Gravity turns remaining (`0` = inactive).
++    pub gravity_turns: u8,
++    /// Magic Room turns remaining (`0` = inactive).
++    pub magic_room_turns: u8,
++    /// Wonder Room turns remaining (`0` = inactive).
++    pub wonder_room_turns: u8,
++    /// Fairy Lock turns remaining (`0` = inactive).
++    pub fairy_lock_turns: u8,
++    /// Patches for `[P1, P2]`.
++    pub sides: [SidePatch; 2],
++}
++
++fn find_mon_index(
++    side: &crate::state::SideState,
++    dex: &pikapro_data::Dex,
++    target: SpeciesId,
++    used: &[bool],
++) -> Option<usize> {
++    let target_base = dex.species(target).base_species;
++    // Exact species match first.
++    if let Some(i) = side
++        .team
++        .iter()
++        .enumerate()
++        .position(|(i, m)| !used[i] && (m.species == target || m.base_species == target || m.set_species == target))
++    {
++        return Some(i);
++    }
++    // Base-species fallback (handles Mega / forme changes).
++    side.team.iter().enumerate().position(|(i, m)| {
++        !used[i]
++            && (dex.species(m.species).base_species == target_base
++                || dex.species(m.base_species).base_species == target_base)
++    })
++}
++
++impl Battle {
++    /// Patches the battle state in place to match a live public observation snapshot,
++    /// refreshing event filters, active slots, requests, and legal actions.
++    pub fn patch_public(&mut self, patch: &PublicPatch) {
++        let dex = self.format.dex;
++        self.state.turn = patch.turn.max(1);
++        self.result = None;
++        self.mid_turn = false;
++        self.active_move = None;
++        self.faint_queue = StackVec::new();
++        self.queue = resolve::Queue::default();
++        self.pending = [None, None];
++
++        // Patch field
++        let field = &mut self.state.field;
++        *field = crate::state::FieldState::default();
++        if let Some((w, turns)) = patch.weather {
++            field.weather = Some(w);
++            field.weather_turns = turns;
++        }
++        if let Some((t, turns)) = patch.terrain {
++            field.terrain = Some(t);
++            field.terrain_turns = turns;
++        }
++        if patch.trick_room_turns > 0 {
++            field.trick_room_turns = patch.trick_room_turns;
++            field.pseudo_order.push(PseudoWeather::TrickRoom);
++        }
++        if patch.gravity_turns > 0 {
++            field.gravity_turns = patch.gravity_turns;
++            field.pseudo_order.push(PseudoWeather::Gravity);
++        }
++        if patch.magic_room_turns > 0 {
++            field.magic_room_turns = patch.magic_room_turns;
++            field.pseudo_order.push(PseudoWeather::MagicRoom);
++        }
++        if patch.wonder_room_turns > 0 {
++            field.wonder_room_turns = patch.wonder_room_turns;
++            field.pseudo_order.push(PseudoWeather::WonderRoom);
++        }
++        if patch.fairy_lock_turns > 0 {
++            field.fairy_lock_turns = patch.fairy_lock_turns;
++            field.pseudo_order.push(PseudoWeather::FairyLock);
++        }
++
++        // Patch both sides
++        for side_id in SideId::BOTH {
++            let sp = &patch.sides[side_id.index()];
++            let side = self.state.side_mut(side_id);
++            let team_len = side.team.len();
++            let mut used = vec![false; team_len];
++
++            for mp in &sp.mons {
++                let Some(target) = mp.match_species else { continue };
++                let Some(idx) = find_mon_index(side, dex, target, &used) else { continue };
++                used[idx] = true;
++                let mon = &mut side.team[idx];
++
++                // Permanent Mega / forme change first so stats & types update before HP.
++                if let Some(forme) = mp.forme_species
++                    && forme != mon.species
++                {
++                    mon.change_species(dex, forme);
++                    mon.base_species = forme;
++                    let data = dex.species(forme);
++                    mon.base_types = data.types;
++                    mon.species_types = data.types;
++                    for stat in [Stat::Atk, Stat::Def, Stat::SpA, Stat::SpD, Stat::Spe] {
++                        mon.set_stats[stat] = mon.stats[stat];
++                    }
++                    mon.ability = data.abilities.primary;
++                    mon.base_ability = data.abilities.primary;
++                }
++
++                if let Some(item_opt) = mp.item {
++                    mon.item = item_opt;
++                }
++                if let Some(ab) = mp.ability {
++                    mon.ability = ab;
++                }
++
++                // Reset volatiles/boosts cleanly before applying observed state.
++                mon.volatiles = Volatiles::default();
++                mon.volatile_counters = crate::state::VolatileCounters::default();
++                mon.boosts = Boosts::default();
++                mon.protect_counter = 0;
++                mon.stall_turns = 0;
++                mon.trapped = false;
++                mon.switch_flag = SwitchFlag::None;
++                mon.force_switch_flag = false;
++                mon.effect_disabled = 0;
++
++                let max_hp = mon.stats[Stat::Hp];
++                if mp.fainted {
++                    mon.hp = 0;
++                    mon.status = Status::None;
++                } else {
++                    if let Some(exact) = mp.hp_exact {
++                        mon.hp = exact.min(max_hp);
++                    } else if let Some(pct) = mp.hp_pct {
++                        if pct == 0 {
++                            mon.hp = 0;
++                        } else {
++                            let scaled = ((u32::from(pct) * u32::from(max_hp)) + 50) / 100;
++                            mon.hp = (scaled as u16).clamp(1, max_hp);
++                        }
++                    }
++                    mon.status = mp.status;
++                    mon.boosts = mp.boosts;
++                    mon.protect_counter = mp.protect_counter;
++                    if mp.protect_counter > 0 {
++                        mon.volatiles.set(Volatiles::STALL);
++                        mon.stall_turns = 2;
++                    }
++                    mon.active_turns = mp.active_turns;
++                    mon.active_move_actions = mp.active_move_actions;
++                    mon.volatile_counters.settled = mp.active_turns > 0;
++                    mon.trapped = mp.trapped;
++
++                    if let Some(mv) = mp.choice_lock {
++                        mon.volatiles.set(Volatiles::CHOICE_LOCK);
++                        mon.volatile_counters.choice_lock = mv;
++                        mon.last_move = Some(mv);
++                    }
++                    if let Some((mv, turns)) = mp.encore
++                        && turns > 0
++                    {
++                        mon.volatiles.set(Volatiles::ENCORE);
++                        mon.volatile_counters.encore = turns;
++                        mon.volatile_counters.encore_move = mv;
++                    }
++                    if let Some((mv, turns)) = mp.disable
++                        && turns > 0
++                    {
++                        mon.volatiles.set(Volatiles::DISABLE);
++                        mon.volatile_counters.disable = turns;
++                        mon.volatile_counters.disable_move = mv;
++                    }
++                    if mp.taunt_turns > 0 {
++                        mon.volatiles.set(Volatiles::TAUNT);
++                        mon.volatile_counters.taunt = mp.taunt_turns;
++                    }
++                    if mp.confusion_turns > 0 {
++                        mon.volatiles.set(Volatiles::CONFUSION);
++                        mon.volatile_counters.confusion = mp.confusion_turns;
++                    }
++                    if mp.substitute {
++                        mon.volatiles.set(Volatiles::SUBSTITUTE);
++                        mon.volatile_counters.substitute_hp_halves = ((max_hp / 4).max(1)) * 2;
++                    }
++                    if mp.must_recharge {
++                        mon.volatiles.set(Volatiles::MUST_RECHARGE);
++                        mon.volatile_counters.must_recharge = 1;
++                    }
++                    if mp.unburden {
++                        mon.volatiles.set(Volatiles::UNBURDEN);
++                    }
++                }
++
++                // Per-move PP and disabled flags
++                for slot in mon.moves.iter_mut() {
++                    slot.disabled = false;
++                    if let Some(&(_, pp)) = mp.move_pp.iter().find(|&&(id, _)| id == slot.id) {
++                        slot.pp = pp.min(slot.max_pp);
++                    }
++                    if mp.disabled_moves.contains(&slot.id) {
++                        slot.disabled = true;
++                    }
++                }
++            }
++
++            // Reorder team so active slots sit at 0..MAX_ACTIVE as pikapro requires.
++            let mut desired_active: [Option<usize>; MAX_ACTIVE] = [None; MAX_ACTIVE];
++            let mut placed = vec![false; team_len];
++            for slot in 0..MAX_ACTIVE {
++                if let Some(target) = sp.active_species[slot]
++                    && let Some(idx) = find_mon_index(side, dex, target, &placed)
++                {
++                    desired_active[slot] = Some(idx);
++                    placed[idx] = true;
++                }
++            }
++            // Build reordered team: slot 0, slot 1, then remaining bench.
++            let mut new_order: Vec<usize> = Vec::with_capacity(team_len);
++            let mut active_slots: [Option<u8>; MAX_ACTIVE] = [None; MAX_ACTIVE];
++            for slot in 0..MAX_ACTIVE {
++                if let Some(idx) = desired_active[slot] {
++                    let pos = new_order.len();
++                    new_order.push(idx);
++                    if !side.team[idx].is_fainted() && !sp.force_switch[slot] {
++                        active_slots[slot] = Some(pos as u8);
++                    }
++                } else {
++                    // Find a fainted/unused placeholder if needed to keep slot indexing aligned.
++                    if let Some(idx) = (0..team_len).find(|&i| !placed[i] && side.team[i].is_fainted()) {
++                        placed[idx] = true;
++                        new_order.push(idx);
++                    } else if let Some(idx) = (0..team_len).find(|&i| !placed[i]) {
++                        placed[idx] = true;
++                        let pos = new_order.len();
++                        new_order.push(idx);
++                        if !side.team[idx].is_fainted() && !sp.force_switch[slot] {
++                            active_slots[slot] = Some(pos as u8);
++                        }
++                    }
++                }
++            }
++            for i in 0..team_len {
++                if !placed[i] {
++                    new_order.push(i);
++                }
++            }
++            let old_team = side.team;
++            side.team = StackVec::new();
++            for idx in new_order {
++                side.team.push(old_team[idx]);
++            }
++            side.active = active_slots;
++
++            // Reset counters for benched Pokémon; set switch_flag for force_switch slots.
++            for (idx, mon) in side.team.iter_mut().enumerate() {
++                let is_active = side.active.contains(&Some(idx as u8));
++                if !is_active {
++                    mon.active_turns = 0;
++                    mon.active_move_actions = 0;
++                    mon.boosts = Boosts::default();
++                }
++                if idx < MAX_ACTIVE && sp.force_switch[idx] {
++                    mon.switch_flag = SwitchFlag::Fainted;
++                }
++            }
++
++            // Gimmicks and can_mega_evo
++            side.gimmicks_used = crate::format::Gimmicks::default();
++            if sp.mega_used {
++                side.gimmicks_used.insert(Gimmick::MegaEvolve);
++            }
++            for mon in side.team.iter_mut() {
++                mon.can_mega_evo = if sp.mega_used {
++                    None
++                } else {
++                    resolve::mega::can_mega_evo(&self.format, mon.base_species, mon.item)
++                };
++            }
++
++            let now_fainted = side.team.iter().filter(|m| m.is_fainted()).count() as u8;
++            side.total_fainted = sp.total_fainted.max(now_fainted);
++            side.fainted_last_turn = sp.fainted_last_turn;
++
++            // Side conditions
++            let mut conds = SideConditions::default();
++            for &(cond, val) in &sp.side_conditions {
++                if val > 0 {
++                    *conds.turns_mut(cond) = val;
++                    if !conds.order.contains(&cond) {
++                        conds.order.push(cond);
++                    }
++                }
++            }
++            side.conditions = conds;
++        }
++
++        // Refresh requests based on force_switch flags.
++        let fs_p1 = patch.sides[0].force_switch;
++        let fs_p2 = patch.sides[1].force_switch;
++        let any_fs1 = fs_p1.iter().any(|&x| x);
++        let any_fs2 = fs_p2.iter().any(|&x| x);
++        if any_fs1 || any_fs2 {
++            self.requests[0] = if any_fs1 {
++                Request::ForceSwitch { slots: fs_p1 }
++            } else {
++                Request::Wait
++            };
++            self.requests[1] = if any_fs2 {
++                Request::ForceSwitch { slots: fs_p2 }
++            } else {
++                Request::Wait
++            };
++        } else {
++            self.requests = [Request::Move, Request::Move];
++        }
++
++        // Refresh event filters, condition caches, and legal actions.
++        (self.event_filter, self.prefixed_filter) = resolve::events::filters(self);
++        self.conditions_version = self.conditions_version.wrapping_add(1);
++        self.masks_memo = resolve::events::MasksMemo::EMPTY;
++        self.masks_cached = resolve::events::Cached::No;
++        self.fresh_speeds = 0;
++        self.refresh_legal();
++    }
++}
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
+--- a/crates/pikapro-py/src/python.rs	2006-07-23 19:21:28
++++ b/crates/pikapro-py/src/python.rs	2026-11-21 22:18:21
+@@ -1365,6 +1365,338 @@
+         )
+     }
+ 
++    /// Fog-safe `rich` observation (`float32` array of length `1028`) from the battle's
++    /// public log and `side`'s request.
++    fn encode_rich<'py>(&self, py: Python<'py>, side: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
++        use pikapro_rl::encode::{Encoder, Rich};
++        let side = side_arg(side)?;
++        let tables = pikapro_rl::tables::Tables::for_format(self.game.battle.format());
++        let mut out = vec![0.0f32; Rich::SIZE];
++        self.game
++            .with_view(side, |view| Rich.encode(&view, &tables, &mut out))
++            .map_err(err)?;
++        array(py, out, vec![Rich::SIZE])
++    }
++
++    /// Fog-safe `rich` observation (`float32` array of length `1028`) directly from the
++    /// battle's internal state (used on `patch_public` search leaves whose log starts fresh).
++    #[pyo3(signature = (side, foe_known_items=None, foe_known_abilities=None, foe_known_moves=None))]
++    fn encode_state_rich<'py>(
++        &self,
++        py: Python<'py>,
++        side: &Bound<'py, PyAny>,
++        foe_known_items: Option<Vec<Option<String>>>,
++        foe_known_abilities: Option<Vec<Option<String>>>,
++        foe_known_moves: Option<Vec<Vec<String>>>,
++    ) -> PyResult<Bound<'py, PyAny>> {
++        use pikapro_rl::encode::{Rich, encode_battle_state_rich};
++        let side = side_arg(side)?;
++        let dex = self.dex();
++        let tables = pikapro_rl::tables::Tables::for_format(self.game.battle.format());
++        let items: Vec<Option<pikapro_data::ItemId>> = foe_known_items
++            .unwrap_or_default()
++            .into_iter()
++            .map(|opt| opt.and_then(|s| dex.item_by_name(&s)))
++            .collect();
++        let abilities: Vec<Option<pikapro_data::AbilityId>> = foe_known_abilities
++            .unwrap_or_default()
++            .into_iter()
++            .map(|opt| opt.and_then(|s| dex.ability_by_name(&s)))
++            .collect();
++        let moves: Vec<Vec<pikapro_data::MoveId>> = foe_known_moves
++            .unwrap_or_default()
++            .into_iter()
++            .map(|list| list.into_iter().filter_map(|s| dex.move_by_name(&s)).collect())
++            .collect();
++        let mut out = vec![0.0f32; Rich::SIZE];
++        encode_battle_state_rich(
++            &self.game.battle,
++            side,
++            &tables,
++            Some(&self.game.team[side.index()]),
++            Some(&self.game.team[side.foe().index()]),
++            &items,
++            &abilities,
++            &moves,
++            &mut out,
++        );
++        array(py, out, vec![Rich::SIZE])
++    }
++
++    /// Patches the battle state in place from a public snapshot dict so search can
++    /// jump straight to the current turn without replaying prior turns.
++    fn patch_public(&mut self, state: &Bound<'_, PyDict>) -> PyResult<()> {
++        use pikapro::patch::{MonPatch, PublicPatch, SidePatch};
++        use pikapro::state::{Boosts, MAX_ACTIVE, SideCondition, Status, Terrain, Weather};
++
++        let dex = self.dex();
++        let mut patch = PublicPatch::default();
++        if let Some(v) = state.get_item("turn")? {
++            patch.turn = v.extract::<u16>().unwrap_or(1);
++        }
++        if let Some(v) = state.get_item("weather")?
++            && !v.is_none()
++        {
++            let name: String = v.extract()?;
++            let turns: u8 = state
++                .get_item("weather_turns")?
++                .and_then(|x| x.extract().ok())
++                .unwrap_or(5);
++            let w = match name.to_ascii_lowercase().as_str() {
++                "sun" | "sunnyday" => Some(Weather::Sun),
++                "rain" | "raindance" => Some(Weather::Rain),
++                "sand" | "sandstorm" => Some(Weather::Sand),
++                "snow" | "snowscape" | "hail" => Some(Weather::Snow),
++                "harshsun" | "desolateland" => Some(Weather::HarshSun),
++                "heavyrain" | "primordialsea" => Some(Weather::HeavyRain),
++                "strongwinds" | "deltastream" => Some(Weather::StrongWinds),
++                _ => None,
++            };
++            if let Some(w) = w {
++                patch.weather = Some((w, turns));
++            }
++        }
++        if let Some(v) = state.get_item("terrain")?
++            && !v.is_none()
++        {
++            let name: String = v.extract()?;
++            let turns: u8 = state
++                .get_item("terrain_turns")?
++                .and_then(|x| x.extract().ok())
++                .unwrap_or(5);
++            let t = match name.to_ascii_lowercase().as_str() {
++                "electric" | "electricterrain" => Some(Terrain::Electric),
++                "grassy" | "grassyterrain" => Some(Terrain::Grassy),
++                "misty" | "mistyterrain" => Some(Terrain::Misty),
++                "psychic" | "psychicterrain" => Some(Terrain::Psychic),
++                _ => None,
++            };
++            if let Some(t) = t {
++                patch.terrain = Some((t, turns));
++            }
++        }
++        for (key, dst) in [
++            ("trick_room_turns", &mut patch.trick_room_turns),
++            ("gravity_turns", &mut patch.gravity_turns),
++            ("magic_room_turns", &mut patch.magic_room_turns),
++            ("wonder_room_turns", &mut patch.wonder_room_turns),
++            ("fairy_lock_turns", &mut patch.fairy_lock_turns),
++        ] {
++            if let Some(v) = state.get_item(key)?
++                && !v.is_none()
++            {
++                *dst = v.extract::<u8>().unwrap_or(0);
++            }
++        }
++
++        if let Some(sides_any) = state.get_item("sides")? {
++            let sides_list = sides_any.cast::<PyList>()?;
++            for (s_idx, side_obj) in sides_list.iter().enumerate().take(2) {
++                let sd = side_obj.cast::<PyDict>()?;
++                let mut sp = SidePatch::default();
++                if let Some(v) = sd.get_item("mega_used")? {
++                    sp.mega_used = v.extract().unwrap_or(false);
++                }
++                if let Some(v) = sd.get_item("total_fainted")? {
++                    sp.total_fainted = v.extract().unwrap_or(0);
++                }
++                if let Some(v) = sd.get_item("fainted_last_turn")? {
++                    sp.fainted_last_turn = v.extract().unwrap_or(false);
++                }
++                if let Some(v) = sd.get_item("active_species")? {
++                    let act: Vec<Option<String>> = v.extract()?;
++                    for (slot, name_opt) in act.into_iter().enumerate().take(MAX_ACTIVE) {
++                        sp.active_species[slot] = name_opt.and_then(|s| dex.species_by_name(&s));
++                    }
++                }
++                if let Some(v) = sd.get_item("force_switch")? {
++                    let fs: Vec<bool> = v.extract()?;
++                    for (slot, flag) in fs.into_iter().enumerate().take(MAX_ACTIVE) {
++                        sp.force_switch[slot] = flag;
++                    }
++                }
++                if let Some(v) = sd.get_item("side_conditions")? {
++                    let conds: Vec<(String, u8)> = v.extract()?;
++                    for (name, val) in conds {
++                        let c = match name.to_ascii_lowercase().as_str() {
++                            "reflect" => Some(SideCondition::Reflect),
++                            "lightscreen" | "light_screen" => Some(SideCondition::LightScreen),
++                            "auroraveil" | "aurora_veil" => Some(SideCondition::AuroraVeil),
++                            "tailwind" => Some(SideCondition::Tailwind),
++                            "safeguard" => Some(SideCondition::Safeguard),
++                            "mist" => Some(SideCondition::Mist),
++                            "wideguard" | "wide_guard" => Some(SideCondition::WideGuard),
++                            "quickguard" | "quick_guard" => Some(SideCondition::QuickGuard),
++                            "stealthrock" | "stealth_rock" => Some(SideCondition::StealthRock),
++                            "spikes" => Some(SideCondition::Spikes),
++                            "toxicspikes" | "toxic_spikes" => Some(SideCondition::ToxicSpikes),
++                            "stickyweb" | "sticky_web" => Some(SideCondition::StickyWeb),
++                            "firepledge" | "fire_pledge" => Some(SideCondition::FirePledge),
++                            "grasspledge" | "grass_pledge" => Some(SideCondition::GrassPledge),
++                            "waterpledge" | "water_pledge" => Some(SideCondition::WaterPledge),
++                            _ => None,
++                        };
++                        if let Some(c) = c {
++                            sp.side_conditions.push((c, val));
++                        }
++                    }
++                }
++                if let Some(v) = sd.get_item("mons")? {
++                    let mons_list = v.cast::<PyList>()?;
++                    for mon_obj in mons_list.iter() {
++                        let md = mon_obj.cast::<PyDict>()?;
++                        let mut mp = MonPatch::default();
++                        if let Some(x) = md.get_item("species")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            mp.match_species = dex.species_by_name(&s);
++                        }
++                        if let Some(x) = md.get_item("forme")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            mp.forme_species = dex.species_by_name(&s);
++                        }
++                        if let Some(x) = md.get_item("hp_exact")?
++                            && !x.is_none()
++                        {
++                            mp.hp_exact = Some(x.extract()?);
++                        }
++                        if let Some(x) = md.get_item("hp_pct")?
++                            && !x.is_none()
++                        {
++                            mp.hp_pct = Some(x.extract()?);
++                        }
++                        if let Some(x) = md.get_item("fainted")? {
++                            mp.fainted = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("status")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            let turns: u8 = md
++                                .get_item("status_turns")?
++                                .and_then(|t| t.extract().ok())
++                                .unwrap_or(1);
++                            mp.status = match s.to_ascii_lowercase().as_str() {
++                                "brn" => Status::Burn,
++                                "frz" => Status::Freeze { turns },
++                                "par" => Status::Paralysis,
++                                "psn" => Status::Poison,
++                                "tox" => Status::Toxic { counter: turns },
++                                "slp" => Status::Sleep { turns: turns.max(1) },
++                                _ => Status::None,
++                            };
++                        }
++                        if let Some(x) = md.get_item("boosts")?
++                            && !x.is_none()
++                        {
++                            let b: [i8; 7] = x.extract()?;
++                            mp.boosts = Boosts {
++                                atk: b[0],
++                                def: b[1],
++                                spa: b[2],
++                                spd: b[3],
++                                spe: b[4],
++                                accuracy: b[5],
++                                evasion: b[6],
++                            };
++                        }
++                        if let Some(x) = md.get_item("item")? {
++                            if x.is_none() {
++                                mp.item = Some(None);
++                            } else {
++                                let s: String = x.extract()?;
++                                if s.is_empty() {
++                                    mp.item = Some(None);
++                                } else if let Some(id) = dex.item_by_name(&s) {
++                                    mp.item = Some(Some(id));
++                                }
++                            }
++                        }
++                        if let Some(x) = md.get_item("ability")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            mp.ability = dex.ability_by_name(&s);
++                        }
++                        if let Some(x) = md.get_item("protect_counter")? {
++                            mp.protect_counter = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("active_turns")? {
++                            mp.active_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("active_move_actions")? {
++                            mp.active_move_actions = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("trapped")? {
++                            mp.trapped = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("choice_lock")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            mp.choice_lock = dex.move_by_name(&s);
++                        }
++                        if let Some(x) = md.get_item("encore")?
++                            && !x.is_none()
++                        {
++                            let (s, t): (String, u8) = x.extract()?;
++                            if let Some(id) = dex.move_by_name(&s) {
++                                mp.encore = Some((id, t));
++                            }
++                        }
++                        if let Some(x) = md.get_item("disable")?
++                            && !x.is_none()
++                        {
++                            let (s, t): (String, u8) = x.extract()?;
++                            if let Some(id) = dex.move_by_name(&s) {
++                                mp.disable = Some((id, t));
++                            }
++                        }
++                        if let Some(x) = md.get_item("taunt_turns")? {
++                            mp.taunt_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("confusion_turns")? {
++                            mp.confusion_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("substitute")? {
++                            mp.substitute = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("must_recharge")? {
++                            mp.must_recharge = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("unburden")? {
++                            mp.unburden = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("move_pp")?
++                            && !x.is_none()
++                        {
++                            let list: Vec<(String, u8)> = x.extract()?;
++                            mp.move_pp = list
++                                .into_iter()
++                                .filter_map(|(s, pp)| dex.move_by_name(&s).map(|id| (id, pp)))
++                                .collect();
++                        }
++                        if let Some(x) = md.get_item("disabled_moves")?
++                            && !x.is_none()
++                        {
++                            let list: Vec<String> = x.extract()?;
++                            mp.disabled_moves =
++                                list.into_iter().filter_map(|s| dex.move_by_name(&s)).collect();
++                        }
++                        sp.mons.push(mp);
++                    }
++                }
++                patch.sides[s_idx] = sp;
++            }
++        }
++        self.game.battle.patch_public(&patch);
++        self.game.changes = [crate::game::RequestChanges::default(); 2];
++        Ok(())
++    }
++
+     fn __repr__(&self) -> String {
+         let b = &self.game.battle;
+         let state = match b.result() {
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/rl.rs b/crates/pikapro-py/src/rl.rs
+--- a/crates/pikapro-py/src/rl.rs	2006-07-23 19:21:28
++++ b/crates/pikapro-py/src/rl.rs	2026-11-21 18:21:42
+@@ -16,7 +16,7 @@
+ 
+ use pikapro::{BattleRng, Choice, Format, LegalActions, MAX_ACTIVE, Request, SideId, SlotAction};
+ use pikapro_protocol::{TeamSheet, export_sheet, pack_team};
+-use pikapro_rl::encode::Basic;
++use pikapro_rl::encode::{Basic, Rich};
+ use pikapro_rl::env::{EnvConfig, OpponentSpec, OtsView, Profile, VecEnv};
+ use pikapro_rl::policy::Policy;
+ use pikapro_rl::reward::RewardPreset;
+@@ -45,14 +45,18 @@
+     pub(crate) columns: Vec<String>,
+ }
+ 
+-/// The observation named `name`: `"basic"`.
++/// The observation named `name`: `"basic"` or `"rich"`.
+ pub(crate) fn observation_arg(name: &str) -> PyResult<(Observation, ObsInfo)> {
+     match name {
+         "basic" => Ok((
+             Observation::new(Basic),
+             ObsInfo { kind: "basic".into(), size: Basic::SIZE, columns: Basic::columns() },
+         )),
+-        other => Err(err(format!("unknown observation {other:?} (names: basic)"))),
++        "rich" => Ok((
++            Observation::new(Rich),
++            ObsInfo { kind: "rich".into(), size: Rich::SIZE, columns: Rich::columns() },
++        )),
++        other => Err(err(format!("unknown observation {other:?} (names: basic, rich)"))),
+     }
+ }
+ 
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/mod.rs b/crates/pikapro-rl/src/encode/mod.rs
+--- a/crates/pikapro-rl/src/encode/mod.rs	2006-07-23 19:21:28
++++ b/crates/pikapro-rl/src/encode/mod.rs	2026-11-21 18:21:40
+@@ -10,11 +10,13 @@
+ 
+ pub mod basic;
+ pub mod ctx;
++pub mod rich;
+ 
+ use std::sync::Arc;
+ 
+ pub use basic::Basic;
+ pub use ctx::{MonRef, MoveInfo, MoveKnowledge, Types, ViewCtx};
++pub use rich::{RICH_FIELD_WIDTH, RICH_MON_WIDTH, RICH_SIDE_WIDTH, Rich, encode_battle_state_rich};
+ 
+ use pikapro_view::PlayerView;
+ 
+diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
+--- a/crates/pikapro-rl/src/encode/rich.rs	1969-12-31 17:00:00
++++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-21 22:18:20
+@@ -0,0 +1,659 @@
++//! The `rich` observation: structured token-ready features for transformer policies.
++//!
++//! Layout (`SIZE = 1028` floats per player):
++//! - `12` Pokémon rows (`6` own, `6` foe) × `80` floats (`0..960`):
++//!   - `0..8`: categorical IDs as exact integer floats (`species`, `item`, `ability`,
++//!     `active_slot`, `move0..3`), `0` for unknown/absent.
++//!   - `8..16`: `present`, `is_own`, `is_active`, `is_fainted`, `is_revealed`,
++//!     `is_mega`, `is_brought`, `hp_frac`.
++//!   - `16..23`: status one-hot (`brn`, `frz`, `par`, `psn`, `tox`, `slp`),
++//!     `status_turns / 6`.
++//!   - `23..30`: stat boosts (`atk..eva / 6`).
++//!   - `30..48`: current types one-hot (`18`).
++//!   - `48..54`: exact stats `[hp, atk, def, spa, spd, spe] / 255` (own only).
++//!   - `54..60`: base stats `[hp, atk, def, spa, spd, spe] / 255`.
++//!   - `60..66`: `protect_chain / 4`, `first_turn`, `turns_active / 10`,
++//!     `can_mega`, `trapped`, `moved_this_turn`.
++//!   - `66..74`: `move0..3_pp_frac`, `move0..3_disabled`.
++//!   - `74..80`: volatile flags (`must_recharge`, `charging`, `taunt`, `encore`,
++//!     `confusion`, `substitute`).
++//! - `2` Side blocks (own `960..980`, foe `980..1000`) × `20` floats.
++//! - `1` Field block (`1000..1028`) × `28` floats.
++
++use pikapro::state::{SideCondition, Status, Terrain, Volatiles, Weather};
++use pikapro::{Battle, MAX_ACTIVE, MAX_MOVES, Request, SideId};
++use pikapro_data::{AbilityId, ItemId, MoveId, Stat, Type};
++use pikapro_view::{AbilityState, ItemState, OwnRequest, PlayerView, PublicVolatiles as PV};
++
++use super::ctx::{MonRef, ROWS, ViewCtx};
++use super::{Encoder, flag, one_hot};
++use crate::tables::Tables;
++
++const TYPES: usize = Type::COUNT; // 18
++/// Values per Pokémon row (`8` IDs + `72` continuous/flag floats).
++pub const RICH_MON_WIDTH: usize = 80;
++/// Values per side block.
++pub const RICH_SIDE_WIDTH: usize = 20;
++/// Values in the global field block.
++pub const RICH_FIELD_WIDTH: usize = 28;
++
++const WEATHER_LEN: usize = 7;
++const TERRAIN_LEN: usize = 4;
++
++const fn weather_index(w: Weather) -> usize {
++    match w {
++        Weather::Sun => 0,
++        Weather::Rain => 1,
++        Weather::Sand => 2,
++        Weather::Snow => 3,
++        Weather::HarshSun => 4,
++        Weather::HeavyRain => 5,
++        Weather::StrongWinds => 6,
++    }
++}
++
++const fn terrain_index(t: Terrain) -> usize {
++    match t {
++        Terrain::Electric => 0,
++        Terrain::Grassy => 1,
++        Terrain::Misty => 2,
++        Terrain::Psychic => 3,
++    }
++}
++
++/// The `rich` observation encoder for transformer policies.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct Rich;
++
++impl Rich {
++    /// Total `f32` values written per player (`12 * 80 + 2 * 20 + 28 = 1028`).
++    pub const SIZE: usize = 2 * ROWS * RICH_MON_WIDTH + 2 * RICH_SIDE_WIDTH + RICH_FIELD_WIDTH;
++
++    /// Column names, in order.
++    pub fn columns() -> Vec<String> {
++        let mut names = Vec::with_capacity(Self::SIZE);
++        let statuses = ["brn", "frz", "par", "psn", "tox", "slp"];
++        let boosts = ["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"];
++        let stats = ["hp", "atk", "def", "spa", "spd", "spe"];
++        for who in ["own", "foe"] {
++            for row in 0..ROWS {
++                let p = format!("{who}{row}");
++                names.extend(
++                    ["species_id", "item_id", "ability_id", "active_slot", "move0_id", "move1_id", "move2_id", "move3_id"]
++                        .map(|n| format!("{p}.{n}")),
++                );
++                names.extend(
++                    ["present", "is_own", "is_active", "is_fainted", "is_revealed", "is_mega", "is_brought", "hp_frac"]
++                        .map(|n| format!("{p}.{n}")),
++                );
++                names.extend(statuses.map(|n| format!("{p}.status_{n}")));
++                names.push(format!("{p}.status_turns"));
++                names.extend(boosts.map(|n| format!("{p}.boost_{n}")));
++                names.extend((0..TYPES).map(|t| format!("{p}.type_{}", Type::ALL[t].name().to_ascii_lowercase())));
++                names.extend(stats.map(|n| format!("{p}.exact_{n}")));
++                names.extend(stats.map(|n| format!("{p}.base_{n}")));
++                names.extend(
++                    ["protect_chain", "first_turn", "turns_active", "can_mega", "trapped", "moved_this_turn"]
++                        .map(|n| format!("{p}.{n}")),
++                );
++                for k in 0..MAX_MOVES {
++                    names.push(format!("{p}.move{k}_pp"));
++                }
++                for k in 0..MAX_MOVES {
++                    names.push(format!("{p}.move{k}_disabled"));
++                }
++                names.extend(
++                    ["vol_recharge", "vol_charging", "vol_taunt", "vol_encore", "vol_confusion", "vol_substitute"]
++                        .map(|n| format!("{p}.{n}")),
++                );
++            }
++        }
++        for who in ["own_side", "foe_side"] {
++            names.extend(
++                [
++                    "team_size",
++                    "fainted",
++                    "mega_used",
++                    "tailwind",
++                    "tailwind_turns",
++                    "reflect",
++                    "reflect_turns",
++                    "light_screen",
++                    "light_screen_turns",
++                    "aurora_veil",
++                    "aurora_veil_turns",
++                    "safeguard",
++                    "mist",
++                    "wide_guard",
++                    "quick_guard",
++                    "stealth_rock",
++                    "spikes",
++                    "toxic_spikes",
++                    "sticky_web",
++                    "pledge",
++                ]
++                .map(|n| format!("{who}.{n}")),
++            );
++        }
++        names.extend(
++            ["sun", "rain", "sand", "snow", "harsh_sun", "heavy_rain", "strong_winds"]
++                .map(|n| format!("field.weather_{n}")),
++        );
++        names.push("field.weather_turns".into());
++        names.extend(["electric", "grassy", "misty", "psychic"].map(|n| format!("field.terrain_{n}")));
++        names.push("field.terrain_turns".into());
++        names.extend([
++            "field.trick_room".into(),
++            "field.trick_room_turns".into(),
++            "field.gravity".into(),
++            "field.gravity_turns".into(),
++            "field.magic_room".into(),
++            "field.wonder_room".into(),
++            "field.fairy_lock".into(),
++            "field.turn".into(),
++            "field.request_wait".into(),
++            "field.request_team_preview".into(),
++            "field.request_move".into(),
++            "field.request_force_switch".into(),
++            "field.force_switch_0".into(),
++            "field.force_switch_1".into(),
++            "field.active_count".into(),
++        ]);
++        debug_assert_eq!(names.len(), Self::SIZE);
++        names
++    }
++}
++
++fn encode_mon_view(m: &MonRef<'_>, tables: &Tables, o: &mut [f32]) {
++    if !m.present() {
++        return;
++    }
++    // 0..8: categorical IDs
++    let species = m.species();
++    o[0] = species.map_or(0.0, |id| (id.index() + 1) as f32);
++    o[1] = match m.item() {
++        ItemState::Known(id) => (id.index() + 1) as f32,
++        _ => 0.0,
++    };
++    o[2] = match m.ability() {
++        AbilityState::Known(id) => (id.index() + 1) as f32,
++        _ => 0.0,
++    };
++    o[3] = m.slot.map_or(0.0, |s| f32::from(s + 1));
++
++    // Moves: IDs in 4..8, PP in 66..70, disabled in 70..74.
++    m.each_move_pp(|i, mv| {
++        if i >= MAX_MOVES {
++            return;
++        }
++        if let Some(id) = mv.slot.id() {
++            o[4 + i] = (id.index() + 1) as f32;
++            o[66 + i] = mv.pp_frac(tables);
++            o[70 + i] = flag(mv.disabled);
++        }
++    });
++
++    // 8..16: core flags + HP
++    o[8] = 1.0;
++    o[9] = flag(m.own);
++    o[10] = flag(m.is_active());
++    o[11] = flag(m.is_fainted());
++    o[12] = flag(m.own || m.is_revealed());
++    o[13] = flag(m.is_mega());
++    o[14] = flag(m.brought || m.is_active() || m.is_fainted() || m.is_revealed());
++    o[15] = m.hp_frac();
++
++    // 16..23: status one-hot + status turns
++    let status = m.status() as usize;
++    if status > 0 {
++        one_hot(&mut o[16..22], status - 1);
++    }
++    o[22] = f32::from(m.status_turns().min(6)) / 6.0;
++
++    // 23..30: boosts (active only)
++    if m.is_active() {
++        for (k, b) in m.boosts().into_iter().enumerate() {
++            o[23 + k] = f32::from(b) / 6.0;
++        }
++    }
++
++    // 30..48: types one-hot
++    if let Some(t) = m.types(tables) {
++        let types = &mut o[30..48];
++        one_hot(types, t.set.primary as usize);
++        if let Some(s) = t.set.secondary {
++            one_hot(types, s as usize);
++        }
++        if let Some(a) = t.added {
++            one_hot(types, a as usize);
++        }
++    }
++
++    // 48..54: exact stats (own only)
++    if let Some(st) = m.exact_stats() {
++        for (k, v) in st.into_iter().enumerate() {
++            o[48 + k] = f32::from(v) / 255.0;
++        }
++    }
++
++    // 54..60: species base stats
++    if let Some(sp) = species {
++        let bs = tables.dex.species(sp).base_stats;
++        o[54] = f32::from(bs[Stat::Hp]) / 255.0;
++        o[55] = f32::from(bs[Stat::Atk]) / 255.0;
++        o[56] = f32::from(bs[Stat::Def]) / 255.0;
++        o[57] = f32::from(bs[Stat::SpA]) / 255.0;
++        o[58] = f32::from(bs[Stat::SpD]) / 255.0;
++        o[59] = f32::from(bs[Stat::Spe]) / 255.0;
++    }
++
++    // 60..66: tactical counters
++    if let Some(act) = m.active {
++        o[60] = f32::from(act.counters.protect_chain.min(4)) / 4.0;
++        o[61] = flag(m.is_active() && act.turns_active <= 1 && !act.moved_this_turn);
++        o[62] = f32::from(act.turns_active.min(10)) / 10.0;
++        let v = act.volatiles;
++        o[64] = flag(
++            m.request.is_some_and(|r| r.trapped)
++                || v.has(PV::TRAPPED | PV::PARTIALLY_TRAPPED),
++        );
++        o[65] = flag(act.moved_this_turn);
++        // 74..80: key public volatiles
++        o[74] = flag(v.has(PV::MUST_RECHARGE));
++        o[75] = flag(v.has(PV::CHARGING));
++        o[76] = flag(v.has(PV::TAUNT));
++        o[77] = flag(v.has(PV::ENCORE));
++        o[78] = flag(v.has(PV::CONFUSION));
++        o[79] = flag(v.has(PV::SUBSTITUTE));
++    }
++    o[63] = flag(m.request.is_some_and(|r| r.can_mega_evo));
++}
++
++fn encode_side_view(ctx: &ViewCtx<'_>, side: usize, o: &mut [f32]) {
++    let s = ctx.sides[side];
++    let size = s.team_size.min(ROWS as u8);
++    o[0] = f32::from(size) / 6.0;
++    o[1] = if size > 0 { f32::from(s.fainted.min(size)) / f32::from(size) } else { 0.0 };
++    o[2] = flag(s.mega_used || s.tera_used);
++
++    let tw = s.condition(SideCondition::Tailwind);
++    o[3] = flag(tw.layers > 0);
++    o[4] = if tw.layers > 0 { f32::from(4u8.saturating_sub(tw.turns)) / 4.0 } else { 0.0 };
++
++    let rf = s.condition(SideCondition::Reflect);
++    o[5] = flag(rf.layers > 0);
++    o[6] = if rf.layers > 0 { f32::from(5u8.saturating_sub(rf.turns.min(5))) / 5.0 } else { 0.0 };
++
++    let ls = s.condition(SideCondition::LightScreen);
++    o[7] = flag(ls.layers > 0);
++    o[8] = if ls.layers > 0 { f32::from(5u8.saturating_sub(ls.turns.min(5))) / 5.0 } else { 0.0 };
++
++    let av = s.condition(SideCondition::AuroraVeil);
++    o[9] = flag(av.layers > 0);
++    o[10] = if av.layers > 0 { f32::from(5u8.saturating_sub(av.turns.min(5))) / 5.0 } else { 0.0 };
++
++    o[11] = flag(s.condition(SideCondition::Safeguard).layers > 0);
++    o[12] = flag(s.condition(SideCondition::Mist).layers > 0);
++    o[13] = flag(s.condition(SideCondition::WideGuard).layers > 0);
++    o[14] = flag(s.condition(SideCondition::QuickGuard).layers > 0);
++    o[15] = flag(s.condition(SideCondition::StealthRock).layers > 0);
++    o[16] = f32::from(s.condition(SideCondition::Spikes).layers.min(3)) / 3.0;
++    o[17] = f32::from(s.condition(SideCondition::ToxicSpikes).layers.min(2)) / 2.0;
++    o[18] = flag(s.condition(SideCondition::StickyWeb).layers > 0);
++    o[19] = flag(
++        s.condition(SideCondition::FirePledge).layers > 0
++            || s.condition(SideCondition::GrassPledge).layers > 0
++            || s.condition(SideCondition::WaterPledge).layers > 0,
++    );
++}
++
++fn encode_field_view(ctx: &ViewCtx<'_>, o: &mut [f32]) {
++    let f = ctx.view.field();
++    if let Some(w) = f.weather {
++        one_hot(&mut o[0..WEATHER_LEN], weather_index(w));
++        o[7] = f32::from(5u8.saturating_sub(f.weather_turns.min(5))) / 5.0;
++    }
++    if let Some(t) = f.terrain {
++        one_hot(&mut o[8..8 + TERRAIN_LEN], terrain_index(t));
++        o[12] = f32::from(5u8.saturating_sub(f.terrain_turns.min(5))) / 5.0;
++    }
++    if let Some(tr) = f.trick_room {
++        o[13] = 1.0;
++        o[14] = f32::from(5u8.saturating_sub(tr.min(5))) / 5.0;
++    }
++    if let Some(g) = f.gravity {
++        o[15] = 1.0;
++        o[16] = f32::from(5u8.saturating_sub(g.min(5))) / 5.0;
++    }
++    o[17] = flag(f.magic_room.is_some());
++    o[18] = flag(f.wonder_room.is_some());
++    o[19] = flag(f.fairy_lock);
++    o[20] = f32::from(ctx.view.turn().min(100)) / 100.0;
++    let (req_idx, fs0, fs1) = match ctx.view.own.request {
++        OwnRequest::Wait => (0, false, false),
++        OwnRequest::TeamPreview { .. } => (1, false, false),
++        OwnRequest::Move => (2, false, false),
++        OwnRequest::ForceSwitch { slots } => (3, slots.first().copied().unwrap_or(false), slots.get(1).copied().unwrap_or(false)),
++    };
++    one_hot(&mut o[21..25], req_idx);
++    o[25] = flag(fs0);
++    o[26] = flag(fs1);
++    let active_count = ctx.slot_rows[0].iter().filter(|s| s.is_some()).count();
++    o[27] = active_count as f32 / 2.0;
++}
++
++impl Encoder for Rich {
++    fn size(&self) -> usize {
++        Self::SIZE
++    }
++
++    fn encode(&self, view: &PlayerView<'_>, tables: &Tables, out: &mut [f32]) {
++        out.fill(0.0);
++        let ctx = ViewCtx::new(view, tables);
++        for (side, rows) in ctx.mons.iter().enumerate() {
++            for (row, m) in rows.iter().enumerate() {
++                let start = (side * ROWS + row) * RICH_MON_WIDTH;
++                encode_mon_view(m, tables, &mut out[start..start + RICH_MON_WIDTH]);
++            }
++        }
++        let side_base = 2 * ROWS * RICH_MON_WIDTH;
++        encode_side_view(&ctx, 0, &mut out[side_base..side_base + RICH_SIDE_WIDTH]);
++        encode_side_view(&ctx, 1, &mut out[side_base + RICH_SIDE_WIDTH..side_base + 2 * RICH_SIDE_WIDTH]);
++        let field_base = side_base + 2 * RICH_SIDE_WIDTH;
++        encode_field_view(&ctx, &mut out[field_base..field_base + RICH_FIELD_WIDTH]);
++    }
++}
++
++/// Fog-safe rich encoding directly from a [`Battle`] (used for patched search leaves
++/// whose event log does not contain earlier turns).
++///
++/// For `me`, full private team knowledge is encoded. For `me.foe()`, hidden items,
++/// abilities and unrevealed moves are masked to `0` unless explicitly marked in
++/// `foe_revealed_*` (or active/used during the simulated branch).
++pub fn encode_battle_state_rich(
++    battle: &Battle,
++    me: SideId,
++    tables: &Tables,
++    own_team: Option<&pikapro_view::OwnTeam>,
++    foe_team: Option<&pikapro_view::OwnTeam>,
++    foe_known_items: &[Option<ItemId>],
++    foe_known_abilities: &[Option<AbilityId>],
++    foe_known_moves: &[Vec<MoveId>],
++    out: &mut [f32],
++) {
++    out.fill(0.0);
++    let state = battle.state();
++    let dex = tables.dex;
++    let sides = [me, me.foe()];
++    let mut own_written = [false; ROWS];
++    let mut foe_written = [false; ROWS];
++    for (ego, side_id) in sides.into_iter().enumerate() {
++        let side = state.side(side_id);
++        let is_own = ego == 0;
++        for (idx, mon) in side.team.iter().enumerate().take(ROWS) {
++            let row = (mon.id as usize).min(ROWS - 1);
++            if is_own {
++                own_written[row] = true;
++            } else {
++                foe_written[row] = true;
++            }
++            let o = &mut out[(ego * ROWS + row) * RICH_MON_WIDTH..][..RICH_MON_WIDTH];
++            let active_slot = (0..MAX_ACTIVE).find(|&s| side.active[s] == Some(idx as u8));
++            let is_active = active_slot.is_some();
++            let is_fainted = mon.is_fainted();
++            let is_revealed = is_own || is_active || is_fainted || mon.hp < mon.stats[Stat::Hp];
++
++            // 0..8: IDs
++            o[0] = (mon.species.index() + 1) as f32;
++            if is_own {
++                o[1] = mon.item.map_or(0.0, |id| (id.index() + 1) as f32);
++                o[2] = (mon.ability.index() + 1) as f32;
++            } else {
++                let item = foe_known_items.get(row).copied().flatten();
++                let ab = foe_known_abilities.get(row).copied().flatten();
++                o[1] = item.map_or(0.0, |id| (id.index() + 1) as f32);
++                o[2] = ab.map_or(0.0, |id| (id.index() + 1) as f32);
++            }
++            o[3] = active_slot.map_or(0.0, |s| (s + 1) as f32);
++
++            if is_own {
++                for (k, mv) in mon.moves.iter().enumerate().take(MAX_MOVES) {
++                    o[4 + k] = (mv.id.index() + 1) as f32;
++                    o[66 + k] = if mv.max_pp > 0 { f32::from(mv.pp) / f32::from(mv.max_pp) } else { 0.0 };
++                    o[70 + k] = flag(mv.disabled || (mon.effect_disabled & (1 << k)) != 0);
++                }
++            } else {
++                let known = foe_known_moves.get(row);
++                let mut written = 0usize;
++                for mv in mon.moves.iter().take(MAX_MOVES) {
++                    let was_used = mv.pp < mv.max_pp;
++                    let is_known = was_used || known.is_some_and(|list| list.contains(&mv.id));
++                    if is_known && written < MAX_MOVES {
++                        o[4 + written] = (mv.id.index() + 1) as f32;
++                        o[66 + written] = if mv.max_pp > 0 { f32::from(mv.pp) / f32::from(mv.max_pp) } else { 0.0 };
++                        o[70 + written] = flag(mv.disabled);
++                        written += 1;
++                    }
++                }
++            }
++
++            // 8..16: core flags + HP
++            o[8] = 1.0;
++            o[9] = flag(is_own);
++            o[10] = flag(is_active);
++            o[11] = flag(is_fainted);
++            o[12] = flag(is_revealed);
++            o[13] = flag(dex.species(mon.species).name.contains("-Mega"));
++            o[14] = flag(is_own || is_revealed);
++            o[15] = if mon.stats[Stat::Hp] > 0 {
++                f32::from(mon.hp) / f32::from(mon.stats[Stat::Hp])
++            } else {
++                0.0
++            };
++
++            // 16..23: status
++            let (st_idx, st_turns) = match mon.status {
++                Status::None => (0usize, 0u8),
++                Status::Burn => (1, 0),
++                Status::Freeze { turns } => (2, turns),
++                Status::Paralysis => (3, 0),
++                Status::Poison => (4, 0),
++                Status::Toxic { counter } => (5, counter),
++                Status::Sleep { turns } => (6, turns),
++            };
++            if st_idx > 0 {
++                one_hot(&mut o[16..22], st_idx - 1);
++            }
++            o[22] = f32::from(st_turns.min(6)) / 6.0;
++
++            // 23..30: boosts
++            if is_active {
++                let b = mon.boosts;
++                for (k, val) in [b.atk, b.def, b.spa, b.spd, b.spe, b.accuracy, b.evasion].into_iter().enumerate() {
++                    o[23 + k] = f32::from(val) / 6.0;
++                }
++            }
++
++            // 30..48: types
++            let types = &mut o[30..48];
++            one_hot(types, mon.types.primary as usize);
++            if let Some(s) = mon.types.secondary {
++                one_hot(types, s as usize);
++            }
++            if let Some(a) = mon.volatile_counters.added_type {
++                one_hot(types, a as usize);
++            }
++
++            // 48..54: exact stats (own only)
++            if is_own {
++                o[48] = f32::from(mon.stats[Stat::Hp]) / 255.0;
++                o[49] = f32::from(mon.stats[Stat::Atk]) / 255.0;
++                o[50] = f32::from(mon.stats[Stat::Def]) / 255.0;
++                o[51] = f32::from(mon.stats[Stat::SpA]) / 255.0;
++                o[52] = f32::from(mon.stats[Stat::SpD]) / 255.0;
++                o[53] = f32::from(mon.stats[Stat::Spe]) / 255.0;
++            }
++
++            // 54..60: base stats
++            let bs = dex.species(mon.species).base_stats;
++            o[54] = f32::from(bs[Stat::Hp]) / 255.0;
++            o[55] = f32::from(bs[Stat::Atk]) / 255.0;
++            o[56] = f32::from(bs[Stat::Def]) / 255.0;
++            o[57] = f32::from(bs[Stat::SpA]) / 255.0;
++            o[58] = f32::from(bs[Stat::SpD]) / 255.0;
++            o[59] = f32::from(bs[Stat::Spe]) / 255.0;
++
++            // 60..66: tactical counters
++            if is_active {
++                o[60] = f32::from(mon.protect_counter.min(4)) / 4.0;
++                o[61] = flag(mon.active_move_actions == 0 && mon.active_turns <= 1);
++                o[62] = f32::from((mon.active_turns.min(10)) as u8) / 10.0;
++                o[63] = flag(is_own && mon.can_mega_evo.is_some());
++                o[64] = flag(mon.trapped || mon.volatiles.has(Volatiles::TRAPPED | Volatiles::PARTIALLY_TRAPPED));
++                o[65] = flag(mon.active_move_actions > 0);
++                // 74..80: volatiles
++                o[74] = flag(mon.volatiles.has(Volatiles::MUST_RECHARGE));
++                o[75] = flag(mon.volatiles.has(Volatiles::CHARGING | Volatiles::TWO_TURN_MOVE));
++                o[76] = flag(mon.volatiles.has(Volatiles::TAUNT));
++                o[77] = flag(mon.volatiles.has(Volatiles::ENCORE));
++                o[78] = flag(mon.volatiles.has(Volatiles::CONFUSION));
++                o[79] = flag(mon.volatiles.has(Volatiles::SUBSTITUTE));
++            }
++        }
++    }
++
++    // Fill own Pokémon left out at team preview so row 0..5 matches PlayerView exactly.
++    if let Some(team) = own_team {
++        for (row, written) in own_written.iter().enumerate() {
++            if *written {
++                continue;
++            }
++            let Some(tm) = team.get(row as u8) else { continue };
++            if tm.level == 0 {
++                continue;
++            }
++            let o = &mut out[row * RICH_MON_WIDTH..][..RICH_MON_WIDTH];
++            o[0] = (tm.species.index() + 1) as f32;
++            o[1] = tm.item.map_or(0.0, |id| (id.index() + 1) as f32);
++            o[2] = (tm.ability.index() + 1) as f32;
++            for (k, &mv_id) in tm.moves.iter().enumerate().take(MAX_MOVES) {
++                o[4 + k] = (mv_id.index() + 1) as f32;
++                let max = u32::from(tables.move_facts(mv_id).max_pp);
++                o[66 + k] = if max > 0 { 1.0 } else { 0.0 };
++            }
++            o[8] = 1.0; // present
++            o[9] = 1.0; // is_own
++            o[12] = 1.0; // is_revealed (own)
++            o[15] = 1.0; // hp_frac
++            let sp_data = dex.species(tm.species);
++            one_hot(&mut o[30..48], sp_data.types.primary as usize);
++            if let Some(s) = sp_data.types.secondary {
++                one_hot(&mut o[30..48], s as usize);
++            }
++            for (k, v) in tm.stats.into_iter().enumerate() {
++                o[48 + k] = f32::from(v) / 255.0;
++            }
++            let bs = sp_data.base_stats;
++            o[54] = f32::from(bs[Stat::Hp]) / 255.0;
++            o[55] = f32::from(bs[Stat::Atk]) / 255.0;
++            o[56] = f32::from(bs[Stat::Def]) / 255.0;
++            o[57] = f32::from(bs[Stat::SpA]) / 255.0;
++            o[58] = f32::from(bs[Stat::SpD]) / 255.0;
++            o[59] = f32::from(bs[Stat::Spe]) / 255.0;
++        }
++    }
++
++    // Fill unbrought opponent preview Pokémon with strictly public preview info only
++    // (species, types, base stats — never hidden items, abilities, moves, or exact stats).
++    if let Some(team) = foe_team {
++        for (row, written) in foe_written.iter().enumerate() {
++            if *written {
++                continue;
++            }
++            let Some(tm) = team.get(row as u8) else { continue };
++            if tm.level == 0 {
++                continue;
++            }
++            let o = &mut out[(ROWS + row) * RICH_MON_WIDTH..][..RICH_MON_WIDTH];
++            o[0] = (tm.species.index() + 1) as f32;
++            o[8] = 1.0; // present
++            o[15] = 1.0; // public unrevealed hp_frac
++            let sp_data = dex.species(tm.species);
++            one_hot(&mut o[30..48], sp_data.types.primary as usize);
++            if let Some(s) = sp_data.types.secondary {
++                one_hot(&mut o[30..48], s as usize);
++            }
++            let bs = sp_data.base_stats;
++            o[54] = f32::from(bs[Stat::Hp]) / 255.0;
++            o[55] = f32::from(bs[Stat::Atk]) / 255.0;
++            o[56] = f32::from(bs[Stat::Def]) / 255.0;
++            o[57] = f32::from(bs[Stat::SpA]) / 255.0;
++            o[58] = f32::from(bs[Stat::SpD]) / 255.0;
++            o[59] = f32::from(bs[Stat::Spe]) / 255.0;
++        }
++    }
++
++    // Sides
++    let side_base = 2 * ROWS * RICH_MON_WIDTH;
++    for (ego, side_id) in sides.into_iter().enumerate() {
++        let s = state.side(side_id);
++        let o = &mut out[side_base + ego * RICH_SIDE_WIDTH..][..RICH_SIDE_WIDTH];
++        let size = s.team.len().min(ROWS) as u8;
++        let fainted = s.team.iter().filter(|p| p.is_fainted()).count() as u8;
++        o[0] = f32::from(size) / 6.0;
++        o[1] = if size > 0 { f32::from(fainted.min(size)) / f32::from(size) } else { 0.0 };
++        o[2] = flag(
++            s.gimmicks_used.contains(pikapro::Gimmick::MegaEvolve)
++                || s.gimmicks_used.contains(pikapro::Gimmick::Terastallize),
++        );
++        let c = &s.conditions;
++        o[3] = flag(c.tailwind > 0);
++        o[4] = f32::from(c.tailwind.min(4)) / 4.0;
++        o[5] = flag(c.reflect > 0);
++        o[6] = f32::from(c.reflect.min(5)) / 5.0;
++        o[7] = flag(c.light_screen > 0);
++        o[8] = f32::from(c.light_screen.min(5)) / 5.0;
++        o[9] = flag(c.aurora_veil > 0);
++        o[10] = f32::from(c.aurora_veil.min(5)) / 5.0;
++        o[11] = flag(c.safeguard > 0);
++        o[12] = flag(c.mist > 0);
++        o[13] = flag(c.wide_guard > 0);
++        o[14] = flag(c.quick_guard > 0);
++        o[15] = flag(c.stealth_rock > 0);
++        o[16] = f32::from(c.spikes.min(3)) / 3.0;
++        o[17] = f32::from(c.toxic_spikes.min(2)) / 2.0;
++        o[18] = flag(c.sticky_web > 0);
++        o[19] = flag(c.fire_pledge > 0 || c.grass_pledge > 0 || c.water_pledge > 0);
++    }
++
++    // Field
++    let f = &state.field;
++    let o = &mut out[side_base + 2 * RICH_SIDE_WIDTH..][..RICH_FIELD_WIDTH];
++    if let Some(w) = f.weather {
++        one_hot(&mut o[0..WEATHER_LEN], weather_index(w));
++        o[7] = f32::from(f.weather_turns.min(5)) / 5.0;
++    }
++    if let Some(t) = f.terrain {
++        one_hot(&mut o[8..8 + TERRAIN_LEN], terrain_index(t));
++        o[12] = f32::from(f.terrain_turns.min(5)) / 5.0;
++    }
++    o[13] = flag(f.trick_room_turns > 0);
++    o[14] = f32::from(f.trick_room_turns.min(5)) / 5.0;
++    o[15] = flag(f.gravity_turns > 0);
++    o[16] = f32::from(f.gravity_turns.min(5)) / 5.0;
++    o[17] = flag(f.magic_room_turns > 0);
++    o[18] = flag(f.wonder_room_turns > 0);
++    o[19] = flag(f.fairy_lock_turns > 0);
++    o[20] = f32::from(state.turn.min(100)) / 100.0;
++    let (req_idx, fs0, fs1) = match battle.request(me) {
++        Request::Wait => (0, false, false),
++        Request::TeamPreview { .. } => (1, false, false),
++        Request::Move => (2, false, false),
++        Request::ForceSwitch { slots } => (3, slots[0], slots[1]),
++    };
++    one_hot(&mut o[21..25], req_idx);
++    o[25] = flag(fs0);
++    o[26] = flag(fs1);
++    let active_count = state.side(me).active.iter().filter(|s| s.is_some()).count();
++    o[27] = active_count as f32 / 2.0;
++}
+diff -ruN --exclude=target --exclude=Cargo.lock a/python/pikapro/rl/__init__.py b/python/pikapro/rl/__init__.py
+--- a/python/pikapro/rl/__init__.py	2006-07-23 19:21:28
++++ b/python/pikapro/rl/__init__.py	2026-11-21 18:22:33
+@@ -96,8 +96,8 @@
+ #: (the caller plays player 1).
+ OPPONENTS = [*BUILTIN_POLICIES, "external"]
+ 
+-#: The values of ``VecEnv(observation=...)``: the ``basic`` float vector.
+-OBSERVATIONS = ["basic"]
++#: The values of ``VecEnv(observation=...)``: the ``basic`` and ``rich`` float vectors.
++OBSERVATIONS = ["basic", "rich"]
+ 
+ 
+ #: The columns of :func:`action_table`, by offset.

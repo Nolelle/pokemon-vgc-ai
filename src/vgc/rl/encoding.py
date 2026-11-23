@@ -23,13 +23,11 @@ from vgc.bc.encoding import (
     ABILITY_TO_IDX,
     ITEM_TO_IDX,
     MOVE_TO_IDX,
-    SLOT_FEATURE_DIM,
     SPECIES_TO_IDX,
     TARGET_TO_IDX,
-    encode_state,
-    flatten_state,
+    trunk_inputs,
 )
-from vgc.bc.policy import battle_state_record
+from vgc.bc.policy import _bench_list, battle_state_record
 from vgc.bc.selfplay import order_to_action_dict
 from vgc.battle_memory import BattleMemory
 from vgc.damage import PokemonState, damage_range, to_id
@@ -119,6 +117,26 @@ class CandidateFeatures:
         return int(self.move_indices.shape[0])
 
 
+def live_state_record(battle, config=None) -> dict:
+    """The full decision record `encode_live_state` encodes: `battle_state_record`
+    plus the private-request bench override (brought-four minus active/fainted).
+    Shared with the live-vs-replay parity harness so both read the same inputs.
+    """
+
+    record = battle_state_record(battle, config)
+    # poke-env retains the whole preview six in `team`, but the private request
+    # lists the brought four. Unbrought Pokemon are metadata, not live reserves.
+    request = getattr(battle, "last_request", None)
+    entries = (request.get("side") or {}).get("pokemon") if isinstance(request, dict) else None
+    if entries and not getattr(battle, "teampreview", False):
+        identities = {entry["ident"] for entry in entries}
+        team = {ident: mon for ident, mon in battle.team.items() if ident in identities}
+        if len(team) != len(identities):
+            raise ValueError("cannot map every brought Pokemon from the private request")
+        record["state"]["our"]["bench"] = _bench_list(team, list(battle.active_pokemon))
+    return record
+
+
 def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
     """Return BC-compatible ``(index_array, scalars+zero-slot-marker)`` for a battle.
 
@@ -127,9 +145,7 @@ def encode_live_state(battle, config=None) -> tuple[np.ndarray, np.ndarray]:
     full BC state trunk to be warm-started without changing its first linear layer.
     """
 
-    record = battle_state_record(battle, config)
-    index_array, scalars = flatten_state(encode_state(record))
-    return index_array, np.concatenate((scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32)))
+    return trunk_inputs(live_state_record(battle, config))
 
 
 def _distribution_uncertainty(probabilities: dict[str, float]) -> float:

@@ -191,7 +191,7 @@ from __future__ import annotations
 import numpy as np
 
 from vgc.damage import to_id
-from vgc.data import load_items, load_moves, load_species
+from vgc.data import canonical_species_id, load_items, load_moves, load_species
 
 # --- vocabularies (deterministic, derived at import time from committed data) --------
 
@@ -221,6 +221,8 @@ ABILITY_TO_IDX: dict[str, int] = {token: idx for idx, token in enumerate(ABILITY
 TARGET_VOCAB: list[str] = ["opp0", "opp1", "ally", "self_or_field", "spread", "<none>"]
 TARGET_TO_IDX: dict[str, int] = {token: idx for idx, token in enumerate(TARGET_VOCAB)}
 
+# Cosmetic forme canonicalization (2026-11-04, replay-parse schema 8) only changes
+# WHICH existing token an id maps to, not the layout -- version deliberately unchanged.
 ENCODER_LAYOUT_VERSION = "bc-encoding-v4"
 
 # --- encode_state's fixed vocab-like orderings ----------------------------------------
@@ -277,7 +279,11 @@ def _encode_active_slot(mon: dict | None) -> dict[str, object]:
             "boosts": [0.0] * len(_BOOST_STATS),
             "mega": 0.0,
         }
-    species_idx = SPECIES_TO_IDX.get(mon.get("species"), SPECIES_TO_IDX["<unk>"])
+    # canonical_species_id keeps cosmetic formes (`alcremierubycream` from a live
+    # poke-env details string, a replay's raw name, ...) on their base species' token.
+    species_idx = SPECIES_TO_IDX.get(
+        canonical_species_id(mon.get("species") or ""), SPECIES_TO_IDX["<unk>"]
+    )
     item_idx = (
         ITEM_TO_IDX.get(mon.get("item"), ITEM_TO_IDX["<unk>"])
         if mon.get("item")
@@ -308,9 +314,19 @@ def _encode_active_slot(mon: dict | None) -> dict[str, object]:
 
 
 def _encode_bench(bench: list[dict] | None) -> tuple[list[int], list[float]]:
-    bench = list(bench or [])[:_MAX_BENCH_SLOTS]
+    # Canonical bench order (layout unchanged, same rationale as the
+    # cosmetic-forme canonicalization): live lists the brought four in team-dict
+    # order, replay records in appearance order -- sort by canonical species id
+    # so both paths encode identically.
+    bench = sorted(
+        list(bench or [])[:_MAX_BENCH_SLOTS],
+        key=lambda mon: canonical_species_id(mon.get("species_id") or ""),
+    )
     species_idx = [
-        SPECIES_TO_IDX.get(mon.get("species_id"), SPECIES_TO_IDX["<unk>"]) for mon in bench
+        SPECIES_TO_IDX.get(
+            canonical_species_id(mon.get("species_id") or ""), SPECIES_TO_IDX["<unk>"]
+        )
+        for mon in bench
     ]
     hp_fraction = [float(mon.get("hp_fraction") or 0.0) for mon in bench]
     pad_count = _MAX_BENCH_SLOTS - len(bench)
@@ -327,7 +343,8 @@ def _encode_preview(preview_species: list[str] | None) -> list[int]:
     """
     preview_species = list(preview_species or [])[:_MAX_PREVIEW_SLOTS]
     species_idx = [
-        SPECIES_TO_IDX.get(species_id, SPECIES_TO_IDX["<unk>"]) for species_id in preview_species
+        SPECIES_TO_IDX.get(canonical_species_id(species_id or ""), SPECIES_TO_IDX["<unk>"])
+        for species_id in preview_species
     ]
     species_idx += [SPECIES_TO_IDX["<pad>"]] * (_MAX_PREVIEW_SLOTS - len(species_idx))
     return species_idx
@@ -344,7 +361,9 @@ def _encode_side(side: dict | None) -> dict[str, object]:
     bench_species_idx, bench_hp_fraction = _encode_bench(bench_raw)
     conditions = set(side.get("side_conditions") or [])
     condition_flags = [1.0 if flag in conditions else 0.0 for flag in _SIDE_CONDITION_FLAGS]
-    preview_species_idx = _encode_preview(side.get("preview_species"))
+    # Teampreview records carry each side's six under "preview"; turn records use
+    # "preview_species".
+    preview_species_idx = _encode_preview(side.get("preview_species") or side.get("preview"))
 
     # v4 resource-state summary: "known" mons are exactly what's already in the state
     # (non-empty active slots + bench, which per vgc.replay_parse's docstring only ever
@@ -485,6 +504,19 @@ INDEX_MOVES_SLICE_V2 = slice(20, 36)
 INDEX_DIM_V2 = 36  # 4 + 8 + 4 + 4 + 16 -- no species_idx_preview group
 
 STATE_SCALAR_DIM_V2 = 4 + 28 + 20 + 4 + 8 + 2 + 5 + 5 + 1 + 8 + 1  # == 86, no v4 additions
+
+
+def trunk_inputs(record: dict) -> tuple[np.ndarray, np.ndarray]:
+    """`(index_array, scalars+zero_slot_marker)` -- the exact tensor pair the BC
+    trunk consumes. `vgc.rl.encoding.encode_live_state` builds it at serve time
+    and the replay pretrainer builds it from prepared records at train time; the
+    two slot-marker values stay zero in pretraining because RL feeds zeros to the
+    trunk (slot conditioning lives in the heads).
+    """
+    index_array, scalars = flatten_state(encode_state(record))
+    return index_array, np.concatenate(
+        (scalars, np.zeros(SLOT_FEATURE_DIM, dtype=np.float32))
+    )
 
 
 def flatten_state_v2(state: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:

@@ -1,0 +1,269 @@
+{
+  "status": "diagnostic_unapproved",
+  "complete": true,
+  "source_snapshot": "/private/var/folders/zb/9rr1lhqs2wx3jp2d_8vm5zrm0000gn/T/vgc-research-20261028-icom_dcs",
+  "source_commit": "85ed1294eb113eb9632b99b84d18dd50de0f6f0b",
+  "evaluation_script_sha256": "7e503fec7d368123c4ad2d80aba47d7dc13291014cbac267e75faaf7d96e3bf5",
+  "team_sha256": "3a68100912ce15fb2ca56aed0d25a693c7355d3de94ad2d44949cf570d69aa70",
+  "seed": 16107,
+  "games_per_arm": 8,
+  "opponent": "maxpower",
+  "arms": {
+    "initial": {
+      "checkpoint_sha256": "21e2a0d2f5703333c859a1875737007f695b8524ee1821816c7ca1e28731ca4d",
+      "summary": {
+        "p1": "ppo",
+        "p2": "maxpower",
+        "format": "gen9championsvgc2026regmc",
+        "environment": "direct",
+        "open_team_sheets": "n/a (direct env reveals nothing beyond the sim's own fog)",
+        "games": 8,
+        "p1_wins": 7,
+        "p2_wins": 1,
+        "draws": 0,
+        "p1_win_rate": 0.875,
+        "p2_win_rate": 0.125,
+        "p1_wilson": [
+          0.5291051942301386,
+          0.9775830911367038
+        ],
+        "p2_wilson": [
+          0.022416908863296142,
+          0.47089480576986154
+        ],
+        "mean_turns": 6.5,
+        "timestamp": "2026-10-28T23:40:42.219543+00:00"
+      },
+      "games": [
+        {
+          "game": 0,
+          "side": "p1",
+          "outcome": -1.0,
+          "simulator_seed": [
+            2137083782,
+            1199577366,
+            326743059,
+            1876320925
+          ],
+          "turns": 7
+        },
+        {
+          "game": 1,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            1654714589,
+            871733818,
+            1624612313,
+            950127002
+          ],
+          "turns": 6
+        },
+        {
+          "game": 2,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            519311542,
+            1420455047,
+            1779392651,
+            2054274489
+          ],
+          "turns": 7
+        },
+        {
+          "game": 3,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            2083530461,
+            1144325901,
+            1253954527,
+            923028294
+          ],
+          "turns": 6
+        },
+        {
+          "game": 4,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            358108671,
+            282082373,
+            663649981,
+            642124871
+          ],
+          "turns": 8
+        },
+        {
+          "game": 5,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            1774946293,
+            1844044176,
+            614987533,
+            1545664880
+          ],
+          "turns": 6
+        },
+        {
+          "game": 6,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            439725512,
+            1461230176,
+            763734619,
+            798054893
+          ],
+          "turns": 6
+        },
+        {
+          "game": 7,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            2069125566,
+            1990554528,
+            651817400,
+            571701884
+          ],
+          "turns": 6
+        }
+      ]
+    },
+    "endpoint": {
+      "checkpoint_sha256": "21e2a0d2f5703333c859a1875737007f695b8524ee1821816c7ca1e28731ca4d",
+      "summary": {
+        "p1": "ppo",
+        "p2": "maxpower",
+        "format": "gen9championsvgc2026regmc",
+        "environment": "direct",
+        "open_team_sheets": "n/a (direct env reveals nothing beyond the sim's own fog)",
+        "games": 8,
+        "p1_wins": 7,
+        "p2_wins": 1,
+        "draws": 0,
+        "p1_win_rate": 0.875,
+        "p2_win_rate": 0.125,
+        "p1_wilson": [
+          0.5291051942301386,
+          0.9775830911367038
+        ],
+        "p2_wilson": [
+          0.022416908863296142,
+          0.47089480576986154
+        ],
+        "mean_turns": 6.5,
+        "timestamp": "2026-10-28T23:40:46.158654+00:00"
+      },
+      "games": [
+        {
+          "game": 0,
+          "side": "p1",
+          "outcome": -1.0,
+          "simulator_seed": [
+            2137083782,
+            1199577366,
+            326743059,
+            1876320925
+          ],
+          "turns": 7
+        },
+        {
+          "game": 1,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            1654714589,
+            871733818,
+            1624612313,
+            950127002
+          ],
+          "turns": 6
+        },
+        {
+          "game": 2,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            519311542,
+            1420455047,
+            1779392651,
+            2054274489
+          ],
+          "turns": 7
+        },
+        {
+          "game": 3,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            2083530461,
+            1144325901,
+            1253954527,
+            923028294
+          ],
+          "turns": 6
+        },
+        {
+          "game": 4,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            358108671,
+            282082373,
+            663649981,
+            642124871
+          ],
+          "turns": 8
+        },
+        {
+          "game": 5,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            1774946293,
+            1844044176,
+            614987533,
+            1545664880
+          ],
+          "turns": 6
+        },
+        {
+          "game": 6,
+          "side": "p1",
+          "outcome": 1.0,
+          "simulator_seed": [
+            439725512,
+            1461230176,
+            763734619,
+            798054893
+          ],
+          "turns": 6
+        },
+        {
+          "game": 7,
+          "side": "p2",
+          "outcome": 1.0,
+          "simulator_seed": [
+            2069125566,
+            1990554528,
+            651817400,
+            571701884
+          ],
+          "turns": 6
+        }
+      ]
+    }
+  },
+  "paired_match_score_change": 0.0,
+  "paired_bootstrap_95_interval": [
+    0.0,
+    0.0
+  ],
+  "improved_pairs": 0,
+  "worsened_pairs": 0,
+  "elapsed_seconds": 8.352840000001379
+}

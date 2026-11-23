@@ -453,3 +453,464 @@
 - Expanded run logged1,310 calls:1,079 completed,229 skipped,2 errors,0 timeouts;669 successful overturns; ~0.53s/call including skips. Both errors were incumbent fast-choice fallbacks. Their causes were not retained in that run and remain unclassified; bounded failure details were added afterward and covered by the focused reporting tests. Do not assume error-free execution in the next experiment.
 - Validation:174 focused tests passed,2 integration tests deselected; affected reporting/judge tests rerun after failure-example addition (16 passed,2 deselected). Ruff and git diff --check PASS. Independent Sol review found no remaining actionable parser/fit-equivalence/audit/reporting issue. Full integration/readiness suite not run (offline data/reporting changes); no public ladder games or promotion.
 - Next concrete task: on recorded ladder player-view positions, measure whether the experimental-value winner from a fixed wider candidate pool reaches the live judge's six choices. Hold replies/random futures fixed, separate candidate filtering from reply/sample/timeout effects, and classify judge errors. Latest local pilot session20261013T193848Z is historical. Only after diagnosis, choose one default-off fast-ranking experiment and require same-session live-pipeline/fresh-team validation before ladder blocks. Larger RL/learned Q/Jev/coaching work remains parked.
+
+## 2026-11-01 to 2026-11-02 — User-directed neural pretraining plan and replay refresh
+
+- User steered this chat toward initial training from replays (pretraining) of a specialist neural network, followed by additional training on stronger-player examples and eventually learning from practice-game outcomes (reinforcement learning). Work in understandable chunks; current work is data preparation, not a training run. The desired stronger-player subset is 1600+ pre-game rating; this is not evidence of achieving that rating. The project ladder goal remains separate.
+- Architecture discussed: existing `BcPolicyNet` reads board summaries; `CandidatePolicyValueNet` scores complete legal two-Pokémon actions and predicts outcomes. A learned selector for our bring-four/two leads was proposed, not implemented. Existing own preview selection remains engineered. The old replay warm-start copies compatible board-reader embeddings/trunk only; it does NOT pretrain the complete-action scoring layers. Do not describe the proposed full replay-to-neural-to-practice pipeline as already running.
+- Corrected an early status explanation after finding the newer, uncommitted October 28–29 research documents: fresh candidate networks had already learned on narrow local practice tasks. Those isolated results are not general ladder strength. The older failed 100k recipe remains a closed recipe; it does not prove all neural or reinforcement learning approaches fail. Preserve the pre-existing dirty research worktree.
+- Completed the authorized M-C replay refresh from the saved 54,870-game baseline: **10,141 new / 65,011 total replays**, reaching November 1; **1,281,380 schema-7 decision records** (924,518 turn, 226,840 replacement, 130,022 preview). Parser failures/skips: zero. All baseline IDs retained; audited eligible IDs present; no malformed/wrong-format new replays. Two pagination gaps were individually repaired. Old raw and parsed datasets were preserved.
+- Source: `data/bc/decisions_regmc_s7_20261101.jsonl.gz`, compressed SHA-256 `6eeebcd9a2a53ba718ab88f896692cdd6509cd247e83659a636216034b037ac7`. Run evidence: `runs/replay_refresh_20261101/{final_report.json,final_report.md,parse.log,listing_audit.json,gap_repair.json,environment_review.md,showdown_parity.json}`. The bounded listing audit is not proof of complete public archive coverage. Download settings: shared post-game listing rating >=1200, max 1200 pages, 0.3 seconds between requests, excluded `laplacestheorems`. Use individual PRE-game ratings for stronger-player selection; later filtering cannot recover omitted games.
+- The completion monitor `finish-replay-refresh` was deleted after reporting success. Do not restart the completed collection/finalizer or notification monitor.
+- November 1 upstream parity check was **BLOCKED on 32 watched upstream commits** relative to local Showdown pin `3a766f2cfb5e51c1e428cfe87d0dba91a8f01640`. This is not 32 confirmed bugs. Static coverage declarations passed, but do not override that block or certify bug-free mechanics. No simulator update, model training, readiness approval, or ladder games occurred here. Recheck current environment before future practice training.
+
+## 2026-11-02 — Replay selection inventory and fixed proposed evaluation groups
+
+- Implemented `tools/inventory_replay_pretraining.py` and `tests/test_replay_pretraining_inventory.py`. Current proposal/evidence: `docs/pretraining_selection_2026-11-02.md`, `runs/pretraining_selection_20261102_v3/{manifest.jsonl,summary.json,independent_verification.json,run_context.json}`. Earlier unsuffixed and `_v2` run folders are retained drafts; `_v3` is authoritative for this proposal.
+- Whole-game chronological allocation starts approximately 80/10/10, keeps timestamp ties together, then removes reserved-lineup appearances from earlier groups. Final: **47,096 training / 5,832 development / 6,033 final-test games**. Every turn, both seats, all teaching tasks, and broad/1600+ stages share that same assignment. Do not reuse the older replay-ID hash split for this prepared dataset.
+- Set aside **4,683 distinct games** for disclosed team sheets or reconstruction review: 2,625 sheet games, 1,376 Baton Pass, 610 Illusion/replacement, 122 Transform (reasons overlap). Another **1,367 older games** containing reserved lineups are excluded from training/development. Originals remain preserved; no other accounts were guessed to be bots or deleted.
+- Reserved **176 sorted six-species lineups** by fixed hash ordering/seed `20261102`. They occur in **445 final-test games**, a SUBSET of the 6,033 test games, with zero appearances on either side in retained training/development. These are species-lineup identities, not exact private sets or every similar team. The ordinary future-game test intentionally permits familiar teams/accounts.
+- Selection manifest SHA-256: `7ccfcf95ac7bd1b5989762bd4d81f385ee019288bb2593e0fd1a245384ac072a`. Input fingerprint, split counts, every raw join and **130,022 individual pre-game ratings** reconciled. The inventory's initial empty-player-name handling defect was corrected and tested; it did not require changing source replays.
+- Training has **6,081 player-game perspectives at pre-game rating >=1600**, comprising 3,096 wins and 2,985 losses before task-specific masks. Full corpus: 12,101 such perspectives. A player-game is one player's view of one game, not a unique person or one decision. Exclude unknown ratings from this stronger-player subset. Keep losses as well as wins.
+- Inventory/parser verification: 42 focused checks passed (5 inventory, 2 raw-audit, 35 parser/format). Ruff and whitespace checks passed. Independent review completed. No full battle or training suite was run for this offline inventory.
+
+## 2026-11-02 — Partial-answer preparation and team-balanced sampling implemented
+
+- User asked to fix incomplete labels and repeated-lineup dominance. Added `src/vgc/bc/{replay_supervision.py,replay_sampling.py,replay_pretraining.py}`, `tools/prepare_replay_pretraining.py`, and corresponding `tests/test_replay_{supervision,sampling,pretraining}.py`. Report: `docs/replay_pretraining_preparation_2026-11-02.md`.
+- **Current prepared output is `data/bc/pretraining_regmc_s7_20261102_v2/`**: separate `train.jsonl.gz`, `validation.jsonl.gz`, `test.jsonl.gz`, `sampling_broad.jsonl`, `sampling_expert.jsonl`, and `summary.json`. The unsuffixed prepared directory is a retained diagnostic draft. Output has **1,155,762 records**: 925,046 train, 114,118 development, 116,598 test. No source dataset was overwritten.
+- An explicit yes/no mask says which answers may contribute to learning. Unknown actions never become pass. Disabled targets are null and cannot be consumed as enabled labels. Outcome teaching is independent of move availability; timer/offline results are masked out. Whole-game conservative filters use raw protocol and Champions move properties to exclude called/locked/charge/recharge move observations. Chat/nicknames are not searched for move-name meanings. Only early switches before resolution events qualify; dragged/replacement choices do not become voluntary switch labels. Preview labels teach an unordered brought-four set and an ordered lead pair, not bench order.
+- Enabled TRAIN answers, broad / acting-player 1600+: moves **604,210 / 41,223**; early switch destinations **100,853 / 6,975**; brought-four sets **75,597 / 5,106**; lead pairs **93,835 / 6,074**; outcome positions **915,867 / 60,628**. Counts overlap and have different units; do not sum them as independent samples.
+- **Original-target and complete submitted joint-choice teaching both remain disabled (zero certified labels).** Public logs lack complete legal requests and usually exact own sets; called/locked moves, redirection and involuntary movement can conceal intent. Missing evidence was not recovered or fabricated. Only the original pre-decision state is a model input; ratings, names, results, labels and later appearances stay outside it.
+- Sampling controls each game's influence per task, divides across eligible player perspectives and answers, then divides game weight by the square root of the more frequent of its two lineups' TRAIN-game frequencies. Mirror lineups count once. Broad and 1600+ phases fit their frequencies separately using training only. Development/test retain natural frequencies. Do not apply the same weights again as loss weights after weighted sampling.
+- Largest broad outcome-lineup participation drops from **34.0% to 2.1%** of expected draws; move-task maximum drops from **24.5% to 1.3%**. This is a sampling change, not a measured strength gain. Broad outcome weights have effective size about 14,678 equally weighted games out of 46,528 eligible games. Rare lineups gain influence; the best weighting recipe still requires development comparison. In the smaller 1600+ pool, maximum account participation remains roughly 9–10%, depending on task.
+- Preparation REQUIRES the pinned selection manifest SHA above. Independent review caught that matching split counts alone would permit a train/test ID swap; a negative test now rejects swapped assignments before output creation. Prepared shards/plans are fingerprint-checked; existing output folders cannot be overwritten.
+- Consumer APIs: `vgc.bc.replay_pretraining.load_sampling_plan`, `iter_task_examples`; `vgc.bc.replay_sampling.sample_task_units` draws `(replay_id, side, task, ordinal)` references. An exhaustive task iterator is not itself balanced random sampling. Explicit final-evaluation mode is required to read test examples; test examples have no training probability. The legacy `BcTurnDataset` and old training entry point were NOT automatically switched to this new contract.
+- Verification: **15 focused tests passed**, Ruff/whitespace passed; independent review verified the split-integrity fix. `runs/pretraining_preparation_20261102/verification.json` checks all **1,155,762 exported inputs equal their original snapshots**, source/game counts and every task probability reconcile, and **200,000 outcome draws across broad/expert include zero held-out games**. Actual largest-lineup shares 2.058% broad vs 2.095% expected, 2.442% expert vs 2.411% expected. Scripts, example records, and source fingerprints are in the same run folder.
+- Important remaining boundary: prepared partial observations can support auxiliary predictions (extra outputs learning observed facts) and shared board-reader learning. They do **not** train the current nonlinear complete-action scoring head. Do not zero-fill an unknown partner action or synthesize guessed legal candidates to claim full-choice pretraining. A compatible objective and suitable exact-choice evidence remain to be designed/collected. No optimizer/model training was executed here.
+
+## 2026-11-02 — Full data-science report and current handoff
+
+- Built `docs/data_science_report_2026-11-02.md` and an interactive report in `runs/data_science_report_20261102/app/` (15 evidence-backed sections, 11 charts, 4 rendered tables). Local preview: `http://127.0.0.1:61821/?view=1`. The Data preview helper registered this loopback-only report service with user-login restart; it was not published externally. Preserve its existing project/port and shared report runtime when revising.
+- Report inputs/analysis: `runs/data_science_report_20261102/{profile.py,profile.json,state_profile.json,bias_diagnostic.json,build_report.py,report_validation.json}` plus saved app source. Profile joins all 65,011 game IDs and ratings against the fixed manifest. Fresh decision-state scan covers all schema-7 records. Source compressed hash was rechecked. Independent numerical review found no material issues; actual browser checked all chart marks, tables, narrow layout and source/data-preview panel. No exhaustive browser/theme sweep was claimed.
+- Descriptive findings: median pre-game rating **1,349**; 12,101 / 130,022 player-game perspectives are 1600+ (**9.3%**). Median game length **7 turns**, 90th percentile **11**. Endings: **41,832 played out / 22,392 forfeits / 787 timer/offline**. Current normalized unique accounts **15,040**; six-species lineup signatures **28,313**. Most common lineup appears in **17,587 games (27.1%)**, counting mirrors once per game.
+- Preview coverage: 296 raw species/form names, **292 matching the 390-entry exact-format catalogue (74.9%)**, plus four outside-catalogue aliases/forms (`alcremiesaltedcream`, `florgeswhite`, `florgesyellow`, `furfroukabuki`). Do not use 296/390 as legal-match coverage. Catalogue battle forms may not appear by name at preview; the coverage fraction is not a clean strategy-coverage score. Alias normalization remains a review item, not proof of illegal games.
+- Public-field completeness across 1,751,349 active snapshots per relative side: item observed about **18.4%**, ability **18.0%**, any move **70.0%**. Repeated own/opponent observations are symmetric across both seats. Missing public information is not absence of an item/ability and is not the private information available to the actual player.
+- Collection-bias diagnostic, unequal-rated games only: stronger player won **145/2,682 (5.4%)** when weaker pre-rating <1200, versus **29,821/56,015 (53.2%)** when both pre-ratings >=1234. This is consistent with outcome-dependent inclusion from the post-game download cutoff; do not interpret it as population skill behavior or assume the 1234 sensitivity group is unbiased. Filtering cannot recover uncollected battles.
+- The chronological final test has **17.0% 1600+ perspectives**, versus **6.5% training / 13.4% development**. Later evaluation therefore has a different player mix. Existing team/account overlap, repeated outcomes/positions, and unknown older-model exposure remain material. No model-performance, 1600+/1700+ strength, or readiness claim was made.
+- **Next concrete work:** choose/implement a training objective and outputs compatible with these partial labels, and wire a trainer to the new masks/saved sampler without test leakage. Be explicit about shared-representation versus complete-action-head learning. Compare weighting choices on development data, freeze final test, and use fresh model initialization or verified provenance. Additional useful data work: review four preview aliases and improve collection around the rating cutoff. Before practice-game training, separately resolve/recheck Showdown parity and relevant environment checks. Do not silently start training while that block is unresolved.
+- All code/docs from this chat remain **uncommitted** at this handoff. HEAD is still `d853c64`. The prior dirty October 28–29 files were preserved; no commit, model promotion, simulator update, ladder play, or old-dataset deletion occurred here.
+
+## 2026-11-04 — Pre-pilot data gaps: engine sync, rating backfill, own-team rebuild, trainer
+
+- User decisions: per-Pokémon move outputs (no joint-scorer pretraining); rebuild acting player's OWN team from facts first; backfill every rated game in the same Sep 9–Nov 1 window; engine update now. Lead decision (user may override): broad pretraining floor = acting player PRE-game rating >=1200 (`--broad-min-pre-rating 1200`); <1200 games kept on disk.
+- Showdown synced 3a766f2cf -> 16db150ab, commit `33a8861` (Aura Guard, No Retreat trap fix, Champions doubles tiers, Sneasler OU->Uber singles-only; Sneasler still legal in M-C). Gates + parity PASS, local smoke 1/1. Parity "speciesclause" blocks were a stale-build checker artifact. All 5 old BC checkpoints now vocab-stale (auraguard); none default-enabled. Launcher needs nvm Node 22 on PATH.
+- Backfill RUNNING (detached PID 26508): `download_replays.py --min-rating 1 --max-pages 5000 --sleep 0.3 --exclude-player laplacestheorems`; baseline index in `runs/replay_backfill_20261104/start.json`. Progress = file count (index rebuilt only at end). ~6k/h; 79.9k files at 2026-11-05 00:26 UTC.
+- Parser schema 8 (`data/bc/decisions_regmc_s8_20261104.jsonl.gz`, frozen 65,011 games): adds `log_line`; cosmetic formes -> base via `vgc.data.canonical_species_id` (27 raw names incl. Alcremie/Florges/Furfrou/Vivillon), also in `encode_state`. Verified identical to s7 after canonicalization. `encode_state` bench now sorted by species id (live/replay order parity). Layout version unchanged.
+- Own-team rebuild `vgc.bc.own_team_rebuild` (opt-in `prepare_replay_pretraining.py --rebuild-own-team`): fills acting player's own active item/ability/4 moves + unappeared brought bench. Layers: same-game protocol facts -> same account+lineup donors (sheets first; time rule by target START TIME: <DEV_START / <TEST_START / any) -> hidden-conditional common sets (pre-DEV_START sheets where item/ability stayed hidden). Opponent side byte-identical; nothing known overwritten. `own_info`/`own_fully_confirmed` are bookkeeping, NOT encoder inputs (flags would leak future usage).
+- Answer key (19,791 sheet units, leave-one-game-out priors): L1 facts 100% precise; end-to-end item 96.5%, ability 98.7%, all-4-moves 90.7%, fully exact 88.6% (54.4% when no other sheet donor — the realistic case). Layer-3 item guess 61.6% (v1 40.1%). Coverage: own_fully_confirmed train 22.7% / 1600+ 39.1%; own bench mean 0.41 -> 1.035. Bugs found and fixed via the answer key: post-mega ability, `cant` holder (position mon), move-caused ability change, `|swap|`, Trick `-activate`, later-fainting bench. `illusion_possible(preview)` sets aside 395 more games (unbroken Illusion). Evidence `runs/own_team_rebuild_20261104/v4/`.
+- Trainer: `vgc.bc.replay_pretrain` (TurnPretrainNet = `BcPolicyNet(heads=())` trunk + per-slot option-masked action head [own moves + <switch>], destination head [own bench], value head; PreviewPretrainNet species-only, sorted inputs, 15 brought combos + 30 ordered leads) and `tools/train_replay_pretrain.py`. Loss = ACTION(pooled) + DESTINATION + VALUE; sampling probabilities only draw units. Shared `trunk_inputs` used by `encode_live_state`. Checkpoint warm-starts `CandidatePolicyValueNet.state_encoder` fully (tested). Test split refused. Smoke (2k scratch games, NOT strength): action 0.295 ≈ train-frequency baseline 0.298; others beat baselines. Review caught: cache keying, pooled-loss calibration, destination never evaluated, inverted frequency baseline, empty breakdowns/1600+ subset (meta read from wrong field) — all fixed with tests.
+- Not done / next: after backfill -> listing audit, reparse s8, new selection v4 with same DEV/TEST boundaries + `state_review_illusion_possible`, lead-authored skew diagnostic (stronger player win rate by lower-player pre-rating band), prepare with rebuild + 1200 floor. Only then pilots. All Job C/D code UNCOMMITTED (HEAD 33a8861).
+
+## 2026-11-05 — Backfill resume + live-vs-replay parity + per-task rating floors
+
+- Backfill crashed 2026-11-05 ~03:30 UTC (uncaught http.client.RemoteDisconnected) at ~Sep 14 equivalent (138,234 files). Fixed: `TRANSIENT_ERRORS` in tools/download_replays.py. Resumed as PID 22214 (log runs/replay_backfill_20261104/download_resume.log); 149,669 files at 23:11 UTC. It also fetches post-Nov-1 games -> fixed-boundary selection excludes them as `after_window`.
+- User decisions: parity check before rebuild (done); rating mix split by network — policy tasks (move/target/switch_destination/preview_*) broad = pre-game >=1200, outcome broad = any known rating (`--broad-outcome-min-pre-rating -inf`), expert >=1600 all tasks; open-team-sheet games (`showteam`) excluded from policy tasks, kept for outcome/answer key.
+- Selection: `inventory_replay_pretraining.py --boundaries-from runs/pretraining_selection_20261102_v3/manifest.jsonl` -> dev_start=1792406685, test_start=1792870992, window_end=1793572357; Illusion set-aside included. Sampling eligibility per (game, side, task) in replay_sampling.py; trainer headline validation uses the same eligibility; `<1200` band added.
+- Parity harness offline/check_live_replay_parity.py (direct env, additive spectator capture in tools/sim_worker.mjs, 60 seeded games). v1 -> v7: identical-after-masking-inherent 0% -> 99.8% (1,090 decisions; residual 2 cosmetic boost-dict rows). Inherent (masked): own unrevealed moves/item/ability (L2/L3 estimates), own HP rounding <=0.01, never-appearing reserves.
+- Bugs fixed via parity: forced-switch replay snapshot leaked both the own destination and the opponent's simultaneous replacement (now frozen pre-replacement; test); LIVE opponent mega flag/ability wrong (poke-env keeps base `_species`; now `_last_details` forme via poke_env_compat + details-driven `_active_mon_dict`; a first fix assigned mega abilities to wrong mons — caught and fixed; tests in test_bc.py); parser missed `[from] item:/ability:` reveals (scan sat after `continue` handlers); `-ability`/Trace attribution; single-legal-ability fill (Champions data; poke-env maps mega formes to base abilities -> live overridden); own replacement now on own bench at forced switch. Encoded ability = current effective (matches live); base ability kept for rebuild facts. Parser schema 9 (s8 untouched).
+- Readiness gates (battle-state, action, static) PASS after live changes; 135 focused tests pass. All work since 33a8861 UNCOMMITTED.
+- Next: wait for download -> listing audit, reparse s9, select v4 (fixed boundaries), skew diagnostic (lead-authored), prepare with rebuild + floors (1200 policy / -inf outcome).
+- Committed 2026-11-05 (see git log): everything since 33a8861. Pre-commit gate: full non-integration suite 1619 pass, ruff clean; tests/test_bc_policy.py opp-ability expectations updated to the single-legal-ability rule (Gholdengo -> goodasgold). Integration suite (needs local server) not re-run; static readiness gates passed earlier.
+
+## 2026-11-06 — Dataset rebuild on the completed backfill
+
+- Download finished: 149,752 replays (11,518 new in the resume), full listing walked to Sep 9, 0 failed fetches, 20,315 unrated skipped.
+- s9 reparse: data/bc/decisions_regmc_s9_20261106.jsonl.gz (149,752 games, 2,857,780 records, 0 parse failures). tools/parse_replays.py writes plain text regardless of .gz suffix — recompressed. audit_replay_state FAIL is a positional-join artifact: lead keyed check on the 65,011 s8 games -> identical record counts per kind and identical turn actions (924,518/924,518).
+- Selection v4: runs/pretraining_selection_20261106_v4 (fixed v3 boundaries): train 109,547 / val 11,517 / test 11,110; excluded 15,325 (open_team_sheet 4,873, after_window 4,107, illusion_possible 3,087, baton_pass 2,671, illusion_or_replace 1,865, preview_raw_mismatch 860, transform 611); reserved_team_excluded 2,253. NOTE: open-team-sheet games were already excluded wholesale in v3 too, so they feed neither outcome training nor policy tasks (only the own-team answer key/donors via raw facts).
+- Who-won check (tools/rating_skew_check.py, lead-authored): v3 showed stronger-player win 5.0% (lower 1100-1199) and 33% (1200-1233); v4 shows 52-56% in every band and split. Skew fixed.
+- Own-team answer key on v4 (runs/own_team_rebuild_20261106): L1 facts 99.99/99.96/100%; end-to-end item 95.2 / ability 98.1 / all-4-moves 87.5 / fully exact 84.9 (no-sheet-donor 48.6); own_fully_confirmed train 20.8%, 1600+ 39.6%.
+- Prepared: data/bc/pretraining_regmc_s9_20261106 (floors 1200 policy / -inf outcome; selection sha cec196…f25, dataset sha 797186…4300). Broad units/effective games: move 697,580/13.6k, switch_destination 114,348/14.0k, preview_brought 86,401/15.7k, preview_leads 107,945/18.0k, outcome 2,045,790/36.2k. Expert: move 41,248/1.46k, outcome 60,481/1.99k. Team participation after weighting <=2.8%; expert top account ~9-10%. target task 0 (not certifiable, by design).
+- Fixed stale schema gates (inventory_replay_pretraining.py, rebuild_own_team.py -> SCHEMA_VERSION).
+- Next: user go/no-go on first pretraining pilots.
+
+## 2026-11-06 (later) — Independent re-verification (user asked; lead-authored checks)
+
+- New tools/verify_pretraining_data.py: re-derives from RAW logs (raw hashes, pre-game ratings incl. HTML-escaped names, winners, split boundaries, duplicates, reserved-team rule), checks prepared shards (split membership, source-line join, forbidden input keys, outcome vs raw winner, preview label sanity, forced-switch destination leak, own-mega-this-turn leak, move option-set sizes), sampling plans (train-only, policy floor 1200 + no open-sheet, expert >=1600, outcome includes <1200), and fog on 3,000 sampled games (every opp move/item/ability/mega revealed in the raw log before the decision line; lenient token match).
+- Found 4 real parser bugs the earlier checks and the 60-game parity harness missed (our bot never used these mechanics): (1) no `|swap|` (Ally Switch) handling -> slot attributions wrong for the rest of the game, 1,533 kept games; (2) Revival Blessing revive ignored -> revived mon absent from bench; (3) revive keyed by nickname, not species (Maushold-Four); (4) `|cant|HOLDER|ability: Queenly Majesty|MOVE|[of] ATTACKER` credited the move to the holder (6,157 games touched). Fixed through schemas 10 and 11; s10->s11 diff 0 records outside affected games.
+- My own check had 3 false alarms, fixed in the tool: HTML-escaped names in rating lines, moves revealed by `cant` lines, reserved-team rule is the hashed 5% not all test rosters.
+- Final verified dataset: data/bc/pretraining_regmc_s11_20261106 (source decisions_regmc_s11_20261106, selection runs/pretraining_selection_20261106_v6, rebuild runs/own_team_rebuild_20261106_v6). Verifier (runs/verify_20261106_s11): 0 violations on all hard checks; 116 move units whose label is outside a 4-move option set (trainer drops them); 45 slots with 5 moves (conflicting evidence, ~0.003%). Rating-skew fixed. Win/loss per-record imbalance (51% loss) is expected: losers have more forced switches; sampling equalises perspectives.
+- Use s11 for pilots; s9/s10 kept but superseded.
+
+## 2026-11-06 — Second independent verification pass (in progress)
+
+- **The preceding s11 pilot-readiness statement is withdrawn.** The saved `runs/verify_20261106_s11/verification.json` still contained 64,921 flags from the old reserved-team check, and the verifier always exited 0. The corrected check had not been rerun to produce that saved report. Fresh `runs/verify_s11_pass2/verification.json` now passes its stated checks: all 8 artifact hashes, raw metadata, fixed boundaries, ratings, outcomes and sampling rules; exit status is now nonzero on violations. Its old fog check remains a lenient presence heuristic, not proof of ownership.
+- Added lead-authored `tools/verify_replay_identity.py`: checks every train/validation turn against raw execution identities, recoverable move masks, native opponent move reveal timing and retention, structured ability ownership evidence, known current items and mask contracts. Does not open final-test gameplay. Its own first iterations exposed verifier mistakes (battle-only identity normalization, field-setting ability lines, duplicate nicknames); those diagnostic outputs are NOT final green certificates.
+- Confirmed with raw games and an independent Codex review: Ally Switch still dropped the partner's action/reveal within the swap turn; reflected Magic Bounce moves could displace the reflector's native action; Shell Bell healing credited the `[of]` victim rather than the healed holder; Struggle could enter native move options and enabled policy labels. Schema 12 fixes these; raw examples include `2678014325`, `2677963350`, `2678237852`.
+- Trainer `.npz` caches and own-team facts caches could silently reuse old contents without validating current inputs/code. New checks reject legacy or mismatched caches; fingerprints include raw/encoded inputs, relevant source, vocabulary/species data and cosmetic-form mapping.
+- Reserved roster games were excluded from training rows but still eligible to contribute to common-set priors. The independent manifest check found 2,084 pre-dev eligible source games with reserved rosters (1,922 explicitly reserved exclusions, 162 other excluded games). They now supply neither cross-game donors nor priors. `prior_game_ids` records actual prior contributors; the answer-key measurement subtracts a game's contribution only when that game actually contributed. Missing-time donor targets return no donors.
+- Non-reserved donor-time policy is unchanged: train targets use pre-validation donors; validation may use other validation-period games; test may use donors from any period. Reconstruction evaluation is therefore not a strictly chronological simulation of team information discovery.
+- Verification so far: 98 focused parser/supervision/rebuild/cache/preparation/sampling tests pass; 107 BC/RL/inventory tests pass (17 deselected); battle-state and action static readiness checks PASS. No model training.
+- Rebuilding the same raw corpus to `data/bc/decisions_regmc_s12_pass2.jsonl.gz`, selection `runs/pretraining_selection_s12_pass2`, fresh facts `runs/own_team_rebuild_s12_pass2`, prepared `data/bc/pretraining_regmc_s12_pass2`. Lead-authored recipe `/tmp/vgc_rebuild_pass2.sh`; log `runs/rebuild_s12_pass2.log`. Fixed boundary input `runs/reverify_pass2_boundaries.jsonl` preserves 1792406685 / 1792870992 / 1793572357. Do NOT use the v6 manifest directly as `--boundaries-from`: that command takes max time across excluded rows too, which would extend the window.
+- Pending: finish schema-12 rebuild, review final Codex findings, run both audits on the new artifacts, check fresh answer-key measurements, and record final results below. s11 is retained for diagnosis, not approved for training.
+
+## 2026-11-10 01:20–03:00 CST – Claude Code / Fable 5.2 — finish second verification pass (schema 13)
+
+- Picked up the dirty branch `fix/replay-state-20261026`. State found: s12_pass2 rebuild had finished 2026-11-06 13:34 but its three final checks were never run; `tests/test_own_team_rebuild.py` had 9 cache-test lines pasted into the wrong test (1 failing test, 14 lint errors) — repaired. `/tmp/vgc_rebuild_pass2.sh` and the earlier Codex notes were gone.
+- s12_pass2 checks (now run): verify_pretraining_data PASS (runs/verify_s12_pass2); verify_replay_identity 1 flag in 1.46M (game 2680728537 T6: Hatterene `cant|move: Throat Chop` for a blocked reflection, then its own Dazzling Gleam — label dropped, not wrong); answer key v2 item 94.8 / ability 98.1 / all-4-moves 86.6 / fully exact 83.7 (no-sheet-donor 48.8); slightly below v6 because reserved rosters no longer donate; L1 item mismatches 2 -> 0.
+- Fresh Codex review (review-only, no files changed) -> 3 findings, all fixed: (1) parser: a named `cant` AFTER the Pokemon's own move (blocked Dancer copy) was added to its revealed moves; a `cant` BEFORE its own move displaced the real label. Now a later native move overrides a cant-derived action and withdraws the cant-named move; named cant after acting reveals nothing. Raw scan of all games: 0 move-then-named-cant, 99 cant-then-move (88 sleep + Sleep Talk). Schema 13. (2) verify_replay_identity now flags any opponent item with no earlier raw evidence (`opponent_item_before_decision`); the cant allowance I had briefly added was removed. (3) measure_own_team_rebuild now loads facts through `build_corpus_facts` (new required `--raw-dir`), so stale facts are refused.
+- Files: src/vgc/replay_parse.py, tools/verify_replay_identity.py, tools/measure_own_team_rebuild.py, tests/test_replay_parse.py, tests/test_own_team_rebuild.py
+- Checks: full unit suite 1634 pass, ruff clean, battle-state + action static gates PASS (run before the schema-13 edit; parser is offline-only).
+- Rebuild RUNNING: recipe `runs/rebuild_s13.sh` (kept in runs/, not /tmp), log `runs/rebuild_s13.log`. Raw dir now holds 154,813 files (5,061 newer downloads 11-07..11-09); the recipe pins the same 149,752 games via `--only-ids runs/pretraining_selection_s12_pass2/manifest.jsonl`. Outputs: data/bc/decisions_regmc_s13.jsonl.gz, runs/pretraining_selection_s13, runs/own_team_rebuild_s13, data/bc/pretraining_regmc_s13, runs/verify_s13, runs/verify_identity_s13.
+- Next: read the three s13 check results; if clean, s13 is the candidate pilot dataset (s11/s12 superseded). Nothing committed yet.
+
+## 2026-11-10 02:50 CST – Claude Code / Fable 5.2 — schema 14 (s13 superseded before use)
+
+- s13 results: verify_pretraining_data PASS; new opponent-item timing check 0 flags in 771k; identity verifier flagged 11 records / 2 games (2690288427, 2692927883): a Copycat / Magic Bounce move blocked by Armor Tail (`cant|HOLDER|ability:..|MOVE|[of] ATTACKER`) was listed as the attacker's own move. Fixed: the ability-block branch now labels/reveals only if the attacker has not already acted that turn (and a later native move overrides). Schema 14; test added; `test_cant_ability_block_attributes_to_of_mon` log made realistic (leads before `|turn|1`).
+- Checks: full unit suite 1634 pass, ruff clean.
+- Rebuild RUNNING: `runs/rebuild_s14.sh` -> log `runs/rebuild_s14.log`; outputs `*_s14` (data/bc/decisions_regmc_s14.jsonl.gz, runs/pretraining_selection_s14, runs/own_team_rebuild_s14, data/bc/pretraining_regmc_s14, runs/verify_s14, runs/verify_identity_s14).
+- Next: read s14 check results (all three must be clean). Then s14 is the candidate; s11/s12/s13 superseded (kept on disk, ~0.5 GB each — delete only with owner OK). Nothing committed.
+
+## 2026-11-10 04:10 – Claude Code / Fable 5.2
+- Did: s14 rebuild finished (2,506,547 records, same 149,752 games). All three checks clean: verify_pretraining_data PASS; identity verifier PASS (0 violations); answer key v2 item 94.8% / ability 98.1% / all-4-moves 86.6% / fully exact 83.7% (unchanged from s12/s13).
+- Did: first s14 identity run had 1 flag (game 2693447392 T3: Hatterene switched in, Magic Bounce reflected Parting Shot, blocked by Armor Tail). Verifier bug, dataset was right: a named `cant` after ANY move line by that actor this turn (called or native) is now not a reveal. Re-run: pass.
+- Files: tools/verify_replay_identity.py; outputs runs/verify_s14, runs/verify_identity_s14 (pre-fix run kept as runs/verify_identity_s14_prefix), runs/own_team_rebuild_s14, data/bc/pretraining_regmc_s14
+- Checks: unit suite 1634 pass + ruff clean (before this verifier-only edit; ruff re-run on the verifier clean). Integration suite not run.
+- Next: owner go/no-go on pilots using s14. Commit when owner asks.
+- Open: nothing committed. s11/s12/s13 datasets superseded, still on disk (~0.5 GB each) — delete only with owner OK. Theoretical parser gap, 0 cases in corpus (verifier would flag): a not-yet-acted Pokemon whose reflected move is ability-blocked and who then never moves that turn would get a false reveal/label.
+
+## 2026-11-10 08:16 – Claude Code / Fable 5.2 — independent bug scan of s14 (no code changed)
+- Did: fresh checks on data/bc/pretraining_regmc_s14 that the two verifiers do not cover. Scripts + outputs in runs/dataset_bug_scan_20261110/ (scan1 = structure/leak/labels, scan2 = per-move label coverage, hpcheck = HP/status/boosts/field vs raw log, itemcheck).
+- FOUND (1) value leak: own bench is completed from FUTURE appearances (own_team_rebuild.py ~L1151); when the 3rd/4th mon never appears the bench is short. Turn-1 train rows: bench 2 -> 43.1% win (169k), bench 1 -> 76.4% (31k), bench 0 -> 74.7% (14k). Live bench is always complete.
+- FOUND (2) move-label hole: replay_supervision.audit_raw_log's game-wide `locked` flag drops ALL move labels in any game with a charge/recharge/Encore/called move. 30,625/108,603 train games have zero move labels; Electro Shot used 40,440x labelled 0, Encore 7,934 -> 0, Hyper Beam 4,336 -> 0, Solar Beam 3,178 -> 0; Dragon Pulse/Weather Ball/Snarl ~46%.
+- FOUND (3) parser ignores -sethp (Pain Split, 191 kept games), -copyboost (Psych Up, 1,031), -invertboost (102), -swapboost (12): stale HP/boosts afterwards. Examples 2701640633 T7, 2678110470 T5.
+- FOUND (4) teampreview rows carry an outcome label but encode_state reads `preview_species` (rows have `preview`) -> all-blank input, ~10% of outcome units. (5) preview_brought labels need all four to appear -> ~57% from losing side.
+- Clean: 0 out-of-vocabulary tokens, 0 duplicate turn rows, labels inside option sets, consumed items stay gone, HP/status/weather/terrain/Trick Room/side conditions match raw in 10,000 games (513k Pokemon snapshots) apart from (3).
+- Checks: analysis only; no tests run, no repo code changed.
+- Next: owner decides fixes for (1)-(4) before any pilot; s14 NOT ready for value pretraining as is.
+- Open: still nothing committed on this branch.
+
+## 2026-11-10 (later) – Devin / Fable 5.2 — fixing the four s14 dataset bugs (IN PROGRESS)
+- Did: owner asked to fix bugs (1)-(4) from the 08:16 scan. Design: (1) own bench always true size — never-seen brought slots filled with a hash-picked unseen preview species (`own_info.bench_guessed`); (2) game-wide `locked` gate replaced by per-turn/per-slot `move_locks` (Encore start..end turn, Instruct); charge/Outrage continuations already carry `[from] lockedmove` on the move line (0 exceptions in 25k raw games); (3) parser handles -sethp/-copyboost/-invertboost/-swapboost, schema 15; (4) encoder reads `preview` when `preview_species` is absent.
+- Did: verifiers updated to match: verify_replay_identity now uses per-(turn, actor) locks (new flags move_mask_on_locked_actor, move_label_not_single_native_move); verify_pretraining_data gains B_turn1_own_bench_full.
+- Files: src/vgc/bc/{own_team_rebuild,replay_supervision,encoding}.py, src/vgc/replay_parse.py, tests/*, tools/verify_replay_identity.py, tools/verify_pretraining_data.py, runs/rebuild_s15.sh (recipe, not yet run)
+- Checks: pending (focused tests + full unit suite).
+- Next: review code diff; run `runs/rebuild_s15.sh` (~1.5 h) -> *_s15; re-run both verifiers + runs/dataset_bug_scan_20261110 scans pointed at s15.
+- Open: nothing committed. Bug (5) bring-four label skew not addressed (not asked).
+
+## 2026-11-10 08:39 – Devin / SWE-2 (sidekick) — four s14 dataset fixes implemented
+- Did: implemented all four fixes per lead's spec. (1) `_guess_unseen_bench` (sha256 on replay_id|side|species) tops the bench to min(4, preview); `own_info.bench_guessed`; invariants get additions|guessed. (2) `audit_raw_log` now emits per-turn `move_locks` (Encore -start..-end turn inclusive, tracked by position with swap exchange + removal on switch/drag/replace/faint; Instruct via -singleturn); `build_supervision` gates per slot and fails closed when `move_locks` is missing; `locked_or_called` kept as diagnostic. (3) parser: -sethp joins -damage/-heal, new -copyboost/-invertboost/-swapboost handlers, SCHEMA_VERSION 14->15 (all gates use the symbol; nothing hardcodes 14). (4) `_encode_side` falls back to `preview`.
+- Files: src/vgc/bc/{own_team_rebuild,replay_supervision,encoding}.py, src/vgc/replay_parse.py, tests/test_{own_team_rebuild,replay_supervision,replay_parse,bc}.py
+- Checks: focused 5-file pytest 151 pass; ruff clean; full unit suite 1640 pass / 252 deselected (integration), was 1634 + 6 new tests.
+- Next: lead reviews diff; dataset rebuild (runs/rebuild_s15.sh) NOT run per lead instruction.
+- Open: nothing committed. Bug (5) preview_brought label skew still open (not asked).
+
+## 2026-11-10 (later 2) – Devin / Fable 5.2 — four s14 bugs fixed, s15 built and checked
+- Did: code fixes landed (see previous entry); rebuilt same 149,752 games via `runs/rebuild_s15.sh` -> data/bc/pretraining_regmc_s15 (2,506,547 records, parser schema 15).
+- Checks: full unit suite 1640 pass, ruff clean. verify_pretraining_data PASS incl. new B_turn1_own_bench_full (262,688 rows, 0 bad). Scans in runs/dataset_bug_scan_s15/: turn-1 own bench always 2 (win rate 50.0%); games with zero move labels 30,625 -> 0; labelled/observed moves 99.3% (Electro Shot 0 -> 99.5%, Encore 0 -> 100%); HP/status/boost/field vs raw 0 mismatches in 10,000 games; teampreview rows encode non-blank; 0 OOV, 0 duplicate rows.
+- Open: verify_replay_identity reports 2 flags in 4.5M (`recoverable_move_mask_missing`, games 2698577452 T2, 2701181441 T6): a pivot move (Parting Shot / Volt Switch) followed by the replacement's Magic Bounce reflection in the same slot -> audit sees 2 move events in the slot and drops the label. Label is MISSING, not wrong; verifier left strict, so it exits "fail" on these 2.
+- Open: turn-1 value rows with a guessed bench mon: ~21% (val: 3,216 one guess, 1,516 two, of 22,874). Guess = hash-picked unseen preview species; bring-four label skew (5) not addressed. `boost_value_bad` in scan1 = zero-valued boost keys, pre-existing and harmless (78,224 in s14).
+- Next: owner go/no-go on pilots using s15 (s14 superseded). Nothing committed.
+
+## 2026-11-10 (later 3) – Devin / Fable 5.2 — committed
+- Did: committed everything uncommitted on `fix/replay-state-20261026` in one commit: the second verification pass (schemas 12-14, cache/reserved-roster fixes, tools/verify_replay_identity.py) plus today's four s14 bug fixes (schema 15) and verifier updates.
+- Files: src/vgc/{replay_parse.py,bc/*}, tests/*, tools/{verify_*,measure_own_team_rebuild,train_replay_pretrain}.py, this worklog.
+- Checks: full unit suite 1640 pass + ruff clean (run before commit, code unchanged since). Not pushed.
+- Next: owner go/no-go on pretraining pilots using data/bc/pretraining_regmc_s15.
+- Open: `runs/` and `data/bc/` are gitignored, so the rebuild recipe (runs/rebuild_s15.sh), scan scripts (runs/dataset_bug_scan_s15/) and datasets live only on this machine. 2 known dropped labels (see previous entry); bring-four label skew open; s11-s14 datasets superseded, delete only with owner OK.
+
+## 2026-11-12 02:45 – Devin / Fable 5.2 — s15 readiness check (analysis only, no code changed)
+- Did: probes on s15 train+validation (`runs/readiness_s15/probe.py` -> probe.json) and a real-trainer smoke (600 broad + 100 expert steps, `runs/readiness_s15/smoke/`).
+- Result data: turn-1 value rows show no structural win signal (bench/unseen/active all constant, 50.0%); smoke value acc turns 1-2 = 55%, calibrated; move options always sorted, label position spread; 0 cache skips in all 5 tasks; leads labels 50/50.
+- BLOCKER (trainer, not data): `tools/train_replay_pretrain.py` build_cache crashes saving the cache on full-size train (`np.array(json.dumps(tasks))` -> "string too large", line 232). Smoke only ran via `runs/readiness_s15/smoke_nocache.py` (cache_dir=None; build 204 s train + 23 s val).
+- Open (data, not blocking a pilot): 18,593 of 208,659 train destination labels (8.9%) are "one real + one guessed bench mon" -> label is always the real one (artifact; suggest masking); 56,123 (27%) have a single option (zero loss). Bring-four labels 56.9% from losers (96,269 vs 72,994). Item fill source tracks outcome weakly (both leads common_set: 37.7% win, n=14.8k) but source is not an input. 2 known dropped labels.
+- Next: owner decides: fix cache save; mask guessed-bench destination units; reweight bring-four by outcome. Then pilots. Worklog entry uncommitted.
+
+## 2026-11-12 03:00 – Devin / Fable 5.2 — compared a second (Cursor) s15 readiness review with mine
+- Did: checked its claims against code and my probe. Confirmed: 215,264 of 2,045,715 train outcome units are teampreview rows (encoded as both actives empty); `evaluate_preview` is called without `policy_floor` (lines 699, 706); preview net has no expert phase / early stopping. Its neural leak-probe numbers are unverified: no scripts or outputs for it under runs/.
+- Disagree: its "ready, 0 skips" verdict misses the cache-save crash (line 232) and the 18,593 guessed-bench destination labels.
+- Next: owner go on one trainer patch: cache save, guessed-bench destination mask, teampreview value filter, preview policy_floor. No code changed.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — s15 trainer cache + filters
+- Did: tasks_json saved as uint8 bytes (fixes np-2.5 string-too-large crash on 3.9GB cache); build_cache filters teampreview outcome rows + bench_guessed switch_destination rows into per-task `filtered` sets (serialized via default=list, reloaded as sets of tuples); _units drops filtered refs silently; meta gains bench_guessed; policy_floor passed to both evaluate_preview calls; "cache built" print + final_metrics.json gain filtered counts.
+- Files: tools/train_replay_pretrain.py, src/vgc/bc/replay_pretraining.py, tests/test_replay_pretrain.py (+1 roundtrip test)
+- Checks: 12 tests pass; ruff clean; 2 real s15 runs (300b/100e): run1 built cache 250.5s, run2 loaded 10.9s; outcome units 1,830,451 / filtered 215,264 / val value n 192,739 all match spec; final_metrics identical apart from cache_seconds/mean_step_seconds; 0 missing refs all steps.
+- Next: lead reviews; data/bc/pretraining_regmc_s15 untouched on disk.
+
+## 2026-11-12 03:40 – Devin / Fable 5.2 — trainer patch reviewed (previous entry's date should read 2026-11-12)
+- Did: reviewed the four-change diff (cache save, guessed-bench destination filter, teampreview value filter, preview policy_floor); accepted as is.
+- Checks: see previous entry; evidence in runs/readiness_s15/smoke2 (run1/run2 logs, final_metrics_run1.json).
+- Next: owner go on commit and on the first s15 pilot. Each trainer --out dir stores a ~4.4 GB cache (disk had 29 GB free before smoke2).
+- Open: uncommitted: trainer, replay_pretraining.py, test, worklog. Preview expert phase / early stopping and bring-four reweighting deferred until after the first pilot.
+
+## 2026-11-12 05:10 – Devin / Fable 5.2 — first s15 pilot (runs/pilot_s15_1, default 2000 broad + 1000 expert steps, seed 20261112)
+- Did: ran tools/train_replay_pretrain.py at HEAD 2a1354d (cache hardlinked from readiness_s15/smoke2). Owner: no pass rule yet; pilots are for finding bugs.
+- Result (validation, broad ckpt step 1750): action 38.0% vs train-freq 32.0% / uniform 20.0%; destination 74.6% vs uniform 64.7%; value acc 67.4%, logloss 0.583 vs 0.693; preview brought 19.4% vs bring-rate rule 10.3%, leads 12.9% vs 6.9% (preview loss still falling at the end).
+- Finding 1: expert (1600+) phase overfits from its first eval (val 2.512 -> 2.816; train 1.87 -> 1.30). Saved turn_net.pt = expert step 250: value logloss on full val 0.614 vs broad 0.583, overconfident (pred 0.96 -> obs 0.87). Action gain on 1600+ 37.2% -> 37.7% only.
+- Finding 2 (confirmed mechanism, partial size): outcome sampling gives each (game, side) equal mass, so winners' rows (fewer per game) are drawn more: turn rows sampled 51.7% wins vs 50.0% raw (turn 1: 52.0%). Turn-1 mean pred on 1200+ val 55.7% vs 50.4% actual; ~2 of the 5 points explained, rest open.
+- Clean: turn-1 preds flat across bench_guessed (0.556-0.560) and item-source groups -> net does not read the rebuild fills. Destination val loss rises after step 250 at flat accuracy (overconfident; 105k units).
+- Probe: runs/pilot_s15_1/turn1_probe.py. Next: owner picks fixes (expert recipe; outcome sampling weight). Worklog uncommitted.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — s15 pilot trainer fixes A/B/C
+- Did: (A) pool_task_within_game in replay_sampling.py (equal per-unit outcome weights within a game, per-game/task mass unchanged) applied to both plans in main; (B) --expert-lr-scale 0.1, --expert-eval-every 50, expert seeds best with step-0 eval of broad-best weights; (C) --preview-steps 4000 + best-checkpoint selection on mean task val loss with patience. final_metrics gains outcome_sampling + preview_best_step.
+- Files: src/vgc/bc/replay_sampling.py, tools/train_replay_pretrain.py, tests/test_replay_sampling.py (+pool test)
+- Checks: 20 tests pass; ruff clean; smoke3 run finished "wrote" (243.7s cache rebuild), expert 0 val 2.578 -> best_step 100; preview_best_step 200; 0 missing refs.
+- Next: lead reviews; data/bc/pretraining_regmc_s15 untouched.
+
+## 2026-11-12 05:40 – Devin / Fable 5.2 — pilot 2 started
+- Did: committed 1774f60 (outcome sampling pooled within game; expert lr scale 0.1, eval every 50, step-0 broad baseline; preview up to 4000 steps with best-checkpoint). Smoke runs/readiness_s15/smoke3 OK, 20 tests pass, ruff clean.
+- Running: runs/pilot_s15_2 (seed 20261112, defaults, cache hardlinked from smoke3), log train.log.
+- Next: compare with pilot_s15_1; rerun runs/pilot_s15_1/turn1_probe.py on the new turn_net_broad.pt (turn-1 mean pred vs 50.4% actual).
+- Open: disk 18 GB free; old caches in runs/readiness_s15/{smoke,smoke2} could be deleted with owner OK.
+
+## 2026-11-12 06:30 – Devin / Fable 5.2 — pilot 2 results (runs/pilot_s15_2, HEAD 1774f60)
+- Expert fix works: best step 150 (of step-0 baseline 2.471 -> 2.448); full-val value logloss 0.578 (pilot 1 saved ckpt 0.614), calibration now matches (0.96 pred -> 0.93 obs). Action 38.2%, destination 75.0%, value acc 67.9%.
+- Preview: early-stopped at 1250 steps; brought 19.1% / leads 13.3% = same as pilot 1 -> it was NOT undertrained; it plateaus ~1000 steps.
+- OPEN BUG: turn-1 mean pred on 1200+ val still 55.2% vs 50.4% actual (pilot 1 55.7%), despite pooled sampling. Not explained. Next check: mean pred on train turn-1 rows and per-game p1+p2 prediction sum.
+- Deleted runs/readiness_s15/smoke2/*.npz (owner OK); freed nothing, hardlinked to runs/pilot_s15_1 (stale cache, fingerprint changed). 18 GB free.
+
+## 2026-11-12 06:50 – Devin / Fable 5.2 — turn-1 optimism diagnosed (model, not data)
+- Probes runs/pilot_s15_2/{turn1_pairs,bias_by_turn}.py on pilot-2 broad ckpt: overall val bias +0.8 pt (0.494 vs 0.486). By turn: +4.9/+6.2/+4.4 pts on turns 1-3, -1 to -3 from turn 5. Same on train turn-1 rows (+5.2). p1/p2 identical; per-game p1+p2 sum 1.10. Sampled targets are 50% per turn after pooling, so the net under-fits a turn-dependent bias. Not a label bug. Only the trunk transfers to RL, not this head.
+- Next: long runs (10k broad, early stop) x3 seeds from a clean worktree; check whether the bias shrinks.
+
+## 2026-11-10 – Devin / SWE-2 (sidekick) — eval_replay_pretrain tool
+- Did: build_cache gains final_evaluation kwarg (test opens only with it AND cache_dir None, passed to iter_task_examples); new tools/eval_replay_pretrain.py (--split validation/test double-gated by --final-test, test access logged to runs/test_access_log.jsonl, never writes a test cache); value bias-by-turn table re-derived via iter_task_examples + trunk_inputs in 4096 batches; checkpoint vocabulary + prepared sha256 asserted; +1 test.
+- Files: tools/train_replay_pretrain.py, tools/eval_replay_pretrain.py (new), tests/test_replay_pretrain.py
+- Checks: 13 tests pass; ruff clean; validation eval on pilot_s15_2: broad value 0.5815/0.6761 and turn 0.5783/0.6794 match final_metrics exactly; bias turn-1 "turn" 22420 n, pred 0.5491, observed 0.500.
+- Next: lead; --split test NEVER run.
+
+## 2026-11-12 19:40 – Devin / Fable 5.2 — long runs x3 seeds + one-time sealed test score
+- Did: runs/long_s15.sh (worktree at 1b80fb2, 10k broad steps, patience 6) -> runs/long_s15_{20261112,13,14}. All early-stopped at 2750-3250 (best 1250-1750): the DESTINATION head overfits from ~step 750 (val 0.45 -> 0.53) and drives the combined stop; action flat ~1.42 from 2000, value ~0.578. Seeds agree within 0.5 pt (action 38.2-38.3%, dest 74.7-75.2%, value 67.4-68.0%).
+- Did: added tools/eval_replay_pretrain.py (327dd2b). Chosen seed 20261112 (lowest full-val loss sum 2.455). Validation: action 38.2% (rule 32.0%), dest 75.2% (unif 64.7%), value 68.0% ll 0.577, brought 19.1% (rule 10.3%), leads 13.3% (6.9%).
+- TEST (opened once, logged in runs/test_access_log.jsonl): action 37.0% (rule 31.0%), 1600+ 37.3%; dest 74.8% (unif 65.3%); value 67.3% ll 0.587 (turns 1-2 57.5%, 6+ 76.1%); brought 18.6% (rule 8.2%); leads 10.6% (6.6%). Turn-1 bias of the saved expert ckpt +1.8 val / +2.4 test (broad ckpt +4.9).
+- Next (not started): destination head early-stopping/regularization separate from the combined loss; step 6 (practice-game warm start + Showdown/env recheck). Test split must not be reopened for recipe tuning.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — dest-head own stopping + RL readiness
+- Did: turn-net selection loss now action+value (dest excluded, recorded as dest_val_loss per eval); per-phase destination tracker (dest_best/dest_bad, same patience) freezes destination_head when exhausted and restores its own best state at phase end; expert unfreezes/re-seeds at step 0; final_metrics gains dest_frozen_step + dest_val_loss_restored per phase; step_losses(train_destination=False) test added.
+- Files: tools/train_replay_pretrain.py, tests/test_replay_pretrain.py
+- Checks: 14 tests pass; ruff clean. Long run runs/long_s15_desthead_20261112 in flight (seed 20261112). RL readiness: warm start 8/8 stale 0, encoder identity max diff 0.0; all four readiness gates BLOCKED on upstream commit e5d26285a (sim/side.ts, inputlogs for overridden choices); live-replay parity running.
+- Next: compare desthead run vs runs/long_s15_20261112 on validation.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — desthead run + RL readiness results
+- Did: ran long_s15_desthead_20261112 (seed 20261112, 10k broad) — dest froze broad@2250 / expert@450; restored dest losses 0.4438/0.4421 beat REF 0.4614/0.4568; action+value also improved. Validation eval written; parity harness 99.7% excl-inherent; readiness gates all BLOCKED on upstream e5d26285a (no sync run).
+- Files: runs/long_s15_desthead_20261112/, runs/rl_readiness_s15/ (logs + parity summary)
+- Checks: 14 tests, ruff clean, eval parity vs final_metrics confirmed.
+- Next: owner decision on tools/sync_showdown.py for the blocking commit.
+
+## 2026-11-12 22:10 – Devin / Fable 5.2 — destination head on its own score + RL readiness checks
+- Did: trainer selects turn net on action+value; destination head tracked/frozen/restored on its own val loss. runs/long_s15_desthead_20261112 (same seed as long_s15_20261112), VALIDATION only: action 39.1% (was 38.2%), 1600+ 38.6% (37.5%), dest 75.4% loss 0.442 (75.2%, 0.457), value 68.3% ll 0.577 (68.0%, 0.577), turn-1 bias +0.5 pt (+1.8). Broad best 2500 (was 1750). Test NOT reopened.
+- RL readiness (runs/rl_readiness_s15/): warm start 8/8 tensors, 0 stale vocab, hidden identical (max diff 0.0). Live/replay parity 99.73% excl. inherent (1099 decisions; 3 non-inherent = boosts.spd), matches 11-05's 99.8%.
+- BLOCKED: all 4 gates, one upstream Showdown commit e5d26285a "Fix inputlogs for overridden choices" (sim/side.ts). tools/sync_showdown.py not run (pulls, rebuilds, re-exports, commits) -> needs owner OK.
+- Next: owner OK for sync_showdown.py, then rerun the 4 gates. Disk ~19 GB.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — Showdown sync to 965a535ef
+- Did: tools/sync_showdown.py pulled 11 upstream commits to 965a535ef (blocking: e5d26285a inputlogs fix), rebuilt dist/sim, committed 94a7550ad — only mechanics_catalog.json + mechanics_coverage.json changed; vocabulary files untouched.
+- Checks: all 4 readiness gates PASS (logs runs/rl_readiness_s15/post_sync/); warm start on desthead ckpt 8/8, stale 0, diff 0.0; 38 tests pass.
+- Next: owner reviews the auto-commit; nothing pushed.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — desthead confirmation runs 13/14
+- Did: seed 20261113 rebuilt cache (270s, counts identical: move 1102318/switch 104996/outcome 1830451/brought 86401/leads 107945, filtered 9352/215264); hardlinked its npz into 20261114 (loaded 14.2s). All 6 runs now have eval_validation.json; six-run table at runs/long_s15_desthead_summary.md — desthead beats baseline on every seed (action 0.391-0.400 vs 0.382-0.383; dest loss 0.440-0.442 vs 0.451-0.457; t1 pred nearer 0.500).
+- Note: old cache inode 206650738/206650850 is stale under current fingerprint (pre-desthead code hash); 5 links: long_s15_2026111{2,3,4}, pilot_s15_2, readiness_s15/smoke3 — removing all frees ~4.38 GB. Nothing deleted.
+- Next: owner review of summary; nothing committed, no processes running.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — RL warm-start pilot s31101
+- Did: ran paired pilot pilot_{fresh,warm}_s31101 (32 iters, 1024 games, evals 0/256/512/1024 vs heuristic+maxpower). Gate artifacts had staled on git_commit (94a7550 vs new HEAD) — refreshed via the three check_*_readiness scripts, then both arms ran clean. Warm trunk verified 8/8 from desthead_20261114 ckpt; all 34 non-trunk params identical to fresh init.
+- Result @1024: fresh pool 0.719 (heur .531 / max .906), warm pool 0.703 (heur .438 / max .969) — no significant delta; warm was ahead at 512 (0.211 vs 0.156). Zero health-check hits; wall ~15.5/16.0 min.
+- Files: runs/rl_warmstart_exp1/ (logs, eval.jsonl, arm_diff_check.py+log); recheck logs in runs/rl_readiness_s15/post_sync/recheck_*.log
+- Next: owner decides whether warm-start matters at longer horizons.
+
+## 2026-11-12 – Devin / SWE-2 (sidekick) — warm-start experiment-1 MAIN
+- Did: 6 concurrent runs (fresh/warm × 31111/22/33, 2048 games, evals x128 at 0..2048). Warm logs all 8/8, fresh none; zero health hits; 0 nonfinite. Replayed eval games from snapshots for index-paired bootstrap — all 36 replayed cells exactly match recorded counts.
+- Result: endpoint vs heuristic pooled WARM-FRESH -0.0052 [-0.057,+0.047] — null. Endpoint maxpower +0.013 [-0.010,+0.039]. AUC-vs-heuristic -0.0005 [-0.021,+0.020] with strong per-seed sign disagreement (+0.105 s31122 / -0.073 s31133). Warm start = no measurable effect at 2k games.
+- Files: runs/rl_warmstart_exp1/main_*, main_summary.{py,md,json}, replay_eval_games.py, replay_games/, replay_logs/
+- Next: owner decision on warm start.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — status check of warm-start experiment 1
+- Did: confirmed main run finished (no training processes running); read runs/rl_warmstart_exp1/main_summary.md. Primary endpoint vs heuristic warm-fresh -0.005 [-0.057,+0.047], null.
+- Checks: none run (read-only).
+- Next: owner decision on warm start (drop it, or test a longer horizon / different question).
+
+## 2026-11-13 – Claude Code / Fable 5.2 — why warm start = fresh in RL experiment 1 (analysis, no source changed)
+- Did: knock-out evals on final snapshots (iter 64, seed 31111, 128 games vs heuristic; `runs/pretrain_review/ablate_eval.py`, abl_*.json). Unchanged: fresh 108 / warm 106 (matches eval.jsonl). Trunk output frozen to one constant board: 109 / 107. Trunk zeroed: 68 / 94. Tactical (damage/KO/Speed) features zeroed: 4 / 7.
+- Reading: the trained policy plays off the per-action tactical features; the state trunk (the only 8 tensors pretraining fills) carries no used board information on this task, so the experiment could not show a pretraining effect either way. Warm trunk drifted only ~10% (not destroyed, just unused).
+- Design gaps: one fixed team mirror + fixed leads (`phase2_mirror`, "team 1234"); pretrained action/destination/value heads and the whole preview net are discarded; 3 seeds with per-seed curve swings of +-10 pts.
+- Checks: "none" arm reproduces recorded counts exactly. One seed pair only.
+- Next: owner picks: rerun without tactical features (cheap), multi-team train/holdout-team eval, or carry the pretrained policy into RL (teacher anchor / head transfer). Worklog uncommitted.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — verified Fable's ablation review
+- Did: checked runs/pretrain_review/abl_*.json; counts match the review (fresh/warm: normal 108/106, trunk constant 109/107, trunk zero 68/94, tactical zero 4/7). Experiment 1's null is uninformative about pretraining (trunk unused on fixed-mirror task).
+- Recommendation to owner: 20-min no-tactical rerun first (decides whether warm arm is worth carrying), then first real RL run = multi-team train / holdout-team eval, harder opponents, search checks.
+- Next: owner picks.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — no-tactical warm-start rerun launched
+- Did: gates PASS at 14a8495 (worklog stashed for the check, then restored). Launched 6 runs runs/rl_warmstart_exp1/notac_{fresh,warm}_s{31111,31122,31133}: same as main (64 iters x 32 games vs heuristic, evals x128 @0/256/512/1024/1536/2048 vs heuristic+maxpower, --information-features) but --no-tactical-features. Warm logs 8/8 tensors.
+- Checks: in flight.
+- Next: when done, pooled warm-fresh @2048 vs heuristic + AUC, compare to main runs.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — no-tactical rerun results
+- Did: 6 notac runs finished clean (0 errors). @2048 vs heuristic pooled warm-fresh -0.010 (eval-noise CI [-0.077,+0.056]) but seed-to-seed SD 0.17 (s31111 +0.19, s31122 -0.14, s31133 -0.08) -> null, very underpowered. AUC +0.034 (seed SD 0.12, not credible). maxpower endpoint -0.044 (one seed). Bots still learn without tactical: fresh 65% / warm 64% vs heuristic @2048 (main 82%).
+- Key: board-reader freeze ablation on notac ckpts: fresh_s31122 97->100, warm_s31111 86->81 => trunk STILL unused without tactical features. Fixed-mirror task cannot test pretraining at all.
+- Files: runs/rl_warmstart_exp1/notac_*, notac_summary.{py,txt}; runs/pretrain_review/abl_notac_*.json
+- Next: owner decision; recommend multi-team train / holdout-team design (where board reading is needed), with a trunk-freeze ablation as a built-in check.
+
+## 2026-11-13 – Claude Code / Opus 5.5 — many-teams RL experiment designed (draft prereg)
+- Did: draft docs/prereg/rl_multiteam_warmstart.md (train_ppo pool mode on mc_sheet_pool_v2 train 226 / eval holdout 88; warm vs fresh; pilot 2 seeds x 2048 with trunk-freeze validity gate; main 8192 games; primary = holdout-vs-heuristic AUC diff).
+- Smoke: train_ppo default teacher-anchor 0.05 -> 32 games 8.5 min, 7/8 worker TimeoutErrors, 15/32 games; with --teacher-anchor-weight 0 -> 40 s, 0 errors. evaluate_learned_policy vs vgc ~20 s per 10 games. Logs runs/rl_multiteam_design/.
+- Next: owner approves design -> build eval wrapper + pool freeze check, then pilot.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — many-teams pilot tooling built, prereg locked
+- Did: train_ppo `--save-checkpoints-at-games` (default off); new offline/evaluate_pool_checkpoint.py (paired, shard-invariant, trunkc freeze). Prereg locked with seeds 41101/41102, eval seeds 70001-3, fresh = `--bc-checkpoint /nonexistent` (default warm-starts from bc_policy_v4!).
+- Checks: warm 8/8, resume keeps anchor 0 + checkpoints untouched, shared server OK, eval rows identical jobs 1/4 (none+trunkc); 123 tests pass. Logs runs/rl_multiteam/tooling_check/.
+- Next: commit, gates on clean tree, launch pilot (4 runs x 2048), eval, apply validity gate.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — many-teams pilot: validity gate FAILED
+- Did: Showdown sync -> 7e743761c (b9e34ee, owner OK; Pursuit PP fix); gates PASS; 4 runs (fresh/warm x 41101/41102) to 2048 games, 0 errors, ~34 min each; 40 evals, 0 errors.
+- Result: trunk-freeze cost fresh pooled +2.1 pts [+0.8,+3.4] < 5 -> stop per prereg. Warm +2.0. Holdout vs heur @2048 fresh 69% / warm 67%; vs vgc 27% / 30%; train-holdout gap ~0.
+- Files: runs/rl_multiteam/pilot_*; prereg result section appended.
+- Next: owner decides how to make board reading matter (learned team preview, drop per-move tactical shortcut, longer horizon) before any main run.
+- Open: worklog + prereg result note uncommitted.
+
+## 2026-11-13 – Devin / Fusion (Opus 5.5) — pilot follow-up: which inputs the bots use (analysis only)
+- Did: runs/rl_multiteam/branch_ablate.py freezes one input branch at a time (paired with pilot holdout-vs-heuristic rows, seed 70001; reproduces tool trunkc 349 exactly). Results in branch_ablate.jsonl.
+- Result @2048 (pooled 4 runs): WHOLE context frozen costs ~2.1 pts (same as trunk alone); info/mechanics/history ~0; tactical zeroed costs ~30-40 pts. @1024 whole-context cost ~0. So bots play off per-action tactical numbers; board use is ~0 -> ~2 pts and rising slowly.
+- Correction: my earlier "freeze cost barely moved between checkpoints" had no data behind it; measured now (0 -> 2 pts).
+- Next: owner call. Recommend closing trunk-transfer question (use fresh), not running main; see chat for options.
+- Open: worklog + prereg result note uncommitted.
+
+## 2026-11-18 – Local mikumiku37 replication pilot
+- Ran terminal-only from-scratch league training on pikapro 0.1.0. The 8,694,191-parameter model completed 32 games; a smaller model completed 128. Main saved model: runs/replication_8m7_37101/policy_0000032.pt. No public play.
+- Search ran in Showdown. Default opening visited 8 worlds, 8 actions per side, 4 seeds per cell. Reduced two-game holdout comparison finished; plain model won both. Pilot only.
+- Engine comparison: 94/100 agreed through finish on unpatched pikapro 0.1.0; six first divergences logged in runs/replication_rust_37101/engine_comparison.json. All 226 training teams validate. Seven focused checks passed; Ruff clean.
+- Guide and repeat commands: docs/mikumiku_replication_pilot.md.
+
+## 2026-11-18 – pikapro 0.1.0+regmc.2 parity fixes (600/600 match vs Showdown 7e743761c)
+- Fixed two upstream RNG-order bugs in pikapro 0.1.0:
+  1. `patches/pikapro/0001-update-before-forced-switch.patch`: run `each_update` before forced switches for living pivot Pokémon (and set `skip_before_switch_out` on Shed Tail). Fixed all 6 original mismatches.
+  2. `patches/pikapro/0002-keep-status-without-replacement.patch`: skip `check_fainted` status clearing when `can_switch == 0` so fainted statused Pokémon still participate in speed-tie handler sorts. Fixed remaining holdout mismatches (187/200 -> 200/200).
+- Packaged locally as `patches/pikapro/pikapro-0.1.0+regmc.2.tar.gz` via `tools/package_replica_engine.py`, wired into `pyproject.toml` (`replica` extra) and `uv.lock`, installed in `.venv`.
+- Verified 600/600 parity vs pinned Showdown `7e743761c` (`runs/replica_parity_20261118/{original_after,holdout_after,new_training_teams}.json`: 100/100, 200/200, 300/300), 8/8 unit tests pass, and `offline/replica_live_smoke.py` completes full local Showdown games with and without search.
+- Confirmed both bugs are still present on upstream `spedr/pikapro-engine` `main` (`2611ea9`) with no open issues for them.
+- Next: sync Showdown for upstream Reg M-C Last Resort fix (`41ba4797f`) + check pikapro parity, then wire public ladder runner to the replication transformer architecture.
+
+## 2026-11-18 – Upstream issue, Showdown 5b88c4761 sync, pikapro 0.1.0+regmc.3, and ladder runner support
+- Opened upstream issue https://github.com/spedr/pikapro-engine/issues/2 documenting both switching.rs RNG-order bugs and patches.
+- Stashed unrelated Nov 13–17 uncommitted files (`wip: nov13-17 prereg and floette preview trial`), synced Showdown to `5b88c4761` (`cb4f3baa1`, adding Champions `lastresort` `onDisableMove` from `41ba4797f`), and passed all 3 readiness gates.
+- Added `patches/pikapro/0003-champions-disable-last-resort.patch`, packaged and installed `pikapro 0.1.0+regmc.3`, and verified both a dedicated Last Resort test and 100/100 full-game parity vs Showdown `5b88c4761` (`runs/replica_parity_20261118/regmc3_100.json`).
+- Updated `ladder/run_ladder.py` with `--policy-mode replica` and `--policy-mode replica-search` (plus search budget flags) for both `--local-smoke` and public ladder play (keeping all 4 readiness/parity gates and vocabulary validation).
+- Tests: 42/42 passed (`test_replica_engine.py`, `test_replica_search.py`, `test_replication_policy.py`, `test_ladder.py`); Ruff clean.
+- Next: scale up RL PPO training of the replication transformer on `pikapro 0.1.0+regmc.3`, then test on local smoke and public ladder.
+
+## 2026-11-18 – Phase 1 PPO trainer upgrade (parallel workers, desktop/afk profiles, resume, eval, W&B)
+- Upgraded `selfplay/train_replication_league.py` with:
+  - `--profile desktop` (half CPU cores, `nice=10`, `threads=2`) and `--profile afk` (cpus-2, `nice=2`, `threads=4`) with optional `--workers`/`--threads` overrides.
+  - Parallel `spawn` worker pool running persistent `ReplicaRustWorker` instances and cached opponent snapshots.
+  - Atomic `trainer_state.pt` saving and `--resume` (restores model, optimizer, RNG states, league history, and `wandb_run_id`).
+  - PPO health metrics (`policy_loss`, `value_loss`, `entropy`, `approx_kl`, `value_accuracy`, `games_per_sec`, `decisions_per_sec`).
+  - Periodic paired held-out baseline evaluation (`--eval-every`, `--eval-games`, `--eval-opponents`, default `maxpower,heuristic`).
+  - Optional Weights & Biases logging (`--wandb-project`, `--wandb-run-name`, `--wandb-entity`, `--wandb-mode`).
+- Next: refresh readiness gates on clean commit, run parallel + resume + W&B smoke verification, then start main PPO training.
+
+## 2026-11-19 – Upgraded to official PyPI pikapro 0.2.0 and Phase 2/3 PPO runs
+- `spedr/pikapro-engine#2` was fixed and closed upstream in `pikapro 0.2.0` (commit `0bfff72`, released on PyPI).
+- Switched `pyproject.toml` `replica` extra to official `pikapro>=0.2.0`, removed local `patches/pikapro/` tarball and `tools/package_replica_engine.py`, and synced `.venv`.
+- Verified `pikapro 0.2.0` against Showdown `5b88c4761`: 42/42 unit tests pass (including Last Resort and Tyranitar speed-tie) and 100/100 full-game parity matches.
+- Phase 2 bake-off (`desktop` mode, 2,048 games): Medium (`width=128, L=4`, 1.16M params) beat Full (`width=268, L=12`, 8.69M params) on speed (112s vs 331s), stability (`approx_kl` 0.027 vs 0.148), and maxpower win rate (45% vs 36%).
+- Phase 3 (`afk` mode, 20,000 games, `runs/replica_m128_l4_37101`, W&B `x41s0ucp`): completed in 10.3 min (~25–30 g/s); held-out win rates climbed to ~60% vs `maxpower` (peak 75%) and ~40% vs `heuristic` (peak 57.5% at game 13,824), then plateaued as `approx_kl` rose to 0.081 at `lr=3e-4`, `games_per_update=64`.
+- Next: Phase 3b (resume with `lr=1e-4`, `games_per_update=256`) or Phase 4 local Showdown lookahead test.
+
+## 2026-11-20 – 500k-game PPO run, search speedup, and 17/20 (85%) A/B win for lookahead
+- Completed Phase 3b (20k -> 60k, `desktop`, `lr=1e-4`, `gpu=256`), Phase 3c (60k -> 150k, `afk`, `lr=5e-5`), and Phase 3d (150k -> 500k, `afk`, `lr=2e-5`, `gpu=512`) on `runs/replica_m128_l4_37101` (W&B `x41s0ucp`, `pikapro 0.2.0`).
+- Held-out progression (plain neural, zero search): `heuristic` 21.9% -> 63.1% avg (final 70.0%, peak 80.0%); `vgc` (2-ply search) 26.4% -> 36.8% avg (final 40.0%, peak 50.0% at 444,912); value accuracy 53.4% -> 72.6% avg (peak 75.7%).
+- Phase 4 local Showdown smoke (`ladder/run_ladder.py --local-smoke`): 0 fallbacks, 0 errors for both `replica` and `replica-search`.
+- Upgraded `replica-search` (`src/vgc/rl/replication_policy.py`, `offline/replica_search_probe.py`, `ladder/run_ladder.py`): persistent reusable `LiveExactMirror`, batched `policy.values(...)` leaf scoring, mixed-strategy sampling in `ReplicaLadderPlayer`, and `ReplicaRustWorker` (`pikapro 0.2.0`) for `paired_match`.
+- 20-game paired A/B (`policy_0500000.pt`, unseen `team_003` vs `team_005`, `4w x 4a x 2s`, `runs/phase4_smoke/ab_search_vs_plain_20.json`): `replica-search` beat plain `replica` **17–3 (85.0%)** (10/10 as p1, 7/10 as p2), 0 errors, ~0.7s/turn (~95s total for 134 search decisions).
+- Public Reg M-C ladder v1 baseline (`policy_0500000.pt`, `--policy-mode replica-search`, `6w x 6a x 2s`, `teams/mc_ladder_01.packed.txt`, 30 live games in `runs/ladder.jsonl`): **17–13 (56.7%)**, **0 fallbacks**, start **1117**, peak **1255**, end **1165** Elo (avg opp 1184, range 1000–1464; 10/12 vs 1000–1149, 6/11 vs 1150–1249, 1/7 vs 1250+). True v1 Elo ceiling sits around ~1200–1250.
+- Next: design and train next-gen v2 transformer (larger capacity e.g. `width=192, layers=6`, cosine LR schedule, larger team pool / longer self-play).
+
+## 2026-11-21 – v2 post-mortem and full A+B+C+D v3 pipeline upgrade
+- Reviewed finished v2 run (`runs/replica_v2_m192_l6_748t`, 2.87M params, 748 teams, 500k games, 8.8h): underperformed v1 vs `vgc` (29.8% vs 35.8–37.9%) and value accuracy (69.3% vs 72.6%) due to high initial KL (0.075–0.082) / small-batch overfitting (`batch_size=64, epochs=3`), diluted team pool (369/748 stale M-B-spread or synthetic archetype teams), and board blind spots.
+- Implemented all four upgrades (A, B, C, D) with full v1/v2 checkpoint backwards compatibility:
+  - **A (Board representation, `src/vgc/rl/replication_policy.py` v2):** Added explicit turn-remaining timers (weather, Trick Room, terrains, Tailwind, screens, Safeguard), `protect_counter`, `first_turn`, `must_recharge`, `preparing`, `status_counter`, permutation-safe side/slot embeddings, and calibrated win-probability logit value head (with v1 loader preserved).
+  - **B (Training math & clean teams, `selfplay/train_replication_league.py`, `data/selfplay/v3_clean_train_manifest.json`):** Added per-trajectory GAE (`--gamma`, `--gae-lambda`), BCE value loss for v2, KL early stopping (`--target-kl`), anchor opponents (`--anchor-opponents`, `--anchor-fraction`), and built a clean 379-team Reg M-C pool (zero synthetic/M-B teams, zero holdout overlap, 100% `pikapro` validated).
+  - **C (Live search, `src/vgc/rl/replica_search.py`, `offline/replica_search_probe.py`, `ladder/run_ladder.py`):** Wired `BattleMemory` into `replica-search` (`mirror.hypotheses(battle, memory=...)`) and replaced flat uniform opponent prior with neural policy softmax priors.
+  - **D (Throughput, `selfplay/train_replication_league.py`):** Added lockstep batched rollouts (`--rollout-batch-size 32`) + `--device auto` (Apple M4 Pro MPS GPU for PPO updates). Verified ~2x wall-clock speedup on `width=192, layers=6` (`11.6 -> 22.3 games/sec`, `209 -> 420 dec/sec` in `desktop` mode).
+- Verification: 44/44 unit tests + 2/2 integration tests pass (including fog-of-war hidden-opponent boundary and legacy v1/v2 checkpoint loading), `replica_search_probe` smoke clean, Ruff clean.
+- Next: launch overnight v3 training run on `data/selfplay/v3_clean_train_manifest.json` (and optionally run a live ladder check with the upgraded `replica-search` on v1 while v3 trains).
+
+## 2026-11-21 (late) – Rust speedups: native `pikapro.rl.VecEnv` rich encoder + `Battle.patch_public` live search
+- Extended `pikapro 0.2.0` via PyO3 (reproducible patch saved at `patches/pikapro/0001-rich-encoder-and-patch-public.patch`, built and installed into `.venv`):
+  - **Rust #1 (Training bridge — `rich` encoder, 1,028 floats/player):** Added `crates/pikapro-rl/src/encode/rich.rs` (fog-safe `PlayerView`, registered as `observation="rich"` across `VecEnv`, `ChannelSession`, and `Battle.encode_rich`/`Battle.encode_state_rich`). Carries species/item/ability/move IDs, exact/base stats, HP, status + sleep/toxic counters, boosts, types, protect chain, Fake Out `first_turn`, `turns_active`, Mega/trap flags, PP/disabled, volatiles, and explicit side + field turn timers.
+  - **Rust #2 (Live ladder search — `Battle.patch_public`):** Added integer-only `crates/pikapro/src/patch.rs` (`Battle.patch_public(state_dict)` + `Battle.fork()` + `Battle.encode_state_rich(side, ...)`) so live lookahead runs directly in Rust `pikapro` instead of spawning Node.js Showdown (`LiveExactMirror`).
+- Added Python layers:
+  - `src/vgc/rl/rust_policy.py`: `RustFactoredPolicy` (encoder-only Transformer over the 1,028-float Rust `rich` obs, autoregressive factored doubles heads `slot0 -> slot1 | slot0`, 360-way preview head, BCE win-probability value head).
+  - `selfplay/train_rust_vec.py`: PPO league trainer on `pikapro.rl.VecEnv(..., observation="rich", masks="factored")` + Apple M4 Pro MPS GPU for both rollouts and updates, native Rust `simple_heuristics` anchor opponents, GAE, BCE value loss, KL early stopping, cosine LR, atomic `--resume`, fast Rust holdout eval, and W&B logging.
+  - `src/vgc/rl/rust_search.py` & `ladder/run_ladder.py`: `RustExactMirror` + `search_public_rust` + `--policy-mode rust` / `--policy-mode rust-search` (`RustLadderPlayer` wired with `ChannelSession(..., observation="rich")` and `BattleMemory`).
+  - `tests/test_rust_pipeline.py`: fog-of-war hidden opponent item boundary, bit-exact (`0.0` diff) parity across `Battle.encode_rich`, `ChannelSession.obs`, and `Battle.encode_state_rich`, `Battle.patch_public`, checkpoint save/load, and `search_public_rust` end-to-end.
+- Verified checks & benchmarks:
+  - Tests: 47/47 focused tests pass (`tests/test_rust_pipeline.py`, `test_replication_policy.py`, `test_replica_search.py`, `test_replica_engine.py`, `test_ladder.py`); full unit suite 1,653 passed / 4 skipped (only 1 pre-existing missing-scratch-file failure in `test_replay_pretrain.py`); Ruff clean; all 3 readiness gates PASS.
+  - Deep verification audit caught & fixed 4 live-play/search bugs before v3:
+    1. `rust_search.py` read `item`/`ability`/`hp_fraction` instead of `snapshot_battle`'s actual keys (`item_id`+`item_state`, `ability_id`+`ability_known`, `current_hp`/`max_hp`, side `trapped`), which had dropped own items/Mega Stones and opponent HP%. Fixed; `RustExactMirror` now matches `ChannelSession` to `0.000000` on own mons + globals and exact opponent HP% on both `p1` and `p2`.
+    2. `rust_search.py` used `Battle.slot_mask` Showdown request-order switch bits (`2, 3`) instead of `VecEnv`/`ChannelSession` permanent 0..5 row switch bits (`0, 1` after a switch). Added bidirectional `req_pos <-> obs_row` switch remapping; action masks now match `ChannelSession.mask` bit-for-bit on both seats after non-identity preview (`team 2143`) and mid-game switches.
+    3. `ladder/run_ladder.py` (`RustLadderPlayer`) compared `pikapro` 1-based choice strings (`"move 1 1, switch 3"`) against `poke-env` named strings (`"move closecombat 1, switch Tyranitar"`), and called `sess.choice(...)` in a loop (which consumes the request on the first call). Added `match_pikapro_choice_to_order` in `rust_search.py` and fixed `RustLadderPlayer` to resolve exact `DoubleBattleOrder` objects cleanly.
+    4. Verified live local Pokémon Showdown smoke (`ladder/run_ladder.py --local-smoke --n 2`) for both `--policy-mode rust` and `--policy-mode rust-search`: 0 fallbacks, 0 errors, ~1.2s total for 2 full `rust-search` games (`4w x 4a x 2s`).
+  - Training throughput (`train_rust_vec.py`, `width=192, layers=6`, 2.87M params, 379 teams, `num_envs=256`, `threads=8`, MPS GPU): **96.4 games/sec** (**1,707 decisions/sec**) on 9.2-turn early games (~6x faster than v2's 16 games/sec; projects to ~130–160 games/sec at mature ~6-turn games, ~4M–5M+ games overnight). Value accuracy climbed 54.8% -> 63.4% in 46 seconds (4,098 games); `--resume`, `VecEnv` `autoreset="next_step"`, `side_randomization`, `eval_vs_python_vgc`, and zero train/holdout team overlap (379 train vs 88 holdout: 0 exact, 0 species-6 overlap) all verified.
+- Next: plan and launch the v3 Rust training run via `selfplay/train_rust_vec.py`.
+
+## 2026-11-21 (audit #2) – Move-order & team-slot equivariant `RustFactoredPolicy` v2 + full-12-row search obs
+- Second adversarial audit before v3 launch caught 3 silent issues that would have hurt unseen-team generalization or biased eval:
+  1. **Move-order blindness in `src/vgc/rl/rust_policy.py` (critical):** `encode_board` summed all 4 move embeddings without slot identity (`move_emb(mvs).sum(dim=-2)`) and used blind `Linear(2W, 47)` action heads + blind `slot0_action_emb(a0)`, making the model unable to tell which move was in slot 1..4 on unseen teams. Upgraded to `RUST_POLICY_VERSION = 2`: removed `own_slot_emb`, paired each move's `(pp, disabled)` with its own embedding in the pooled mon token, and replaced blind heads with semantic move heads (`[slot_ctx, move_emb(m_k), pp_k, dis_k] -> 10 (target, mega) logits`), semantic switch heads (`[slot_ctx, own_token[j]] -> 1 logit`), and semantic Slot-1 conditioning (`move_emb(chosen_move) + variant_emb` or `own_token[chosen_switch]`).
+  2. **Unbrought opponent preview rows in `encode_battle_state_rich` (`patches/pikapro/0001-rich-encoder-and-patch-public.patch`):** Patched Rust `rich.rs`/`python.rs` to also fill the 2 unbrought opponent preview rows with strictly public preview info (species, types, base stats; zero hidden items/abilities/moves/exact stats), matching `VecEnv`/`ChannelSession` on all 12 rows. Rebuilt and reinstalled `pikapro 0.2.0` into `.venv`.
+  3. **Fast-game selection bias in `eval_rust_opponents` (`selfplay/train_rust_vec.py`):** Replaced first-N completion stop with exact per-env quotas (`done_per_env < quotas`) so slower games are never dropped from holdout win rates.
+- Verified:
+  - Empirical audit of `rich.rs` confirmed 100% bit-exact timer parity across turns 1..4 (`weather_turns`, `tailwind`, `protect_chain`, `first_turn`, `turns_active`), zero NaN/Inf across 1,920 env-steps, all IDs strictly within dex bounds, and zero fog-of-war leaks at Team Preview.
+  - Added exact move-order & team-slot equivariance regression test (`test_rust_policy_is_equivariant_to_move_order_and_team_slot_order`) to `tests/test_rust_pipeline.py`: 48/48 tests pass, Ruff clean.
+  - 2,063-game MPS GPU smoke on `width=192, layers=6`: **63.2 games/sec** (`1,108 dec/sec`) on 9.26-turn early games (~95–110 g/s at mature 6-turn games), `value_accuracy` 49.0% -> 61.1% and `vs_snapshots_score` 51.6% -> 59.5% in 1 update, `approx_kl` 0.0072.
+- Next: commit audit #2 fixes, refresh the 3 training readiness gates, and plan/launch the v3 run.
+
+## 2026-11-22 – Completed 3,000,004-game Rust v3 training run (`runs/rust_v3_m192_l6_379t`)
+- Finished full 3M-game AFK PPO league run (`train_rust_vec.py`, `RustFactoredPolicy` v2 equivariant, `width=192, layers=6`, 3.32M params, 379 clean Reg M-C teams, W&B `gci7x7w5`, ~8.9h total wall time at ~95–104 games/sec on M4 Pro MPS GPU).
+- Final held-out results on 88 unseen Reg M-C teams (plain neural policy, zero lookahead):
+  - vs Python `vgc` 2-ply search (40 unseen games): **62.5% final**, **64.0% last-5 avg**, **72.5% peak** (at 2.76M) — roughly 2x v1's ~36.8% and v2's ~29.8%.
+  - vs Rust `simple_heuristics` (100 unseen games): **75.0% final**, **76.2% last-5 avg** (peak **79.0%**).
+  - vs Rust `max_base_power` (100 unseen games): **90.0% final**, **85.8% last-5 avg**.
+  - Win-chance prediction (`value_accuracy`): **77.3% final**, **75.5% last-50 avg**, **77.9% peak** (up from 72.6% in v1 / 69.3% in v2); `approx_kl` ~0.0025–0.0028 throughout late training.
+- Final checkpoint: `runs/rust_v3_m192_l6_379t/policy_3000004.pt`.
+- Public Reg M-C ladder v3 baseline (`policy_3000004.pt`, `--policy-mode rust-search`, `8w x 8a x 4s`, MPS GPU, `teams/mc_ladder_01.packed.txt`, 30 live games in `runs/ladder.jsonl`, ~32 min wall time): **16–14 (53.3%)**, **0 fallbacks**, start **1262**, **peak 1346**, end **1316** (+win #30 vs 1274 -> ~1332) Elo against avg opp **1282** (range 1052–1473; **8–3 (72.7%)** vs <1250, **2–4** vs 1250–1349, **6–7 (46.2%)** vs 1350+, including wins over 1469, 1416, 1409, 1384, 1359, 1350). Estimated true v3 ladder Elo sits around **~1320–1360** (+100 to +130 Elo over v1's ~1200–1250 baseline).
+- Next: review the 14 v3 losses to diagnose the next bottleneck toward 1500–1700+ Elo (e.g. deeper/2-turn Rust lookahead, team strength/matchups, or scaling v4 training to 5–10M+ games / wider team pool).
+
+## 2026-11-22 (Steps 1–3) – v3 loss post-mortem, Reg M-C team tournament, and 2-turn regularized `rust-search`
+- **Step 1 (Post-mortem of 30 live v3 games):**
+  - 20-game paired A/B on unseen holdout teams confirmed `rust-search` beats plain v3 **16–4 (80.0%)**.
+  - Replay audit of the 14 losses exposed two clear causes: (1) **1-turn horizon Protect stall trap** — 49 Protects / 8 failed double-Protects in 14 losses vs 10 Protects / 1 fail in 16 wins (e.g. Game 6 threw a won 2v1 vs 1099 Elo by clicking Protect 5 straight turns while plain v3 wanted 90.8% `Low Kick + Close Combat`); (2) `mc_ladder_01` struggled against the ladder's #1 `Archaludon + Pelipper + Grimmsnarl` core (37.5% vs Archaludon, 27.3% vs Grimmsnarl; Tyranitar 6–13).
+- **Step 2 (Reg M-C team screening with `policy_3000004.pt` in Rust `VecEnv`):**
+  - Screened all 12 curated teams (`mc_ladder_01..06` + `teams/owner/*`) and confirmed top 4 at **512 games each** against all 88 unseen holdout teams + the 17 Archaludon/Pelipper/Grimmsnarl teams:
+    - **#1 `teams/mc_ladder_04.packed.txt`** (`Salamence, Rillaboom, Sneasler, Arcanine-Hisui, Kingambit, Basculegion`): **69.5%** overall (+9.0% over `mc_ladder_01`'s 60.5%), 53.9% vs meta core.
+    - **#2 `teams/owner/salamence_tw.packed.txt`**: **63.5%** overall, **60.0%** vs meta core.
+- **Step 3 (Upgraded `src/vgc/rl/rust_search.py` to 2-turn regularized lookahead):**
+  - Added `min_prior_prob=0.01` (prunes <1% tail junk moves beyond top 2), `prior_bonus=0.025` (KL-regularized Nash toward the 3M-game neural policy), and `rollout_turns=1` (batched MPS GPU 2-turn rollout past the 1-turn simultaneous matrix; ~0.33s/turn at `8w x 8a x 4s`).
+  - Game 6 Protect trap: fixed **4/4 turns** (breaks out immediately with Close Combat).
+  - **30-game paired A/B on unseen holdout teams (`4w x 8a x 2s`):** NEW 2-turn regularized `rust-search` beat OLD 1-turn unregularized `rust-search` **19–11 (63.3%)**, cutting Protect clicks from 80 -> 55 (-31%).
+- Public Reg M-C ladder test (`teams/mc_ladder_04.packed.txt`, `policy_3000004.pt`, 2-turn regularized `rust-search`, `8w x 8a x 4s`, 30 games, session `20261123T015924Z`): **11–19 (36.7%)**, **0 fallbacks**, start **1392**, min **1194**, end **1263** (avg opp 1285).
+  - Clean diagnosis: **14 of the 19 losses** were to the exact same `Pelipper + Grimmsnarl + Archaludon + Charizard` core (1–14 vs Pelipper, 1–13 vs Grimmsnarl/Archaludon across `SunRainCoach`, `KitaAuraFarmer`, `RyoBasslineMX`, `NijikaDoritoDrums`, `BocchiTheBop` — ~50% of the 1350+ ladder right now!). All-physical `mc_ladder_04` (5 physical attackers) gets hard-walled by Grimmsnarl Reflect + Stamina Archaludon + Rain, whereas against everything else it went **10–5 (66.7%)**.
+  - 2-turn search fix confirmed live: 0 fallbacks, zero Protect stall loops (all games 4–10 turns), failed Protects per loss cut more than in half (4 across 19 losses vs 8 across 14 before).
+- Public Reg M-C ladder test (`teams/owner/salamence_tw.packed.txt`, `policy_3000004.pt`, 2-turn regularized `rust-search`, `8w x 8a x 4s`, 30 games, session `20261123T045848Z`): **11–19 (36.7%)**, **0 fallbacks**, start **1373**, **peak 1381**, min **1251**, end **1273** against a much tougher avg opp **1337** (range 1116–1537; beat 1450 `NijikaDoritoDrums` and went 2–1 vs 1366–1391 `abnew123-bot`).
+  - Same gatekeeper pattern: **11 of 19 losses** were to the exact same `Pelipper + Grimmsnarl + Archaludon + Charizard + Garchomp` 1450–1537 ladder cluster (1–11 vs Grimmsnarl, 2–11 vs Pelipper/Archaludon, 0–7 vs `SunRainCoach`), whereas against everything else it went **10–8 (55.6%)**. Note `mc_ladder_01` (with Tyranitar Sand Stream turning off Rain) went 3–5 vs `SunRainCoach`, whereas both non-weather teams (`mc_ladder_04` and `salamence_tw`) went 0–11 vs `SunRainCoach`.
+- Next: Step 4A — pull fresh November high-rated Reg M-C replays to build an updated meta team pool (proper coverage of `Pelipper+Grimmsnarl+Archaludon+Charizard`, `Garganacl`, modern Trick Room, zero holdout overlap) and extend v3 (`192x6`) from 3M -> 7M games (`v3b`) with a warm LR restart (`3e-5 -> 5e-6`).
+
+## 2026-11-23 – Refreshed Nov Reg M-C priors & 696-team diverse meta pool; launching `v3b` (3M -> 7M)
+- Downloaded 1,303 fresh high-rated (>=1300) November Reg M-C replays (`tools/download_replays.py`, index now 171,258 replays).
+- Added `--since` date filtering (with `index.jsonl` fast path) to `tools/build_set_priors.py` and rebuilt `data/usage/set_priors.json` from **39,589** Oct 15–Nov 23 rated (>=1200) replays (266 species; re-pinned `set_priors_sha256` in `data/champions/battle_state_coverage.json`).
+- Built diverse modern Reg M-C training pool `data/selfplay/v3b_nov_meta_train_manifest.json`: **696 unique `pikapro`-validated teams** across **583 unique 6-species cores** (445 fresh Oct 15–Nov 23 OTS teams >=1250 + 251 from `v3_clean`, capped at max 3 variants/core, **0 holdout overlap** against all 88 unseen holdout teams). Doubled/tripled coverage of Screens, Rain, Sun/TR, Farigiraf, Delphox, Sinistcha.
+- Added `--init-from <checkpoint.pt>` to `selfplay/train_rust_vec.py` so `v3b` warm-starts cleanly in `runs/rust_v3b_m192_l6_novmeta` from `runs/rust_v3_m192_l6_379t/policy_3000004.pt` with a fresh 4,000,000-game cosine LR schedule (`3e-5 -> 5e-6`) without modifying `v3`.
+- Hardware sizing note (M4 Pro MPS): `192x6` (3.32M) ~101 g/s, `256x6` (5.60M) ~96 g/s (sweet spot if we need a bigger v4 brain next), `268x12` (9.56M) ~43 g/s (too slow for 10 days left in Reg M-C).
+- Next: refresh 3 readiness gates on clean commit and launch overnight `v3b` AFK run (4M additional games -> 7M total).
+
+## 2026-11-23 (afternoon) – Completed `v3b` (3M -> 7M total games on 696-team Nov meta pool)
+- Finished full 4,000,024-game warm-started `v3b` run (`runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt`, W&B `oyn1lwwm`, 11.56h at ~95–114 g/s on M4 Pro MPS GPU).
+- Progression across the +4M games (`3M -> 7M` total):
+  - `value_accuracy`: **75.4% -> 76.05%** (`value_loss`: **0.4672 -> 0.4585**, lowest yet).
+  - `vs_anchors` (heuristic): **77.3% -> 80.5%**; unseen holdout `simple_heuristics` **74.6% -> 76.7–79.7%**; unseen `max_base_power` **89.5–91.0%**; unseen `vgc` 2-ply **64.4–65.6% avg** (peak **72.5%**).
+- **Direct 1,024-game head-to-head (`v3b` 7M vs `v3` 3M, plain neural, deterministic, 6.5s on MPS):**
+  - All 88 unseen holdout teams (512 games): **`v3b` beat `v3` 62.9% (~+92 Elo gain!!)**.
+  - Unseen Archaludon/Pelipper/Grimmsnarl subset (512 games): **`v3b` beat `v3` 59.8% (~+70 Elo gain!)**.
+- Public Reg M-C ladder `v3b` baseline (`policy_4000024.pt`, 7M total games, 2-turn regularized `rust-search`, refreshed 39.6k Nov `set_priors.json`, `8w x 8a x 4s`, `teams/mc_ladder_01.packed.txt`, 30 live games, session `20261123T214021Z`): **14–16 (46.7%)**, **0 fallbacks**, start **1357**, **peak 1458** (+112 Elo over v3's 1346, +203 over v1's 1255!), min **1357** (never dropped below v3's all-time peak!), end **1392** against a massive **1443 avg opponent Elo** (range 1257–1650; **5–1 (83.3%)** vs 1250–1349, **4–7** vs 1350–1449, **5–8 (38.5%)** vs 1450–1650 — including scalps over **1650 `YakinikuBOT2`**, **1559 & 1536 `SilverGale24`**, and **1518 & 1472 `SunRainCoach`**!). Estimated true `v3b` ladder Elo: **~1410–1450 Elo**.
+- Next: decide between Option 2B (launch bigger `256x6` 5.60M-param `v4` brain on the 696-team Nov meta pool) and/or deeper search/team tuning toward 1600–1700+ Elo.

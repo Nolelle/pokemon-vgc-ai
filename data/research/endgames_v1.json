@@ -1,0 +1,870 @@
+{
+  "team_sha256": "951f78f63f26ce295827431a7b437dcbf572b82007deedfa9258d403532b69f3",
+  "fixtures": [
+    {
+      "seed": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "side": "p2",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move solarbeam 1, move sludgebomb 1",
+          "p2": "move heatwave, move sludgebomb 2"
+        },
+        {
+          "p1": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move solarbeam 2, move fakeout 2",
+          "p2": "move weatherball 1, move sludgebomb -1"
+        },
+        {
+          "p1": "move protect, move flareblitz -1",
+          "p2": "move solarbeam -2, move sludgebomb -1"
+        },
+        {
+          "p1": "move solarbeam mega 2, move partingshot -1",
+          "p2": "move solarbeam 2, move leafstorm -1"
+        },
+        {
+          "p1": "pass, switch Garchomp"
+        },
+        {
+          "p1": "move heatwave, move earthquake",
+          "p2": "move heatwave, move leafstorm 2"
+        },
+        {
+          "p2": "switch Incineroar, switch Garchomp"
+        },
+        {
+          "p1": "move weatherball 2, switch Incineroar",
+          "p2": "move flareblitz -2, move rockslide"
+        },
+        {
+          "p1": "switch Garchomp, pass"
+        },
+        {
+          "p1": "move rockslide, move darkestlariat -1",
+          "p2": "move darkestlariat 2, move earthquake"
+        },
+        {
+          "p1": "pass, move partingshot -1",
+          "p2": "move darkestlariat 2, move dragonclaw -1"
+        },
+        {
+          "p1": "pass, move partingshot -1",
+          "p2": "move partingshot 1, move dragonclaw -1"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0
+      ]
+    },
+    {
+      "seed": [
+        33,
+        33,
+        33,
+        33
+      ],
+      "side": "p2",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move weatherball -2, switch Garchomp",
+          "p2": "move solarbeam mega 1, move sleeppowder 1"
+        },
+        {
+          "p1": "move solarbeam 2, move earthquake",
+          "p2": "move solarbeam 1, move sludgebomb -1"
+        },
+        {
+          "p1": "move solarbeam 1, move dragonclaw -1",
+          "p2": "move weatherball -2, move leafstorm -1"
+        },
+        {
+          "p1": "switch Incineroar, pass",
+          "p2": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move darkestlariat 2, move dragonclaw 2",
+          "p2": "move weatherball 1, move flareblitz 1"
+        },
+        {
+          "p1": "move flareblitz 1, move protect",
+          "p2": "move weatherball -2, move flareblitz -1"
+        },
+        {
+          "p2": "switch Garchomp, pass"
+        },
+        {
+          "p1": "move partingshot -2, move rockslide",
+          "p2": "move earthquake, move flareblitz -1"
+        },
+        {
+          "p1": "switch Venusaur, pass"
+        },
+        {
+          "p1": "move leafstorm -2, move dragonclaw -1",
+          "p2": "move rockslide, pass"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0
+      ]
+    },
+    {
+      "seed": [
+        76,
+        76,
+        76,
+        76
+      ],
+      "side": "p1",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move weatherball mega 2, move protect",
+          "p2": "switch Garchomp, move leafstorm 2"
+        },
+        {
+          "p1": "switch Incineroar, move protect",
+          "p2": "move dragonclaw 2, switch Incineroar"
+        },
+        {
+          "p1": "switch Charizard, switch Garchomp",
+          "p2": "move dragonclaw 1, move fakeout 2"
+        },
+        {
+          "p1": "switch Incineroar, move protect",
+          "p2": "move earthquake, switch Venusaur"
+        },
+        {
+          "p2": "pass, switch Charizard"
+        },
+        {
+          "p1": "move flareblitz 1, move dragonclaw 1",
+          "p2": "move rockslide, move heatwave mega"
+        },
+        {
+          "p2": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move partingshot 2, move earthquake",
+          "p2": "move darkestlariat 1, move solarbeam 1"
+        },
+        {
+          "p1": "switch Charizard, switch Venusaur"
+        },
+        {
+          "p1": "move heatwave, move leafstorm 2",
+          "p2": "move flareblitz 1, move solarbeam -1"
+        },
+        {
+          "p1": "pass, move sleeppowder 2",
+          "p2": "move flareblitz 2, move weatherball 1"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        -1.0
+      ]
+    },
+    {
+      "seed": [
+        84,
+        84,
+        84,
+        84
+      ],
+      "side": "p2",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "switch Incineroar, move leafstorm 1",
+          "p2": "switch Incineroar, move sleeppowder -1"
+        },
+        {
+          "p1": "move darkestlariat 1, move sludgebomb 1",
+          "p2": "move fakeout 2, move leafstorm -1"
+        },
+        {
+          "p1": "move flareblitz -2, move leafstorm 2",
+          "p2": "switch Charizard, move leafstorm 1"
+        },
+        {
+          "p1": "move flareblitz 1, switch Garchomp",
+          "p2": "move protect, move sludgebomb -1"
+        },
+        {
+          "p1": "switch Charizard, move protect",
+          "p2": "move heatwave, move leafstorm 2"
+        },
+        {
+          "p1": "switch Venusaur, move protect",
+          "p2": "move solarbeam 1, move sleeppowder 1"
+        },
+        {
+          "p1": "switch Charizard, move dragonclaw -1",
+          "p2": "move solarbeam -2, move sludgebomb -1"
+        },
+        {
+          "p1": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move partingshot -2, move protect",
+          "p2": "move heatwave, move sludgebomb -1"
+        },
+        {
+          "p1": "move partingshot 1, move dragonclaw 1",
+          "p2": "switch Garchomp, move protect"
+        },
+        {
+          "p2": "switch Charizard, pass"
+        },
+        {
+          "p1": "move flareblitz -2, move rockslide",
+          "p2": "move solarbeam mega 2, move sludgebomb 2"
+        },
+        {
+          "p2": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move flareblitz -2, move dragonclaw -1",
+          "p2": "move fakeout 2, move leafstorm -1"
+        },
+        {
+          "p1": "pass, switch Venusaur"
+        },
+        {
+          "p1": "move flareblitz 2, move sleeppowder -1",
+          "p2": "move partingshot 2, move sludgebomb 2"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        1.0,
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        1.0
+      ]
+    },
+    {
+      "seed": [
+        89,
+        89,
+        89,
+        89
+      ],
+      "side": "p2",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move weatherball -2, move sleeppowder 2",
+          "p2": "move solarbeam 1, move sleeppowder 2"
+        },
+        {
+          "p1": "move weatherball mega 2, move leafstorm 2",
+          "p2": "move solarbeam -2, move protect"
+        },
+        {
+          "p1": "move heatwave, move leafstorm 2",
+          "p2": "move solarbeam mega 2, move leafstorm 1"
+        },
+        {
+          "p2": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move weatherball 1, move sleeppowder 1",
+          "p2": "move solarbeam 2, move fakeout -1"
+        },
+        {
+          "p1": "move protect, move leafstorm 1",
+          "p2": "move heatwave, move darkestlariat -1"
+        },
+        {
+          "p2": "switch Garchomp, pass"
+        },
+        {
+          "p1": "move weatherball 1, move sludgebomb -1",
+          "p2": "move dragonclaw -2, move flareblitz 1"
+        },
+        {
+          "p1": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move flareblitz -2, switch Garchomp",
+          "p2": "move dragonclaw 2, move darkestlariat 2"
+        },
+        {
+          "p1": "pass, switch Venusaur"
+        },
+        {
+          "p1": "move partingshot 2, move sludgebomb 1",
+          "p2": "move earthquake, move flareblitz 2"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0
+      ]
+    },
+    {
+      "seed": [
+        94,
+        94,
+        94,
+        94
+      ],
+      "side": "p2",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move solarbeam 1, switch Garchomp",
+          "p2": "move weatherball mega 1, move leafstorm 1"
+        },
+        {
+          "p1": "switch Venusaur, pass"
+        },
+        {
+          "p1": "move sludgebomb -2, move protect",
+          "p2": "move solarbeam 1, move leafstorm -1"
+        },
+        {
+          "p1": "move sludgebomb 1, move dragonclaw 2",
+          "p2": "switch Incineroar, move leafstorm 2"
+        },
+        {
+          "p1": "move leafstorm 2, switch Incineroar",
+          "p2": "move darkestlariat 1, move leafstorm -1"
+        },
+        {
+          "p1": "move leafstorm -2, move flareblitz 2",
+          "p2": "switch Charizard, move sludgebomb -1"
+        },
+        {
+          "p2": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move leafstorm 2, move partingshot -1",
+          "p2": "move weatherball 1, move darkestlariat 2"
+        },
+        {
+          "p1": "pass, switch Garchomp"
+        },
+        {
+          "p1": "move sludgebomb -2, move protect",
+          "p2": "move heatwave, switch Garchomp"
+        },
+        {
+          "p1": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move fakeout 1, move rockslide",
+          "p2": "move solarbeam 2, move dragonclaw -1"
+        },
+        {
+          "p2": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move partingshot -2, move rockslide",
+          "p2": "move fakeout 2, move dragonclaw 2"
+        },
+        {
+          "p1": "move flareblitz 1, pass",
+          "p2": "move darkestlariat -2, move dragonclaw -1"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+        1.0
+      ]
+    },
+    {
+      "seed": [
+        99,
+        99,
+        99,
+        99
+      ],
+      "side": "p1",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move heatwave, move sludgebomb 2",
+          "p2": "move protect, move protect"
+        },
+        {
+          "p1": "move solarbeam -2, move sleeppowder 1",
+          "p2": "move solarbeam mega 2, move sleeppowder 2"
+        },
+        {
+          "p1": "move protect mega, move sleeppowder -1",
+          "p2": "switch Garchomp, move sleeppowder -1"
+        },
+        {
+          "p1": "move solarbeam 2, switch Garchomp",
+          "p2": "move protect, switch Incineroar"
+        },
+        {
+          "p1": "move solarbeam -2, move rockslide",
+          "p2": "move dragonclaw -2, move flareblitz 2"
+        },
+        {
+          "p1": "pass, switch Venusaur"
+        },
+        {
+          "p1": "move weatherball -2, move sludgebomb -1",
+          "p2": "switch Venusaur, move partingshot 1"
+        },
+        {
+          "p2": "pass, switch Garchomp"
+        },
+        {
+          "p1": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move protect, move flareblitz 1",
+          "p2": "move sleeppowder 2, move protect"
+        },
+        {
+          "p1": "move solarbeam -2, move partingshot -1",
+          "p2": "move leafstorm -2, move dragonclaw -1"
+        },
+        {
+          "p1": "move solarbeam 2, move darkestlariat 1",
+          "p2": "move leafstorm -2, move dragonclaw -1"
+        },
+        {
+          "p2": "switch Incineroar, switch Charizard"
+        },
+        {
+          "p1": "move solarbeam 1, move flareblitz -1",
+          "p2": "move darkestlariat 1, move solarbeam 1"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          2
+        ],
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          4
+        ],
+        [
+          1.0,
+          4
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        1.0,
+        -1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        -1.0
+      ]
+    },
+    {
+      "seed": [
+        184,
+        184,
+        184,
+        184
+      ],
+      "side": "p1",
+      "prefix": [
+        {
+          "p1": "team 1234",
+          "p2": "team 1234"
+        },
+        {
+          "p1": "move weatherball 1, move sludgebomb 2",
+          "p2": "move solarbeam 2, move sludgebomb 1"
+        },
+        {
+          "p1": "move solarbeam mega 1, move leafstorm 2",
+          "p2": "move solarbeam 1, move leafstorm 2"
+        },
+        {
+          "p1": "move weatherball 2, move sludgebomb 2",
+          "p2": "move solarbeam -2, switch Garchomp"
+        },
+        {
+          "p2": "pass, switch Incineroar"
+        },
+        {
+          "p1": "move protect, move leafstorm 2",
+          "p2": "move solarbeam mega 2, move flareblitz -1"
+        },
+        {
+          "p1": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move darkestlariat -2, move sludgebomb 2",
+          "p2": "move weatherball 1, move darkestlariat 2"
+        },
+        {
+          "p1": "pass, switch Garchomp"
+        },
+        {
+          "p1": "move darkestlariat 2, move protect",
+          "p2": "move solarbeam 2, move partingshot 1"
+        },
+        {
+          "p2": "pass, switch Venusaur"
+        },
+        {
+          "p1": "move partingshot 2, move dragonclaw 1",
+          "p2": "move solarbeam 1, move sludgebomb 1"
+        },
+        {
+          "p2": "switch Incineroar, pass"
+        },
+        {
+          "p1": "move partingshot 1, move dragonclaw -1",
+          "p2": "move fakeout 1, move leafstorm -1"
+        },
+        {
+          "p1": "move partingshot 1, move dragonclaw 1",
+          "p2": "move darkestlariat 1, move sludgebomb 2"
+        },
+        {
+          "p1": "move flareblitz -2, move dragonclaw 2",
+          "p2": "move darkestlariat 1, move sludgebomb 2"
+        }
+      ],
+      "maxpower": [
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ],
+        [
+          1.0,
+          1
+        ]
+      ],
+      "random": [
+        -1.0,
+        1.0,
+        1.0,
+        1.0,
+        -1.0,
+        -1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ]
+}

@@ -661,6 +661,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pikapro"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/5f/f01d88fea577af735fe5ede0de9acbef8a15f0e9029b34cdc2b0e447185e/pikapro-0.2.0.tar.gz", hash = "sha256:b42dcaf653616f219854055ac43983b31855d42e7141cda72b1412fe396e48dd", size = 2602877, upload-time = "2026-11-19T18:18:28.729Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/6b/f05a43efa4b38e7a752e64f4f457b2d84fe376b67549ad1787a513934fb5/pikapro-0.2.0-cp310-abi3-macosx_10_13_x86_64.whl", hash = "sha256:7629e9963d3499ea8d09885370898acdc1c37e44d72f58b8728d35d433993fab", size = 2603147, upload-time = "2026-11-19T18:18:16.999Z" },
+    { url = "https://files.pythonhosted.org/packages/03/36/f558660a71a354d160566e6abb23a79a1c0071a31f81d809008816d64240/pikapro-0.2.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f08c7253cc6ae6080abf4d92f58646bd427f6c0b78f0171d2b43d39729d820b6", size = 2522023, upload-time = "2026-11-19T18:18:18.729Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/f0/17d1303cf766dad5f689c74d69044e9ceff7e9faba666dd723e001fc8d6a/pikapro-0.2.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8ac4ae5bd602248f2d26bdc45352139bc506f34f70ad77c126713d22aea1d6c8", size = 2631323, upload-time = "2026-11-19T18:18:20.123Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/2f/ac5098c77b41fa9581f00071bc9119cccb8434fe126a56d1ed04cc1fce18/pikapro-0.2.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:11bdcdb31feffc1597deb05b34563dde8c71b3005e94429346f58dd658237a7b", size = 2666846, upload-time = "2026-11-19T18:18:21.772Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/69/e28b0fdd7ae9add3efbf28e2f5a7c00d71583794f29a4d7281b87439d66c/pikapro-0.2.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f49d70e8edea4a3590f113f88e5db6ff72e2658e43938eb0008638a8f1ef2ca9", size = 2714623, upload-time = "2026-11-19T18:18:23.134Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/90/5a0eff9307d150faa7e939cf235ce4591b20242b3665cf799cac4679bad4/pikapro-0.2.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:73e59885fd392f312df68ae6a6d6be3019b147d581a0db5eab3d9a3aef7097bb", size = 2799076, upload-time = "2026-11-19T18:18:24.459Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/74/53f3eb01bd245a5cbabc5dea8de5b9301a7359063aa675e61c4af5122054/pikapro-0.2.0-cp310-abi3-win_amd64.whl", hash = "sha256:74ae6918a8935e245bc44a4d15b3796fc5629e8524cf0e13ade038477930363c", size = 2668994, upload-time = "2026-11-19T18:18:27Z" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.11.8"
 source = { registry = "https://pypi.org/simple" }
@@ -713,6 +731,9 @@ dev = [
 llm = [
     { name = "openai" },
 ]
+replica = [
+    { name = "pikapro" },
+]
 train = [
     { name = "torch" },
     { name = "wandb" },
@@ -722,13 +743,14 @@ train = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'llm'", specifier = ">=3.24.0" },
+    { name = "pikapro", marker = "extra == 'replica'", specifier = ">=0.2.0" },
     { name = "poke-env", specifier = ">=0.15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "torch", marker = "extra == 'train'", specifier = ">=2.13.0" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.19.0" },
 ]
-provides-extras = ["dev", "train", "llm"]
+provides-extras = ["dev", "train", "llm", "replica"]
 
 [[package]]
 name = "protobuf"

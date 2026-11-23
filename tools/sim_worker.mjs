@@ -140,6 +140,22 @@ function attachOmniscient(entry) {
 	});
 }
 
+function attachSpectator(entry) {
+	// The public-view stream -- what a saved replay's log is made of. Buffered whole
+	// so `spectator` can return it at battle end; purely additive capture.
+	(async () => {
+		for await (const chunk of entry.streams.spectator) {
+			for (const line of chunk.split("\n")) {
+				if (line) entry.spectator.push(line);
+			}
+		}
+	})().catch((err) => {
+		if (!entry.lastError && err) {
+			entry.lastError = err.stack || err.message || String(err);
+		}
+	});
+}
+
 function makeEntry(stream, transcript = { p1: [], p2: [] }) {
 	const streams = getPlayerStreams(stream);
 	const entry = {
@@ -147,6 +163,7 @@ function makeEntry(stream, transcript = { p1: [], p2: [] }) {
 		streams,
 		buffers: { p1: [], p2: [] },
 		transcript: { p1: [...transcript.p1], p2: [...transcript.p2] },
+		spectator: [],
 		winner: null,
 		ended: false,
 		lineCount: 0,
@@ -155,6 +172,7 @@ function makeEntry(stream, transcript = { p1: [], p2: [] }) {
 	attachDrain(entry, "p1");
 	attachDrain(entry, "p2");
 	attachOmniscient(entry);
+	attachSpectator(entry);
 	return entry;
 }
 
@@ -1108,6 +1126,15 @@ function respond(msg, entry) {
 	};
 }
 
+async function handleSpectator(msg) {
+	// Return the accumulated public-view (spectator) protocol lines for a battle --
+	// the same view a downloaded replay stores in `log`.
+	const entry = battles.get(msg.id);
+	if (!entry) throw new Error(`unknown battle id ${msg.id}`);
+	await settle(entry);
+	return { id: msg.id, spectator: [...entry.spectator] };
+}
+
 async function handleClose(msg) {
 	const entry = battles.get(msg.id);
 	if (entry) {
@@ -1173,6 +1200,8 @@ async function dispatch(msg) {
 			return handleStallInfo(msg);
 		case "patchPublic":
 			return handlePatchPublic(msg);
+		case "spectator":
+			return handleSpectator(msg);
 		case "close":
 			return handleClose(msg);
 		case "batch":

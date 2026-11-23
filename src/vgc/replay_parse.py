@@ -152,7 +152,7 @@ from dataclasses import dataclass, field
 from poke_env.teambuilder.teambuilder import Teambuilder
 
 from vgc.damage import STATUS_IDS, to_id
-from vgc.data import load_species
+from vgc.data import canonical_species_id, load_species
 
 # --- protocol constants -----------------------------------------------------------------
 
@@ -163,7 +163,21 @@ from vgc.data import load_species
 # -- see module docstring). Every emitted record carries `"schema": SCHEMA_VERSION` so
 # old datasets stay distinguishable from newer ones instead of silently being read as if
 # compatible.
-SCHEMA_VERSION = 7
+#
+# Schema 8 (2026-11-04): every record gains `"log_line"`, the raw-log line index the
+# record's snapshot is taken at (the `|turn|N|` marker for "turn" records, the
+# `|switch|`/`|drag|` line for "forced_switch", the first `|turn|` marker for
+# "teampreview") -- every protocol event at a raw index < `log_line` was already
+# public when the decision was made. This is what `vgc.bc.own_team_rebuild` aligns
+# fills against. Species ids are now canonicalized through
+# `vgc.data.canonical_species_id` (cosmetic formes like `alcremierubycream` collapse to
+# their base species -- identity is unchanged, so live poke-env ids and replay names
+# share one token).
+#
+# Schema 15 (2026-11-10): the parser now applies `|-sethp|` (Pain Split), `|-copyboost|`
+# (Psych Up), `|-invertboost|` (Topsy-Turvy), and `|-swapboost|` (Guard/Power Swap)
+# instead of skipping them -- snapshot VALUES change; no field is added or removed.
+SCHEMA_VERSION = 15
 
 _HP_RE = re.compile(r"(\d+)/(\d+)")
 
@@ -226,7 +240,7 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
             base = base[0] if base else None
         base = to_id(base)
         if base:
-            return base, True
+            return canonical_species_id(base), True
     # Other battle-only formes (Palafin-Hero, Aegislash-Blade, Mimikyu-Busted, ...) are
     # the same team member too: Palafin switches back in as "Palafin-Hero", and keying
     # that as a new species listed one Pokemon twice (an extra survivor on the board).
@@ -234,8 +248,8 @@ def _resolve_species(species_id: str) -> tuple[str, bool]:
     if isinstance(battle_only, list):
         battle_only = battle_only[0] if battle_only else None
     if battle_only and to_id(battle_only) != species_id:
-        return to_id(battle_only), False
-    return species_id, False
+        return canonical_species_id(to_id(battle_only)), False
+    return canonical_species_id(species_id), False
 
 
 def _parse_position(token: str) -> tuple[str, int | None, str]:
@@ -289,7 +303,10 @@ class MonKnowledge:
     status: str | None = None
     boosts: dict[str, int] = field(default_factory=dict)
     item: str | None = None
-    ability: str | None = None
+    ability: str | None = None  # current EFFECTIVE ability -- matches live encoding
+    # Revealed BASE ability (Trace, not the copied value) -- temporary changes
+    # never touch this; switching back in reverts `ability` to it.
+    base_ability: str | None = None
     mega: bool = False
     tera_type: str | None = None
     fainted: bool = False
@@ -297,6 +314,9 @@ class MonKnowledge:
     # turns; a `|cant|`-attempted move counts too -- see the "move"/"cant" tag handlers
     # below). Schema 2+ only -- see module docstring and `SCHEMA_VERSION`.
     revealed_moves: set[str] = field(default_factory=set)
+    # Exact forme id from the last |detailschange|/-formechange (e.g.
+    # "charizardmegay") -- the public -mega line only names the base species.
+    forme_id: str | None = None
 
 
 @dataclass
@@ -308,6 +328,10 @@ class SideState:
     appeared_order: list[str] = field(default_factory=list)
     lead_species: list[str] = field(default_factory=list)
     sets_by_species: dict[str, dict] = field(default_factory=dict)
+    # Display nickname -> species_id, from switch/drag/replace lines: a side-wide
+    # `p2: Nickname` target (Revival Blessing) resolves through this map -- the
+    # name is NOT the species id (e.g. nickname "Maushold" -> mausholdfour).
+    nicknames: dict[str, str] = field(default_factory=dict)
 
     def mon(self, species_id: str) -> MonKnowledge:
         known = self.known.get(species_id)
@@ -335,6 +359,27 @@ class BattleState:
 # --- state snapshotting ------------------------------------------------------------------
 
 
+def _is_consumable(item_id: str) -> bool:
+    from vgc.data import load_items
+    entry = load_items().get(item_id) or {}
+    return bool(entry.get("isBerry")) or any(k in item_id for k in ("herb", "seed", "gem"))
+
+
+_SINGLE_ABILITY_CACHE: dict[str, str | None] = {}
+
+
+def _single_ability(forme_id: str) -> str | None:
+    """The ability when `forme_id` has exactly one legal ability in Champions
+    data -- public info, mirrors poke-env's auto-fill of unambiguous abilities."""
+    if forme_id in _SINGLE_ABILITY_CACHE:
+        return _SINGLE_ABILITY_CACHE[forme_id]
+    from vgc.data import load_species
+    entry = load_species().get(forme_id) or {}
+    abilities = {to_id(a) for a in (entry.get("abilities") or {}).values()}
+    _SINGLE_ABILITY_CACHE[forme_id] = abilities.pop() if len(abilities) == 1 else None
+    return _SINGLE_ABILITY_CACHE[forme_id]
+
+
 def _mon_dict(known: MonKnowledge | None) -> dict | None:
     if known is None:
         return None
@@ -344,7 +389,7 @@ def _mon_dict(known: MonKnowledge | None) -> dict | None:
         "status": known.status,
         "boosts": dict(known.boosts),
         "item": known.item,
-        "ability": known.ability,
+        "ability": known.ability or _single_ability(known.species_id),
         "mega": known.mega,
         # Schema 2+: every move id observed for this mon so far this game, sorted for
         # deterministic JSONL output -- see MonKnowledge.revealed_moves' docstring.
@@ -429,7 +474,7 @@ def parse_showteam_line(parts: list[str]) -> tuple[str, dict[str, dict]] | None:
         return None
     sets: dict[str, dict] = {}
     for mon in mons:
-        species_id = to_id(mon.species or mon.nickname)
+        species_id = canonical_species_id(to_id(mon.species or mon.nickname))
         if not species_id:
             continue
         sets[species_id] = {
@@ -479,7 +524,8 @@ def _target_slot_label(
 
 
 def _apply_switch(
-    state: BattleState, side: str, slot: int, species_id: str, is_mega: bool, hp_field: str
+    state: BattleState, side: str, slot: int, species_id: str, is_mega: bool,
+    hp_field: str, nick: str | None = None,
 ) -> None:
     """Applies a switch-in to `state`. `species_id`/`is_mega` must already be resolved
     via `_resolve_species` by the caller (single resolution point, so the action record
@@ -489,9 +535,14 @@ def _apply_switch(
     side_state = state.sides[side]
     side_state.active[slot] = species_id
     side_state.note_appearance(species_id)
+    if nick is not None:
+        side_state.nicknames[nick] = species_id
     known = side_state.mon(species_id)
     known.fainted = False
     known.boosts = {}  # stat stages reset on switching out (Baton Pass is not modelled)
+    # Effective ability reverts to the revealed base on switch-out (a Trace copy
+    # / Skill Swap does not survive leaving the field).
+    known.ability = known.base_ability
     if is_mega:
         known.mega = True
     parsed_hp = _parse_hp(hp_field)
@@ -505,24 +556,84 @@ def _apply_switch(
 def _process_segment(
     state: BattleState,
     turn_num: int,
-    lines: list[str],
+    lines: list[tuple[int, str]],
     records: list[dict],
     skipped: Counter,
     showteam_players: set[str],
+    segment_marker_idx: int,
 ) -> None:
+    """`lines` is `(raw_log_line_index, line)` pairs; `segment_marker_idx` is the raw
+    index of the `|turn|N|` marker that opened this segment -- the `log_line` every
+    "turn" record for this segment is stamped with (the snapshot is public state
+    before any segment line applied, so events at raw indices < the marker were all
+    already known -- see SCHEMA_VERSION's schema-8 note).
+    """
     state.turn = turn_num
     snapshot = _snapshot(state) if turn_num else None
     acted: dict[tuple[str, int], dict] = {}
+    # Labels belong to the occupants at the decision instant. Execution positions
+    # can change within this turn through Ally Switch.
+    origin_slots = {side: [0, 1] for side in ("p1", "p2")}
     pending_mega: set[tuple[str, int]] = set()
     fainted_this_segment: set[tuple[str, int]] = set()
+    # Forced-replacement batch: every forced_switch record snapshots BEFORE any
+    # replacement |switch| of EITHER side in its batch (the request instant), so a
+    # later record never sees an earlier replacement applied -- that would leak
+    # the destination label into the field or the opponent's simultaneous
+    # replacement into opp.active.
+    forced_snapshot: dict | None = None
+    forced_pending: list[tuple[str, int, str, bool, str, str | None]] = []
 
-    for line in lines:
+    def flush_forced() -> None:
+        nonlocal forced_snapshot
+        for s_, sl_, sp_, m_, hp_, nick_ in forced_pending:
+            _apply_switch(state, s_, sl_, sp_, m_, hp_, nick_)
+        forced_pending.clear()
+        forced_snapshot = None
+
+    for raw_idx, line in lines:
         if not line or line == "|":
             continue
         parts = line.split("|")
         if len(parts) < 2:
             continue
         tag = parts[1]
+        if tag not in ("switch", "drag"):
+            flush_forced()
+
+        # Generic `[from] item:/[from] ability:` reveals -- must run BEFORE the
+        # tag handlers, which `continue` past them (Leftovers ticks on -heal, Life
+        # Orb recoil on -damage, weather setters' `[of]` abilities). Owner = the
+        # `[of]` mon when present, else the line's subject -- the same rule
+        # analyze_log applies. Skipped on tags that already own the field
+        # (-ability owns its subject+source semantics; -item/-enditem theirs).
+        if "[from]" in line and "[from] move:" not in line:
+            for marker, attr, skip_tag in (
+                ("[from] item:", "item", ("-item", "-enditem")),
+                ("[from] ability:", "ability", ("-ability",)),
+            ):
+                if marker in line and tag not in skip_tag and len(parts) >= 3:
+                    target = (line.split("[of]", 1)[1]
+                              if "[of]" in line and (attr != "item" or tag == "-damage")
+                              else parts[2])
+                    tside, tslot, _ = _parse_position(target.strip(" |"))
+                    if tside in ("p1", "p2") and tslot is not None:
+                        tspecies = state.sides[tside].active[tslot]
+                        if tspecies is not None:
+                            value = to_id(
+                                line.split(marker, 1)[1].split("|", 1)[0].strip(" |"))
+                            # A used consumable (Sitrus Berry eaten, White Herb
+                            # spent) proves prior possession but the item is
+                            # already gone -- `-enditem` tracks it; recording it
+                            # as current would outdate the snapshot.
+                            if attr == "item" and _is_consumable(value):
+                                continue
+                            tmon = state.sides[tside].mon(tspecies)
+                            setattr(tmon, attr, value)
+                            if attr == "ability":
+                                # `[from] ability:` on a non--ability line (Rough
+                                # Skin, Drought's weather setter) is a BASE reveal.
+                                tmon.base_ability = value
 
         if tag == "poke" and turn_num == 0:
             if len(parts) >= 4 and parts[2] in ("p1", "p2"):
@@ -549,13 +660,12 @@ def _process_segment(
                 skipped["malformed_switch"] += 1
                 continue
             species_id, is_mega = _resolve_species(_species_from_details(parts[3]))
-            already_acted = (side, slot) in acted
+            action_key = (side, origin_slots[side][slot])
+            already_acted = action_key in acted
             just_fainted = (side, slot) in fainted_this_segment
             if turn_num and (already_acted or just_fainted):
-                # Snapshot BEFORE applying the switch: the decision point is "my mon
-                # just fainted/pivoted, what do I send in", so the slot should still
-                # read as empty/pre-switch in the recorded state.
-                forced_snapshot = _for_player(_snapshot(state), side)
+                if forced_snapshot is None:
+                    forced_snapshot = _snapshot(state)
                 records.append(
                     {
                         "replay_id": None,  # filled in by parse_replay
@@ -564,15 +674,19 @@ def _process_segment(
                         "player": side,
                         "turn": turn_num,
                         "decision_kind": "forced_switch",
-                        "state": forced_snapshot,
+                        "log_line": raw_idx,  # snapshot taken just before this switch
+                        "state": _for_player(forced_snapshot, side),
                         "action": {"slot": slot, "switch_species": species_id},
                     }
                 )
+                forced_pending.append((side, slot, species_id, is_mega, parts[4], _name))
+                continue
             elif turn_num:
-                acted[(side, slot)] = {"kind": "switch", "switch_species": species_id}
+                flush_forced()
+                acted[action_key] = {"kind": "switch", "switch_species": species_id}
             elif len(state.sides[side].lead_species) < 2:
                 state.sides[side].lead_species.append(species_id)
-            _apply_switch(state, side, slot, species_id, is_mega, parts[4])
+            _apply_switch(state, side, slot, species_id, is_mega, parts[4], _name)
             continue
 
         if tag == "-mega":
@@ -587,10 +701,19 @@ def _process_segment(
             known = state.sides[side].mon(species_id)
             known.mega = True
             known.item = to_id(parts[4]) or known.item
-            if (side, slot) in acted and acted[(side, slot)].get("kind") == "move":
-                acted[(side, slot)]["mega"] = True
+            # parts[3] on the public -mega line is the BASE species; the exact
+            # mega forme was announced by the preceding |detailschange|. Mega
+            # formes each have one legal ability -- public info the instant it
+            # megas (it is now both effective and base).
+            mega_ability = _single_ability(known.forme_id or "")
+            if mega_ability:
+                known.ability = mega_ability
+                known.base_ability = mega_ability
+            action_key = (side, origin_slots[side][slot])
+            if action_key in acted and acted[action_key].get("kind") == "move":
+                acted[action_key]["mega"] = True
             else:
-                pending_mega.add((side, slot))
+                pending_mega.add(action_key)
             continue
 
         if tag == "-terastallize":
@@ -612,24 +735,40 @@ def _process_segment(
             if side not in ("p1", "p2") or slot is None:
                 skipped["malformed_move"] += 1
                 continue
-            if (side, slot) in acted:
-                continue  # a second move report for an already-acted slot -- ignore it
             move_id = to_id(parts[3])
+            from_tags = [part for part in parts[4:] if part.startswith("[from]")]
+            native_reveal = not from_tags or all(part in {
+                "[from] move: Sleep Talk", "[from] Sleep Talk", "[from] move: Instruct",
+            } for part in from_tags)
+            acting_species = state.sides[side].active[slot]
+            if native_reveal and acting_species is not None and move_id and move_id != "struggle":
+                state.sides[side].mon(acting_species).revealed_moves.add(move_id)
+            if from_tags:
+                continue  # called/reflected execution is not a fresh choice
+            action_key = (side, origin_slots[side][slot])
+            previous = acted.get(action_key)
+            if previous is not None and not previous.get("from_cant"):
+                continue
+            if previous is not None:
+                # An earlier `cant` this turn was not this Pokemon's own action: it
+                # went on to move (asleep + Sleep Talk; a Magic Bounce reflection or
+                # Dancer copy that was blocked before its own move). The native move
+                # is the choice, and a move name taken from that `cant` is withdrawn.
+                withdrawn = previous.get("cant_revealed")
+                if withdrawn is not None and withdrawn[1] != move_id:
+                    state.sides[side].mon(withdrawn[0]).revealed_moves.discard(withdrawn[1])
             target_token = parts[4] if len(parts) > 4 else ""
             extra = parts[5:]
             is_spread = any(part.startswith("[spread]") for part in extra)
             target_slot = _target_slot_label(side, slot, target_token, is_spread)
-            mega = (side, slot) in pending_mega
-            pending_mega.discard((side, slot))
-            acted[(side, slot)] = {
+            mega = action_key in pending_mega or bool(previous and previous.get("mega"))
+            pending_mega.discard(action_key)
+            acted[action_key] = {
                 "kind": "move",
                 "move_id": move_id,
                 "target_slot": target_slot,
                 "mega": mega,
             }
-            acting_species = state.sides[side].active[slot]
-            if acting_species is not None and move_id:
-                state.sides[side].mon(acting_species).revealed_moves.add(move_id)
             continue
 
         if tag == "cant":
@@ -638,26 +777,92 @@ def _process_segment(
             side, slot, _name = _parse_position(parts[2])
             if side not in ("p1", "p2") or slot is None:
                 continue
-            if (side, slot) in acted:
+            # `|cant|HOLDER|ability: X|MOVE|[of] ATTACKER` (Queenly Majesty /
+            # Dazzling / Armor Tail block): the subject is the ability holder
+            # that blocked, the attempted move belongs to the `[of]` mon, and
+            # the holder's ability is now revealed. The holder's own action is
+            # not described by this line.
+            if len(parts) > 4 and parts[3].startswith("ability:") and "[of]" in line:
+                holder_id = state.sides[side].active[slot]
+                if holder_id is not None:
+                    holder = state.sides[side].mon(holder_id)
+                    holder.ability = to_id(parts[3].split(":", 1)[1].strip())
+                    holder.base_ability = holder.ability
+                o_side, o_slot, _ = _parse_position(
+                    line.split("[of]", 1)[1].strip(" |"))
+                if o_side in ("p1", "p2") and o_slot is not None:
+                    attempted_move_id = to_id(parts[4])
+                    action_key = (o_side, origin_slots[o_side][o_slot])
+                    # If the attacker already acted this turn, the blocked move was
+                    # called or reflected (Copycat, Magic Bounce, Dancer), not one
+                    # of its own moves: no label and no reveal.
+                    if action_key not in acted and attempted_move_id:
+                        attacker_id = state.sides[o_side].active[o_slot]
+                        cant_revealed = None
+                        if attacker_id is not None and attempted_move_id != "struggle":
+                            known_moves = state.sides[o_side].mon(attacker_id).revealed_moves
+                            if attempted_move_id not in known_moves:
+                                cant_revealed = (attacker_id, attempted_move_id)
+                            known_moves.add(attempted_move_id)
+                        acted[action_key] = {
+                            "kind": "move", "move_id": attempted_move_id,
+                            "target_slot": None,
+                            "mega": action_key in pending_mega,
+                            "from_cant": True, "cant_revealed": cant_revealed}
                 continue
+            action_key = (side, origin_slots[side][slot])
             attempted_move = parts[4] if len(parts) > 4 and parts[4] else None
             if attempted_move:
                 attempted_move_id = to_id(attempted_move)
-                acted[(side, slot)] = {
+                if action_key in acted:
+                    # It already acted this turn, so this blocked move is a copy
+                    # (Dancer) or a reflection, not one of its own four moves.
+                    continue
+                cant_species = state.sides[side].active[slot]
+                cant_revealed = None
+                if cant_species is not None and attempted_move_id and attempted_move_id != "struggle":
+                    known_moves = state.sides[side].mon(cant_species).revealed_moves
+                    if attempted_move_id not in known_moves:
+                        cant_revealed = (cant_species, attempted_move_id)
+                    known_moves.add(attempted_move_id)
+                acted[action_key] = {
                     "kind": "move",
                     "move_id": attempted_move_id,
                     "target_slot": None,
-                    "mega": (side, slot) in pending_mega,
+                    "mega": action_key in pending_mega,
+                    "from_cant": True,
+                    "cant_revealed": cant_revealed,
                 }
-                cant_species = state.sides[side].active[slot]
-                if cant_species is not None and attempted_move_id:
-                    state.sides[side].mon(cant_species).revealed_moves.add(attempted_move_id)
-            else:
+            elif action_key not in acted:
                 # The protocol says the mon could not act, but does not reveal the
                 # submitted choice. It must not become a teachable pass label.
-                acted[(side, slot)] = {
-                    "kind": "unknown", "mega": (side, slot) in pending_mega
+                acted[action_key] = {
+                    "kind": "unknown", "mega": action_key in pending_mega,
+                    "from_cant": True,
                 }
+            continue
+
+        if tag == "swap":
+            # `|swap|p1a: Name|1|...` (Ally Switch): the subject moves to the
+            # named position and that position's occupant takes the vacated
+            # slot -- i.e. the side's two active entries exchange. Everything
+            # else (hp/boosts/revealed moves) travels with the mon, keyed by
+            # species_id in `known`, so only the slot map needs the swap.
+            if len(parts) < 4:
+                continue
+            side, old_slot, _name = _parse_position(parts[2])
+            if side not in ("p1", "p2") or old_slot is None:
+                continue
+            try:
+                new_slot = int(parts[3])
+            except ValueError:
+                continue
+            active = state.sides[side].active
+            if 0 <= new_slot < len(active) and new_slot != old_slot:
+                active[old_slot], active[new_slot] = (
+                    active[new_slot], active[old_slot])
+                origins = origin_slots[side]
+                origins[old_slot], origins[new_slot] = origins[new_slot], origins[old_slot]
             continue
 
         if tag == "faint":
@@ -675,11 +880,29 @@ def _process_segment(
             fainted_this_segment.add((side, slot))
             continue
 
-        if tag in ("-damage", "-heal"):
+        if tag in ("-damage", "-heal", "-sethp"):
             if len(parts) < 4:
                 continue
-            side, slot, _name = _parse_position(parts[2])
-            if side not in ("p1", "p2") or slot is None:
+            side, slot, name = _parse_position(parts[2])
+            if side not in ("p1", "p2"):
+                continue
+            if slot is None:
+                # Side-addressed heal (`|-heal|p2: Glalie|49/100|...`) -- Revival
+                # Blessing revives a fainted bench mon at the given HP; the name
+                # is the species (no slot letter). It rejoins the bench.
+                if tag == "-heal" and name:
+                    # The token is a NICKNAME, not a species id ("Maushold" may
+                    # be mausholdfour) -- resolve via the side's map populated
+                    # by switch/drag/replace lines, else the literal name.
+                    species_id = state.sides[side].nicknames.get(name, to_id(name))
+                    known = state.sides[side].known.get(species_id)
+                    if known is not None:
+                        parsed_hp = _parse_hp(parts[3])
+                        if parsed_hp is not None:
+                            fraction, status, fainted = parsed_hp
+                            known.hp_fraction = fraction
+                            known.status = status
+                            known.fainted = bool(fainted)
                 continue
             species_id = state.sides[side].active[slot]
             if species_id is None:
@@ -730,6 +953,69 @@ def _process_segment(
             state.sides[side].mon(species_id).boosts[parts[3]] = max(-6, min(6, value))
             continue
 
+        if tag == "-copyboost":
+            # `|-copyboost|RECEIVER|SOURCE|[from] move: Psych Up`: the subject
+            # receives a copy of the source's current boosts.
+            if len(parts) < 4:
+                continue
+            side, slot, _name = _parse_position(parts[2])
+            src_side, src_slot, _ = _parse_position(parts[3])
+            if (side not in ("p1", "p2") or slot is None
+                    or src_side not in ("p1", "p2") or src_slot is None):
+                continue
+            species_id = state.sides[side].active[slot]
+            source_id = state.sides[src_side].active[src_slot]
+            if species_id is None or source_id is None:
+                continue
+            state.sides[side].mon(species_id).boosts = dict(
+                state.sides[src_side].mon(source_id).boosts
+            )
+            continue
+
+        if tag == "-invertboost":
+            # `|-invertboost|MON|[from] move: Topsy-Turvy`: negate every stage.
+            if len(parts) < 3:
+                continue
+            side, slot, _name = _parse_position(parts[2])
+            if side not in ("p1", "p2") or slot is None:
+                continue
+            species_id = state.sides[side].active[slot]
+            if species_id is None:
+                continue
+            known = state.sides[side].mon(species_id)
+            known.boosts = {stat: -value for stat, value in known.boosts.items()}
+            continue
+
+        if tag == "-swapboost":
+            # `|-swapboost|MON_A|MON_B|def, spd|[from] move: Guard Swap`: swap
+            # the listed stats between the two mons; no stat field (or a "["
+            # extra in its place, e.g. Power Swap) swaps ALL boosts.
+            if len(parts) < 4:
+                continue
+            side, slot, _name = _parse_position(parts[2])
+            other_side, other_slot, _ = _parse_position(parts[3])
+            if (side not in ("p1", "p2") or slot is None
+                    or other_side not in ("p1", "p2") or other_slot is None):
+                continue
+            species_id = state.sides[side].active[slot]
+            other_id = state.sides[other_side].active[other_slot]
+            if species_id is None or other_id is None:
+                continue
+            boosts = state.sides[side].mon(species_id).boosts
+            other_boosts = state.sides[other_side].mon(other_id).boosts
+            if len(parts) > 4 and not parts[4].startswith("["):
+                swapped_stats = [
+                    stat.strip() for stat in parts[4].split(",") if stat.strip()
+                ]
+            else:
+                swapped_stats = list(set(boosts) | set(other_boosts))
+            for stat in swapped_stats:
+                boosts[stat], other_boosts[stat] = (
+                    other_boosts.get(stat, 0),
+                    boosts.get(stat, 0),
+                )
+            continue
+
         if tag == "-clearallboost":
             for side_state in state.sides.values():
                 for species_id in side_state.active:
@@ -776,6 +1062,18 @@ def _process_segment(
                 state.sides[side].mon(species_id).status = None
             continue
 
+        if tag == "detailschange":
+            if len(parts) < 4:
+                continue
+            side, slot, _name = _parse_position(parts[2])
+            if side not in ("p1", "p2") or slot is None:
+                continue
+            forme_id = to_id(_species_from_details(parts[3]))
+            species_id, _ = _resolve_species(_species_from_details(parts[3]))
+            if species_id is not None:
+                state.sides[side].mon(species_id).forme_id = forme_id
+            continue
+
         if tag == "-ability":
             if len(parts) < 4:
                 continue
@@ -783,8 +1081,58 @@ def _process_segment(
             if side not in ("p1", "p2") or slot is None:
                 continue
             species_id = state.sides[side].active[slot]
-            if species_id is not None:
-                state.sides[side].mon(species_id).ability = to_id(parts[3])
+            if species_id is None:
+                continue
+            ability_id = to_id(parts[3])
+            known = state.sides[side].mon(species_id)
+
+            def _of_mon() -> MonKnowledge | None:
+                if "[of]" not in line:
+                    return None
+                o_side, o_slot, _ = _parse_position(
+                    line.split("[of]", 1)[1].strip(" |"))
+                if o_side in ("p1", "p2") and o_slot is not None:
+                    o_species = state.sides[o_side].active[o_slot]
+                    if o_species is not None:
+                        return state.sides[o_side].mon(o_species)
+                return None
+
+            # `ability` carries the CURRENT EFFECTIVE ability (matches live's
+            # temporary_ability semantics); `base_ability` keeps the revealed base
+            # for rebuild facts. analyze_log applies the same attribution.
+            ability_froms = [
+                seg.split("ability: ", 1)[1].strip() for seg in parts[4:]
+                if seg.startswith("[from] ability:")
+            ]
+            if ability_froms:
+                for source in ability_froms:
+                    source_id = to_id(source)
+                    of_mon = _of_mon()
+                    if ability_id == source_id:
+                        # Contact spread (Mummy/Wandering Spirit/Lingering
+                        # Aroma): the receiver's ability BECAME it (effective),
+                        # and the [of] mon's base is now revealed.
+                        known.ability = ability_id
+                        if of_mon is not None:
+                            of_mon.ability = source_id
+                            of_mon.base_ability = source_id
+                    else:
+                        # Trace/Receiver/Power of Alchemy: holder's EFFECTIVE
+                        # ability is the copy; its base stays the copier -- and
+                        # the [of] mon's base ability is now revealed.
+                        known.ability = ability_id
+                        known.base_ability = source_id
+                        if of_mon is not None:
+                            of_mon.ability = ability_id
+                            of_mon.base_ability = ability_id
+            elif "[from]" in "|".join(parts[4:]):
+                # `[from] move:` Skill Swap / Entrainment / Role Play / Doodle,
+                # `[from] item:` -- an effective ability CHANGE on the subject,
+                # not a base reveal.
+                known.ability = ability_id
+            else:
+                known.ability = ability_id
+                known.base_ability = ability_id
             continue
 
         if tag == "-item":
@@ -869,6 +1217,8 @@ def _process_segment(
             new_species, is_mega = _resolve_species(_species_from_details(parts[3]))
             old_species = state.sides[side].active[slot]
             new_known = state.sides[side].mon(new_species)
+            if _name:
+                state.sides[side].nicknames[_name] = new_species
             if is_mega:
                 new_known.mega = True
             if old_species is not None and old_species in state.sides[side].known:
@@ -885,6 +1235,7 @@ def _process_segment(
         # inactive, j/l join-leave, c chat, etc.) is intentionally a no-op -- see module
         # docstring's "known best-effort limitations".
 
+    flush_forced()
     if turn_num == 0:
         return
 
@@ -899,6 +1250,9 @@ def _process_segment(
             key = f"slot{slot}"
             observed = acted.get((player, slot))
             if observed is not None:
+                # from_cant / cant_revealed are parser bookkeeping, not record fields.
+                observed = {k: v for k, v in observed.items()
+                            if k not in ("from_cant", "cant_revealed")}
                 action[key] = observed
                 action_status[key] = "unknown" if observed["kind"] == "unknown" else "observed"
             elif snapshot[player]["active"][slot] is None:
@@ -915,6 +1269,7 @@ def _process_segment(
                 "player": player,
                 "turn": turn_num,
                 "decision_kind": "turn",
+                "log_line": segment_marker_idx,  # schema 8: snapshot as of the |turn|N| marker
                 "state": _for_player(snapshot, player),
                 "action": action,
                 "action_status": action_status,
@@ -922,7 +1277,9 @@ def _process_segment(
         )
 
 
-def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[dict]:
+def _teampreview_record(
+    state: BattleState, showteam_players: set[str], log_line: int
+) -> list[dict]:
     records = []
     preview_snapshot = {
         "p1": {"preview": list(state.sides["p1"].preview_species)},
@@ -939,6 +1296,7 @@ def _teampreview_record(state: BattleState, showteam_players: set[str]) -> list[
                 "player": player,
                 "turn": 0,
                 "decision_kind": "teampreview",
+                "log_line": log_line,  # schema 8: preview decision, everything before turn 1 known
                 "state": _for_player(preview_snapshot, player),
                 "action": {
                     "picked": list(side_state.appeared_order[:4]),
@@ -988,16 +1346,31 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
         player_names = _parse_player_names(log)
         winner: str | None = None
 
-        segment_lines: list[str] = []
+        segment_lines: list[tuple[int, str]] = []
         pending_turn = 0
+        # Raw index of the `|turn|N|` marker that opened the current segment (schema-8
+        # `log_line` for that segment's records); `first_turn_idx` stamps teampreview
+        # records -- everything before turn 1 was already public at lead-pick time.
+        segment_marker_idx = 0
+        first_turn_idx: int | None = None
         ended = False
         outcome_kind = "unresolved"
-        for line in log.splitlines():
+        raw_lines = log.splitlines()
+        for raw_idx, line in enumerate(raw_lines):
             if line.startswith("|turn|"):
                 _process_segment(
-                    state, pending_turn, segment_lines, records, skipped, showteam_players
+                    state,
+                    pending_turn,
+                    segment_lines,
+                    records,
+                    skipped,
+                    showteam_players,
+                    segment_marker_idx,
                 )
                 segment_lines = []
+                if first_turn_idx is None:
+                    first_turn_idx = raw_idx
+                segment_marker_idx = raw_idx
                 parts = line.split("|")
                 try:
                     pending_turn = int(parts[2])
@@ -1006,7 +1379,13 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                 continue
             if line.startswith("|win|") or line.startswith("|tie|") or line == "|tie":
                 _process_segment(
-                    state, pending_turn, segment_lines, records, skipped, showteam_players
+                    state,
+                    pending_turn,
+                    segment_lines,
+                    records,
+                    skipped,
+                    showteam_players,
+                    segment_marker_idx,
                 )
                 segment_lines = []
                 ended = True
@@ -1023,11 +1402,20 @@ def parse_replay(replay_id: str, rating: int | None, log: str) -> ParsedReplay:
                 else:
                     outcome_kind = "draw"
                 break
-            segment_lines.append(line)
+            segment_lines.append((raw_idx, line))
         if not ended:
-            _process_segment(state, pending_turn, segment_lines, records, skipped, showteam_players)
+            _process_segment(
+                state,
+                pending_turn,
+                segment_lines,
+                records,
+                skipped,
+                showteam_players,
+                segment_marker_idx,
+            )
 
-        records = _teampreview_record(state, showteam_players) + records
+        preview_log_line = first_turn_idx if first_turn_idx is not None else len(raw_lines)
+        records = _teampreview_record(state, showteam_players, preview_log_line) + records
 
         # Attach each player's showteam parse (if any) to the FIRST record we emit for
         # that (replay, player) -- see module docstring's "sets" schema note. `"won"` is

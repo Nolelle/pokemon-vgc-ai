@@ -141,7 +141,43 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MIN_RATING,
         help="skip replays rated below this, and null-rated replays (default: %(default)s)",
     )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="optional YYYY-MM-DD UTC cutoff: only include replays uploaded on or after this date",
+    )
     return parser.parse_args()
+
+
+def _parse_since_timestamp(raw: str | None) -> float:
+    if not raw:
+        return 0.0
+    from datetime import datetime, timezone
+
+    return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+
+
+def _select_replay_files(replays_dir: Path, min_rating: int, since_ts: float) -> list[Path]:
+    index_path = replays_dir / "index.jsonl"
+    if index_path.is_file() and since_ts > 0.0:
+        selected: list[Path] = []
+        for line in index_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rating = entry.get("rating")
+            uploaded = entry.get("uploadtime") or 0
+            rid = entry.get("id")
+            if rid and rating is not None and rating >= min_rating and uploaded >= since_ts:
+                p = replays_dir / f"{rid}.json"
+                if p.is_file():
+                    selected.append(p)
+        return sorted(selected)
+    return sorted(replays_dir.glob("*.json"))
 
 
 def main() -> int:
@@ -150,7 +186,8 @@ def main() -> int:
         print(f"{args.replays_dir} does not exist", file=sys.stderr)
         return 1
 
-    files = sorted(args.replays_dir.glob("*.json"))
+    since_ts = _parse_since_timestamp(args.since)
+    files = _select_replay_files(args.replays_dir, args.min_rating, since_ts)
 
     move_counts: dict[str, Counter] = defaultdict(Counter)
     item_counts: dict[str, Counter] = defaultdict(Counter)
@@ -168,6 +205,8 @@ def main() -> int:
             continue
         rating = payload.get("rating")
         if rating is None or rating < args.min_rating:
+            continue
+        if since_ts > 0.0 and (payload.get("uploadtime") or 0) < since_ts:
             continue
         log = payload.get("log")
         if not isinstance(log, str) or not log:

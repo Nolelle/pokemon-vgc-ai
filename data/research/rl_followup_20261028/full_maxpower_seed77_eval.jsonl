@@ -1,0 +1,8 @@
+{"draws": 0, "games": 64, "games_seen": 0, "iteration": 0, "losses": 24, "opponent": "maxpower", "wilson": [0.5025015331382642, 0.7333419611189468], "win_rate": 0.625, "wins": 40}
+{"games_seen": 0, "iteration": 0, "kind": "pool", "mean_win_rate": 0.625, "min_opponent": "maxpower", "min_win_rate": 0.625, "win_rates": {"maxpower": 0.625}}
+{"draws": 0, "games": 64, "games_seen": 128, "iteration": 4, "losses": 14, "opponent": "maxpower", "wilson": [0.665669836692222, 0.8649780253865025], "win_rate": 0.78125, "wins": 50}
+{"games_seen": 128, "iteration": 4, "kind": "pool", "mean_win_rate": 0.78125, "min_opponent": "maxpower", "min_win_rate": 0.78125, "win_rates": {"maxpower": 0.78125}}
+{"draws": 0, "games": 64, "games_seen": 256, "iteration": 8, "losses": 8, "opponent": "maxpower", "wilson": [0.7722521366978408, 0.9352783460737919], "win_rate": 0.875, "wins": 56}
+{"games_seen": 256, "iteration": 8, "kind": "pool", "mean_win_rate": 0.875, "min_opponent": "maxpower", "min_win_rate": 0.875, "win_rates": {"maxpower": 0.875}}
+{"draws": 0, "games": 64, "games_seen": 512, "iteration": 16, "losses": 5, "opponent": "maxpower", "wilson": [0.8298024712135222, 0.9661693219045645], "win_rate": 0.921875, "wins": 59}
+{"games_seen": 512, "iteration": 16, "kind": "pool", "mean_win_rate": 0.921875, "min_opponent": "maxpower", "min_win_rate": 0.921875, "win_rates": {"maxpower": 0.921875}}
