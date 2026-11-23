@@ -629,6 +629,15 @@ def train(args: argparse.Namespace) -> None:
         ]
         metrics_mode = "a"
     else:
+        if args.init_from is not None:
+            init_model = load_rust_policy(args.init_from, device=device)
+            if init_model.width != args.width or init_model.layers != args.layers:
+                raise ValueError(
+                    f"--init-from width/layers ({init_model.width}x{init_model.layers}) "
+                    f"does not match ({args.width}x{args.layers})"
+                )
+            model.load_state_dict(init_model.state_dict())
+            del init_model
         args.out.mkdir(parents=True, exist_ok=False)
         snap0 = save_rust_policy(args.out / f"policy_{0:07d}.pt", model)
         league = [Snapshot(0, snap0)]
@@ -1011,6 +1020,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--init-from",
+        type=Path,
+        default=None,
+        help="warm-start weights from an existing RustFactoredPolicy checkpoint into a new --out run",
+    )
     parser.add_argument("--team-manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--holdout-manifest", type=Path, default=DEFAULT_HOLDOUT_MANIFEST)
     parser.add_argument("--num-envs", type=int, default=256)

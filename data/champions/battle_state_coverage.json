@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "decision_replay_schema": "vgc-decision-replay-v1",
-  "set_priors_sha256": "c12bf85ad00f7200b0ec47a4536d595209ae62bc1db70d368b1093141a35a22b",
+  "set_priors_sha256": "57ef54f8e35fbb60584d0b6d51ed60f18fbc98df4de4e380864fd445255eb1c7",
   "release_ready": true,
   "release_rule": "Every decision is reconstructible from its player-visible prefix and request, private/future facts cannot change its inputs, and material hidden opponent configurations remain probability-weighted branches through search.",
   "scopes": {
