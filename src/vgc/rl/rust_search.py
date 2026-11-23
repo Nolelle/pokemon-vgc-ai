@@ -626,6 +626,107 @@ def _choice_str_from_slots(
     return str(choice)
 
 
+def _resolve_forced_switches(clone: pikapro.Battle, our_idx: int, opp_idx: int, start_turn: int) -> None:
+    """Advance any mid-turn forced switches until the turn finishes or the game ends."""
+    for _ in range(8):
+        if clone.over or clone.turn > start_turn:
+            break
+        progressed = False
+        for s_idx in (our_idx, opp_idx):
+            if clone.request_kind(s_idx) == "force_switch":
+                choices = clone.legal_choices(s_idx)
+                if choices:
+                    clone.submit(s_idx, choices[0])
+                    progressed = True
+        if not progressed:
+            break
+
+
+def _batch_step_policy_rollout(
+    clones: list[pikapro.Battle],
+    root: RustWorldRoot,
+    policy: RustFactoredPolicy,
+    space: pikapro.ActionSpace,
+) -> None:
+    """Advance a batch of non-terminal battles by 1 full turn using batched GPU policy."""
+    import torch
+
+    if not clones:
+        return
+    our_idx = root.our_side_idx
+    opp_idx = root.opp_side_idx
+    s = policy.slot_size
+    dev = policy.device
+
+    # Collect (clone_idx, side_idx, obs, fmask, min_sw, obs_to_req) for every acting side.
+    jobs: list[tuple[int, int, dict[int, int]]] = []
+    obs_list: list[np.ndarray] = []
+    mask_list: list[np.ndarray] = []
+    ms_list: list[int] = []
+    for ci, clone in enumerate(clones):
+        if clone.over:
+            continue
+        for s_idx in (our_idx, opp_idx):
+            rk = clone.request_kind(s_idx)
+            if rk == "wait":
+                continue
+            obs = clone.encode_state_rich(
+                s_idx,
+                foe_known_items=root.foe_items if s_idx == our_idx else None,
+                foe_known_abilities=root.foe_abilities if s_idx == our_idx else None,
+                foe_known_moves=root.foe_moves if s_idx == our_idx else None,
+            )
+            fmask, min_sw, obs_to_req = _factored_mask_for_battle(clone, s_idx, space, obs)
+            jobs.append((ci, s_idx, obs_to_req))
+            obs_list.append(obs)
+            mask_list.append(fmask)
+            ms_list.append(min_sw)
+
+    if not jobs:
+        return
+
+    obs_np = np.stack(obs_list, axis=0)
+    masks_np = np.stack(mask_list, axis=0)
+    ms_np = np.asarray(ms_list, dtype=np.uint8)
+
+    with torch.no_grad():
+        x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
+        enc = policy.encode_board(x)
+        m0_t = torch.from_numpy(np.ascontiguousarray(masks_np[:, :s], dtype=bool)).to(dev)
+        l0 = policy.slot0_logits(enc).masked_fill(~m0_t, -1e9)
+        a0_t = l0.argmax(dim=-1)
+        a0_np = a0_t.cpu().numpy()
+
+        m1_np = space.pair_mask(masks_np, ms_np, a0_np)
+        m1_t = torch.from_numpy(np.ascontiguousarray(m1_np, dtype=bool)).to(dev)
+        l1 = policy.slot1_logits(enc, a0_t).masked_fill(~m1_t, -1e9)
+        a1_np = l1.argmax(dim=-1).cpu().numpy()
+
+    # Group choices per clone and submit 1 full turn.
+    per_clone: dict[int, dict[int, str]] = {}
+    for (ci, s_idx, obs_to_req), a0, a1 in zip(jobs, a0_np.tolist(), a1_np.tolist(), strict=True):
+        cstr = _choice_str_from_slots(int(a0), int(a1), space, obs_to_req)
+        per_clone.setdefault(ci, {})[s_idx] = cstr
+
+    for ci, side_choices in per_clone.items():
+        clone = clones[ci]
+        if clone.over:
+            continue
+        start_turn = clone.turn
+        for s_idx in (our_idx, opp_idx):
+            if clone.over or clone.request_kind(s_idx) == "wait":
+                continue
+            cstr = side_choices.get(s_idx)
+            if cstr:
+                try:
+                    clone.submit(s_idx, cstr)
+                except ValueError:
+                    fallback = clone.legal_choices(s_idx)
+                    if fallback:
+                        clone.submit(s_idx, fallback[0])
+        _resolve_forced_switches(clone, our_idx, opp_idx, start_turn)
+
+
 def search_public_rust(
     battle,
     packed_team: str,
@@ -639,14 +740,32 @@ def search_public_rust(
     mirror: RustExactMirror | None = None,
     memory=None,
     worst_case_weight: float = 0.5,
+    min_prior_prob: float = 0.01,
+    prior_bonus: float = 0.025,
+    rollout_turns: int = 1,
 ) -> tuple[ReplicaSearchResult[str], dict[str, Any]]:
-    """Run fast Rust-backed multi-world 1-turn lookahead search.
+    """Run fast Rust-backed multi-world lookahead search (1-turn or 1+rollout_turns).
+
+    Parameters
+    ----------
+    min_prior_prob:
+        Minimum policy probability for admitting our own candidate actions beyond the
+        top 2 (blocks 0.01% junk Protect/switch moves from exploiting 1-turn value errors).
+    prior_bonus:
+        Small KL-regularization bonus ``prior_bonus * ln(max(p_i, 1e-4))`` added to our
+        row payoffs so search only overturns a strong neural preference when the rollout
+        gain clearly outweighs it.
+    rollout_turns:
+        Extra on-policy batched-GPU turns to simulate past the 1-turn simultaneous matrix
+        (``0`` = pure 1-turn lookahead; ``1`` = 2-turn lookahead).
 
     Returns ``(result, audit)`` where ``result.actions`` are Showdown choice strings
     (e.g. ``"move 1, move 2 1"``).
     """
     if not 1 <= worlds <= 16 or not 1 <= actions <= 8 or seeds < 1:
         raise ValueError("worlds/actions/seeds must be within 1..16/1..8/positive")
+    if rollout_turns < 0:
+        raise ValueError("rollout_turns must be >= 0")
     config = dataclasses.replace(PolicyConfig(), exact_search_total_hypotheses=worlds)
     space = pikapro.ActionSpace("championsvgc")
     rng = np.random.default_rng(seed)
@@ -690,11 +809,15 @@ def search_public_rust(
             )
             pairs, probs, _ = policy.top_joint_actions(obs, fmask, min_sw, space, limit=actions)
             legal_strs = {str(c) for c in root.battle.legal_choices(side_idx)}
+            is_our_root = side_idx == root.our_side_idx
             ranked: list[str] = []
             prior_map: dict[str, float] = {}
             for (a0, a1), prob in zip(pairs, probs, strict=True):
                 cstr = _choice_str_from_slots(a0, a1, space, obs_to_req)
                 if cstr in legal_strs and cstr not in prior_map:
+                    # Prune ultra-low-probability tail moves for our side (keep at least top 2).
+                    if is_our_root and min_prior_prob > 0.0 and len(ranked) >= 2 and float(prob) < min_prior_prob:
+                        continue
                     ranked.append(cstr)
                     prior_map[cstr] = float(prob)
             if not ranked:
@@ -719,12 +842,14 @@ def search_public_rust(
             pmap = scored_priors.get(id(obs_handle)) or {}
             return [max(pmap.get(c, 0.0), 1e-9) for c in opp_orders]
 
+        root_obs = (world_roots[0], world_roots[0].our_side_idx)
+
         def eval_matrix(
             root: RustWorldRoot, our_orders: tuple[str, ...], opp_orders: tuple[str, ...]
         ) -> np.ndarray:
             cells: list[list[list[float]]] = [[[] for _ in opp_orders] for _ in our_orders]
             pending_pos: list[tuple[int, int]] = []
-            pending_obs: list[np.ndarray] = []
+            pending_clones: list[pikapro.Battle] = []
             our_idx = root.our_side_idx
             opp_idx = root.opp_side_idx
 
@@ -737,19 +862,7 @@ def search_public_rust(
                             clone.submit(our_idx, our_c)
                         if not clone.over and opp_c != "<wait>" and clone.request_kind(opp_idx) != "wait":
                             clone.submit(opp_idx, opp_c)
-                        # Resolve mid-turn forced switches greedily using policy.
-                        for _ in range(8):
-                            if clone.over or clone.turn > start_turn:
-                                break
-                            progressed = False
-                            for s_idx in (our_idx, opp_idx):
-                                if clone.request_kind(s_idx) == "force_switch":
-                                    choices = clone.legal_choices(s_idx)
-                                    if choices:
-                                        clone.submit(s_idx, choices[0])
-                                        progressed = True
-                            if not progressed:
-                                break
+                        _resolve_forced_switches(clone, our_idx, opp_idx, start_turn)
                         if clone.over:
                             if clone.winner is None:
                                 cells[i][j].append(0.0)
@@ -757,27 +870,53 @@ def search_public_rust(
                                 cells[i][j].append(1.0 if clone.winner == our_idx else -1.0)
                         else:
                             pending_pos.append((i, j))
-                            pending_obs.append(
-                                clone.encode_state_rich(
-                                    our_idx,
-                                    foe_known_items=root.foe_items,
-                                    foe_known_abilities=root.foe_abilities,
-                                    foe_known_moves=root.foe_moves,
-                                )
-                            )
+                            pending_clones.append(clone)
 
-            if pending_obs:
+            # Optional multi-turn batched GPU rollout past the 1-turn horizon.
+            for _ in range(rollout_turns):
+                if not pending_clones:
+                    break
+                _batch_step_policy_rollout(pending_clones, root, policy, space)
+                next_pos: list[tuple[int, int]] = []
+                next_clones: list[pikapro.Battle] = []
+                for (i, j), clone in zip(pending_pos, pending_clones, strict=True):
+                    if clone.over:
+                        if clone.winner is None:
+                            cells[i][j].append(0.0)
+                        else:
+                            cells[i][j].append(1.0 if clone.winner == our_idx else -1.0)
+                    else:
+                        next_pos.append((i, j))
+                        next_clones.append(clone)
+                pending_pos = next_pos
+                pending_clones = next_clones
+
+            if pending_clones:
+                pending_obs = [
+                    clone.encode_state_rich(
+                        our_idx,
+                        foe_known_items=root.foe_items,
+                        foe_known_abilities=root.foe_abilities,
+                        foe_known_moves=root.foe_moves,
+                    )
+                    for clone in pending_clones
+                ]
                 vals = policy.values_from_obs(np.stack(pending_obs, axis=0))
                 for (i, j), v in zip(pending_pos, vals.tolist(), strict=True):
                     cells[i][j].append(float(v))
 
+            our_priors = scored_priors.get(id(root_obs)) or {}
             mat = np.empty((len(our_orders), len(opp_orders)), dtype=float)
-            for i in range(len(our_orders)):
+            for i, our_c in enumerate(our_orders):
+                bonus = (
+                    prior_bonus * float(np.log(max(our_priors.get(our_c, 1e-4), 1e-4)))
+                    if prior_bonus > 0.0
+                    else 0.0
+                )
                 for j in range(len(opp_orders)):
-                    mat[i, j] = float(np.mean(cells[i][j])) if cells[i][j] else 0.0
+                    mat[i, j] = (float(np.mean(cells[i][j])) if cells[i][j] else 0.0) + bonus
             return mat
 
-        root_obs = (world_roots[0], world_roots[0].our_side_idx)
         result = search_sampled_worlds(
             root_obs,
             sampled,

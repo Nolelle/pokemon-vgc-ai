@@ -874,4 +874,19 @@
   - vs Rust `max_base_power` (100 unseen games): **90.0% final**, **85.8% last-5 avg**.
   - Win-chance prediction (`value_accuracy`): **77.3% final**, **75.5% last-50 avg**, **77.9% peak** (up from 72.6% in v1 / 69.3% in v2); `approx_kl` ~0.0025–0.0028 throughout late training.
 - Final checkpoint: `runs/rust_v3_m192_l6_379t/policy_3000004.pt`.
-- Next: paired A/B of plain `rust` vs `rust-search` (`8w x 8a x 4s`), then live Reg M-C public ladder test.
+- Public Reg M-C ladder v3 baseline (`policy_3000004.pt`, `--policy-mode rust-search`, `8w x 8a x 4s`, MPS GPU, `teams/mc_ladder_01.packed.txt`, 30 live games in `runs/ladder.jsonl`, ~32 min wall time): **16–14 (53.3%)**, **0 fallbacks**, start **1262**, **peak 1346**, end **1316** (+win #30 vs 1274 -> ~1332) Elo against avg opp **1282** (range 1052–1473; **8–3 (72.7%)** vs <1250, **2–4** vs 1250–1349, **6–7 (46.2%)** vs 1350+, including wins over 1469, 1416, 1409, 1384, 1359, 1350). Estimated true v3 ladder Elo sits around **~1320–1360** (+100 to +130 Elo over v1's ~1200–1250 baseline).
+- Next: review the 14 v3 losses to diagnose the next bottleneck toward 1500–1700+ Elo (e.g. deeper/2-turn Rust lookahead, team strength/matchups, or scaling v4 training to 5–10M+ games / wider team pool).
+
+## 2026-11-22 (Steps 1–3) – v3 loss post-mortem, Reg M-C team tournament, and 2-turn regularized `rust-search`
+- **Step 1 (Post-mortem of 30 live v3 games):**
+  - 20-game paired A/B on unseen holdout teams confirmed `rust-search` beats plain v3 **16–4 (80.0%)**.
+  - Replay audit of the 14 losses exposed two clear causes: (1) **1-turn horizon Protect stall trap** — 49 Protects / 8 failed double-Protects in 14 losses vs 10 Protects / 1 fail in 16 wins (e.g. Game 6 threw a won 2v1 vs 1099 Elo by clicking Protect 5 straight turns while plain v3 wanted 90.8% `Low Kick + Close Combat`); (2) `mc_ladder_01` struggled against the ladder's #1 `Archaludon + Pelipper + Grimmsnarl` core (37.5% vs Archaludon, 27.3% vs Grimmsnarl; Tyranitar 6–13).
+- **Step 2 (Reg M-C team screening with `policy_3000004.pt` in Rust `VecEnv`):**
+  - Screened all 12 curated teams (`mc_ladder_01..06` + `teams/owner/*`) and confirmed top 4 at **512 games each** against all 88 unseen holdout teams + the 17 Archaludon/Pelipper/Grimmsnarl teams:
+    - **#1 `teams/mc_ladder_04.packed.txt`** (`Salamence, Rillaboom, Sneasler, Arcanine-Hisui, Kingambit, Basculegion`): **69.5%** overall (+9.0% over `mc_ladder_01`'s 60.5%), 53.9% vs meta core.
+    - **#2 `teams/owner/salamence_tw.packed.txt`**: **63.5%** overall, **60.0%** vs meta core.
+- **Step 3 (Upgraded `src/vgc/rl/rust_search.py` to 2-turn regularized lookahead):**
+  - Added `min_prior_prob=0.01` (prunes <1% tail junk moves beyond top 2), `prior_bonus=0.025` (KL-regularized Nash toward the 3M-game neural policy), and `rollout_turns=1` (batched MPS GPU 2-turn rollout past the 1-turn simultaneous matrix; ~0.33s/turn at `8w x 8a x 4s`).
+  - Game 6 Protect trap: fixed **4/4 turns** (breaks out immediately with Close Combat).
+  - **30-game paired A/B on unseen holdout teams (`4w x 8a x 2s`):** NEW 2-turn regularized `rust-search` beat OLD 1-turn unregularized `rust-search` **19–11 (63.3%)**, cutting Protect clicks from 80 -> 55 (-31%).
+- Next: live 30-game public Reg M-C ladder run with `teams/mc_ladder_04.packed.txt` + 2-turn regularized `rust-search`, then Step 4 (scaling to v4).
