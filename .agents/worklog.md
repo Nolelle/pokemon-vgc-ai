@@ -903,3 +903,13 @@
 - Added `--init-from <checkpoint.pt>` to `selfplay/train_rust_vec.py` so `v3b` warm-starts cleanly in `runs/rust_v3b_m192_l6_novmeta` from `runs/rust_v3_m192_l6_379t/policy_3000004.pt` with a fresh 4,000,000-game cosine LR schedule (`3e-5 -> 5e-6`) without modifying `v3`.
 - Hardware sizing note (M4 Pro MPS): `192x6` (3.32M) ~101 g/s, `256x6` (5.60M) ~96 g/s (sweet spot if we need a bigger v4 brain next), `268x12` (9.56M) ~43 g/s (too slow for 10 days left in Reg M-C).
 - Next: refresh 3 readiness gates on clean commit and launch overnight `v3b` AFK run (4M additional games -> 7M total).
+
+## 2026-11-23 (afternoon) – Completed `v3b` (3M -> 7M total games on 696-team Nov meta pool)
+- Finished full 4,000,024-game warm-started `v3b` run (`runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt`, W&B `oyn1lwwm`, 11.56h at ~95–114 g/s on M4 Pro MPS GPU).
+- Progression across the +4M games (`3M -> 7M` total):
+  - `value_accuracy`: **75.4% -> 76.05%** (`value_loss`: **0.4672 -> 0.4585**, lowest yet).
+  - `vs_anchors` (heuristic): **77.3% -> 80.5%**; unseen holdout `simple_heuristics` **74.6% -> 76.7–79.7%**; unseen `max_base_power` **89.5–91.0%**; unseen `vgc` 2-ply **64.4–65.6% avg** (peak **72.5%**).
+- **Direct 1,024-game head-to-head (`v3b` 7M vs `v3` 3M, plain neural, deterministic, 6.5s on MPS):**
+  - All 88 unseen holdout teams (512 games): **`v3b` beat `v3` 62.9% (~+92 Elo gain!!)**.
+  - Unseen Archaludon/Pelipper/Grimmsnarl subset (512 games): **`v3b` beat `v3` 59.8% (~+70 Elo gain!)**.
+- Next: live 30-game Reg M-C ladder test of `v3b` + refreshed Nov `set_priors.json` + 2-turn `rust-search` (starting with `mc_ladder_01` for exact apples-to-apples comparison vs v1/v3), then decide on Option 2B (`256x6` 5.60M v4).
