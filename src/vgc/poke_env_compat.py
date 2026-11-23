@@ -1193,6 +1193,8 @@ def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:
     if mon is not None and len(split) > 3:
         if split[1] == "detailschange":
             vars(battle).setdefault("_vgc_detailschanged_details", {})[id(mon)] = split[3]
+            if split[2][:2] != battle.player_role:
+                mon._last_details = split[3]
         # Track mons that forme-changed in-battle: a stale pre-forme `_ability`
         # must not be allowed to resurface over `forme_change_ability` later.
         vars(battle).setdefault("_vgc_detailschanged", set()).add(id(mon))
