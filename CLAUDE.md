@@ -6,6 +6,32 @@ consent Open Team Sheets, but this bot rejects them and assumes no opponent shee
 best-of-one ladder. Backed by the local Showdown checkout's `champions` mod (see
 `config/formats.ts` in that repo), not vanilla gen9.
 
+## Current State & Active Direction (2026-11-23)
+
+See [`docs/rust_rl_and_search.md`](docs/rust_rl_and_search.md) and [`README.md`](README.md)
+for the current playing/training stack (historical audits and pre-Rust plans now live in
+[`docs/archive/`](docs/archive/README.md)):
+
+- **Active playing stack (`--policy-mode rust-search`):** Rust `pikapro 0.2.0` vectorized
+  self-play RL (`selfplay/train_rust_vec.py`, `src/vgc/rl/rust_policy.py` v2 equivariant
+  Transformer) paired with 2-turn regularized live lookahead search
+  (`src/vgc/rl/rust_search.py`, `8w × 8a × 4s`, `rollout_turns=1`, `min_prior_prob=0.01`,
+  `prior_bonus=0.025`, ~0.33s/turn).
+- **Current best checkpoint (`v3b`, 7M self-play games):**
+  `runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt` (`192×6`, 3.32M params, trained on
+  696 `pikapro`-validated November Reg M-C teams in
+  `data/selfplay/v3b_nov_meta_train_manifest.json`). Live public Reg M-C ladder on
+  `teams/mc_ladder_01.packed.txt`: **peak 1458 Elo** (30 games, avg opp 1443, 0 fallbacks,
+  beat 1650/1559/1536/1518 opponents; +112 peak Elo over `v3`, +203 over `v1`).
+- **Refreshed opponent set priors (2026-11-23):** `data/usage/set_priors.json` rebuilt
+  with `tools/build_set_priors.py --since 2026-10-15` from **39,589** rated (>=1200)
+  Reg M-C replays (171,258 indexed).
+- **Next milestone:** scale to `v4` (`256×6`, ~5.6M params, ~96 games/sec on M4 Pro) on
+  the 696-team November meta pool and test stronger ladder rosters toward 1700+ Elo.
+- **Note on `.venv`:** patched `pikapro 0.2.0` is installed in `.venv` (patch saved at
+  `patches/pikapro/0001-rich-encoder-and-patch-public.patch`). Avoid overwriting `.venv`
+  with `uv sync` without rebuilding `pikapro`.
+
 ## Regulation M-C (2026-09-09)
 
 Live format id is `vgc.config.FORMAT_ID` (`gen9championsvgc2026regmc`). Champions data
