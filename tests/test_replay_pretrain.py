@@ -234,6 +234,8 @@ def test_cache_roundtrip_matches_iter_task_examples() -> None:
     from vgc.bc.encoding import MOVE_TO_IDX  # noqa: PLC0415
 
     prepared = Path("runs/own_team_rebuild_20261104/scratch/prepared")
+    if not (prepared / "summary.json").is_file():
+        pytest.skip(f"local scratch prepared dataset not present: {prepared}")
     cache = build_cache(prepared, "train")
     examples = {}
     for i, ex in enumerate(iter_task_examples(prepared, "move", split="train")):

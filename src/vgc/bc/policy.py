@@ -326,14 +326,19 @@ def _champions_single_ability(forme_id: str) -> str | None:
     return _ABILITY_CACHE[forme_id]
 
 
-def _active_mon_dict(pokemon: Pokemon | None) -> dict | None:
+def _active_mon_dict(
+    pokemon: Pokemon | None, battle: DoubleBattle | None = None
+) -> dict | None:
     if pokemon is None or pokemon.fainted:
         return None
     # Per-mon evidence only: the mon's own |detailschange|/switch details is the
     # reliable species+forme (poke-env's `-mega` handling can land on the wrong
     # Pokemon object; `forme_change_ability` alone proved unreliable).
+    from vgc.poke_env_compat import detailschange_details
+
     raw_details = (
-        getattr(pokemon, "details", None)
+        detailschange_details(battle, pokemon)
+        or getattr(pokemon, "details", None)
         or getattr(pokemon, "_last_details", "")
         or pokemon.species
         or ""
@@ -438,12 +443,13 @@ def _side_dict(
     side_conditions,
     preview_species: list[str],
     unseen_count: int,
+    battle: DoubleBattle | None = None,
 ) -> dict:
     conditions = set(_screens_from(side_conditions))
     if SideCondition.TAILWIND in side_conditions:
         conditions.add("tailwind")
     return {
-        "active": [_active_mon_dict(mon) for mon in active],
+        "active": [_active_mon_dict(mon, battle=battle) for mon in active],
         "bench": _bench_list(team, active),
         "side_conditions": sorted(conditions),
         "preview_species": preview_species,
@@ -483,7 +489,12 @@ def battle_state_record(battle: DoubleBattle, config: PolicyConfig | None = None
 
     state = {
         "our": _side_dict(
-            our_active, our_team, battle.side_conditions, our_preview_species, our_unseen_count
+            our_active,
+            our_team,
+            battle.side_conditions,
+            our_preview_species,
+            our_unseen_count,
+            battle=battle,
         ),
         "opp": _side_dict(
             opp_active,
@@ -491,6 +502,7 @@ def battle_state_record(battle: DoubleBattle, config: PolicyConfig | None = None
             battle.opponent_side_conditions,
             opp_preview_species,
             opp_unseen_count,
+            battle=battle,
         ),
         "field": _field_dict(battle),
     }

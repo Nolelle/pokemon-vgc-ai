@@ -7,21 +7,43 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pikapro = pytest.importorskip("pikapro")
-torch = pytest.importorskip("torch")
-
-import pikapro.rl as rl  # noqa: E402
-from vgc.rl.env import DirectBattle  # noqa: E402
-from vgc.rl.replica_engine import ReplicaRustWorker  # noqa: E402
-from vgc.rl.rust_policy import (  # noqa: E402
-    RICH_OBS_SIZE,
-    RustFactoredPolicy,
-    load_rust_policy,
-    save_rust_policy,
-)
-from vgc.rl.rust_search import RustExactMirror, search_public_rust  # noqa: E402
-
 TEAM_PATH = Path(__file__).resolve().parents[1] / "teams" / "mc_ladder_01.packed.txt"
+
+
+@pytest.fixture(autouse=True)
+def _require_rust_stack():
+    """Skip inside test execution (not module collection) so `pytest -m integration`
+    never records a module-level skip when the optional `pikapro` extra is absent.
+    """
+    global pikapro, rl, torch, DirectBattle, ReplicaRustWorker, RICH_OBS_SIZE
+    global RustFactoredPolicy, load_rust_policy, save_rust_policy
+    global RustExactMirror, search_public_rust
+    pikapro = pytest.importorskip("pikapro")
+    torch = pytest.importorskip("torch")
+    import pikapro.rl as _rl
+
+    from vgc.rl.env import DirectBattle as _DirectBattle
+    from vgc.rl.replica_engine import ReplicaRustWorker as _ReplicaRustWorker
+    from vgc.rl.rust_policy import (
+        RICH_OBS_SIZE as _RICH_OBS_SIZE,
+        RustFactoredPolicy as _RustFactoredPolicy,
+        load_rust_policy as _load_rust_policy,
+        save_rust_policy as _save_rust_policy,
+    )
+    from vgc.rl.rust_search import (
+        RustExactMirror as _RustExactMirror,
+        search_public_rust as _search_public_rust,
+    )
+
+    rl = _rl
+    DirectBattle = _DirectBattle
+    ReplicaRustWorker = _ReplicaRustWorker
+    RICH_OBS_SIZE = _RICH_OBS_SIZE
+    RustFactoredPolicy = _RustFactoredPolicy
+    load_rust_policy = _load_rust_policy
+    save_rust_policy = _save_rust_policy
+    RustExactMirror = _RustExactMirror
+    search_public_rust = _search_public_rust
 
 
 def _strip_items(packed: str) -> str:

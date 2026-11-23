@@ -1176,14 +1176,23 @@ def _is_mega_forme(species_id: str) -> bool:
     return "mega" in species_id
 
 
+def detailschange_details(battle: AbstractBattle | None, mon: Pokemon) -> str | None:
+    """Exact details string from the latest `|detailschange|` on `mon`, if any."""
+    if battle is None:
+        return None
+    mapping = vars(battle).get("_vgc_detailschanged_details")
+    return mapping.get(id(mon)) if isinstance(mapping, dict) else None
+
+
 def _prepare_forme_change(battle: AbstractBattle, split: list[str]) -> Any:
     mon = _find_mon(battle, split[2])
-    # Record the exact announced forme on the mon's `_last_details` slot --
-    # poke-env leaves it at the switch-time details for megas, and the public
-    # `-mega` line names only the base, so the detailschange is the only place
-    # the real forme id lands (mega is permanent; a later switch rewrites it).
+    # Record the exact announced forme on `battle` (NOT poke-env's internal
+    # `_last_details` slot: mutating `_last_details` tricks
+    # `Pokemon._update_from_details` into either skipping a Mega `|request|` update
+    # or reverting a temporary `-formechange` like Morpeko-Hangry on the next request).
     if mon is not None and len(split) > 3:
-        mon._last_details = split[3]
+        if split[1] == "detailschange":
+            vars(battle).setdefault("_vgc_detailschanged_details", {})[id(mon)] = split[3]
         # Track mons that forme-changed in-battle: a stale pre-forme `_ability`
         # must not be allowed to resurface over `forme_change_ability` later.
         vars(battle).setdefault("_vgc_detailschanged", set()).add(id(mon))
