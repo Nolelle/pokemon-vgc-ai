@@ -46,13 +46,34 @@
 import Module, {createRequire} from 'node:module';
 import {readFileSync, realpathSync} from 'node:fs';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 const showdownRepo = process.argv[2];
 if (!showdownRepo) {
 	process.stderr.write('usage: parse_showdown_entries.mjs <showdown_repo>\n');
 	process.exit(2);
 }
-const ts = createRequire(path.join(showdownRepo, 'package.json'))('typescript');
+
+function loadTypeScriptCompiler() {
+	const fromShowdown = createRequire(path.join(showdownRepo, 'package.json'));
+	let ts;
+	try {
+		ts = fromShowdown('typescript');
+	} catch {
+		ts = null;
+	}
+	if (ts?.SyntaxKind) {
+		return ts;
+	}
+	// Showdown 2025-11+ depends on TypeScript 7, whose default export is version metadata
+	// only; keep using the TS 5 compiler API for parsing (tools/parser_deps).
+	const fallback = createRequire(
+		path.join(path.dirname(fileURLToPath(import.meta.url)), 'parser_deps', 'package.json'),
+	);
+	return fallback('typescript');
+}
+
+const ts = loadTypeScriptCompiler();
 
 function unwrap(node) {
 	while (node && (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) ||

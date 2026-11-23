@@ -215,7 +215,7 @@ function run(req, seed) {
 	}
 	for (const slot of SLOTS) applyState(battle, mons[slot], (req.state || {})[slot]);
 	applyField(battle, req.field, mons);
-	battle.faintMessages();
+	battle.resolveFaints();
 	// A fresh request after the manual changes, so the choice parser sees the final state.
 	battle.clearRequest();
 	battle.makeRequest("move");
