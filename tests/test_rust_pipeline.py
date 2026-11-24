@@ -560,3 +560,197 @@ def test_player_view_extender_timers_stay_nonzero_on_turns_6_to_8() -> None:
     # Turns 1..4 count down 5-turn base (0.8, 0.6, 0.4, 0.2), then Turns 5..7 infer 8-turn extender (0.6, 0.4, 0.2), Turn 8 expires (0.0).
     assert rain_by_turn == [0.8, 0.6, 0.4, 0.2, 0.6, 0.4, 0.2, 0.0], rain_by_turn
     assert ter_by_turn == [0.8, 0.6, 0.4, 0.2, 0.6, 0.4, 0.2, 0.0], ter_by_turn
+
+
+def test_encode_state_rich_parity_moved_revealed_and_extenders() -> None:
+    """Track A fixes: `moved_this_turn` resets each turn, undamaged switched-out foes
+    stay revealed via `foe_revealed`, and 8-turn extenders match `encode_rich` on turns 1..3.
+    """
+    t1 = (
+        "Politoed||DampRock|Drizzle|Protect,Scald,Yawn,HelpingHand|Calm|32,,16,,18,||||50|]"
+        "Rillaboom||TerrainExtender|GrassySurge|Protect,FakeOut,LeechSeed,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Snorlax||SitrusBerry|ThickFat|Protect,Rest,BodySlam,Crunch|Careful|32,,16,,18,||||50|]"
+        "Umbreon||Leftovers|InnerFocus|Protect,Moonlight,Snarl,FoulPlay|Calm|32,,16,,18,||||50|]"
+        "Cresselia||RockyHelmet|Levitate|Protect,LunarBlessing,Psychic,IcyWind|Bold|32,,32,,2,||||50|]"
+        "Blissey||CovertCloak|NaturalCure|Protect,SoftBoiled,SeismicToss,HelpingHand|Bold|32,,32,,2,||||50|"
+    )
+    t2 = (
+        "Snorlax||SitrusBerry|ThickFat|Protect,Rest,BodySlam,Crunch|Careful|32,,16,,18,||||50|]"
+        "Umbreon||Leftovers|InnerFocus|Protect,Moonlight,Snarl,FoulPlay|Calm|32,,16,,18,||||50|]"
+        "Cresselia||RockyHelmet|Levitate|Protect,LunarBlessing,Psychic,IcyWind|Bold|32,,32,,2,||||50|]"
+        "Blissey||CovertCloak|NaturalCure|Protect,SoftBoiled,SeismicToss,HelpingHand|Bold|32,,32,,2,||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|Protect,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Milotic||FlameOrb|MarvelScale|Protect,Scald,Recover,IcyWind|Bold|32,,32,,2,||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t1, t2], seed=(1, 2, 3, 4), log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    # Turn 1: Politoed uses Helping Hand, Rillaboom uses Protect; foe switches Snorlax out undamaged.
+    b.submit(0, "move 4 -2, move 1")
+    b.submit(1, "switch 3, move 1")
+
+    # At start of Turn 2, active mons have NOT moved yet this turn (`o[65] == 0.0`).
+    o_view = b.encode_rich(0)
+    o_state = b.encode_state_rich(0, foe_revealed=[True, True, True, False, False, False])
+    assert float(o_view[65]) == 0.0
+    assert float(o_state[65]) == 0.0, "moved_this_turn must reset to 0.0 at start of Turn 2"
+    assert float(o_state[RICH_MON_WIDTH + 65]) == 0.0
+
+    # 8-turn Damp Rock / Terrain Extender on Turn 2 (`rem=7`, `elapsed=1`) must both read 0.8.
+    assert abs(float(o_view[12 * RICH_MON_WIDTH + 47]) - 0.8) < 1e-6
+    assert abs(float(o_state[12 * RICH_MON_WIDTH + 47]) - 0.8) < 1e-6
+    assert abs(float(o_state[12 * RICH_MON_WIDTH + 52]) - 0.8) < 1e-6
+
+    # Undamaged switched-out foe Snorlax (foe row 0 -> row index 6) must stay revealed & brought.
+    foe_row0 = 6 * RICH_MON_WIDTH
+    assert float(o_view[foe_row0 + 12]) == 1.0 and float(o_view[foe_row0 + 14]) == 1.0
+    assert float(o_state[foe_row0 + 12]) == 1.0 and float(o_state[foe_row0 + 14]) == 1.0
+
+
+def test_our_public_knowledge_reveals_only_public_protocol_facts() -> None:
+    """Simulated opponent sees our publicly revealed items/abilities/moves, never hidden ones."""
+    from types import SimpleNamespace
+
+    from vgc.battle_memory import BattleMemory
+    from vgc.rl.rust_search import _our_public_knowledge
+
+    packed = (
+        "Tyranitar||AssaultVest|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|"
+    )
+    mem = BattleMemory("test", our_role="p1")
+    mem.observe_protocol(
+        [
+            ["", "switch", "p1a: Tyranitar", "Tyranitar, L50, M", "100/100"],
+            ["", "switch", "p1b: Sneasler", "Sneasler, L50, M", "100/100"],
+            ["", "-weather", "Sandstorm", "[from] ability: Sand Stream", "[of] p1a: Tyranitar"],
+            ["", "move", "p1b: Sneasler", "Fake Out", "p2a: Pelipper"],
+        ]
+    )
+    battle = SimpleNamespace(team={})
+    items, abilities, moves, revealed = _our_public_knowledge(battle, packed, memory=mem)
+    # Tyranitar: revealed + Sand Stream known from weather line, item still hidden.
+    assert revealed[0] is True
+    assert abilities[0] == "sandstream"
+    assert items[0] is None
+    # Sneasler: revealed + Fake Out known, Focus Sash & Unburden still hidden (never leaked!).
+    assert revealed[1] is True
+    assert moves[1] == ["fakeout"]
+    assert items[1] is None
+    assert abilities[1] is None
+    # Gholdengo: unrevealed on bench, single-ability Good as Gold known, Life Orb hidden.
+    assert revealed[2] is False
+    assert abilities[2] == "goodasgold"
+    assert items[2] is None
+    # Incineroar: unrevealed on bench, Safety Goggles & Intimidate hidden.
+    assert revealed[3] is False
+    assert items[3] is None
+    assert abilities[3] is None
+
+
+def test_rust_policy_v3_equivariance_preview_symmetry_and_roundtrip(tmp_path: Path) -> None:
+    """Track B: v3 policy (static move meta + GPU speed cues + symmetric preview head)
+    must remain move/slot equivariant, give identical preview logits for swapped back/lead
+    pairs, and round-trip cleanly alongside legacy v2 checkpoints.
+    """
+    import torch
+
+    from vgc.rl.rust_policy import (
+        RUST_POLICY_VERSION,
+        RustFactoredPolicy,
+        load_rust_policy,
+        save_rust_policy,
+    )
+
+    assert RUST_POLICY_VERSION == 3
+    torch.manual_seed(42)
+    model = RustFactoredPolicy(width=64, layers=2, policy_version=3).eval()
+
+    t1 = (
+        "Tyranitar||ChoiceScarf|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Pelipper||DampRock|Drizzle|WeatherBall,Hurricane,WideGuard,Protect|Modest|2,,,32,,32||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t1, t1], seed=(3, 4, 5, 6), log=True)
+    obs_pv = b.encode_rich(0)
+    with torch.no_grad():
+        enc = model.encode_board(torch.from_numpy(obs_pv).unsqueeze(0))
+        pv_logits = model.preview_logits(enc)[0].numpy()
+
+    # Check exact symmetry for swapped back pair (0,1,2,3) vs (0,1,3,2) and swapped lead pair (1,0,2,3).
+    orders = model.preview_orders.numpy()
+    idx_0123 = int(np.where((orders == [0, 1, 2, 3]).all(axis=1))[0][0])
+    idx_0132 = int(np.where((orders == [0, 1, 3, 2]).all(axis=1))[0][0])
+    idx_1023 = int(np.where((orders == [1, 0, 2, 3]).all(axis=1))[0][0])
+    assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_0132])) < 1e-5
+    assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_1023])) < 1e-5
+
+    # Advance into battle and test move-order equivariance + save/load roundtrip.
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    obs_turn = b.encode_rich(0)
+    obs_swapped_mv = obs_turn.copy()
+    # Swap move slots 0 and 1 on own row 0 (IDs 4/5, PP 66/67, disabled 70/71).
+    obs_swapped_mv[4], obs_swapped_mv[5] = obs_swapped_mv[5], obs_swapped_mv[4]
+    obs_swapped_mv[66], obs_swapped_mv[67] = obs_swapped_mv[67], obs_swapped_mv[66]
+    obs_swapped_mv[70], obs_swapped_mv[71] = obs_swapped_mv[71], obs_swapped_mv[70]
+    with torch.no_grad():
+        enc1 = model.encode_board(torch.from_numpy(obs_turn).unsqueeze(0))
+        enc2 = model.encode_board(torch.from_numpy(obs_swapped_mv).unsqueeze(0))
+        v1, _ = model.value_from_context(enc1.context)
+        v2, _ = model.value_from_context(enc2.context)
+        l1 = model.slot0_logits(enc1)[0]
+        l2 = model.slot0_logits(enc2)[0]
+    assert abs(float(v1.item()) - float(v2.item())) < 1e-5
+    assert torch.allclose(l1[0:10], l2[10:20], atol=1e-5)
+    assert torch.allclose(l1[10:20], l2[0:10], atol=1e-5)
+
+    # Checkpoint round-trip for v3 AND legacy v2.
+    p_v3 = save_rust_policy(tmp_path / "v3.pt", model)
+    loaded_v3 = load_rust_policy(p_v3, device="cpu")
+    assert loaded_v3.policy_version == 3
+    with torch.no_grad():
+        v3_check, _ = loaded_v3.value_from_context(
+            loaded_v3.encode_board(torch.from_numpy(obs_turn).unsqueeze(0)).context
+        )
+    assert abs(float(v1.item()) - float(v3_check.item())) < 1e-6
+
+    model_v2 = RustFactoredPolicy(width=64, layers=2, policy_version=2).eval()
+    p_v2 = save_rust_policy(tmp_path / "v2.pt", model_v2)
+    loaded_v2 = load_rust_policy(p_v2, device="cpu")
+    assert loaded_v2.policy_version == 2
+    assert loaded_v2.ffn_mult == 2
+
+
+def test_train_rust_vec_optimizer_decay_groups_and_ema_pfsp() -> None:
+    """Track B: embeddings/LayerNorm/biases get 0 weight decay; PFSP EMA stays fresh."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "selfplay"))
+    import train_rust_vec as trv
+
+    from vgc.rl.rust_policy import RustFactoredPolicy
+
+    model = RustFactoredPolicy(width=64, layers=2, policy_version=3)
+    opt = trv.build_optimizer(model, lr=1e-4, weight_decay=1e-3)
+    assert len(opt.param_groups) == 2
+    assert opt.param_groups[0]["weight_decay"] == 1e-3
+    assert opt.param_groups[1]["weight_decay"] == 0.0
+    no_decay_ids = {id(p) for p in opt.param_groups[1]["params"]}
+    assert id(model.move_emb.weight) in no_decay_ids
+    assert id(model.species_emb.weight) in no_decay_ids
+    assert id(model.value_head[0].weight) in no_decay_ids  # LayerNorm
+
+    snap = trv.Snapshot(0, Path("dummy.pt"))
+    for _ in range(300):
+        snap.record_game(0.0)
+    assert snap.games <= 200.1
+    # After learner starts beating it 100%, EMA priority must drop well below 0.25 within 200 games.
+    for _ in range(200):
+        snap.record_game(1.0)
+    assert snap.priority < 0.25

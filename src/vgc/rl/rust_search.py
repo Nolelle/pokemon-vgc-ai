@@ -8,15 +8,15 @@ Rust `pikapro.Battle.patch_public` + `Battle.fork()` + `Battle.encode_state_rich
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Sequence
 
 import numpy as np
 import pikapro
 
 from vgc.actions import locked_move_ids
 from vgc.damage import to_id
-from vgc.data import load_items
+from vgc.data import load_items, load_species
 from vgc.mechanics_state import snapshot_battle
 from vgc.models import PolicyConfig
 from vgc.rl.live_mirror import (
@@ -472,33 +472,188 @@ def _build_rust_patch_dict(
     return patch
 
 
+def _base_species_id(species_id: str | None) -> str:
+    sp = to_id(species_id)
+    if not sp:
+        return ""
+    entry = load_species().get(sp)
+    if entry:
+        base = to_id(entry.get("baseSpecies"))
+        if base:
+            return base
+    return sp
+
+
+def _single_legal_ability(species_id: str | None) -> str | None:
+    sp = to_id(species_id)
+    if not sp:
+        return None
+    entry = load_species().get(sp)
+    if not entry:
+        return None
+    abilities = entry.get("abilities") or {}
+    vals = {to_id(v) for v in abilities.values() if to_id(v)}
+    return next(iter(vals)) if len(vals) == 1 else None
+
+
 def _foe_public_knowledge(
-    battle, opp_sets: list[dict[str, Any]]
-) -> tuple[list[str | None], list[str | None], list[list[str]]]:
-    """Return per-foe-row publicly revealed items, abilities, and moves (fog-safe)."""
+    battle, opp_sets: list[dict[str, Any]], *, memory: Any = None
+) -> tuple[list[str | None], list[str | None], list[list[str]], list[bool]]:
+    """Return per-foe-row publicly revealed items, abilities, moves, and revealed flags (fog-safe)."""
+    known_by_id: dict[str, Any] = {}
     known_by_base: dict[str, Any] = {}
     for mon in (getattr(battle, "opponent_team", None) or {}).values():
         sp = to_id(getattr(mon, "species", None))
         if sp:
-            known_by_base[sp] = mon
+            known_by_id[sp] = mon
+            known_by_base.setdefault(_base_species_id(sp), mon)
+
+    mem_items = getattr(memory, "opponent_items", None) or {}
+    mem_abilities = getattr(memory, "opponent_abilities", None) or {}
+    mem_moves = getattr(memory, "opponent_moves", None) or {}
+    mem_switches = getattr(memory, "opponent_switches", None) or {}
+
     items: list[str | None] = []
     abilities: list[str | None] = []
     moves: list[list[str]] = []
+    revealed: list[bool] = []
     for s in opp_sets[:6]:
         sp = to_id(s.get("species"))
-        mon = known_by_base.get(sp)
-        if mon is None:
-            items.append(None)
-            abilities.append(None)
-            moves.append([])
-            continue
-        it = normalize_item(getattr(mon, "item", None))
-        ab = to_id(getattr(mon, "ability", None))
-        mvs = [to_id(mid) for mid in (getattr(mon, "moves", None) or {}) if to_id(mid)]
+        base = _base_species_id(sp)
+        mon = known_by_id.get(sp) or known_by_base.get(base)
+        mon_sp = to_id(getattr(mon, "species", None)) if mon is not None else sp
+
+        it = normalize_item(getattr(mon, "item", None)) if mon is not None else None
+        if not it:
+            mem_it = mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base)
+            it = normalize_item(mem_it)
+        if not it and mon_sp:
+            sp_entry = load_species().get(mon_sp) or {}
+            if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
+                it = to_id(sp_entry.get("requiredItem"))
+
+        ab = to_id(getattr(mon, "ability", None)) if mon is not None else None
+        if not ab:
+            ab = to_id(mem_abilities.get(mon_sp) or mem_abilities.get(sp) or mem_abilities.get(base))
+        if not ab and mon_sp:
+            ab = _single_legal_ability(mon_sp)
+
+        mvs_set: list[str] = []
+        if mon is not None:
+            for mid in getattr(mon, "moves", None) or {}:
+                m_id = to_id(mid)
+                if m_id and m_id not in mvs_set:
+                    mvs_set.append(m_id)
+        for key in (mon_sp, sp, base):
+            for mid in mem_moves.get(key) or ():
+                m_id = to_id(mid)
+                if m_id and m_id not in mvs_set:
+                    mvs_set.append(m_id)
+
+        is_rev = bool(
+            mon is not None
+            or mem_switches.get(mon_sp, 0) > 0
+            or mem_switches.get(sp, 0) > 0
+            or mem_switches.get(base, 0) > 0
+            or mvs_set
+        )
         items.append(it or None)
         abilities.append(ab or None)
-        moves.append(mvs)
-    return items, abilities, moves
+        moves.append(mvs_set)
+        revealed.append(is_rev)
+    return items, abilities, moves, revealed
+
+
+def _our_public_knowledge(
+    battle, own_packed_team: str, *, memory: Any = None
+) -> tuple[list[str | None], list[str | None], list[list[str]], list[bool]]:
+    """Return what the opponent has publicly observed of OUR team (strictly fog-safe).
+
+    Matches rows ``0..5`` of ``own_packed_team`` so simulated opponent observations in
+    ``encode_state_rich(opp_idx, ...)`` see our revealed items, abilities, moves, and
+    switched-in Pokémon — without leaking unrevealed private items/abilities/moves.
+    """
+    packed_species: list[str] = []
+    for chunk in str(own_packed_team or "").split("]"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        fields = chunk.split("|")
+        sp_field = fields[1] if len(fields) > 1 and fields[1] else fields[0]
+        packed_species.append(to_id(sp_field))
+
+    own_by_id: dict[str, Any] = {}
+    own_by_base: dict[str, Any] = {}
+    for mon in (getattr(battle, "team", None) or {}).values():
+        sp = to_id(getattr(mon, "species", None))
+        if sp:
+            own_by_id[sp] = mon
+            own_by_base.setdefault(_base_species_id(sp), mon)
+
+    mem_items = getattr(memory, "our_revealed_items", None) or {}
+    mem_abilities = getattr(memory, "our_revealed_abilities", None) or {}
+    mem_moves = getattr(memory, "our_revealed_moves", None) or {}
+    mem_appeared = getattr(memory, "our_appeared", None) or set()
+
+    items: list[str | None] = []
+    abilities: list[str | None] = []
+    moves: list[list[str]] = []
+    revealed: list[bool] = []
+    for sp in packed_species[:6]:
+        base = _base_species_id(sp)
+        mon = own_by_id.get(sp) or own_by_base.get(base)
+        mon_sp = to_id(getattr(mon, "species", None)) if mon is not None else sp
+
+        # Public moves: those recorded in protocol memory OR whose PP has been spent.
+        mvs_set: list[str] = []
+        for key in (mon_sp, sp, base):
+            for mid in mem_moves.get(key) or ():
+                m_id = to_id(mid)
+                if m_id and m_id not in mvs_set:
+                    mvs_set.append(m_id)
+        if mon is not None:
+            for mid, mv_obj in (getattr(mon, "moves", None) or {}).items():
+                cur_pp = getattr(mv_obj, "current_pp", None)
+                max_pp = getattr(mv_obj, "max_pp", None)
+                if isinstance(cur_pp, int) and isinstance(max_pp, int) and max_pp > 0 and cur_pp < max_pp:
+                    m_id = to_id(mid)
+                    if m_id and m_id not in mvs_set:
+                        mvs_set.append(m_id)
+
+        # Public revealed status: active, fainted, damaged, statused, used a move, or in memory.
+        is_rev = bool(
+            mon_sp in mem_appeared
+            or sp in mem_appeared
+            or base in mem_appeared
+            or bool(mvs_set)
+        )
+        if mon is not None and not is_rev:
+            hp_frac = getattr(mon, "current_hp_fraction", 1.0)
+            if (
+                getattr(mon, "active", False)
+                or getattr(mon, "fainted", False)
+                or (isinstance(hp_frac, (int, float)) and hp_frac < 1.0)
+                or getattr(mon, "status", None) is not None
+            ):
+                is_rev = True
+
+        # Public item: only if revealed in protocol memory OR Mega-evolved stone.
+        it = normalize_item(mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base))
+        if not it and mon_sp:
+            sp_entry = load_species().get(mon_sp) or {}
+            if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
+                it = to_id(sp_entry.get("requiredItem"))
+
+        # Public ability: only if revealed in protocol memory OR single-ability species.
+        ab = to_id(mem_abilities.get(mon_sp) or mem_abilities.get(sp) or mem_abilities.get(base))
+        if not ab and mon_sp:
+            ab = _single_legal_ability(mon_sp)
+
+        items.append(it or None)
+        abilities.append(ab or None)
+        moves.append(mvs_set)
+        revealed.append(is_rev)
+    return items, abilities, moves, revealed
 
 
 @dataclass
@@ -509,6 +664,29 @@ class RustWorldRoot:
     foe_items: list[str | None]
     foe_abilities: list[str | None]
     foe_moves: list[list[str]]
+    foe_revealed: list[bool] = field(default_factory=list)
+    our_public_items: list[str | None] = field(default_factory=list)
+    our_public_abilities: list[str | None] = field(default_factory=list)
+    our_public_moves: list[list[str]] = field(default_factory=list)
+    our_revealed: list[bool] = field(default_factory=list)
+
+    def encode_obs(self, clone: pikapro.Battle, side_idx: int) -> np.ndarray:
+        """Encode ``clone`` from ``side_idx``'s fog-safe perspective."""
+        if side_idx == self.our_side_idx:
+            return clone.encode_state_rich(
+                side_idx,
+                foe_known_items=self.foe_items,
+                foe_known_abilities=self.foe_abilities,
+                foe_known_moves=self.foe_moves,
+                foe_revealed=self.foe_revealed or None,
+            )
+        return clone.encode_state_rich(
+            side_idx,
+            foe_known_items=self.our_public_items or None,
+            foe_known_abilities=self.our_public_abilities or None,
+            foe_known_moves=self.our_public_moves or None,
+            foe_revealed=self.our_revealed or None,
+        )
 
 
 class RustExactMirror:
@@ -522,10 +700,19 @@ class RustExactMirror:
     def hypotheses(
         self, battle, memory=None, *, worlds: int | None = None
     ) -> list[MirrorHypothesis]:
-        cfg = (
-            dataclasses.replace(self.config, exact_search_total_hypotheses=worlds)
-            if worlds is not None and worlds != self.config.exact_search_total_hypotheses
-            else self.config
+        target_worlds = int(worlds) if worlds is not None else int(self.config.exact_search_total_hypotheses)
+        # Scale per-axis hypothesis caps so larger world budgets (e.g. worlds=8..10) can
+        # actually populate diverse spread/set/bring worlds instead of capping at 2x2x2=8
+        # (which collapses to <=4 once 4 opponent species are revealed).
+        spread_cap = max(self.config.exact_search_spread_hypotheses, 3 if target_worlds >= 6 else 2)
+        set_cap = max(self.config.exact_search_set_hypotheses, 3 if target_worlds >= 6 else 2)
+        bring_cap = max(self.config.exact_search_bring_hypotheses, 3 if target_worlds >= 8 else 2)
+        cfg = dataclasses.replace(
+            self.config,
+            exact_search_total_hypotheses=target_worlds,
+            exact_search_spread_hypotheses=spread_cap,
+            exact_search_set_hypotheses=set_cap,
+            exact_search_bring_hypotheses=bring_cap,
         )
         hyps, audit, _ = compute_mirror_hypotheses(battle, cfg, memory=memory)
         self.last_hypothesis_audit = dict(audit)
@@ -559,7 +746,12 @@ class RustExactMirror:
         )
         patch_dict = _build_rust_patch_dict(battle, snap, side, hypothesis, memory=memory)
         rust_battle.patch_public(patch_dict)
-        foe_items, foe_abilities, foe_moves = _foe_public_knowledge(battle, opp_sets)
+        foe_items, foe_abilities, foe_moves, foe_revealed = _foe_public_knowledge(
+            battle, opp_sets, memory=memory
+        )
+        our_items, our_abilities, our_moves, our_revealed = _our_public_knowledge(
+            battle, self.own_packed_team, memory=memory
+        )
         return RustWorldRoot(
             battle=rust_battle,
             our_side_idx=our_idx,
@@ -567,6 +759,11 @@ class RustExactMirror:
             foe_items=foe_items,
             foe_abilities=foe_abilities,
             foe_moves=foe_moves,
+            foe_revealed=foe_revealed,
+            our_public_items=our_items,
+            our_public_abilities=our_abilities,
+            our_public_moves=our_moves,
+            our_revealed=our_revealed,
         )
 
     def close(self) -> None:
@@ -822,7 +1019,7 @@ def _choice_str_from_slots(
 def _batch_resolve_forced_switches(
     clones: list[pikapro.Battle],
     start_turns: list[int],
-    root: RustWorldRoot,
+    root: RustWorldRoot | Sequence[RustWorldRoot],
     policy: RustFactoredPolicy,
     space: pikapro.ActionSpace,
 ) -> None:
@@ -831,8 +1028,9 @@ def _batch_resolve_forced_switches(
 
     if not clones:
         return
-    our_idx = root.our_side_idx
-    opp_idx = root.opp_side_idx
+    roots: Sequence[RustWorldRoot] = (
+        [root] * len(clones) if isinstance(root, RustWorldRoot) else root
+    )
     s = policy.slot_size
     dev = policy.device
 
@@ -844,7 +1042,8 @@ def _batch_resolve_forced_switches(
         for ci, (clone, st_turn) in enumerate(zip(clones, start_turns, strict=True)):
             if clone.over or clone.turn > st_turn:
                 continue
-            for s_idx in (our_idx, opp_idx):
+            r = roots[ci]
+            for s_idx in (r.our_side_idx, r.opp_side_idx):
                 if clone.request_kind(s_idx) != "force_switch":
                     continue
                 choices = clone.legal_choices(s_idx)
@@ -852,12 +1051,7 @@ def _batch_resolve_forced_switches(
                     if choices:
                         clone.submit(s_idx, choices[0])
                     continue
-                obs = clone.encode_state_rich(
-                    s_idx,
-                    foe_known_items=root.foe_items if s_idx == our_idx else None,
-                    foe_known_abilities=root.foe_abilities if s_idx == our_idx else None,
-                    foe_known_moves=root.foe_moves if s_idx == our_idx else None,
-                )
+                obs = r.encode_obs(clone, s_idx)
                 fmask, min_sw, obs_to_req = _factored_mask_for_battle(clone, s_idx, space, obs)
                 jobs.append((ci, s_idx, obs_to_req))
                 obs_list.append(obs)
@@ -866,8 +1060,15 @@ def _batch_resolve_forced_switches(
         if not jobs:
             # Check if single-choice submits triggered another wave of forced switches.
             still_pending = any(
-                (not c.over and c.turn <= st and (c.request_kind(our_idx) == "force_switch" or c.request_kind(opp_idx) == "force_switch"))
-                for c, st in zip(clones, start_turns, strict=True)
+                (
+                    not c.over
+                    and c.turn <= st
+                    and (
+                        c.request_kind(roots[idx].our_side_idx) == "force_switch"
+                        or c.request_kind(roots[idx].opp_side_idx) == "force_switch"
+                    )
+                )
+                for idx, (c, st) in enumerate(zip(clones, start_turns, strict=True))
             )
             if not still_pending:
                 break
@@ -904,7 +1105,7 @@ def _batch_resolve_forced_switches(
 
 def _batch_step_policy_rollout(
     clones: list[pikapro.Battle],
-    root: RustWorldRoot,
+    root: RustWorldRoot | Sequence[RustWorldRoot],
     policy: RustFactoredPolicy,
     space: pikapro.ActionSpace,
 ) -> None:
@@ -913,8 +1114,9 @@ def _batch_step_policy_rollout(
 
     if not clones:
         return
-    our_idx = root.our_side_idx
-    opp_idx = root.opp_side_idx
+    roots: Sequence[RustWorldRoot] = (
+        [root] * len(clones) if isinstance(root, RustWorldRoot) else root
+    )
     s = policy.slot_size
     dev = policy.device
 
@@ -926,16 +1128,12 @@ def _batch_step_policy_rollout(
     for ci, clone in enumerate(clones):
         if clone.over:
             continue
-        for s_idx in (our_idx, opp_idx):
+        r = roots[ci]
+        for s_idx in (r.our_side_idx, r.opp_side_idx):
             rk = clone.request_kind(s_idx)
             if rk == "wait":
                 continue
-            obs = clone.encode_state_rich(
-                s_idx,
-                foe_known_items=root.foe_items if s_idx == our_idx else None,
-                foe_known_abilities=root.foe_abilities if s_idx == our_idx else None,
-                foe_known_moves=root.foe_moves if s_idx == our_idx else None,
-            )
+            obs = r.encode_obs(clone, s_idx)
             fmask, min_sw, obs_to_req = _factored_mask_for_battle(clone, s_idx, space, obs)
             jobs.append((ci, s_idx, obs_to_req))
             obs_list.append(obs)
@@ -970,12 +1168,14 @@ def _batch_step_policy_rollout(
 
     stepped_clones: list[pikapro.Battle] = []
     stepped_turns: list[int] = []
+    stepped_roots: list[RustWorldRoot] = []
     for ci, side_choices in per_clone.items():
         clone = clones[ci]
         if clone.over:
             continue
+        r = roots[ci]
         start_turn = clone.turn
-        for s_idx in (our_idx, opp_idx):
+        for s_idx in (r.our_side_idx, r.opp_side_idx):
             if clone.over or clone.request_kind(s_idx) == "wait":
                 continue
             cstr = side_choices.get(s_idx)
@@ -988,7 +1188,8 @@ def _batch_step_policy_rollout(
                         clone.submit(s_idx, fallback[0])
         stepped_clones.append(clone)
         stepped_turns.append(start_turn)
-    _batch_resolve_forced_switches(stepped_clones, stepped_turns, root, policy, space)
+        stepped_roots.append(r)
+    _batch_resolve_forced_switches(stepped_clones, stepped_turns, stepped_roots, policy, space)
 
 
 def select_search_action_index(
@@ -1146,12 +1347,7 @@ def _eval_turn2_minigame(
         for s_idx in (our_idx, opp_idx):
             if clone.request_kind(s_idx) == "wait":
                 continue
-            obs = clone.encode_state_rich(
-                s_idx,
-                foe_known_items=root.foe_items if s_idx == our_idx else None,
-                foe_known_abilities=root.foe_abilities if s_idx == our_idx else None,
-                foe_known_moves=root.foe_moves if s_idx == our_idx else None,
-            )
+            obs = root.encode_obs(clone, s_idx)
             fmask, min_sw, obs_to_req = _factored_mask_for_battle(clone, s_idx, space, obs)
             jobs.append((ci, s_idx, obs_to_req))
             obs_list.append(obs)
@@ -1218,14 +1414,7 @@ def _eval_turn2_minigame(
             v = 0.0 if sub.winner is None else (1.0 if sub.winner == our_idx else -1.0)
             vals_by_clone.setdefault(ci, {})[(ai, bi)] = v
         else:
-            eval_obs.append(
-                sub.encode_state_rich(
-                    our_idx,
-                    foe_known_items=root.foe_items,
-                    foe_known_abilities=root.foe_abilities,
-                    foe_known_moves=root.foe_moves,
-                )
-            )
+            eval_obs.append(root.encode_obs(sub, our_idx))
             eval_keys.append((ci, ai, bi))
 
     if eval_obs:
@@ -1321,12 +1510,7 @@ def search_public_rust(
         def _rank_for_side(root: RustWorldRoot, side_idx: int) -> tuple[list[str], dict[str, float]]:
             if root.battle.request_kind(side_idx) == "wait":
                 return ["<wait>"], {"<wait>": 1.0}
-            obs = root.battle.encode_state_rich(
-                side_idx,
-                foe_known_items=root.foe_items if side_idx == root.our_side_idx else None,
-                foe_known_abilities=root.foe_abilities if side_idx == root.our_side_idx else None,
-                foe_known_moves=root.foe_moves if side_idx == root.our_side_idx else None,
-            )
+            obs = root.encode_obs(root.battle, side_idx)
             fmask, min_sw, obs_to_req = _factored_mask_for_battle(
                 root.battle, side_idx, space, obs
             )
@@ -1351,36 +1535,41 @@ def search_public_rust(
                 return fallback, {c: u for c in fallback}
             return ranked, prior_map
 
-        def select(obs_handle: tuple[RustWorldRoot, int] | None) -> list[str]:
-            if obs_handle is None:
-                return ["<wait>"]
-            root, side_idx = obs_handle
-            ranked, prior_map = _rank_for_side(root, side_idx)
-            scored_priors[id(obs_handle)] = prior_map
-            return ranked
-
-        def opp_priors(obs_handle: tuple[RustWorldRoot, int] | None, opp_orders: tuple[str, ...]) -> list[float]:
-            if obs_handle is None or len(opp_orders) <= 1:
-                return [1.0] * len(opp_orders)
-            pmap = scored_priors.get(id(obs_handle)) or {}
-            return [max(pmap.get(c, 0.0), 1e-9) for c in opp_orders]
-
         root_obs = (world_roots[0], world_roots[0].our_side_idx)
+        our_ranked_list, our_prior_map = _rank_for_side(world_roots[0], world_roots[0].our_side_idx)
+        our_orders_tuple = tuple(our_ranked_list[:actions])
+        scored_priors[id(root_obs)] = our_prior_map
 
-        def eval_matrix(
-            root: RustWorldRoot, our_orders: tuple[str, ...], opp_orders: tuple[str, ...]
-        ) -> np.ndarray:
-            cells: list[list[list[float]]] = [[[] for _ in opp_orders] for _ in our_orders]
-            pending_pos: list[tuple[int, int]] = []
-            pending_clones: list[pikapro.Battle] = []
+        cached_orders: dict[int, list[str]] = {id(root_obs): list(our_orders_tuple)}
+        opp_orders_by_world: list[tuple[str, ...]] = []
+        for sw in sampled:
+            obs_handle = sw.opponent_observation
+            if obs_handle is None:
+                opp_orders_by_world.append(("<wait>",))
+                continue
+            r_w, s_w = obs_handle
+            r_ranked, r_pmap = _rank_for_side(r_w, s_w)
+            r_trimmed = r_ranked[:actions]
+            cached_orders[id(obs_handle)] = r_trimmed
+            scored_priors[id(obs_handle)] = r_pmap
+            opp_orders_by_world.append(tuple(r_trimmed))
+
+        # Pre-evaluate ALL worlds in ONE unified cross-world GPU batch (Turn-1 forced
+        # switches, Turn-2 rollouts, and leaf values) instead of W separate small GPU calls.
+        cells_by_world: list[list[list[list[float]]]] = [
+            [[[] for _ in opp_orders_by_world[wi]] for _ in our_orders_tuple]
+            for wi in range(len(world_roots))
+        ]
+        all_meta: list[tuple[int, int, int]] = []  # (world_idx, i, j)
+        all_clones: list[pikapro.Battle] = []
+        all_start_turns: list[int] = []
+        all_roots: list[RustWorldRoot] = []
+
+        for wi, root in enumerate(world_roots):
             our_idx = root.our_side_idx
             opp_idx = root.opp_side_idx
-
-            all_pos: list[tuple[int, int]] = []
-            all_clones: list[pikapro.Battle] = []
-            all_start_turns: list[int] = []
-            for i, our_c in enumerate(our_orders):
-                for j, opp_c in enumerate(opp_orders):
+            for i, our_c in enumerate(our_orders_tuple):
+                for j, opp_c in enumerate(opp_orders_by_world[wi]):
                     for fseed in future_seeds:
                         clone = root.battle.fork(seed=fseed)
                         start_turn = clone.turn
@@ -1388,64 +1577,76 @@ def search_public_rust(
                             clone.submit(our_idx, our_c)
                         if not clone.over and opp_c != "<wait>" and clone.request_kind(opp_idx) != "wait":
                             clone.submit(opp_idx, opp_c)
-                        all_pos.append((i, j))
+                        all_meta.append((wi, i, j))
                         all_clones.append(clone)
                         all_start_turns.append(start_turn)
+                        all_roots.append(root)
 
-            _batch_resolve_forced_switches(all_clones, all_start_turns, root, policy, space)
-            # Save 1 Turn-1 post-exchange fork per (i, j) for uniform Turn-2 2x2 Nash evaluation.
-            saved_turn1: dict[tuple[int, int], list[pikapro.Battle]] = {}
-            need_t2_check = rollout_turns == 1 and second_turn_branch >= 2 and len(our_orders) >= 2
-            for (i, j), clone in zip(all_pos, all_clones, strict=True):
+        _batch_resolve_forced_switches(all_clones, all_start_turns, all_roots, policy, space)
+
+        saved_turn1_by_world: list[dict[tuple[int, int], list[pikapro.Battle]]] = [
+            {} for _ in world_roots
+        ]
+        need_t2_check = rollout_turns == 1 and second_turn_branch >= 2 and len(our_orders_tuple) >= 2
+        pending_meta: list[tuple[int, int, int]] = []
+        pending_clones: list[pikapro.Battle] = []
+        pending_roots: list[RustWorldRoot] = []
+
+        for (wi, i, j), clone, root in zip(all_meta, all_clones, all_roots, strict=True):
+            if clone.over:
+                if clone.winner is None:
+                    cells_by_world[wi][i][j].append(0.0)
+                else:
+                    cells_by_world[wi][i][j].append(1.0 if clone.winner == root.our_side_idx else -1.0)
+            else:
+                if need_t2_check and not saved_turn1_by_world[wi].get((i, j)):
+                    saved_turn1_by_world[wi][(i, j)] = [clone.fork(seed=future_seeds[0])]
+                pending_meta.append((wi, i, j))
+                pending_clones.append(clone)
+                pending_roots.append(root)
+
+        # Multi-turn batched GPU rollout across ALL worlds simultaneously.
+        for _ in range(rollout_turns):
+            if not pending_clones:
+                break
+            _batch_step_policy_rollout(pending_clones, pending_roots, policy, space)
+            next_meta: list[tuple[int, int, int]] = []
+            next_clones: list[pikapro.Battle] = []
+            next_roots: list[RustWorldRoot] = []
+            for (wi, i, j), clone, root in zip(pending_meta, pending_clones, pending_roots, strict=True):
                 if clone.over:
                     if clone.winner is None:
-                        cells[i][j].append(0.0)
+                        cells_by_world[wi][i][j].append(0.0)
                     else:
-                        cells[i][j].append(1.0 if clone.winner == our_idx else -1.0)
+                        cells_by_world[wi][i][j].append(
+                            1.0 if clone.winner == root.our_side_idx else -1.0
+                        )
                 else:
-                    if need_t2_check and not saved_turn1.get((i, j)):
-                        saved_turn1[(i, j)] = [clone.fork(seed=future_seeds[0])]
-                    pending_pos.append((i, j))
-                    pending_clones.append(clone)
+                    next_meta.append((wi, i, j))
+                    next_clones.append(clone)
+                    next_roots.append(root)
+            pending_meta = next_meta
+            pending_clones = next_clones
+            pending_roots = next_roots
 
-            # Optional multi-turn batched GPU rollout past the 1-turn horizon.
-            for _ in range(rollout_turns):
-                if not pending_clones:
-                    break
-                _batch_step_policy_rollout(pending_clones, root, policy, space)
-                next_pos: list[tuple[int, int]] = []
-                next_clones: list[pikapro.Battle] = []
-                for (i, j), clone in zip(pending_pos, pending_clones, strict=True):
-                    if clone.over:
-                        if clone.winner is None:
-                            cells[i][j].append(0.0)
-                        else:
-                            cells[i][j].append(1.0 if clone.winner == our_idx else -1.0)
-                    else:
-                        next_pos.append((i, j))
-                        next_clones.append(clone)
-                pending_pos = next_pos
-                pending_clones = next_clones
+        if pending_clones:
+            pending_obs = [
+                root.encode_obs(clone, root.our_side_idx)
+                for clone, root in zip(pending_clones, pending_roots, strict=True)
+            ]
+            vals = policy.values_from_obs(np.stack(pending_obs, axis=0))
+            for (wi, i, j), v in zip(pending_meta, vals.tolist(), strict=True):
+                cells_by_world[wi][i][j].append(float(v))
 
-            if pending_clones:
-                pending_obs = [
-                    clone.encode_state_rich(
-                        our_idx,
-                        foe_known_items=root.foe_items,
-                        foe_known_abilities=root.foe_abilities,
-                        foe_known_moves=root.foe_moves,
-                    )
-                    for clone in pending_clones
-                ]
-                vals = policy.values_from_obs(np.stack(pending_obs, axis=0))
-                for (i, j), v in zip(pending_pos, vals.tolist(), strict=True):
-                    cells[i][j].append(float(v))
-
-            # Uniform Turn-2 `branch x branch` Nash check across ALL rows & cols (zero cross-row bias!).
-            if need_t2_check and saved_turn1:
+        # Assemble per-world payoff matrices (with optional Turn-2 Nash refinement & prior bonus).
+        precomputed_matrices: dict[int, np.ndarray] = {}
+        for wi, root in enumerate(world_roots):
+            cells = cells_by_world[wi]
+            opp_orders = opp_orders_by_world[wi]
+            if need_t2_check and saved_turn1_by_world[wi]:
                 refine_clones: list[pikapro.Battle] = []
                 refine_keys: list[tuple[int, int]] = []
-                for (i, j), c_list in saved_turn1.items():
+                for (i, j), c_list in saved_turn1_by_world[wi].items():
                     for c1 in c_list:
                         refine_clones.append(c1)
                         refine_keys.append((i, j))
@@ -1462,22 +1663,41 @@ def search_public_rust(
                     for key, val in zip(refine_keys, t2_vals, strict=True):
                         by_cell.setdefault(key, []).append(val)
                     for (i, j), vals_list in by_cell.items():
-                        # Blend 50/50 with the multi-seed 1x1 rollout so variance stays low while
-                        # Turn-2 tactical traps (Protect/Sucker Punch/Encore/switches) show up!
                         base_mean = float(np.mean(cells[i][j])) if cells[i][j] else 0.0
                         cells[i][j] = [0.5 * base_mean + 0.5 * float(np.mean(vals_list))]
 
-            our_priors = scored_priors.get(id(root_obs)) or {}
-            mat = np.empty((len(our_orders), len(opp_orders)), dtype=float)
-            for i, our_c in enumerate(our_orders):
+            mat = np.empty((len(our_orders_tuple), len(opp_orders)), dtype=float)
+            for i, our_c in enumerate(our_orders_tuple):
                 bonus = (
-                    prior_bonus * float(np.log(max(our_priors.get(our_c, 1e-4), 1e-4)))
+                    prior_bonus * float(np.log(max(our_prior_map.get(our_c, 1e-4), 1e-4)))
                     if prior_bonus > 0.0
                     else 0.0
                 )
                 for j in range(len(opp_orders)):
                     mat[i, j] = (float(np.mean(cells[i][j])) if cells[i][j] else 0.0) + bonus
-            return mat
+            precomputed_matrices[id(root)] = mat
+
+        def select(obs_handle: tuple[RustWorldRoot, int] | None) -> list[str]:
+            if obs_handle is None:
+                return ["<wait>"]
+            cached = cached_orders.get(id(obs_handle))
+            if cached is not None:
+                return cached
+            root, side_idx = obs_handle
+            ranked, prior_map = _rank_for_side(root, side_idx)
+            scored_priors[id(obs_handle)] = prior_map
+            return ranked
+
+        def opp_priors(obs_handle: tuple[RustWorldRoot, int] | None, opp_orders: tuple[str, ...]) -> list[float]:
+            if obs_handle is None or len(opp_orders) <= 1:
+                return [1.0] * len(opp_orders)
+            pmap = scored_priors.get(id(obs_handle)) or {}
+            return [max(pmap.get(c, 0.0), 1e-9) for c in opp_orders]
+
+        def eval_matrix(
+            root: RustWorldRoot, our_orders: tuple[str, ...], opp_orders: tuple[str, ...]
+        ) -> np.ndarray:
+            return precomputed_matrices[id(root)]
 
         result = search_sampled_worlds(
             root_obs,

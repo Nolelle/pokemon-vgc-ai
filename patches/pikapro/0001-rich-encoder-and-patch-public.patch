@@ -588,8 +588,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  mod power;
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
 --- a/crates/pikapro-py/src/python.rs	2026-11-23 19:08:01
-+++ b/crates/pikapro-py/src/python.rs	2026-11-23 19:12:15
-@@ -1365,6 +1365,398 @@
++++ b/crates/pikapro-py/src/python.rs	2026-11-24 15:59:10
+@@ -1365,6 +1365,401 @@
          )
      }
  
@@ -606,9 +606,9 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +        array(py, out, vec![Rich::SIZE])
 +    }
 +
-+    /// Fog-safe `rich` observation (`float32` array of length `1028`) directly from the
++    /// Fog-safe `rich` observation (`float32` array of length `1124`) directly from the
 +    /// battle's internal state (used on `patch_public` search leaves whose log starts fresh).
-+    #[pyo3(signature = (side, foe_known_items=None, foe_known_abilities=None, foe_known_moves=None))]
++    #[pyo3(signature = (side, foe_known_items=None, foe_known_abilities=None, foe_known_moves=None, foe_revealed=None))]
 +    fn encode_state_rich<'py>(
 +        &self,
 +        py: Python<'py>,
@@ -616,6 +616,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +        foe_known_items: Option<Vec<Option<String>>>,
 +        foe_known_abilities: Option<Vec<Option<String>>>,
 +        foe_known_moves: Option<Vec<Vec<String>>>,
++        foe_revealed: Option<Vec<bool>>,
 +    ) -> PyResult<Bound<'py, PyAny>> {
 +        use pikapro_rl::encode::{Rich, encode_battle_state_rich};
 +        let side = side_arg(side)?;
@@ -636,6 +637,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +            .into_iter()
 +            .map(|list| list.into_iter().filter_map(|s| dex.move_by_name(&s)).collect())
 +            .collect();
++        let revealed: Vec<bool> = foe_revealed.unwrap_or_default();
 +        let mut out = vec![0.0f32; Rich::SIZE];
 +        encode_battle_state_rich(
 +            &self.game.battle,
@@ -646,6 +648,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +            &items,
 +            &abilities,
 +            &moves,
++            &revealed,
 +            &mut out,
 +        );
 +        array(py, out, vec![Rich::SIZE])
@@ -1040,8 +1043,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
 --- a/crates/pikapro-rl/src/encode/rich.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-23 21:23:16
-@@ -0,0 +1,714 @@
++++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-24 15:58:50
+@@ -0,0 +1,735 @@
 +//! The `rich` observation: structured token-ready features for transformer policies.
 +//!
 +//! Layout (`SIZE = 1028` floats per player):
@@ -1064,7 +1067,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +//! - `2` Side blocks (own `960..980`, foe `980..1000`) × `20` floats.
 +//! - `1` Field block (`1000..1028`) × `28` floats.
 +
-+use pikapro::state::{SideCondition, Status, Terrain, Volatiles, Weather};
++use pikapro::state::{MoveResult, SideCondition, Status, Terrain, Volatiles, Weather};
 +use pikapro::{Battle, MAX_ACTIVE, MAX_MOVES, Request, SideId};
 +use pikapro_data::{AbilityId, ItemId, MoveId, Stat, Type};
 +use pikapro_view::{AbilityState, ItemState, OwnRequest, PlayerView, PublicVolatiles as PV};
@@ -1448,12 +1451,22 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +    }
 +}
 +
++fn extended_rem_frac(rem: u8) -> f32 {
++    // Match `extended_turns_frac(elapsed)` in `PlayerView` for 5-turn base and 8-turn
++    // extender items (Light Clay / Weather Rocks / Terrain Extender): on turns 1..3 of
++    // an 8-turn extender (`rem = 8, 7, 6`), `PlayerView` sees `elapsed = 0, 1, 2` and
++    // reports `(5 - elapsed) / 5 = (rem - 3) / 5`. For `rem <= 5`, report `rem / 5`.
++    let eff = if rem > 5 { rem.saturating_sub(3) } else { rem };
++    f32::from(eff.min(5)) / 5.0
++}
++
 +/// Fog-safe rich encoding directly from a [`Battle`] (used for patched search leaves
 +/// whose event log does not contain earlier turns).
 +///
 +/// For `me`, full private team knowledge is encoded. For `me.foe()`, hidden items,
 +/// abilities and unrevealed moves are masked to `0` unless explicitly marked in
-+/// `foe_revealed_*` (or active/used during the simulated branch).
++/// `foe_known_*` (or active/used during the simulated branch).
++#[allow(clippy::too_many_arguments)]
 +pub fn encode_battle_state_rich(
 +    battle: &Battle,
 +    me: SideId,
@@ -1463,6 +1476,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +    foe_known_items: &[Option<ItemId>],
 +    foe_known_abilities: &[Option<AbilityId>],
 +    foe_known_moves: &[Vec<MoveId>],
++    foe_revealed: &[bool],
 +    out: &mut [f32],
 +) {
 +    out.fill(0.0);
@@ -1485,7 +1499,16 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +            let active_slot = (0..MAX_ACTIVE).find(|&s| side.active[s] == Some(idx as u8));
 +            let is_active = active_slot.is_some();
 +            let is_fainted = mon.is_fainted();
-+            let is_revealed = is_own || is_active || is_fainted || mon.hp < mon.stats[Stat::Hp];
++            let is_revealed = is_own
++                || is_active
++                || is_fainted
++                || mon.hp < mon.stats[Stat::Hp]
++                || mon.status != Status::None
++                || mon.moves.iter().any(|mv| mv.pp < mv.max_pp)
++                || foe_revealed.get(row).copied().unwrap_or(false)
++                || foe_known_items.get(row).copied().flatten().is_some()
++                || foe_known_abilities.get(row).copied().flatten().is_some()
++                || foe_known_moves.get(row).is_some_and(|list| !list.is_empty());
 +
 +            // 0..8: IDs
 +            o[0] = (mon.species.index() + 1) as f32;
@@ -1589,12 +1612,13 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +
 +            // 60..66: tactical counters
 +            if is_active {
++                let moved_this_turn = mon.volatile_counters.move_this_turn != MoveResult::Undefined;
 +                o[60] = f32::from(mon.protect_counter.min(4)) / 4.0;
-+                o[61] = flag(mon.active_move_actions == 0 && mon.active_turns <= 1);
++                o[61] = flag(mon.active_move_actions == 0 && mon.active_turns <= 1 && !moved_this_turn);
 +                o[62] = f32::from((mon.active_turns.min(10)) as u8) / 10.0;
 +                o[63] = flag(is_own && mon.can_mega_evo.is_some());
 +                o[64] = flag(mon.trapped || mon.volatiles.has(Volatiles::TRAPPED | Volatiles::PARTIALLY_TRAPPED));
-+                o[65] = flag(mon.active_move_actions > 0);
++                o[65] = flag(moved_this_turn);
 +                // 74..80: volatiles
 +                o[74] = flag(mon.volatiles.has(Volatiles::MUST_RECHARGE));
 +                o[75] = flag(mon.volatiles.has(Volatiles::CHARGING | Volatiles::TWO_TURN_MOVE));
@@ -1709,11 +1733,11 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +        o[3] = flag(c.tailwind > 0);
 +        o[4] = f32::from(c.tailwind.min(4)) / 4.0;
 +        o[5] = flag(c.reflect > 0);
-+        o[6] = f32::from(c.reflect.min(5)) / 5.0;
++        o[6] = if c.reflect > 0 { extended_rem_frac(c.reflect) } else { 0.0 };
 +        o[7] = flag(c.light_screen > 0);
-+        o[8] = f32::from(c.light_screen.min(5)) / 5.0;
++        o[8] = if c.light_screen > 0 { extended_rem_frac(c.light_screen) } else { 0.0 };
 +        o[9] = flag(c.aurora_veil > 0);
-+        o[10] = f32::from(c.aurora_veil.min(5)) / 5.0;
++        o[10] = if c.aurora_veil > 0 { extended_rem_frac(c.aurora_veil) } else { 0.0 };
 +        o[11] = flag(c.safeguard > 0);
 +        o[12] = flag(c.mist > 0);
 +        o[13] = flag(c.wide_guard > 0);
@@ -1730,11 +1754,11 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +    let o = &mut out[side_base + 2 * RICH_SIDE_WIDTH..][..RICH_FIELD_WIDTH];
 +    if let Some(w) = f.weather {
 +        one_hot(&mut o[0..WEATHER_LEN], weather_index(w));
-+        o[7] = f32::from(f.weather_turns.min(5)) / 5.0;
++        o[7] = extended_rem_frac(f.weather_turns);
 +    }
 +    if let Some(t) = f.terrain {
 +        one_hot(&mut o[8..8 + TERRAIN_LEN], terrain_index(t));
-+        o[12] = f32::from(f.terrain_turns.min(5)) / 5.0;
++        o[12] = extended_rem_frac(f.terrain_turns);
 +    }
 +    o[13] = flag(f.trick_room_turns > 0);
 +    o[14] = f32::from(f.trick_room_turns.min(5)) / 5.0;
