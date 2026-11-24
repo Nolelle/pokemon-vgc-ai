@@ -35,6 +35,7 @@ from vgc.battle_state_gate import enforce_battle_state_gate_for_cli
 from vgc.config import FORMAT_ID
 from vgc.mechanics_gate import enforce_mechanics_gate_for_cli
 from vgc.rl.rust_policy import (
+    RICH_FIELD_TURN_IDX,
     RICH_OBS_SIZE,
     RustFactoredPolicy,
     load_rust_policy,
@@ -97,7 +98,7 @@ class Snapshot:
 
 @dataclass
 class StepRecord:
-    obs: np.ndarray  # (1028,) float32
+    obs: np.ndarray  # (1124,) float32
     mask: np.ndarray  # (mask_width,) bool
     min_switches: int
     is_preview: bool
@@ -872,8 +873,8 @@ def train(args: argparse.Namespace) -> None:
                             vs_anchor_games += 1
                             vs_anchor_points += (r0 + 1.0) * 0.5
                         draws += int(r0 == 0.0)
-                        # Approximate turn count from field.turn column (index 1020 = turn / 100)
-                        turns_sum += int(round(float(step.obs[ei, 0, 1020]) * 100.0))
+                        # Approximate turn count from field.turn column (= turn / 100)
+                        turns_sum += int(round(float(step.obs[ei, 0, RICH_FIELD_TURN_IDX]) * 100.0))
                         batch_games_done += 1
 
                 batch = _collate_samples(records)

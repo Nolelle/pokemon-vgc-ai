@@ -30,13 +30,14 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-RICH_MON_WIDTH = 80
+RICH_MON_WIDTH = 88
 RICH_MON_IDS = 8
-RICH_MON_SCALARS = RICH_MON_WIDTH - RICH_MON_IDS  # 72
+RICH_MON_SCALARS = RICH_MON_WIDTH - RICH_MON_IDS  # 80
 RICH_SIDE_WIDTH = 20
 RICH_FIELD_WIDTH = 28
 RICH_GLOBAL_DIM = 2 * RICH_SIDE_WIDTH + RICH_FIELD_WIDTH  # 68
-RICH_OBS_SIZE = 12 * RICH_MON_WIDTH + RICH_GLOBAL_DIM  # 1028
+RICH_OBS_SIZE = 12 * RICH_MON_WIDTH + RICH_GLOBAL_DIM  # 1124
+RICH_FIELD_TURN_IDX = 12 * RICH_MON_WIDTH + 2 * RICH_SIDE_WIDTH + 20
 RUST_POLICY_VERSION = 2
 
 _MOVE_SLOTS = 4
@@ -453,17 +454,34 @@ class RustFactoredPolicy(nn.Module):
         return [(t[1], t[2]) for t in top], probs, value_f
 
     @torch.no_grad()
-    def choose_preview_index(self, obs_1d: np.ndarray, preview_mask: np.ndarray) -> int:
+    def top_preview_indices(
+        self, obs_1d: np.ndarray, preview_mask: np.ndarray, *, limit: int = 10
+    ) -> tuple[list[int], np.ndarray]:
+        """Rank legal team-preview indices by policy probability (descending)."""
         x = (
             torch.from_numpy(np.ascontiguousarray(obs_1d, dtype=np.float32))
             .unsqueeze(0)
             .to(self.device)
         )
         enc = self.encode_board(x)
-        logits = self.preview_logits(enc)[0]
-        mask_t = torch.from_numpy(np.asarray(preview_mask, dtype=bool)).to(self.device)
-        logits = logits.masked_fill(~mask_t, -torch.inf)
-        return int(logits.argmax().item())
+        logits = self.preview_logits(enc)[0].cpu().numpy()
+        mask = np.asarray(preview_mask, dtype=bool)
+        legal = np.flatnonzero(mask)
+        if len(legal) == 0:
+            return [], np.empty(0, dtype=np.float64)
+        masked = np.where(mask, logits, -1e9)
+        shifted = masked - float(np.max(masked[legal]))
+        exp_legal = np.exp(shifted[legal])
+        probs_legal = exp_legal / float(np.sum(exp_legal))
+        order = np.argsort(-probs_legal, kind="stable")[:limit]
+        return [int(legal[i]) for i in order], probs_legal[order].astype(np.float64)
+
+    @torch.no_grad()
+    def choose_preview_index(self, obs_1d: np.ndarray, preview_mask: np.ndarray) -> int:
+        top, _ = self.top_preview_indices(obs_1d, preview_mask, limit=1)
+        if not top:
+            return 0
+        return top[0]
 
     def checkpoint(self) -> dict[str, object]:
         return {
@@ -472,6 +490,7 @@ class RustFactoredPolicy(nn.Module):
             "width": self.width,
             "layers": self.layers,
             "dex_sizes": self.dex_sizes,
+            "rich_mon_width": RICH_MON_WIDTH,
             "model": {k: v.detach().cpu() for k, v in self.state_dict().items()},
         }
 
@@ -496,7 +515,18 @@ def load_rust_policy(path: str | Path, device: str = "cpu") -> RustFactoredPolic
         format_id=str(ckpt.get("format_id", "championsvgc")),
         dex_sizes=dict(ckpt["dex_sizes"]),
     ).to(device)
-    model.load_state_dict(ckpt["model"])
+    state = dict(ckpt["model"])
+    # Backwards-compatible zero-padding when loading an older rich-obs checkpoint (e.g.
+    # 80-float mon rows -> 88-float mon rows with appended VGC counter features). Since
+    # new columns are appended at the tail of `scalars_no_mv`, zero-initialized input
+    # columns produce bit-identical logits and values until fine-tuned.
+    saved_w = state.get("mon_scalars.weight")
+    target_w = model.mon_scalars.weight
+    if saved_w is not None and saved_w.shape[0] == target_w.shape[0] and saved_w.shape[1] < target_w.shape[1]:
+        padded = torch.zeros_like(target_w, device=saved_w.device, dtype=saved_w.dtype)
+        padded[:, : saved_w.shape[1]] = saved_w
+        state["mon_scalars.weight"] = padded
+    model.load_state_dict(state)
     return model.eval()
 
 

@@ -274,6 +274,12 @@ class BattleMemory:
                 cant_role = _side(message[2])
                 if cant_role:
                     self._acted.add((cant_role, to_id(_display_name(message[2]))))
+            if kind == "-mega" and len(message) > 4:
+                if _side(message[2]) == self.opponent_role:
+                    stone = to_id(message[4])
+                    if stone:
+                        self.opponent_items[self._species_for_ident(message[2])] = stone
+                continue
             if kind == "detailschange" and len(message) > 3:
                 mega_role = _side(message[2])
                 forme = to_id(str(message[3]).split(",", 1)[0])

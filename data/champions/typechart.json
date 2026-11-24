@@ -197,7 +197,6 @@
   "ghost": {
     "name": "Ghost",
     "damageTaken": {
-      "trapped": 3,
       "Bug": 2,
       "Dark": 1,
       "Dragon": 0,

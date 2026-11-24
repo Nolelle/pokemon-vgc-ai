@@ -1,6 +1,6 @@
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/battle.rs b/crates/pikapro/src/battle.rs
---- a/crates/pikapro/src/battle.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro/src/battle.rs	2026-11-21 18:23:09
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/battle.rs b/crates/pikapro/src/battle.rs
+--- a/crates/pikapro/src/battle.rs	2026-11-23 19:08:01
++++ b/crates/pikapro/src/battle.rs	2026-11-23 19:08:02
 @@ -339,7 +339,7 @@
      }
  
@@ -10,9 +10,9 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/battle.rs b
          // Filled in a local pair and copied in once (returned by value,
          // each side's would be copied out of `legal_actions` and again into
          // place).
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/lib.rs b/crates/pikapro/src/lib.rs
---- a/crates/pikapro/src/lib.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro/src/lib.rs	2026-11-21 18:21:38
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/lib.rs b/crates/pikapro/src/lib.rs
+--- a/crates/pikapro/src/lib.rs	2026-11-23 19:08:01
++++ b/crates/pikapro/src/lib.rs	2026-11-23 19:08:02
 @@ -95,6 +95,7 @@
  pub mod event;
  pub mod format;
@@ -21,10 +21,10 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/lib.rs b/cr
  pub mod request;
  pub(crate) mod resolve;
  pub mod result;
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/crates/pikapro/src/patch.rs
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/crates/pikapro/src/patch.rs
 --- a/crates/pikapro/src/patch.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro/src/patch.rs	2026-11-21 18:23:08
-@@ -0,0 +1,426 @@
++++ b/crates/pikapro/src/patch.rs	2026-11-23 19:20:33
+@@ -0,0 +1,549 @@
 +//! Direct public-state patching for fast search roots (`Battle::patch_public`).
 +//!
 +//! Lets a search mirror start a `Battle` with our known team and a hypothesized
@@ -88,6 +88,30 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +    pub must_recharge: bool,
 +    /// Unburden active (lost item this stint).
 +    pub unburden: bool,
++    /// Last move used by this Pokémon (for Encore/Disable/Torment).
++    pub last_move: Option<MoveId>,
++    /// Perish Song remaining turns (`3..=1`, `0` = none).
++    pub perish_turns: u8,
++    /// Yawn remaining turns (`1` = falls asleep end of this turn, `0` = none).
++    pub yawn_turns: u8,
++    /// Leech Seed active, storing the foe slot (`0` or `1`) that receives healing.
++    pub leech_seed: Option<u8>,
++    /// Salt Cure active.
++    pub salt_cure: bool,
++    /// Ghost-type Curse active.
++    pub curse: bool,
++    /// Syrup Bomb remaining turns (`0` = none).
++    pub syrup_bomb_turns: u8,
++    /// Heal Block (Psychic Noise) remaining turns (`0` = none).
++    pub heal_block_turns: u8,
++    /// Throat Chop remaining turns (`0` = none).
++    pub throat_chop_turns: u8,
++    /// Partially trapped (Bind/Whirlpool/Fire Spin/Magma Storm/Sand Tomb): `(move_id, turns)`.
++    pub partially_trapped: Option<(MoveId, u8)>,
++    /// Rampage lock (Outrage/Thrash/Petal Dance/Raging Fury): `(move_id, remaining_turns)`.
++    pub locked_move: Option<(MoveId, u8)>,
++    /// Two-turn charging move (Electro Shot/Solar Beam/Fly/Phantom Force): `(move_id, target_loc)`.
++    pub two_turn_move: Option<(MoveId, i8)>,
 +    /// Per-move PP overrides `(move_id, pp)`.
 +    pub move_pp: Vec<(MoveId, u8)>,
 +    /// Explicitly disabled moves.
@@ -262,9 +286,16 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +                    } else if let Some(pct) = mp.hp_pct {
 +                        if pct == 0 {
 +                            mon.hp = 0;
++                        } else if pct >= 100 {
++                            mon.hp = max_hp;
 +                        } else {
-+                            let scaled = ((u32::from(pct) * u32::from(max_hp)) + 50) / 100;
-+                            mon.hp = (scaled as u16).clamp(1, max_hp);
++                            // Unbiased midpoint of Champions `floor(100 * hp / max_hp) || 1`.
++                            let m = u32::from(max_hp);
++                            let p = u32::from(pct);
++                            let low = ((p * m + 99) / 100).max(1);
++                            let high_excl = (((p + 1) * m + 99) / 100).saturating_sub(1);
++                            let high = high_excl.min(m.saturating_sub(1)).max(low);
++                            mon.hp = (((low + high) / 2) as u16).clamp(1, max_hp);
 +                        }
 +                    }
 +                    mon.status = mp.status;
@@ -272,12 +303,17 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +                    mon.protect_counter = mp.protect_counter;
 +                    if mp.protect_counter > 0 {
 +                        mon.volatiles.set(Volatiles::STALL);
-+                        mon.stall_turns = 2;
++                        // By the next turn's decision, Showdown/pikapro has already ticked
++                        // `stall_turns` from 2 down to 1 during the previous turn's residual.
++                        mon.stall_turns = 1;
 +                    }
 +                    mon.active_turns = mp.active_turns;
 +                    mon.active_move_actions = mp.active_move_actions;
 +                    mon.volatile_counters.settled = mp.active_turns > 0;
 +                    mon.trapped = mp.trapped;
++                    if let Some(mv) = mp.last_move {
++                        mon.last_move = Some(mv);
++                    }
 +
 +                    if let Some(mv) = mp.choice_lock {
 +                        mon.volatiles.set(Volatiles::CHOICE_LOCK);
@@ -316,6 +352,63 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +                    }
 +                    if mp.unburden {
 +                        mon.volatiles.set(Volatiles::UNBURDEN);
++                    }
++                    if mp.perish_turns > 0 {
++                        mon.volatiles.set(Volatiles::PERISH_SONG);
++                        mon.volatile_counters.perish_song = mp.perish_turns;
++                    }
++                    if mp.yawn_turns > 0 {
++                        mon.volatiles.set(Volatiles::YAWN);
++                        mon.volatile_counters.yawn = mp.yawn_turns;
++                        mon.volatile_counters.yawn_source = crate::state::Position::new(side_id.foe(), 0);
++                    }
++                    if let Some(foe_slot) = mp.leech_seed {
++                        mon.volatiles.set(Volatiles::LEECH_SEED);
++                        mon.volatile_counters.leech_seed_slot =
++                            crate::state::Position::new(side_id.foe(), foe_slot.min(1));
++                    }
++                    if mp.salt_cure {
++                        mon.volatiles.set(Volatiles::SALT_CURE);
++                    }
++                    if mp.curse {
++                        mon.volatiles.set(Volatiles::CURSE);
++                    }
++                    if mp.syrup_bomb_turns > 0 {
++                        mon.volatiles.set(Volatiles::SYRUP_BOMB);
++                        mon.volatile_counters.syrup_bomb = mp.syrup_bomb_turns;
++                        mon.volatile_counters.syrup_bomb_by = (side_id.foe(), 0);
++                    }
++                    if mp.heal_block_turns > 0 {
++                        mon.volatiles.set(Volatiles::HEAL_BLOCK);
++                        mon.volatile_counters.heal_block = mp.heal_block_turns;
++                    }
++                    if mp.throat_chop_turns > 0 {
++                        mon.volatiles.set(Volatiles::THROAT_CHOP);
++                        mon.volatile_counters.throat_chop = mp.throat_chop_turns;
++                    }
++                    if let Some((mv, turns)) = mp.partially_trapped
++                        && turns > 0
++                    {
++                        mon.volatiles.set(Volatiles::PARTIALLY_TRAPPED);
++                        mon.volatile_counters.partially_trapped = turns;
++                        mon.volatile_counters.partially_trapped_move = mv;
++                        mon.volatile_counters.partially_trapped_by = (side_id.foe(), 0);
++                    }
++                    if let Some((mv, turns)) = mp.locked_move
++                        && turns > 0
++                    {
++                        mon.volatiles.set(Volatiles::LOCKED_MOVE);
++                        mon.volatile_counters.locked_move = turns;
++                        mon.volatile_counters.locked_true_duration = turns;
++                        mon.volatile_counters.locked_move_id = mv;
++                    }
++                    if let Some((mv, target_loc)) = mp.two_turn_move {
++                        mon.volatiles.set(Volatiles::TWO_TURN_MOVE);
++                        mon.volatiles.set(Volatiles::CHARGING);
++                        mon.volatile_counters.two_turn = 1;
++                        mon.volatile_counters.charge_move = mv;
++                        mon.volatile_counters.charging = 1;
++                        mon.volatile_counters.charge_target_loc = target_loc;
 +                    }
 +                }
 +
@@ -442,19 +535,61 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/
 +            self.requests = [Request::Move, Request::Move];
 +        }
 +
-+        // Refresh event filters, condition caches, and legal actions.
++        // Refresh event filters, condition caches, DisableMove flags, and legal actions.
 +        (self.event_filter, self.prefixed_filter) = resolve::events::filters(self);
 +        self.conditions_version = self.conditions_version.wrapping_add(1);
 +        self.masks_memo = resolve::events::MasksMemo::EMPTY;
 +        self.masks_cached = resolve::events::Cached::No;
 +        self.fresh_speeds = 0;
++
++        // Run pikapro's own `DisableMove` pass (enforces Choice lock, Encore, Disable,
++        // Taunt, Heal Block, Throat Chop, Torment, Imprison, Gravity, Fake Out, etc.)
++        // while preserving any explicitly patched disabled move flags from our request.
++        for side_id in SideId::BOTH {
++            for slot in 0..MAX_ACTIVE {
++                let pos = crate::state::Position::new(side_id, slot as u8);
++                let Some(mon) = self.state.at(pos) else { continue };
++                if mon.is_fainted() {
++                    continue;
++                }
++                let explicit: [bool; crate::state::MAX_MOVES] = {
++                    let mut arr = [false; crate::state::MAX_MOVES];
++                    for (i, m) in mon.moves.iter().enumerate() {
++                        arr[i] = m.disabled;
++                    }
++                    arr
++                };
++                resolve::volatiles::disable_moves(self, pos);
++                if let Some(mon_mut) = self.state.at_mut(pos) {
++                    for (i, m) in mon_mut.moves.iter_mut().enumerate() {
++                        if explicit[i] {
++                            m.disabled = true;
++                            mon_mut.effect_disabled |= 1 << i;
++                        }
++                    }
++                }
++            }
++        }
++
 +        self.refresh_legal();
 +    }
 +}
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
---- a/crates/pikapro-py/src/python.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro-py/src/python.rs	2026-11-21 22:18:21
-@@ -1365,6 +1365,338 @@
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/resolve/mod.rs b/crates/pikapro/src/resolve/mod.rs
+--- a/crates/pikapro/src/resolve/mod.rs	2026-11-23 19:08:01
++++ b/crates/pikapro/src/resolve/mod.rs	2026-11-23 19:20:54
+@@ -37,7 +37,7 @@
+ mod status;
+ mod switching;
+ mod targeting;
+-mod volatiles;
++pub(crate) mod volatiles;
+ 
+ // The damage formula's callbacks.
+ mod power;
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
+--- a/crates/pikapro-py/src/python.rs	2026-11-23 19:08:01
++++ b/crates/pikapro-py/src/python.rs	2026-11-23 19:12:15
+@@ -1365,6 +1365,398 @@
          )
      }
  
@@ -763,6 +898,66 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.r
 +                        if let Some(x) = md.get_item("unburden")? {
 +                            mp.unburden = x.extract().unwrap_or(false);
 +                        }
++                        if let Some(x) = md.get_item("last_move")?
++                            && !x.is_none()
++                        {
++                            let s: String = x.extract()?;
++                            mp.last_move = dex.move_by_name(&s);
++                        }
++                        if let Some(x) = md.get_item("perish_turns")? {
++                            mp.perish_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("yawn_turns")? {
++                            mp.yawn_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("leech_seed")?
++                            && !x.is_none()
++                        {
++                            if let Ok(slot) = x.extract::<u8>() {
++                                mp.leech_seed = Some(slot);
++                            } else if x.extract::<bool>().unwrap_or(false) {
++                                mp.leech_seed = Some(0);
++                            }
++                        }
++                        if let Some(x) = md.get_item("salt_cure")? {
++                            mp.salt_cure = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("curse")? {
++                            mp.curse = x.extract().unwrap_or(false);
++                        }
++                        if let Some(x) = md.get_item("syrup_bomb_turns")? {
++                            mp.syrup_bomb_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("heal_block_turns")? {
++                            mp.heal_block_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("throat_chop_turns")? {
++                            mp.throat_chop_turns = x.extract().unwrap_or(0);
++                        }
++                        if let Some(x) = md.get_item("partially_trapped")?
++                            && !x.is_none()
++                        {
++                            let (s, t): (String, u8) = x.extract()?;
++                            if let Some(id) = dex.move_by_name(&s) {
++                                mp.partially_trapped = Some((id, t));
++                            }
++                        }
++                        if let Some(x) = md.get_item("locked_move")?
++                            && !x.is_none()
++                        {
++                            let (s, t): (String, u8) = x.extract()?;
++                            if let Some(id) = dex.move_by_name(&s) {
++                                mp.locked_move = Some((id, t));
++                            }
++                        }
++                        if let Some(x) = md.get_item("two_turn_move")?
++                            && !x.is_none()
++                        {
++                            let (s, target_loc): (String, i8) = x.extract()?;
++                            if let Some(id) = dex.move_by_name(&s) {
++                                mp.two_turn_move = Some((id, target_loc));
++                            }
++                        }
 +                        if let Some(x) = md.get_item("move_pp")?
 +                            && !x.is_none()
 +                        {
@@ -793,9 +988,9 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/python.r
      fn __repr__(&self) -> String {
          let b = &self.game.battle;
          let state = match b.result() {
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/rl.rs b/crates/pikapro-py/src/rl.rs
---- a/crates/pikapro-py/src/rl.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro-py/src/rl.rs	2026-11-21 18:21:42
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-py/src/rl.rs b/crates/pikapro-py/src/rl.rs
+--- a/crates/pikapro-py/src/rl.rs	2026-11-23 19:08:01
++++ b/crates/pikapro-py/src/rl.rs	2026-11-23 19:08:02
 @@ -16,7 +16,7 @@
  
  use pikapro::{BattleRng, Choice, Format, LegalActions, MAX_ACTIVE, Request, SideId, SlotAction};
@@ -826,9 +1021,9 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-py/src/rl.rs b/
      }
  }
  
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/mod.rs b/crates/pikapro-rl/src/encode/mod.rs
---- a/crates/pikapro-rl/src/encode/mod.rs	2006-07-23 19:21:28
-+++ b/crates/pikapro-rl/src/encode/mod.rs	2026-11-21 18:21:40
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/mod.rs b/crates/pikapro-rl/src/encode/mod.rs
+--- a/crates/pikapro-rl/src/encode/mod.rs	2026-11-23 19:08:01
++++ b/crates/pikapro-rl/src/encode/mod.rs	2026-11-23 19:08:02
 @@ -10,11 +10,13 @@
  
  pub mod basic;
@@ -843,10 +1038,10 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/m
  
  use pikapro_view::PlayerView;
  
-diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
 --- a/crates/pikapro-rl/src/encode/rich.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-21 22:18:20
-@@ -0,0 +1,659 @@
++++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-23 21:23:16
+@@ -0,0 +1,714 @@
 +//! The `rich` observation: structured token-ready features for transformer policies.
 +//!
 +//! Layout (`SIZE = 1028` floats per player):
@@ -879,8 +1074,8 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +use crate::tables::Tables;
 +
 +const TYPES: usize = Type::COUNT; // 18
-+/// Values per Pokémon row (`8` IDs + `72` continuous/flag floats).
-+pub const RICH_MON_WIDTH: usize = 80;
++/// Values per Pokémon row (`8` IDs + `80` continuous/flag floats).
++pub const RICH_MON_WIDTH: usize = 88;
 +/// Values per side block.
 +pub const RICH_SIDE_WIDTH: usize = 20;
 +/// Values in the global field block.
@@ -952,8 +1147,23 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +                    names.push(format!("{p}.move{k}_disabled"));
 +                }
 +                names.extend(
-+                    ["vol_recharge", "vol_charging", "vol_taunt", "vol_encore", "vol_confusion", "vol_substitute"]
-+                        .map(|n| format!("{p}.{n}")),
++                    [
++                        "vol_recharge",
++                        "vol_charging",
++                        "vol_taunt",
++                        "vol_encore",
++                        "vol_confusion",
++                        "vol_substitute",
++                        "perish_turns",
++                        "vol_yawn",
++                        "vol_leech_seed",
++                        "vol_salt_cure",
++                        "vol_disable",
++                        "vol_heal_block",
++                        "vol_throat_chop",
++                        "vol_locked_or_dot",
++                    ]
++                    .map(|n| format!("{p}.{n}")),
 +                );
 +            }
 +        }
@@ -1114,8 +1324,33 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +        o[77] = flag(v.has(PV::ENCORE));
 +        o[78] = flag(v.has(PV::CONFUSION));
 +        o[79] = flag(v.has(PV::SUBSTITUTE));
++        // 80..88: extended VGC counters & residual/control volatiles
++        o[80] = if v.has(PV::PERISH_SONG) {
++            f32::from(act.counters.perish.min(3)) / 3.0
++        } else {
++            0.0
++        };
++        o[81] = flag(v.has(PV::YAWN));
++        o[82] = flag(v.has(PV::LEECH_SEED));
++        o[83] = flag(v.has(PV::SALT_CURE));
++        o[84] = flag(v.has(PV::DISABLE));
++        o[85] = flag(v.has(PV::HEAL_BLOCK));
++        o[86] = flag(v.has(PV::THROAT_CHOP));
++        o[87] = flag(v.has(PV::LOCKED_MOVE | PV::PARTIALLY_TRAPPED | PV::CURSE | PV::SYRUP_BOMB));
 +    }
 +    o[63] = flag(m.request.is_some_and(|r| r.can_mega_evo));
++}
++
++fn extended_turns_frac(elapsed: u8) -> f32 {
++    // Base duration is 5 turns; if a screen, weather, or terrain is still active at
++    // elapsed >= 5, an 8-turn extender item (Light Clay / Weather Rock / Terrain Extender)
++    // is publicly proven, so report the remaining turns out of 8 rather than 0.0.
++    let rem = if elapsed < 5 {
++        5 - elapsed
++    } else {
++        8u8.saturating_sub(elapsed)
++    };
++    f32::from(rem.min(5)) / 5.0
 +}
 +
 +fn encode_side_view(ctx: &ViewCtx<'_>, side: usize, o: &mut [f32]) {
@@ -1131,15 +1366,15 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +
 +    let rf = s.condition(SideCondition::Reflect);
 +    o[5] = flag(rf.layers > 0);
-+    o[6] = if rf.layers > 0 { f32::from(5u8.saturating_sub(rf.turns.min(5))) / 5.0 } else { 0.0 };
++    o[6] = if rf.layers > 0 { extended_turns_frac(rf.turns) } else { 0.0 };
 +
 +    let ls = s.condition(SideCondition::LightScreen);
 +    o[7] = flag(ls.layers > 0);
-+    o[8] = if ls.layers > 0 { f32::from(5u8.saturating_sub(ls.turns.min(5))) / 5.0 } else { 0.0 };
++    o[8] = if ls.layers > 0 { extended_turns_frac(ls.turns) } else { 0.0 };
 +
 +    let av = s.condition(SideCondition::AuroraVeil);
 +    o[9] = flag(av.layers > 0);
-+    o[10] = if av.layers > 0 { f32::from(5u8.saturating_sub(av.turns.min(5))) / 5.0 } else { 0.0 };
++    o[10] = if av.layers > 0 { extended_turns_frac(av.turns) } else { 0.0 };
 +
 +    o[11] = flag(s.condition(SideCondition::Safeguard).layers > 0);
 +    o[12] = flag(s.condition(SideCondition::Mist).layers > 0);
@@ -1160,11 +1395,11 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +    let f = ctx.view.field();
 +    if let Some(w) = f.weather {
 +        one_hot(&mut o[0..WEATHER_LEN], weather_index(w));
-+        o[7] = f32::from(5u8.saturating_sub(f.weather_turns.min(5))) / 5.0;
++        o[7] = extended_turns_frac(f.weather_turns);
 +    }
 +    if let Some(t) = f.terrain {
 +        one_hot(&mut o[8..8 + TERRAIN_LEN], terrain_index(t));
-+        o[12] = f32::from(5u8.saturating_sub(f.terrain_turns.min(5))) / 5.0;
++        o[12] = extended_turns_frac(f.terrain_turns);
 +    }
 +    if let Some(tr) = f.trick_room {
 +        o[13] = 1.0;
@@ -1367,6 +1602,21 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +                o[77] = flag(mon.volatiles.has(Volatiles::ENCORE));
 +                o[78] = flag(mon.volatiles.has(Volatiles::CONFUSION));
 +                o[79] = flag(mon.volatiles.has(Volatiles::SUBSTITUTE));
++                // 80..88: extended VGC counters & residual/control volatiles
++                o[80] = if mon.volatiles.has(Volatiles::PERISH_SONG) {
++                    f32::from(mon.volatile_counters.perish_song.min(3)) / 3.0
++                } else {
++                    0.0
++                };
++                o[81] = flag(mon.volatiles.has(Volatiles::YAWN));
++                o[82] = flag(mon.volatiles.has(Volatiles::LEECH_SEED));
++                o[83] = flag(mon.volatiles.has(Volatiles::SALT_CURE));
++                o[84] = flag(mon.volatiles.has(Volatiles::DISABLE));
++                o[85] = flag(mon.volatiles.has(Volatiles::HEAL_BLOCK));
++                o[86] = flag(mon.volatiles.has(Volatiles::THROAT_CHOP));
++                o[87] = flag(mon.volatiles.has(
++                    Volatiles::LOCKED_MOVE | Volatiles::PARTIALLY_TRAPPED | Volatiles::CURSE | Volatiles::SYRUP_BOMB,
++                ));
 +            }
 +        }
 +    }
@@ -1506,9 +1756,9 @@ diff -ruN --exclude=target --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/r
 +    let active_count = state.side(me).active.iter().filter(|s| s.is_some()).count();
 +    o[27] = active_count as f32 / 2.0;
 +}
-diff -ruN --exclude=target --exclude=Cargo.lock a/python/pikapro/rl/__init__.py b/python/pikapro/rl/__init__.py
---- a/python/pikapro/rl/__init__.py	2006-07-23 19:21:28
-+++ b/python/pikapro/rl/__init__.py	2026-11-21 18:22:33
+diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/python/pikapro/rl/__init__.py b/python/pikapro/rl/__init__.py
+--- a/python/pikapro/rl/__init__.py	2026-11-23 19:08:01
++++ b/python/pikapro/rl/__init__.py	2026-11-23 19:08:02
 @@ -96,8 +96,8 @@
  #: (the caller plays player 1).
  OPPONENTS = [*BUILTIN_POLICIES, "external"]
