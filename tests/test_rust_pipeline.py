@@ -690,6 +690,30 @@ def test_rust_policy_v3_equivariance_preview_symmetry_and_roundtrip(tmp_path: Pa
     assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_0132])) < 1e-5
     assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_1023])) < 1e-5
 
+    # Fainted active-slot Pokémon (`active_slot > 0` AND `is_fainted == 1.0`, as PlayerView
+    # keeps in 2v1/1v1 endgames) must be excluded from speed-rank comparisons!
+    obs_faint = obs_pv.copy()
+    # Set own0 (speed 100), own1 (speed 200), foe0 (speed 150, FAINTED), foe1 (speed 50) active.
+    for row_i, slot_v, faint_v, spe_v in ((0, 1.0, 0.0, 100.0), (1, 2.0, 0.0, 200.0), (6, 1.0, 1.0, 150.0), (7, 2.0, 0.0, 50.0)):
+        base_i = row_i * RICH_MON_WIDTH
+        obs_faint[base_i + 3] = slot_v
+        obs_faint[base_i + 8] = 1.0
+        obs_faint[base_i + 11] = faint_v
+        if row_i < 6:
+            obs_faint[base_i + 53] = spe_v / 255.0
+        else:
+            obs_faint[base_i + 59] = (spe_v - 36.0) / 255.0
+    x_f = torch.from_numpy(obs_faint).unsqueeze(0)
+    m_f = x_f[:, : 12 * RICH_MON_WIDTH].view(1, 12, RICH_MON_WIDTH)
+    g_f = x_f[:, 12 * RICH_MON_WIDTH :]
+    ids_f = m_f[:, :, :8].long()
+    sf = model._compute_speed_features(m_f, g_f, ids_f[:, :, 1], ids_f[:, :, 2], ids_f[:, :, 3])
+    # Among 3 living actives (own1=200, own0=100, foe1=50), ranks must be 1.0, 0.5, 0.0; dead foe0 must be 0.0!
+    assert abs(float(sf[0, 1, 2]) - 1.0) < 1e-5
+    assert abs(float(sf[0, 0, 2]) - 0.5) < 1e-5
+    assert abs(float(sf[0, 7, 2]) - 0.0) < 1e-5
+    assert abs(float(sf[0, 6, 2]) - 0.0) < 1e-5
+
     # Advance into battle and test move-order equivariance + save/load roundtrip.
     b.submit(0, "team 1234")
     b.submit(1, "team 1234")
@@ -754,3 +778,114 @@ def test_train_rust_vec_optimizer_decay_groups_and_ema_pfsp() -> None:
     for _ in range(200):
         snap.record_game(1.0)
     assert snap.priority < 0.25
+
+
+def test_bug_hunt_p0_p1_locked_moves_consumed_items_mega_ability_and_unrevealed_gholdengo() -> None:
+    """Regression suite for P0/P1 bug-hunt findings:
+    - `_extract_rust_request_meta` + `match_pikapro_choice_to_order` on Locked/Recharge/Struggle
+    - Outrage blocked by Protect clears `BattleMemory.locked_move`
+    - Consumed items are not resurrected; Mega ability beats pre-Mega ability
+    - Unrevealed single-ability bench mons (Gholdengo) do NOT leak `is_revealed=1.0`
+    """
+    from types import SimpleNamespace
+
+    from vgc.battle_memory import BattleMemory
+    from vgc.rl.rust_search import (
+        _extract_rust_request_meta,
+        _our_public_knowledge,
+        match_pikapro_choice_to_order,
+    )
+
+    # 1. Locked rampage / two-turn / Recharge / Struggle request metadata extraction + matching.
+    fake_req = SimpleNamespace(
+        pokemon=[SimpleNamespace(species="Dragonite"), SimpleNamespace(species="Archaludon")],
+        kind=SimpleNamespace(
+            active=[
+                SimpleNamespace(moves=SimpleNamespace(value="Outrage")),
+                SimpleNamespace(moves="Recharge"),
+            ]
+        ),
+    )
+    slot_moves, team_sp = _extract_rust_request_meta(fake_req)
+    assert slot_moves == [["outrage"], ["recharge"]]
+    assert team_sp == ["dragonite", "archaludon"]
+
+    fake_legal = [
+        SimpleNamespace(
+            first_order=SimpleNamespace(
+                order=SimpleNamespace(id="outrage"), move_target=1, mega=False
+            ),
+            second_order=SimpleNamespace(
+                order=SimpleNamespace(id="recharge"), move_target=0, mega=False
+            ),
+        )
+    ]
+    matched = match_pikapro_choice_to_order(
+        "move 1, move 1",
+        SimpleNamespace(last_request={}),
+        fake_legal,
+        slot_moves=slot_moves,
+        team_species=team_sp,
+    )
+    assert matched is fake_legal[0]
+
+    # 2. Outrage blocked by Protect must NOT leave `locked_move` active on the next turn.
+    mem = BattleMemory("lock-test", our_role="p1")
+    mem.observe_protocol(
+        [
+            ["", "turn", "2"],
+            ["", "switch", "p1a: Dragonite", "Dragonite, L50, M", "100/100"],
+            ["", "move", "p1a: Dragonite", "Outrage", "p2a: Incineroar"],
+            ["", "-activate", "p2a: Incineroar", "move: Protect"],
+        ]
+    )
+    assert mem.locked_move("p1", "Dragonite", 3) is None
+
+    # 3. Consumed item is NOT resurrected & Mega Salamence gets Aerilate (not pre-Mega Intimidate).
+    packed = (
+        "Salamence||Salamencite|Intimidate|DoubleEdge,DracoMeteor,Tailwind,Protect|Jolly|,32,,,,32||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Tyranitar||SitrusBerry|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|"
+    )
+    mem2 = BattleMemory("mega-item-test", our_role="p1")
+    mem2.observe_protocol(
+        [
+            ["", "switch", "p1a: Salamence", "Salamence, L50, M", "100/100"],
+            ["", "-ability", "p1a: Salamence", "Intimidate", "boost"],
+            ["", "-mega", "p1a: Salamence", "Salamence", "Salamencite"],
+            ["", "switch", "p1b: Sneasler", "Sneasler, L50, M", "100/100"],
+            ["", "-enditem", "p1b: Sneasler", "Focus Sash"],
+        ]
+    )
+    fake_battle = SimpleNamespace(
+        team={
+            "p1: Salamence": SimpleNamespace(
+                species="salamencemega", item="salamencite", active=True, fainted=False, current_hp_fraction=1.0, status=None, moves={}
+            ),
+            "p1: Sneasler": SimpleNamespace(
+                species="sneasler", item=None, active=True, fainted=False, current_hp_fraction=0.01, status=None, moves={}
+            ),
+        }
+    )
+    our_it, our_ab, _, _ = _our_public_knowledge(fake_battle, packed, memory=mem2)
+    assert our_ab[0] == "aerilate", f"expected aerilate after Mega, got {our_ab[0]}"
+    assert our_it[1] is None, f"consumed Focus Sash must stay None, got {our_it[1]}"
+
+    # 4. Unrevealed brought Gholdengo (single-ability Good as Gold) must NOT leak `is_revealed=1.0`.
+    b = pikapro.Battle("championsvgc", [packed, packed], seed=[1, 2, 3, 4], log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    os_ = b.encode_state_rich(
+        0,
+        foe_known_items=[None] * 6,
+        foe_known_abilities=[None, None, "goodasgold", None, None, None],
+        foe_known_moves=[[]] * 6,
+        foe_revealed=[True, True, False, False, False, False],
+    )
+    foe_gholdengo = (6 + 2) * RICH_MON_WIDTH
+    assert float(os_[foe_gholdengo + 2]) > 0.0  # Good as Gold known
+    assert float(os_[foe_gholdengo + 12]) == 0.0, "unrevealed Gholdengo must NOT leak is_revealed"
+    assert float(os_[foe_gholdengo + 14]) == 0.0, "unrevealed Gholdengo must NOT leak is_brought"

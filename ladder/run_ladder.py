@@ -327,7 +327,10 @@ def _make_session_player(
                     self._rust_sessions[battle_tag] = sess
                 return sess
 
-            async def _handle_battle_message(self, split_messages: list[list[str]]) -> None:
+            async def _handle_battle_message_line(self, split_messages: list[list[str]]) -> None:
+                # Feed `ChannelSession` strictly line-by-line right before poke-env processes
+                # each line so a multi-line burst with an embedded `|request|` never advances
+                # `sess.obs`/`sess.mask` past the decision point before `decide()` runs.
                 if split_messages and split_messages[0] and split_messages[0][0].startswith(">"):
                     battle_tag = split_messages[0][0][1:]
                     sess = self._session_for(battle_tag)
@@ -338,7 +341,7 @@ def _make_session_player(
                     ]
                     if lines:
                         sess.feed_many(lines)
-                await super()._handle_battle_message(split_messages)
+                await super()._handle_battle_message_line(split_messages)
 
             def _battle_finished_callback(self, battle: AbstractBattle) -> None:
                 self._rust_sessions.pop(battle.battle_tag, None)

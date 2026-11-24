@@ -598,6 +598,8 @@ def eval_vs_python_vgc(
                             )
                             if is_pv[0]:
                                 choices[side] = choice_string(sess.choice([int(a0[0])]))
+                            elif int(a0[0]) == rl.RANDOM_ACTION or int(a1[0]) == rl.RANDOM_ACTION:
+                                choices[side] = choice_string(sess.choose_builtin("random"))
                             else:
                                 choices[side] = choice_string(sess.choice([int(a0[0]), int(a1[0])]))
                     res = battle.step(choices)
@@ -660,8 +662,16 @@ def train(args: argparse.Namespace) -> None:
 
     train_teams = load_teams(args.team_manifest, use_weights=args.use_manifest_weights)
     train_pool = rl.TeamPool(train_teams, "championsvgc")
-    holdout_teams = load_teams(args.holdout_manifest) if args.eval_every > 0 else []
-    holdout_pool = rl.TeamPool(holdout_teams, "championsvgc") if holdout_teams else None
+    holdout_teams = (
+        load_teams(args.holdout_manifest)
+        if (args.eval_every > 0 or args.vgc_eval_every > 0)
+        else []
+    )
+    holdout_pool = (
+        rl.TeamPool(holdout_teams, "championsvgc")
+        if (holdout_teams and args.eval_every > 0)
+        else None
+    )
 
     device = resolve_device(args.device)
     torch.manual_seed(args.seed)

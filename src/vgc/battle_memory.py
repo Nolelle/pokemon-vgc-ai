@@ -196,6 +196,9 @@ class BattleMemory:
     _mega_formes: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
     # (role, nickname) -> (turn, move id) of the last Outrage-family move it used this stint.
     _locking_use: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict, repr=False)
+    # (role, nickname) -> turn number when the current active stint began (tracks `active_turns`).
+    _stint_start_turn: dict[tuple[str, str], int] = field(default_factory=dict, repr=False)
+    _last_move_actor_key: tuple[str, str] | None = field(default=None, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -241,12 +244,14 @@ class BattleMemory:
                 self._finalize_damage_buffer()
                 self._finalize_defensive_buffer()
                 actor_role = _side(message[2])
-                if actor_role:
-                    self._acted.add((actor_role, to_id(_display_name(message[2]))))
+                actor_name_key = (actor_role, to_id(_display_name(message[2]))) if actor_role else None
+                self._last_move_actor_key = actor_name_key
+                if actor_name_key:
+                    self._acted.add(actor_name_key)
                 if to_id(message[3]):
                     self.last_move_used = to_id(message[3])
-                    if actor_role and to_id(message[3]) in LOCKING_MOVES:
-                        self._locking_use[(actor_role, to_id(_display_name(message[2])))] = (
+                    if actor_name_key and to_id(message[3]) in LOCKING_MOVES:
+                        self._locking_use[actor_name_key] = (
                             self.current_turn,
                             to_id(message[3]),
                         )
@@ -254,15 +259,40 @@ class BattleMemory:
                 move_id = to_id(message[3]) or "unknown"
                 self._last_move = (actor_role or "", actor, move_id)
                 self._observe_action_order(actor_role, actor, move_id)
-                if self.opponent_role is not None and actor_role == self.opponent_role:
-                    self.opponent_moves[actor][move_id] += 1
-                    if move_id in {"protect", "detect", "kingsshield", "spikyshield"}:
-                        self.opponent_protects[actor] += 1
-                    if len(message) > 4 and _side(message[4]) == self.our_role:
-                        target = self._species_for_ident(message[4])
-                        self.opponent_targets[target] += 1
-                elif self.our_role is not None and actor_role == self.our_role:
-                    self.our_revealed_moves[actor][move_id] += 1
+                if actor not in self._transformed_species:
+                    if self.opponent_role is not None and actor_role == self.opponent_role:
+                        self.opponent_moves[actor][move_id] += 1
+                        if move_id in {"protect", "detect", "kingsshield", "spikyshield"}:
+                            self.opponent_protects[actor] += 1
+                        if len(message) > 4 and _side(message[4]) == self.our_role:
+                            target = self._species_for_ident(message[4])
+                            self.opponent_targets[target] += 1
+                    elif self.our_role is not None and actor_role == self.our_role:
+                        self.our_revealed_moves[actor][move_id] += 1
+                continue
+            if kind in {"-miss", "-immune", "-fail"} or (
+                kind == "-activate"
+                and len(message) > 3
+                and to_id(str(message[3]).split(":", 1)[-1])
+                in {
+                    "protect",
+                    "detect",
+                    "spikyshield",
+                    "kingsshield",
+                    "banefulbunker",
+                    "obstruct",
+                    "silktrap",
+                    "burningbulwark",
+                }
+            ):
+                # An Outrage-family move that missed, was blocked by Protect, or hit an
+                # immunity does NOT lock the user in on the next turn.
+                if (
+                    self._last_move is not None
+                    and self._last_move[2] in LOCKING_MOVES
+                    and self._last_move_actor_key is not None
+                ):
+                    self._locking_use.pop(self._last_move_actor_key, None)
                 continue
             if kind == "-transform" and len(message) > 3:
                 self._transformed_species.add(self._species_for_ident(message[2]))
@@ -363,6 +393,10 @@ class BattleMemory:
                     self._recharging.discard((stint_role, stint_species))
                     self._acted.discard((stint_role, to_id(_display_name(message[2]))))
                     self._locking_use.pop((stint_role, to_id(_display_name(message[2]))), None)
+                    if kind in {"switch", "drag"}:
+                        self._stint_start_turn[(stint_role, to_id(_display_name(message[2])))] = (
+                            self.current_turn
+                        )
                 if _side(message[2]) == self.opponent_role:
                     self._transformed_species.discard(self._species_for_ident(message[2]))
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
@@ -416,6 +450,17 @@ class BattleMemory:
 
         entry = self._locking_use.get((role or "", to_id(name))) if role else None
         return entry[1] if entry and entry[0] == turn - 1 else None
+
+    def active_turns(self, role: str | None, name: str | None, current_turn: int) -> int:
+        """Number of turns the current active stint of ``name`` has lasted (minimum 1)."""
+
+        start = self._stint_start_turn.get((role or "", to_id(name))) if role else None
+        if start is None:
+            return 1
+        # Turn 0 switch-in (lead) -> on Turn 1, `active_turns == 1` (not 2).
+        if start <= 0:
+            return max(1, int(current_turn))
+        return max(1, int(current_turn) - int(start) + 1)
 
     def mega_forme(self, role: str | None, name: str | None) -> str | None:
         """The Mega forme ``name`` evolved into, from the public `detailschange` line."""

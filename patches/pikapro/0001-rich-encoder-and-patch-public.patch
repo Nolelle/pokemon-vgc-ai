@@ -1043,8 +1043,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-rl/src/encode/rich.rs b/crates/pikapro-rl/src/encode/rich.rs
 --- a/crates/pikapro-rl/src/encode/rich.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-24 15:58:50
-@@ -0,0 +1,735 @@
++++ b/crates/pikapro-rl/src/encode/rich.rs	2026-11-24 16:28:42
+@@ -0,0 +1,748 @@
 +//! The `rich` observation: structured token-ready features for transformer policies.
 +//!
 +//! Layout (`SIZE = 1028` floats per player):
@@ -1507,7 +1507,6 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                || mon.moves.iter().any(|mv| mv.pp < mv.max_pp)
 +                || foe_revealed.get(row).copied().unwrap_or(false)
 +                || foe_known_items.get(row).copied().flatten().is_some()
-+                || foe_known_abilities.get(row).copied().flatten().is_some()
 +                || foe_known_moves.get(row).is_some_and(|list| !list.is_empty());
 +
 +            // 0..8: IDs
@@ -1516,7 +1515,13 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                o[1] = mon.item.map_or(0.0, |id| (id.index() + 1) as f32);
 +                o[2] = (mon.ability.index() + 1) as f32;
 +            } else {
-+                let item = foe_known_items.get(row).copied().flatten();
++                // If the simulated battle already consumed/knocked off the foe's item (`mon.item.is_none()`),
++                // report 0.0 instead of resurrecting stale `foe_known_items[row]`.
++                let item = if mon.item.is_some() {
++                    foe_known_items.get(row).copied().flatten()
++                } else {
++                    None
++                };
 +                let ab = foe_known_abilities.get(row).copied().flatten();
 +                o[1] = item.map_or(0.0, |id| (id.index() + 1) as f32);
 +                o[2] = ab.map_or(0.0, |id| (id.index() + 1) as f32);
@@ -1538,7 +1543,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                    if is_known && written < MAX_MOVES {
 +                        o[4 + written] = (mv.id.index() + 1) as f32;
 +                        o[66 + written] = if mv.max_pp > 0 { f32::from(mv.pp) / f32::from(mv.max_pp) } else { 0.0 };
-+                        o[70 + written] = flag(mv.disabled);
++                        // Closed-sheet PlayerView never exposes per-move disabled flags on foes.
++                        o[70 + written] = 0.0;
 +                        written += 1;
 +                    }
 +                }
@@ -1558,7 +1564,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                0.0
 +            };
 +
-+            // 16..23: status
++            // 16..23: status (never leak Battle's private remaining `Sleep { turns }`!)
 +            let (st_idx, st_turns) = match mon.status {
 +                Status::None => (0usize, 0u8),
 +                Status::Burn => (1, 0),
@@ -1566,7 +1572,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                Status::Paralysis => (3, 0),
 +                Status::Poison => (4, 0),
 +                Status::Toxic { counter } => (5, counter),
-+                Status::Sleep { turns } => (6, turns),
++                Status::Sleep { .. } => (6, 0),
 +            };
 +            if st_idx > 0 {
 +                one_hot(&mut o[16..22], st_idx - 1);
@@ -1616,8 +1622,15 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                o[60] = f32::from(mon.protect_counter.min(4)) / 4.0;
 +                o[61] = flag(mon.active_move_actions == 0 && mon.active_turns <= 1 && !moved_this_turn);
 +                o[62] = f32::from((mon.active_turns.min(10)) as u8) / 10.0;
-+                o[63] = flag(is_own && mon.can_mega_evo.is_some());
-+                o[64] = flag(mon.trapped || mon.volatiles.has(Volatiles::TRAPPED | Volatiles::PARTIALLY_TRAPPED));
++                let can_mega_now = is_own
++                    && matches!(battle.request(me), Request::Move)
++                    && !side.gimmicks_used.contains(pikapro::Gimmick::MegaEvolve)
++                    && mon.can_mega_evo.is_some();
++                o[63] = flag(can_mega_now);
++                o[64] = flag(
++                    (is_own && mon.trapped)
++                        || mon.volatiles.has(Volatiles::TRAPPED | Volatiles::PARTIALLY_TRAPPED),
++                );
 +                o[65] = flag(moved_this_turn);
 +                // 74..80: volatiles
 +                o[74] = flag(mon.volatiles.has(Volatiles::MUST_RECHARGE));

@@ -180,7 +180,12 @@ def _side_patch_from_snapshot(
             acted = bool(memory.has_acted(role, mon_name))
         else:
             acted = not bool(m.get("first_turn", False))
-        active_turns = int(m.get("active_turns") or (1 if is_active else 0))
+        if m.get("active_turns"):
+            active_turns = int(m["active_turns"])
+        elif is_active and memory is not None and role is not None and hasattr(memory, "active_turns"):
+            active_turns = int(memory.active_turns(role, mon_name, current_turn))
+        else:
+            active_turns = 1 if is_active else 0
         active_move_actions = 1 if acted else 0
 
         if "confusion" in effects:
@@ -338,7 +343,20 @@ def _side_patch_from_snapshot(
         ):
             rampage = memory.locked_move(role, mon_name, current_turn)
             if rampage:
-                entry["locked_move"] = (rampage, 1)
+                # For our own side, confirm the live Showdown request actually locked us
+                # (prevents forcing a lock if Outrage missed, hit Protect, or hit a Fairy).
+                if is_own:
+                    req_lock = (
+                        (own_locked_by_species or {}).get(sp_id)
+                        or (own_locked_by_species or {}).get(base_id)
+                    )
+                    enabled_mvs = [
+                        mv for mv in (m.get("moves") or []) if not mv.get("disabled")
+                    ]
+                    if req_lock == rampage or (is_trapped and len(enabled_mvs) == 1):
+                        entry["locked_move"] = (rampage, 1)
+                else:
+                    entry["locked_move"] = (rampage, 1)
 
         mons.append(entry)
 
@@ -517,26 +535,42 @@ def _foe_public_knowledge(
     abilities: list[str | None] = []
     moves: list[list[str]] = []
     revealed: list[bool] = []
+    opp_role = getattr(memory, "opponent_role", None)
     for s in opp_sets[:6]:
         sp = to_id(s.get("species"))
         base = _base_species_id(sp)
         mon = known_by_id.get(sp) or known_by_base.get(base)
         mon_sp = to_id(getattr(mon, "species", None)) if mon is not None else sp
+        if memory is not None and opp_role and hasattr(memory, "mega_forme") and mon is not None:
+            m_name = getattr(mon, "name", None) or getattr(mon, "species", None)
+            mega_hint = memory.mega_forme(opp_role, m_name)
+            if mega_hint:
+                mon_sp = to_id(mega_hint)
 
-        it = normalize_item(getattr(mon, "item", None)) if mon is not None else None
-        if not it:
-            mem_it = mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base)
-            it = normalize_item(mem_it)
-        if not it and mon_sp:
-            sp_entry = load_species().get(mon_sp) or {}
-            if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
-                it = to_id(sp_entry.get("requiredItem"))
+        raw_mon_item = getattr(mon, "item", None) if mon is not None else "unknown_item"
+        # If poke-env explicitly cleared `mon.item` to None/empty (Knock Off, consumed Berry/Sash),
+        # do NOT resurrect the consumed item from `BattleMemory`.
+        if mon is not None and (raw_mon_item is None or raw_mon_item == ""):
+            it = None
+        else:
+            it = normalize_item(raw_mon_item) if mon is not None else None
+            if not it:
+                mem_it = mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base)
+                it = normalize_item(mem_it)
+            if not it and mon_sp:
+                sp_entry = load_species().get(mon_sp) or {}
+                if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
+                    it = to_id(sp_entry.get("requiredItem"))
 
+        # Check current forme's ability & single-ability Mega forme BEFORE falling back to
+        # pre-Mega base species ability in `BattleMemory`.
         ab = to_id(getattr(mon, "ability", None)) if mon is not None else None
         if not ab:
-            ab = to_id(mem_abilities.get(mon_sp) or mem_abilities.get(sp) or mem_abilities.get(base))
+            ab = to_id(mem_abilities.get(mon_sp))
         if not ab and mon_sp:
             ab = _single_legal_ability(mon_sp)
+        if not ab:
+            ab = to_id(mem_abilities.get(sp) or mem_abilities.get(base))
 
         mvs_set: list[str] = []
         if mon is not None:
@@ -637,17 +671,23 @@ def _our_public_knowledge(
             ):
                 is_rev = True
 
-        # Public item: only if revealed in protocol memory OR Mega-evolved stone.
-        it = normalize_item(mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base))
-        if not it and mon_sp:
-            sp_entry = load_species().get(mon_sp) or {}
-            if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
-                it = to_id(sp_entry.get("requiredItem"))
+        # Public item: only if still held AND revealed in protocol memory (or Mega-evolved stone).
+        if mon is not None and normalize_item(getattr(mon, "item", None)) is None:
+            it = None
+        else:
+            it = normalize_item(mem_items.get(mon_sp) or mem_items.get(sp) or mem_items.get(base))
+            if not it and mon_sp:
+                sp_entry = load_species().get(mon_sp) or {}
+                if sp_entry.get("isMega") and sp_entry.get("requiredItem"):
+                    it = to_id(sp_entry.get("requiredItem"))
 
-        # Public ability: only if revealed in protocol memory OR single-ability species.
-        ab = to_id(mem_abilities.get(mon_sp) or mem_abilities.get(sp) or mem_abilities.get(base))
+        # Public ability: check current forme first (e.g. Salamence-Mega's Aerilate) before
+        # falling back to pre-Mega base species ability in protocol memory.
+        ab = to_id(mem_abilities.get(mon_sp))
         if not ab and mon_sp:
             ab = _single_legal_ability(mon_sp)
+        if not ab:
+            ab = to_id(mem_abilities.get(sp) or mem_abilities.get(base))
 
         items.append(it or None)
         abilities.append(ab or None)
@@ -780,10 +820,18 @@ def _extract_rust_request_meta(req: Any) -> tuple[list[list[str]], list[str]]:
         for act in active_list:
             mvs = getattr(act, "moves", None)
             val = getattr(mvs, "value", None) if mvs is not None else None
-            if val is not None:
+            if isinstance(val, str):
+                # Locked rampage / two-turn move: `Locked(value="Outrage")` / `Locked(value="Fly")`
+                slot_moves.append([to_id(val)])
+            elif val is not None:
                 slot_moves.append([to_id(getattr(m, "id", "")) for m in val])
             else:
-                slot_moves.append([])
+                # Unit variants such as `"Recharge"` or `"Struggle"`
+                mvs_str = to_id(str(mvs or ""))
+                if mvs_str in ("recharge", "struggle"):
+                    slot_moves.append([mvs_str])
+                else:
+                    slot_moves.append([])
     return slot_moves, team_species
 
 
@@ -890,12 +938,22 @@ def match_pikapro_choice_to_order(
         if o_sig == sig:
             return order
 
-    # Secondary check: match base species for form-changed switches (e.g. Mega / regional forms).
+    # Secondary check: match base species for form-changed switches (e.g. Mega / regional forms)
+    # and match targetless locked moves (Recharge / Struggle / Outrage / Fly / Solar Beam /
+    # Electro Shot) where pikapro emits `move 1` (target=0) while poke-env attaches a target.
     def _loose_slot(a: tuple[Any, ...], b: tuple[Any, ...]) -> bool:
         if a == b:
             return True
         if a[0] == "switch" and b[0] == "switch":
-            return a[1].startswith(b[1]) or b[1].startswith(a[1])
+            return _base_species_id(a[1]) == _base_species_id(b[1])
+        if (
+            a[0] == "move"
+            and b[0] == "move"
+            and a[1] == b[1]
+            and a[3] == b[3]
+            and (b[2] == 0 or a[2] == 0)
+        ):
+            return True
         return False
 
     for order in legal_orders:
@@ -938,9 +996,10 @@ def _switch_row_maps(
                 matched_row = r
                 break
         if matched_row is None:
-            # Base-species prefix match (e.g. Mega forme vs base species)
+            # Base-species match (e.g. Mega forme vs base species; never raw prefix match)
+            req_base = _base_species_id(key)
             for sp_k, rows in obs_rows_by_sp.items():
-                if sp_k.startswith(key) or key.startswith(sp_k):
+                if _base_species_id(sp_k) == req_base:
                     for r in rows:
                         if r not in used_rows:
                             matched_row = r

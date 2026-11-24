@@ -438,7 +438,10 @@ class RustFactoredPolicy(nn.Module):
         eff_spe = (raw_spe * stage_mult * par_mult * tw_mult * scarf_mult * weather_mult) * present
 
         # Normalized active move-order rank in [0, 1] (automatically inverted under Trick Room!).
-        is_active = act > 0
+        # Exclude fainted Pokémon (`col 11 >= 0.5`): `PlayerView` keeps `active_slot > 0`
+        # on fainted slots during force_switch and 2v1/1v1 endgames, whereas `encode_state_rich`
+        # clears `active_slot` on fainted mons.
+        is_active = (act > 0) & (mons[:, :, 11] < 0.5)
         is_tr = glob[:, 53:54]  # (B, 1)
         # Signed speed for ordering: higher moves first normally; lower moves first in Trick Room.
         order_key = torch.where(is_tr > 0.5, -eff_spe, eff_spe)
