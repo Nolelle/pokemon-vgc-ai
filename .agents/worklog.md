@@ -940,3 +940,17 @@
   - **vs ALL non-`SunRainCoach` opponents (12 games, avg opp 1405):** **10–2 (83.3%!!, up from 11–5 / 68.8% before Phase 0–3 — ~1650+ Elo performance!)**.
   - **vs cloned `SunRainCoach`/`KitaAuraFarmer`/`NijikaDoritoDrums`/`BocchiTheBop`/`RyoBasslineMX` core (18/30 = 60% of the session, avg opp 1468):** **4–14 (22.2%)**. Preview Search fixed the Tyranitar blind spot (**12/18** brings vs **0/14** before; **4–8 (33.3%)** when bringing Tyranitar — including scalps over 1541 `SunRainCoach` and 1541 `KitaAuraFarmer` — vs **0–6 (0.0%)** when leaving it behind).
   - **Takeaway:** Phase 0–3 + bug-hunt fixes are verified live (**83.3%** vs the diverse ladder, **0 fallbacks**, new **1477 peak**); the remaining bottleneck is teaching the `192x6` neural brain itself via **Phase 4A** (continued RL training on the new 88-column counter + 8-turn extender encoder + heavier Screens/Weather/Archaludon representation in the training pool).
+
+## 2026-11-24 – Completed Phase 4A (`v3c`, 7M -> 11M total games on 88-col counter + 8-turn extender encoder)
+- Finished full 4,000,012-game warm-started `v3c` AFK run (`runs/rust_v3c_m192_l6_counters/policy_4000012.pt`, W&B `mvoht8mk`, 12.01h at 92.5 g/s on M4 Pro MPS GPU, same `192x6` 3.32M-param architecture).
+- All-time best training & unseen-holdout metrics (plain neural, zero lookahead):
+  - `value_accuracy`: **76.62%** last-50 avg (up from `v3b`'s 76.05%); `value_loss`: **0.4495** (first time ever below 0.450, down from `v3b`'s 0.4585!).
+  - `vs_anchors`: **83.4%** last-50 avg (up from `v3b`'s 80.5%).
+  - Unseen holdout `simple_heuristics`: **86.6% last-5 avg**, **88.0% final**, **92.0% peak** (up from `v3b`'s 76.7–79.7%!).
+  - Unseen holdout `max_base_power`: **90.4% last-5 avg**, **97.0% peak**.
+  - Unseen holdout Python `vgc` 2-ply search: **68.5% last-5 avg**, **72.5% final**, **77.5% peak** (up from `v3b`'s 64.4–65.6% avg).
+  - 7 of 8 newly wired counter columns actively learned non-zero L2 norms (`perish` 0.401, `yawn` 0.375, `leech_seed` 0.335, `disable` 0.307, `locked_dot` 0.184, `throat_chop` 0.180, `heal_block` 0.156).
+- **Direct deterministic head-to-head on unseen holdout teams (seat-swapped, MPS GPU):**
+  - `v3c` (11M) vs `v3b` (7M) on all 88 unseen holdout teams (1,024 games): **`v3c` won 602–422 (58.8%, +61.7 Elo!!)** (`p0=306/512, p1=296/512`).
+  - `v3c` (11M) vs `v3` (3M) on all 88 unseen holdout teams (512 games): **`v3c` won 345–167 (67.4%, +126.0 Elo!!)** (`p0=177/256, p1=168/256`).
+- Next: test `v3c` (`runs/rust_v3c_m192_l6_counters/policy_4000012.pt`) live on the public Reg M-C ladder with our upgraded Phase 0–3 `rust-search` stack (30 games).
