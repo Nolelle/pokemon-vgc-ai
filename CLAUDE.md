@@ -6,31 +6,43 @@ consent Open Team Sheets, but this bot rejects them and assumes no opponent shee
 best-of-one ladder. Backed by the local Showdown checkout's `champions` mod (see
 `config/formats.ts` in that repo), not vanilla gen9.
 
-## Current State & Active Direction (2026-11-23)
+## Current State & Active Direction (2026-11-24)
 
 See [`docs/rust_rl_and_search.md`](docs/rust_rl_and_search.md) and [`README.md`](README.md)
 for the current playing/training stack (historical audits and pre-Rust plans now live in
 [`docs/archive/`](docs/archive/README.md)):
 
 - **Active playing stack (`--policy-mode rust-search`):** Rust `pikapro 0.2.0` vectorized
-  self-play RL (`selfplay/train_rust_vec.py`, `src/vgc/rl/rust_policy.py` v2 equivariant
-  Transformer) paired with 2-turn regularized live lookahead search
-  (`src/vgc/rl/rust_search.py`, `8w × 8a × 4s`, `rollout_turns=1`, `min_prior_prob=0.01`,
-  `prior_bonus=0.025`, ~0.33s/turn).
-- **Current best checkpoint (`v3b`, 7M self-play games):**
-  `runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt` (`192×6`, 3.32M params, trained on
-  696 `pikapro`-validated November Reg M-C teams in
-  `data/selfplay/v3b_nov_meta_train_manifest.json`). Live public Reg M-C ladder on
-  `teams/mc_ladder_01.packed.txt`: **peak 1458 Elo** (30 games, avg opp 1443, 0 fallbacks,
-  beat 1650/1559/1536/1518 opponents; +112 peak Elo over `v3`, +203 over `v1`).
+  self-play RL (`selfplay/train_rust_vec.py`, `src/vgc/rl/rust_policy.py` v2/v3
+  equivariant Transformer over the 88-col / 1,124-float rich observation) paired with
+  Team Preview Rust lookahead (`search_teampreview_rust`) and 2-turn regularized live
+  lookahead search (`src/vgc/rl/rust_search.py`, default `10w × 8a × 4s × 2000 iters`,
+  root noise pruning, uncapped `3×3×3` world axes, cross-world MPS GPU batching,
+  ~1.0s/turn). Mirror fidelity verified **2,126/2,126 (100%)** and 3-round adversarial
+  torture fuzzing verified **558/558** live decisions with 0 mask diffs.
+- **Current best trained checkpoint (`v3c`, 11M total self-play games):**
+  `runs/rust_v3c_m192_l6_counters/policy_4000012.pt` (`192×6`, `policy_version=2`,
+  3.32M params, trained on the 88-col counter + 8-turn extender rich encoder and 696
+  `pikapro`-validated November Reg M-C teams). Beat `v3b` **58.8% (+61.7 Elo)** over
+  1,024 unseen holdout games and `v3` **67.4% (+126.0 Elo)** over 512 games.
+- **Current best live public ladder peak:** **1477 Elo** (30-game Phase 0–3 session
+  with `v3b` + upgraded `10w` search + Team Preview search on
+  `teams/mc_ladder_01.packed.txt`, avg opp 1443, 0 fallbacks, **10–2 / 83.3%** vs
+  non-clone opponents; `v3c` + Track A live ladder run pending).
 - **Refreshed opponent set priors (2026-11-23):** `data/usage/set_priors.json` rebuilt
   with `tools/build_set_priors.py --since 2026-10-15` from **39,589** rated (>=1200)
   Reg M-C replays (171,258 indexed).
-- **Next milestone:** scale to `v4` (`256×6`, ~5.6M params, ~96 games/sec on M4 Pro) on
-  the 696-team November meta pool and test stronger ladder rosters toward 1700+ Elo.
+- **Next milestone (`v4` ready to launch):** train `v4` (`256×6`, `policy_version=3`,
+  `ffn_mult=3`, **6.40M params** with 32-feature static move metadata, GPU Speed/Trick
+  Room rank cues, and 90-group symmetric Team Preview; ~90–96 games/sec on M4 Pro MPS)
+  using `selfplay/train_rust_vec.py` (`--gamma 1.0`, decoupled `AdamW`,
+  `--snapshots-per-wave 2`, `--use-manifest-weights`) on the rating-weighted 696-team
+  manifest `data/selfplay/v4_nov_meta_weighted_manifest.json` (`>=1500` Elo share raised
+  from 22.0% -> 45.1%), then push live ladder Elo toward 1700+.
 - **Note on `.venv`:** patched `pikapro 0.2.0` is installed in `.venv` (patch saved at
-  `patches/pikapro/0001-rich-encoder-and-patch-public.patch`). Avoid overwriting `.venv`
-  with `uv sync` without rebuilding `pikapro`.
+  `patches/pikapro/0001-rich-encoder-and-patch-public.patch`, including 88-col rich
+  encoder, `disable_moves`, and `trap_pokemon_event` in `patch_public`). Avoid
+  overwriting `.venv` with `uv sync` without rebuilding `pikapro`.
 
 ## Regulation M-C (2026-09-09)
 

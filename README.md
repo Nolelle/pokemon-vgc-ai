@@ -5,29 +5,42 @@ A Pokémon Showdown AI bot for **[Gen 9 Champions] VGC 2026 Reg M-C**
 allowed, best-of-one with **hidden opponent team sheets** (the bot rejects Open Team
 Sheets and infers hidden sets from public reveals and recent ladder usage data).
 
-## Goal & Current State (2026-11-23)
+## Goal & Current State (2026-11-24)
 
 - **Target:** **1700+ Elo** on the public Champions Reg M-C ladder.
-- **Current best:** **1458 peak Elo** on the live public Reg M-C ladder (30-game session
-  on `teams/mc_ladder_01.packed.txt`, averaging **1443** opponent Elo, **0 fallbacks**,
-  including wins over **1650**, **1559**, **1536**, and **1518** Elo opponents).
+- **Current best live ladder:** **1477 peak Elo** on the live public Reg M-C ladder
+  (30-game Phase 0–3 session with `v3b` on `teams/mc_ladder_01.packed.txt`, averaging
+  **1443** opponent Elo, **0 fallbacks**, **10–2 (83.3%)** vs non-clone opponents,
+  including wins over **1650**, **1622**, **1559**, **1541**, and **1536** Elo
+  opponents).
+- **Current best trained checkpoint (`v3c`, 11M self-play games):**
+  `runs/rust_v3c_m192_l6_counters/policy_4000012.pt` (`192×6`, 3.32M parameters,
+  `RUST_POLICY_VERSION = 2`), trained on the 88-column counter + 8-turn extender rich
+  encoder and 696-team November meta pool. Beat `v3b` **58.8% (+61.7 Elo)** over 1,024
+  unseen holdout games (live ladder validation pending).
 - **Active architecture:** a fast **Rust vectorized self-play reinforcement learning
-  (RL)** pipeline paired with **2-turn regularized live lookahead search**:
+  (RL)** pipeline paired with **Team Preview search + 2-turn regularized live lookahead
+  search**:
   - **Policy & value network:** [`src/vgc/rl/rust_policy.py`](src/vgc/rl/rust_policy.py)
-    (`RUST_POLICY_VERSION = 2`), a move-order and team-slot equivariant Transformer
-    trained for **7M self-play games** (`v3b`, `192×6`, 3.32M parameters) on a
-    **696-team** November Reg M-C meta pool.
+    now supports **`RUST_POLICY_VERSION = 3`** (backwards-compatible with v2 checkpoints
+    like `v3c`): a move-order and team-slot equivariant Transformer with 32-feature
+    static move metadata, GPU-computed fog-safe Speed/Trick Room rank cues, and a
+    90-group permutation-invariant Team Preview head (`256×6`, `ffn_mult=3`, **6.40M**
+    parameters for `v4`).
   - **Live lookahead search:** [`src/vgc/rl/rust_search.py`](src/vgc/rl/rust_search.py)
-    samples 8 plausible opponent set worlds from refreshed November Reg M-C priors
+    runs Rust Team Preview lookahead plus in-battle 2-turn regularized search across
+    **10 true hidden-info worlds** (`10w × 8a × 4s × 2000 iters`, cross-world MPS GPU
+    batching, ~1.0s/turn) using refreshed November Reg M-C priors
     ([`data/usage/set_priors.json`](data/usage/set_priors.json), built from **39,589**
-    Oct 15–Nov 23 rated replays) and simulates turn 1 plus a 1-turn policy rollout in
-    ~0.33s/turn.
+    Oct 15–Nov 23 rated replays) and verified **2,126/2,126 (100%)** mirror fidelity.
   - **Exact Champions rules foundation:** all game data comes from the local Showdown
     `champions` mod export (`data/champions/*.json` — Stat Points, 166 legal items,
     custom Megas, Champions learnsets), backed by a simulator-verified damage engine
     and strict fog-of-war boundaries.
-- **Next milestone:** train a larger **`256×6` (~5.6M-parameter) `v4`** network on the
-  696-team November meta pool and test stronger ladder rosters toward 1550–1700+ Elo.
+- **Next milestone:** launch the **`v4` (`256×6`, 6.40M-parameter, `policy_version=3`)**
+  self-play run on the rating-weighted 696-team November meta manifest
+  ([`data/selfplay/v4_nov_meta_weighted_manifest.json`](data/selfplay/v4_nov_meta_weighted_manifest.json))
+  and validate `v3c`/`v4` + Track A live search on the public ladder toward 1700+ Elo.
 - Coaching UI / product work remains deferred until the 1700+ Elo playing goal is met.
 
 ## Documentation
@@ -66,7 +79,7 @@ Environment uses `uv` (`.venv/bin/python`). Node 22 is auto-detected via `vgc.no
 ```bash
 .venv/bin/python ladder/run_ladder.py --local-smoke --n 2 \
   --policy-mode rust-search \
-  --rust-checkpoint runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt \
+  --rust-checkpoint runs/rust_v3c_m192_l6_counters/policy_4000012.pt \
   --team teams/mc_ladder_01.packed.txt
 ```
 
@@ -77,7 +90,7 @@ Environment uses `uv` (`.venv/bin/python`). Node 22 is auto-detected via `vgc.no
 ```bash
 .venv/bin/python ladder/run_ladder.py --n 10 \
   --policy-mode rust-search \
-  --rust-checkpoint runs/rust_v3b_m192_l6_novmeta/policy_4000024.pt \
+  --rust-checkpoint runs/rust_v3c_m192_l6_counters/policy_4000012.pt \
   --team teams/mc_ladder_01.packed.txt
 ```
 
