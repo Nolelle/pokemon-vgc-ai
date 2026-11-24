@@ -237,6 +237,8 @@ def _make_session_player(
     replica_seeds: int = 2,
     replica_iterations: int = 400,
     replica_seed: int = 1,
+    rust_preview_search: bool = True,
+    rust_turn2_branch: int = 1,
     **player_kwargs,
 ) -> LadderPlayer:
     """Construct the heuristic logger or an explicitly selected learned logger.
@@ -279,6 +281,8 @@ def _make_session_player(
             RustExactMirror,
             match_pikapro_choice_to_order,
             search_public_rust,
+            search_teampreview_rust,
+            select_search_action_index,
         )
 
         use_search = policy_mode == "rust-search"
@@ -345,6 +349,24 @@ def _make_session_player(
                 if sess.needs_action:
                     s = self.space.slot_size
                     pv_mask = sess.mask[2 * s :]
+                    if self.use_rust_search and rust_preview_search:
+                        try:
+                            cmd, _audit = search_teampreview_rust(
+                                battle,
+                                self.packed_team,
+                                self.policy,
+                                sess.obs,
+                                pv_mask,
+                                seed=int(self.rust_rng.integers(0, 2**31)),
+                            )
+                            digits = cmd.replace("/team", "").replace("team", "").strip()
+                            if len(digits) == 4 and digits.isdigit():
+                                return f"/team {digits}"
+                        except Exception:
+                            self.logger.warning(
+                                "rust preview search failed; falling back to neural preview",
+                                exc_info=True,
+                            )
                     pv_idx = self.policy.choose_preview_index(sess.obs, pv_mask)
                     choice_str = str(sess.choice([pv_idx]))
                     # Showdown expects "/team 1234" from decide_teampreview.
@@ -369,10 +391,9 @@ def _make_session_player(
                         seed=int(self.rust_rng.integers(0, 2**31)),
                         mirror=self._get_rust_mirror(),
                         memory=self._memory_for(battle),
+                        second_turn_branch=rust_turn2_branch,
                     )
-                    selected = int(
-                        self.rust_rng.choice(len(result.actions), p=result.probabilities)
-                    )
+                    selected = select_search_action_index(result, self.rust_rng)
                     chosen_wire = result.actions[selected]
                     matched = match_pikapro_choice_to_order(
                         chosen_wire,
@@ -808,6 +829,8 @@ async def run_local_smoke(
     replica_seeds: int = 2,
     replica_iterations: int = 400,
     replica_seed: int = 1,
+    rust_preview_search: bool = True,
+    rust_turn2_branch: int = 1,
 ) -> list[dict[str, object]]:
     """Exercise the ladder artifact pipeline using a local direct challenge."""
 
@@ -823,6 +846,8 @@ async def run_local_smoke(
         replica_seeds=replica_seeds,
         replica_iterations=replica_iterations,
         replica_seed=replica_seed,
+        rust_preview_search=rust_preview_search,
+        rust_turn2_branch=rust_turn2_branch,
         artifacts_dir=artifacts_dir,
         log_path=log_path,
         session_id=session_id,
@@ -871,6 +896,8 @@ async def run_live_session(
     replica_seeds: int = 2,
     replica_iterations: int = 400,
     replica_seed: int = 1,
+    rust_preview_search: bool = True,
+    rust_turn2_branch: int = 1,
 ) -> list[dict[str, object]]:
     """Play one ladder game at a time, recreating the client after connection failures.
 
@@ -896,6 +923,8 @@ async def run_live_session(
                     replica_seeds=replica_seeds,
                     replica_iterations=replica_iterations,
                     replica_seed=replica_seed,
+                    rust_preview_search=rust_preview_search,
+                    rust_turn2_branch=rust_turn2_branch,
                     artifacts_dir=artifacts_dir,
                     log_path=log_path,
                     session_id=session_id,
@@ -1102,34 +1131,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--replica-worlds",
         type=int,
-        default=4,
-        help="replica-search mode only: sampled hidden-information worlds per decision",
+        default=None,
+        help="sampled hidden-information worlds per decision (defaults: 10 for rust-search, 4 for replica-search)",
     )
     parser.add_argument(
         "--replica-actions",
         type=int,
-        default=4,
-        help="replica-search mode only: top candidate actions per side in lookahead",
+        default=None,
+        help="top candidate actions per side in lookahead (defaults: 8 for rust-search, 4 for replica-search)",
     )
     parser.add_argument(
         "--replica-seeds",
         type=int,
-        default=2,
-        help="replica-search mode only: RNG rollouts per action pairing",
+        default=None,
+        help="RNG rollouts per action pairing (defaults: 4 for rust-search, 2 for replica-search)",
     )
     parser.add_argument(
         "--replica-iterations",
         type=int,
-        default=400,
-        help="replica-search mode only: game-solver iterations per decision",
+        default=None,
+        help="game-solver iterations per decision (defaults: 2000 for rust-search, 400 for replica-search)",
     )
     parser.add_argument(
         "--replica-seed",
         type=int,
         default=1,
-        help="replica-search mode only: base RNG seed for world sampling",
+        help="base RNG seed for world sampling",
     )
-    parser.add_argument("--device", default="cpu", help="learned-policy inference device")
+    parser.add_argument(
+        "--no-rust-preview-search",
+        action="store_true",
+        help="rust-search mode only: disable 2-turn Rust lookahead at Team Preview (A/B control)",
+    )
+    parser.add_argument(
+        "--rust-turn2-branch",
+        type=int,
+        default=1,
+        help="rust-search mode only: Turn-2 2x2 Nash mini-game branching per side (1 disables, 2 enables)",
+    )
+    parser.add_argument("--device", default="auto", help="learned-policy inference device")
     parser.add_argument(
         "--no-sync-showdown",
         action="store_true",
@@ -1171,6 +1211,13 @@ def main() -> int:
     )
     print(f"policy: {selected_policy}")
     team = args.team.read_text().strip()
+    is_rust_search = args.policy_mode == "rust-search"
+    eff_worlds = args.replica_worlds if args.replica_worlds is not None else (10 if is_rust_search else 4)
+    eff_actions = args.replica_actions if args.replica_actions is not None else (8 if is_rust_search else 4)
+    eff_seeds = args.replica_seeds if args.replica_seeds is not None else (4 if is_rust_search else 2)
+    eff_iters = args.replica_iterations if args.replica_iterations is not None else (2000 if is_rust_search else 400)
+    rust_preview_search = not args.no_rust_preview_search
+
     if args.local_smoke:
         records = asyncio.run(
             run_local_smoke(
@@ -1184,11 +1231,13 @@ def main() -> int:
                 device=args.device,
                 policy_mode=args.policy_mode,
                 safety_slots=args.safety_slots,
-                replica_worlds=args.replica_worlds,
-                replica_actions=args.replica_actions,
-                replica_seeds=args.replica_seeds,
-                replica_iterations=args.replica_iterations,
+                replica_worlds=eff_worlds,
+                replica_actions=eff_actions,
+                replica_seeds=eff_seeds,
+                replica_iterations=eff_iters,
                 replica_seed=args.replica_seed,
+                rust_preview_search=rust_preview_search,
+                rust_turn2_branch=args.rust_turn2_branch,
                 timeout_seconds=args.game_timeout,
             )
         )
@@ -1246,11 +1295,13 @@ def main() -> int:
                 device=args.device,
                 policy_mode=args.policy_mode,
                 safety_slots=args.safety_slots,
-                replica_worlds=args.replica_worlds,
-                replica_actions=args.replica_actions,
-                replica_seeds=args.replica_seeds,
-                replica_iterations=args.replica_iterations,
+                replica_worlds=eff_worlds,
+                replica_actions=eff_actions,
+                replica_seeds=eff_seeds,
+                replica_iterations=eff_iters,
                 replica_seed=args.replica_seed,
+                rust_preview_search=rust_preview_search,
+                rust_turn2_branch=args.rust_turn2_branch,
                 game_timeout_seconds=args.game_timeout,
                 max_retries=args.max_retries,
             )

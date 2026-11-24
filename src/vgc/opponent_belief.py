@@ -18,7 +18,9 @@ from typing import Any
 
 from vgc.battle_memory import BattleMemory
 from vgc.damage import FieldState, PokemonState, damage_range, to_id
+from vgc.data import load_species
 from vgc.evaluator import field_effective_speed
+from vgc.mechanics_state import _mega_forme_id
 from vgc.models import PolicyConfig
 from vgc.sets import normalize_item, normalize_status, set_priors_for, usage_spreads_for
 from vgc.stats import (
@@ -566,6 +568,13 @@ def build_opponent_beliefs(
         status = None
         if pokemon is not None:
             known_item = known_item or normalize_item(getattr(pokemon, "item", None))
+            if not known_item:
+                mega_forme = _mega_forme_id(
+                    to_id(getattr(pokemon, "species", None)),
+                    to_id(getattr(pokemon, "forme_change_ability", None)) or None,
+                )
+                if mega_forme:
+                    known_item = to_id((load_species().get(mega_forme) or {}).get("requiredItem")) or None
             known_ability = known_ability or to_id(getattr(pokemon, "ability", None)) or None
             status = normalize_status(getattr(pokemon, "status", None))
 

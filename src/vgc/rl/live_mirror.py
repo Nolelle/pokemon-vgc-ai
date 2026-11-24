@@ -721,6 +721,69 @@ def branch_sensitivity(
     )
 
 
+def compute_mirror_hypotheses(
+    battle,
+    config: PolicyConfig,
+    memory=None,
+) -> tuple[list[MirrorHypothesis], dict[str, object], list[MirrorHypothesis]]:
+    """Pure-Python fog-safe hidden-information beliefs (zero Node.js worker required).
+
+    Returns ``(combined_hypotheses, audit_dict, excluded_hypotheses)``.
+    """
+    snap = snapshot_battle(
+        battle,
+        opponent_mega_unknown=config.exact_mirror_opponent_mega,
+        champions_pp=config.exact_mirror_champions_pp,
+    )
+    timers = enumerate_hidden_state_hypotheses(snap, config)
+    spreads = _spread_beliefs(battle, config, memory)
+    sets = _set_beliefs(battle, config, memory)
+    brought = _bring_beliefs(battle, config)
+    combined = [
+        MirrorHypothesis(
+            weight=spread_weight * set_weight * bring_weight * timer.weight,
+            spreads=spread_assignment,
+            timers=timer,
+            sets=set_assignment,
+            brought=bring_assignment,
+        )
+        for spread_weight, spread_assignment in spreads
+        for set_weight, set_assignment in sets
+        for bring_weight, bring_assignment in brought
+        for timer in timers
+    ]
+    combined.sort(key=lambda entry: -entry.weight)
+    total_count = len(combined)
+    limit = int(config.exact_search_total_hypotheses)
+    if limit < 1:
+        raise ValueError("exact_search_total_hypotheses must be at least 1")
+    kept, direct_mass, excluded = _compress_hypotheses(combined, limit)
+    retained_mass = sum(entry.weight for entry in kept)
+    combined = [
+        MirrorHypothesis(
+            weight=entry.weight / retained_mass,
+            spreads=entry.spreads,
+            timers=entry.timers,
+            sets=entry.sets,
+            brought=entry.brought,
+        )
+        for entry in kept
+    ]
+    audit: dict[str, object] = {
+        "total_before_cap": total_count,
+        "searched": len(combined),
+        "retained_probability_mass": retained_mass,
+        "direct_representative_mass": direct_mass,
+        "compressed": total_count > len(combined),
+        "spread_branches": len(spreads),
+        "set_branches": len(sets),
+        "bring_branches": len(brought),
+        "timer_branches": len(timers),
+    }
+    combined.sort(key=lambda entry: (entry.spread_key, -entry.weight))
+    return combined, audit, list(excluded)
+
+
 @dataclass
 class LiveExactMirror:
     """Own one local Showdown worker and rebuild a current-state root per decision."""
@@ -840,55 +903,9 @@ class LiveExactMirror:
         pays one team-preview start per spread rather than one per branch.
         """
 
-        timers = enumerate_hidden_state_hypotheses(self._snapshot(battle), self.config)
-        spreads = _spread_beliefs(battle, self.config, memory)
-        sets = _set_beliefs(battle, self.config, memory)
-        brought = _bring_beliefs(battle, self.config)
-        combined = [
-            MirrorHypothesis(
-                weight=spread_weight * set_weight * bring_weight * timer.weight,
-                spreads=spread_assignment,
-                timers=timer,
-                sets=set_assignment,
-                brought=bring_assignment,
-            )
-            for spread_weight, spread_assignment in spreads
-            for set_weight, set_assignment in sets
-            for bring_weight, bring_assignment in brought
-            for timer in timers
-        ]
-        combined.sort(key=lambda entry: -entry.weight)
-        total_count = len(combined)
-        limit = int(self.config.exact_search_total_hypotheses)
-        if limit < 1:
-            raise ValueError("exact_search_total_hypotheses must be at least 1")
-        kept, direct_mass, excluded = _compress_hypotheses(combined, limit)
-        retained_mass = sum(entry.weight for entry in kept)
-        combined = [
-            MirrorHypothesis(
-                weight=entry.weight / retained_mass,
-                spreads=entry.spreads,
-                timers=entry.timers,
-                sets=entry.sets,
-                brought=entry.brought,
-            )
-            for entry in kept
-        ]
-        self.last_excluded_hypotheses = list(excluded)
-        self.last_hypothesis_audit = {
-            "total_before_cap": total_count,
-            "searched": len(combined),
-            "retained_probability_mass": retained_mass,
-            "direct_representative_mass": direct_mass,
-            "compressed": total_count > len(combined),
-            "spread_branches": len(spreads),
-            "set_branches": len(sets),
-            "bring_branches": len(brought),
-            "timer_branches": len(timers),
-        }
-        # Spread-major, then most likely first within a spread: a caller stepping through
-        # in order rebuilds the Showdown root once per spread rather than once per branch.
-        combined.sort(key=lambda entry: (entry.spread_key, -entry.weight))
+        combined, audit, excluded = compute_mirror_hypotheses(battle, self.config, memory=memory)
+        self.last_excluded_hypotheses = excluded
+        self.last_hypothesis_audit = audit
         self._last_representatives = list(combined)
         return combined
 
