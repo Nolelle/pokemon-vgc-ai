@@ -23,8 +23,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  pub mod result;
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/crates/pikapro/src/patch.rs
 --- a/crates/pikapro/src/patch.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro/src/patch.rs	2026-11-24 17:13:34
-@@ -0,0 +1,553 @@
++++ b/crates/pikapro/src/patch.rs	2026-11-24 17:29:03
+@@ -0,0 +1,560 @@
 +//! Direct public-state patching for fast search roots (`Battle::patch_public`).
 +//!
 +//! Lets a search mirror start a `Battle` with our known team and a hypothesized
@@ -546,9 +546,11 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +        self.masks_cached = resolve::events::Cached::No;
 +        self.fresh_speeds = 0;
 +
-+        // Run pikapro's own `DisableMove` pass (enforces Choice lock, Encore, Disable,
-+        // Taunt, Heal Block, Throat Chop, Torment, Imprison, Gravity, Fake Out, etc.)
-+        // while preserving any explicitly patched disabled move flags from our request.
++        // Run pikapro's own `DisableMove` and `TrapPokemon` passes (enforces Choice lock,
++        // Encore, Disable, Taunt, Heal Block, Throat Chop, Torment, Imprison, Gravity,
++        // Fake Out, plus Shadow Tag / Arena Trap / Magnet Pull / Shed Shell trapping)
++        // while preserving any explicitly patched disabled-move or trapped flags from
++        // our Showdown request.
 +        for side_id in SideId::BOTH {
 +            for slot in 0..MAX_ACTIVE {
 +                let pos = crate::state::Position::new(side_id, slot as u8);
@@ -563,13 +565,18 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                    }
 +                    arr
 +                };
++                let explicit_trapped = mon.trapped;
 +                resolve::volatiles::disable_moves(self, pos);
++                resolve::trap_pokemon_event(self, pos);
 +                if let Some(mon_mut) = self.state.at_mut(pos) {
 +                    for (i, m) in mon_mut.moves.iter_mut().enumerate() {
 +                        if explicit[i] {
 +                            m.disabled = true;
 +                            mon_mut.effect_disabled |= 1 << i;
 +                        }
++                    }
++                    if explicit_trapped {
++                        mon_mut.trapped = true;
 +                    }
 +                }
 +            }
@@ -580,7 +587,7 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +}
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/resolve/mod.rs b/crates/pikapro/src/resolve/mod.rs
 --- a/crates/pikapro/src/resolve/mod.rs	2026-11-23 19:08:01
-+++ b/crates/pikapro/src/resolve/mod.rs	2026-11-23 19:20:54
++++ b/crates/pikapro/src/resolve/mod.rs	2026-11-24 17:29:02
 @@ -37,7 +37,7 @@
  mod status;
  mod switching;
@@ -590,6 +597,15 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  
  // The damage formula's callbacks.
  mod power;
+@@ -47,7 +47,7 @@
+ 
+ // Substitute, trapping, residual volatiles.
+ mod conditions;
+-pub(crate) use conditions::{is_trapped, request_target};
++pub(crate) use conditions::{is_trapped, request_target, trap_pokemon_event};
+ pub(crate) use volatiles::{request_shows_usable, request_shows_usable_moves};
+ // `LegalActions::check` takes what `chooseMove` does.
+ pub(crate) use targeting::valid_target_loc_in;
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro-py/src/python.rs b/crates/pikapro-py/src/python.rs
 --- a/crates/pikapro-py/src/python.rs	2026-11-23 19:08:01
 +++ b/crates/pikapro-py/src/python.rs	2026-11-24 15:59:10

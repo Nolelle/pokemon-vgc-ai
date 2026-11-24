@@ -944,3 +944,66 @@ def test_patch_public_pivot_force_switch_never_switches_into_self() -> None:
     # 3x3 zero-sum Rock-Paper-Scissors value must be ~0.0 (not truncated to 2x2!).
     rps = [[0.0, -1.0, 1.0], [1.0, 0.0, -1.0], [-1.0, 1.0, 0.0]]
     assert abs(_solve_2x2_zero_sum(rps)) < 0.05
+
+
+def test_patch_public_recomputes_foe_ability_trapping() -> None:
+    """`patch_public` must run `TrapPokemon` so Shadow Tag traps non-Ghosts but not Ghosts."""
+    pikapro = pytest.importorskip("pikapro")
+
+    t_gengar = (
+        "Gengar||Gengarite|CursedBody|Disable,PerishSong,Protect,ShadowBall|Timid|2,,,32,,32||||50|]"
+        "Archaludon||Leftovers|Stamina|FlashCannon,Protect,ElectroShot,DragonPulse|Modest|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Tyranitar||ChoiceScarf|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Pelipper||DampRock|Drizzle|WeatherBall,Hurricane,WideGuard,Protect|Modest|2,,,32,,32||||50|"
+    )
+    t_target = (
+        "Aegislash||FocusSash|StanceChange|Poltergeist,CloseCombat,WideGuard,ShadowSneak|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||LifeOrb|GrassySurge|WoodHammer,GrassyGlide,HighHorsepower,FakeOut|Adamant|32,32,2,,,||||50|]"
+        "Garchomp||GarchompiteZ|RoughSkin|DracoMeteor,PowerGem,EarthPower,Protect|Timid|2,,,32,,32||||50|]"
+        "Volcarona||GrassySeed|FlameBody|HeatWave,GigaDrain,QuiverDance,Protect|Timid|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Tyranitar||Leftovers|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t_gengar, t_target], seed=[1, 2, 3, 4], log=False)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    b.patch_public(
+        {
+            "turn": 2,
+            "sides": [
+                {
+                    "active_species": ["gengarmega", "archaludon"],
+                    "force_switch": [False, False],
+                    "mega_used": True,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "gengar", "is_mega": True, "ability": "shadowtag", "hp_pct": 100, "active_turns": 1},
+                        {"species": "archaludon", "hp_pct": 100, "active_turns": 1},
+                    ],
+                },
+                {
+                    "active_species": ["aegislash", "rillaboom"],
+                    "force_switch": [False, False],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "aegislash", "hp_pct": 100, "active_turns": 1},
+                        {"species": "rillaboom", "hp_pct": 100, "active_turns": 1},
+                    ],
+                },
+            ],
+        }
+    )
+    slot_masks = b.slot_mask(1)
+    space = pikapro.ActionSpace("championsvgc")
+    sw0 = [i for i in range(6) if slot_masks[0, space.switch_base + i]]
+    sw1 = [i for i in range(6) if slot_masks[1, space.switch_base + i]]
+    # Ghost-type Aegislash (slot 0) can still switch out; non-Ghost Rillaboom (slot 1) is trapped.
+    assert len(sw0) == 2, f"Ghost-type Aegislash should not be trapped by Shadow Tag: {sw0}"
+    assert sw1 == [], f"Non-Ghost Rillaboom must be trapped by Mega Gengar Shadow Tag: {sw1}"
