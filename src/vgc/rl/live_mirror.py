@@ -361,7 +361,17 @@ def _opponent_sets(
         if species_id in evolved_stones:
             item = evolved_stones[species_id]
         elif item in used_items:
-            item = None
+            ranked_items = sorted(
+                (prior.get("items") or {}).items(), key=lambda row: (-row[1], row[0])
+            )
+            item = next(
+                (
+                    item_id
+                    for item_id, _count in ranked_items
+                    if item_id in legal_items and item_id not in used_items
+                ),
+                None,
+            )
         if item:
             used_items.add(item)
         ability = to_id(getattr(mon, "ability", None)) or to_id(

@@ -1358,7 +1358,7 @@ def _batch_top_joint_actions(
 
 
 def _solve_2x2_zero_sum(mat: list[list[float]]) -> float:
-    """Exact zero-sum Nash equilibrium value of a small (1..2) x (1..2) simultaneous matrix."""
+    """Zero-sum Nash equilibrium value of a small simultaneous payoff matrix."""
     m = len(mat)
     if m == 0 or not mat[0]:
         return 0.0
@@ -1367,6 +1367,12 @@ def _solve_2x2_zero_sum(mat: list[list[float]]) -> float:
         return min(mat[0])
     if n == 1:
         return max(row[0] for row in mat)
+    if m > 2 or n > 2:
+        from vgc.rl.replica_search import _solve
+
+        arr = np.asarray(mat, dtype=float)
+        _, _, val, _ = _solve([arr], np.array([1.0], dtype=float), iterations=200)
+        return float(val)
     a, b = mat[0][0], mat[0][1]
     c, d = mat[1][0], mat[1][1]
     maximin = max(min(a, b), min(c, d))
@@ -1455,9 +1461,19 @@ def _eval_turn2_minigame(
                 sub = clone.fork(seed=future_seed)
                 st_turn = sub.turn
                 if oc != "<wait>" and sub.request_kind(our_idx) != "wait":
-                    sub.submit(our_idx, oc)
+                    try:
+                        sub.submit(our_idx, oc)
+                    except ValueError:
+                        fb = sub.legal_choices(our_idx)
+                        if fb:
+                            sub.submit(our_idx, fb[0])
                 if not sub.over and ec != "<wait>" and sub.request_kind(opp_idx) != "wait":
-                    sub.submit(opp_idx, ec)
+                    try:
+                        sub.submit(opp_idx, ec)
+                    except ValueError:
+                        fb = sub.legal_choices(opp_idx)
+                        if fb:
+                            sub.submit(opp_idx, fb[0])
                 forked_clones.append(sub)
                 forked_start_turns.append(st_turn)
                 forked_meta.append((ci, ai, bi))
@@ -1999,10 +2015,15 @@ def _sample_preview_worlds(
                 alt_sets[b.species_id] = primary_sets[b.species_id]
 
     opp_packed_primary = _pack_sets(_opponent_sets(battle, config, set_assignments=primary_sets))
-    set_variants.append((opp_packed_primary, 0.7 if has_alt else 1.0))
     if has_alt:
         opp_packed_alt = _pack_sets(_opponent_sets(battle, config, set_assignments=alt_sets))
-        set_variants.append((opp_packed_alt, 0.3))
+        if opp_packed_alt != opp_packed_primary:
+            set_variants.append((opp_packed_primary, 0.7))
+            set_variants.append((opp_packed_alt, 0.3))
+        else:
+            set_variants.append((opp_packed_primary, 1.0))
+    else:
+        set_variants.append((opp_packed_primary, 1.0))
 
     # 2. Predict opponent distinct (lead2, back2) brings via fog-safe neural preview + hybrid.
     opp_idx = 1 - our_idx

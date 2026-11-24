@@ -23,8 +23,8 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
  pub mod result;
 diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycache__ --exclude=Cargo.lock a/crates/pikapro/src/patch.rs b/crates/pikapro/src/patch.rs
 --- a/crates/pikapro/src/patch.rs	1969-12-31 17:00:00
-+++ b/crates/pikapro/src/patch.rs	2026-11-23 19:20:33
-@@ -0,0 +1,549 @@
++++ b/crates/pikapro/src/patch.rs	2026-11-24 17:13:34
+@@ -0,0 +1,553 @@
 +//! Direct public-state patching for fast search roots (`Battle::patch_public`).
 +//!
 +//! Lets a search mirror start a `Battle` with our known team and a hypothesized
@@ -442,7 +442,11 @@ diff -ruN --exclude=target --exclude=.git --exclude=*.egg-info --exclude=__pycac
 +                if let Some(idx) = desired_active[slot] {
 +                    let pos = new_order.len();
 +                    new_order.push(idx);
-+                    if !side.team[idx].is_fainted() && !sp.force_switch[slot] {
++                    // Keep alive pivoting mons (U-turn / Parting Shot / Flip Turn / Eject)
++                    // in `active_slots` even when `force_switch[slot]` is true; clearing
++                    // `active_slots[slot]` while alive made pikapro offer switching the
++                    // pivoting Pokémon back into itself!
++                    if !side.team[idx].is_fainted() {
 +                        active_slots[slot] = Some(pos as u8);
 +                    }
 +                } else {

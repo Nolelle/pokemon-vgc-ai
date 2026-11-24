@@ -889,3 +889,58 @@ def test_bug_hunt_p0_p1_locked_moves_consumed_items_mega_ability_and_unrevealed_
     assert float(os_[foe_gholdengo + 2]) > 0.0  # Good as Gold known
     assert float(os_[foe_gholdengo + 12]) == 0.0, "unrevealed Gholdengo must NOT leak is_revealed"
     assert float(os_[foe_gholdengo + 14]) == 0.0, "unrevealed Gholdengo must NOT leak is_brought"
+
+
+def test_patch_public_pivot_force_switch_never_switches_into_self() -> None:
+    """Round 2 P0 regression: an alive pivoting mon (Parting Shot / U-turn / Flip Turn)
+    with `force_switch=[False, True]` must remain in `active_slots` so pikapro only offers
+    genuine bench switches (3/4), never switching the active mon back into itself (`switch 2`).
+    """
+    from vgc.rl.rust_search import _solve_2x2_zero_sum
+
+    packed = (
+        "Gardevoir||Gardevoirite|Trace|Moonblast,Psychic,DazzlingGleam,Protect|Timid|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Basculegion||ChoiceScarf|Adaptability|WaveCrash,LastRespects,AquaJet,FlipTurn|Adamant|,32,,,,32||||50|]"
+        "Indeedee-F||SafetyGoggles|PsychicSurge|FollowMe,HelpingHand,Psychic,TrickRoom|Bold|32,,32,,2,||||50|]"
+        "Tyranitar||Leftovers|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [packed, packed], seed=[1, 2, 3, 4], log=False)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    b.patch_public(
+        {
+            "turn": 3,
+            "sides": [
+                {
+                    "active_species": ["gardevoir", "incineroar"],
+                    "force_switch": [False, True],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "gardevoir", "hp_pct": 80, "active_turns": 2},
+                        {"species": "incineroar", "hp_pct": 90, "active_turns": 2},
+                    ],
+                },
+                {
+                    "active_species": ["gardevoir", "incineroar"],
+                    "force_switch": [False, False],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [],
+                },
+            ],
+        }
+    )
+    legal = [str(c) for c in b.legal_choices(0)]
+    assert legal, "must have legal bench switches"
+    assert all("switch 2" not in c and "switch 1" not in c for c in legal), f"illegal self-switch offered: {legal}"
+
+    # 3x3 zero-sum Rock-Paper-Scissors value must be ~0.0 (not truncated to 2x2!).
+    rps = [[0.0, -1.0, 1.0], [1.0, 0.0, -1.0], [-1.0, 1.0, 0.0]]
+    assert abs(_solve_2x2_zero_sum(rps)) < 0.05
