@@ -194,6 +194,7 @@ class VgcPlayer(Player):
                         self._clock_for_tag(battle_tag).note_request(
                             update='"update":true' in payload
                         )
+                self._observe_raw_protocol_line(battle_tag, message)
             await self._handle_battle_message_line([room, normalize_for_poke_env(message)])
             battles = getattr(self, "_battles", None)
             if battle_tag and battles:
@@ -206,6 +207,10 @@ class VgcPlayer(Player):
                 ):
                     # Final-turn reveals never reach a later decide(); flush now.
                     self._capture_unknown_species(battle_obj, self._memory_for_tag(battle_tag))
+
+    def _observe_raw_protocol_line(self, battle_tag: str, message: list[str]) -> None:
+        """Optional subclass hook invoked with each raw Showdown line before poke-env parsing."""
+        del battle_tag, message
 
     async def _handle_battle_message_line(self, split_messages) -> None:
         """Work around poke-env 0.15's Open Team Sheets accept/reject race.

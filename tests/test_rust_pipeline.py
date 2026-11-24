@@ -560,3 +560,450 @@ def test_player_view_extender_timers_stay_nonzero_on_turns_6_to_8() -> None:
     # Turns 1..4 count down 5-turn base (0.8, 0.6, 0.4, 0.2), then Turns 5..7 infer 8-turn extender (0.6, 0.4, 0.2), Turn 8 expires (0.0).
     assert rain_by_turn == [0.8, 0.6, 0.4, 0.2, 0.6, 0.4, 0.2, 0.0], rain_by_turn
     assert ter_by_turn == [0.8, 0.6, 0.4, 0.2, 0.6, 0.4, 0.2, 0.0], ter_by_turn
+
+
+def test_encode_state_rich_parity_moved_revealed_and_extenders() -> None:
+    """Track A fixes: `moved_this_turn` resets each turn, undamaged switched-out foes
+    stay revealed via `foe_revealed`, and 8-turn extenders match `encode_rich` on turns 1..3.
+    """
+    t1 = (
+        "Politoed||DampRock|Drizzle|Protect,Scald,Yawn,HelpingHand|Calm|32,,16,,18,||||50|]"
+        "Rillaboom||TerrainExtender|GrassySurge|Protect,FakeOut,LeechSeed,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Snorlax||SitrusBerry|ThickFat|Protect,Rest,BodySlam,Crunch|Careful|32,,16,,18,||||50|]"
+        "Umbreon||Leftovers|InnerFocus|Protect,Moonlight,Snarl,FoulPlay|Calm|32,,16,,18,||||50|]"
+        "Cresselia||RockyHelmet|Levitate|Protect,LunarBlessing,Psychic,IcyWind|Bold|32,,32,,2,||||50|]"
+        "Blissey||CovertCloak|NaturalCure|Protect,SoftBoiled,SeismicToss,HelpingHand|Bold|32,,32,,2,||||50|"
+    )
+    t2 = (
+        "Snorlax||SitrusBerry|ThickFat|Protect,Rest,BodySlam,Crunch|Careful|32,,16,,18,||||50|]"
+        "Umbreon||Leftovers|InnerFocus|Protect,Moonlight,Snarl,FoulPlay|Calm|32,,16,,18,||||50|]"
+        "Cresselia||RockyHelmet|Levitate|Protect,LunarBlessing,Psychic,IcyWind|Bold|32,,32,,2,||||50|]"
+        "Blissey||CovertCloak|NaturalCure|Protect,SoftBoiled,SeismicToss,HelpingHand|Bold|32,,32,,2,||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|Protect,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Milotic||FlameOrb|MarvelScale|Protect,Scald,Recover,IcyWind|Bold|32,,32,,2,||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t1, t2], seed=(1, 2, 3, 4), log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    # Turn 1: Politoed uses Helping Hand, Rillaboom uses Protect; foe switches Snorlax out undamaged.
+    b.submit(0, "move 4 -2, move 1")
+    b.submit(1, "switch 3, move 1")
+
+    # At start of Turn 2, active mons have NOT moved yet this turn (`o[65] == 0.0`).
+    o_view = b.encode_rich(0)
+    o_state = b.encode_state_rich(0, foe_revealed=[True, True, True, False, False, False])
+    assert float(o_view[65]) == 0.0
+    assert float(o_state[65]) == 0.0, "moved_this_turn must reset to 0.0 at start of Turn 2"
+    assert float(o_state[RICH_MON_WIDTH + 65]) == 0.0
+
+    # 8-turn Damp Rock / Terrain Extender on Turn 2 (`rem=7`, `elapsed=1`) must both read 0.8.
+    assert abs(float(o_view[12 * RICH_MON_WIDTH + 47]) - 0.8) < 1e-6
+    assert abs(float(o_state[12 * RICH_MON_WIDTH + 47]) - 0.8) < 1e-6
+    assert abs(float(o_state[12 * RICH_MON_WIDTH + 52]) - 0.8) < 1e-6
+
+    # Undamaged switched-out foe Snorlax (foe row 0 -> row index 6) must stay revealed & brought.
+    foe_row0 = 6 * RICH_MON_WIDTH
+    assert float(o_view[foe_row0 + 12]) == 1.0 and float(o_view[foe_row0 + 14]) == 1.0
+    assert float(o_state[foe_row0 + 12]) == 1.0 and float(o_state[foe_row0 + 14]) == 1.0
+
+
+def test_our_public_knowledge_reveals_only_public_protocol_facts() -> None:
+    """Simulated opponent sees our publicly revealed items/abilities/moves, never hidden ones."""
+    from types import SimpleNamespace
+
+    from vgc.battle_memory import BattleMemory
+    from vgc.rl.rust_search import _our_public_knowledge
+
+    packed = (
+        "Tyranitar||AssaultVest|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|"
+    )
+    mem = BattleMemory("test", our_role="p1")
+    mem.observe_protocol(
+        [
+            ["", "switch", "p1a: Tyranitar", "Tyranitar, L50, M", "100/100"],
+            ["", "switch", "p1b: Sneasler", "Sneasler, L50, M", "100/100"],
+            ["", "-weather", "Sandstorm", "[from] ability: Sand Stream", "[of] p1a: Tyranitar"],
+            ["", "move", "p1b: Sneasler", "Fake Out", "p2a: Pelipper"],
+        ]
+    )
+    battle = SimpleNamespace(team={})
+    items, abilities, moves, revealed = _our_public_knowledge(battle, packed, memory=mem)
+    # Tyranitar: revealed + Sand Stream known from weather line, item still hidden.
+    assert revealed[0] is True
+    assert abilities[0] == "sandstream"
+    assert items[0] is None
+    # Sneasler: revealed + Fake Out known, Focus Sash & Unburden still hidden (never leaked!).
+    assert revealed[1] is True
+    assert moves[1] == ["fakeout"]
+    assert items[1] is None
+    assert abilities[1] is None
+    # Gholdengo: unrevealed on bench, single-ability Good as Gold known, Life Orb hidden.
+    assert revealed[2] is False
+    assert abilities[2] == "goodasgold"
+    assert items[2] is None
+    # Incineroar: unrevealed on bench, Safety Goggles & Intimidate hidden.
+    assert revealed[3] is False
+    assert items[3] is None
+    assert abilities[3] is None
+
+
+def test_rust_policy_v3_equivariance_preview_symmetry_and_roundtrip(tmp_path: Path) -> None:
+    """Track B: v3 policy (static move meta + GPU speed cues + symmetric preview head)
+    must remain move/slot equivariant, give identical preview logits for swapped back/lead
+    pairs, and round-trip cleanly alongside legacy v2 checkpoints.
+    """
+    import torch
+
+    from vgc.rl.rust_policy import (
+        RUST_POLICY_VERSION,
+        RustFactoredPolicy,
+        load_rust_policy,
+        save_rust_policy,
+    )
+
+    assert RUST_POLICY_VERSION == 3
+    torch.manual_seed(42)
+    model = RustFactoredPolicy(width=64, layers=2, policy_version=3).eval()
+
+    t1 = (
+        "Tyranitar||ChoiceScarf|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Pelipper||DampRock|Drizzle|WeatherBall,Hurricane,WideGuard,Protect|Modest|2,,,32,,32||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t1, t1], seed=(3, 4, 5, 6), log=True)
+    obs_pv = b.encode_rich(0)
+    with torch.no_grad():
+        enc = model.encode_board(torch.from_numpy(obs_pv).unsqueeze(0))
+        pv_logits = model.preview_logits(enc)[0].numpy()
+
+    # Check exact symmetry for swapped back pair (0,1,2,3) vs (0,1,3,2) and swapped lead pair (1,0,2,3).
+    orders = model.preview_orders.numpy()
+    idx_0123 = int(np.where((orders == [0, 1, 2, 3]).all(axis=1))[0][0])
+    idx_0132 = int(np.where((orders == [0, 1, 3, 2]).all(axis=1))[0][0])
+    idx_1023 = int(np.where((orders == [1, 0, 2, 3]).all(axis=1))[0][0])
+    assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_0132])) < 1e-5
+    assert abs(float(pv_logits[idx_0123]) - float(pv_logits[idx_1023])) < 1e-5
+
+    # Fainted active-slot Pokémon (`active_slot > 0` AND `is_fainted == 1.0`, as PlayerView
+    # keeps in 2v1/1v1 endgames) must be excluded from speed-rank comparisons!
+    obs_faint = obs_pv.copy()
+    # Set own0 (speed 100), own1 (speed 200), foe0 (speed 150, FAINTED), foe1 (speed 50) active.
+    for row_i, slot_v, faint_v, spe_v in ((0, 1.0, 0.0, 100.0), (1, 2.0, 0.0, 200.0), (6, 1.0, 1.0, 150.0), (7, 2.0, 0.0, 50.0)):
+        base_i = row_i * RICH_MON_WIDTH
+        obs_faint[base_i + 3] = slot_v
+        obs_faint[base_i + 8] = 1.0
+        obs_faint[base_i + 11] = faint_v
+        if row_i < 6:
+            obs_faint[base_i + 53] = spe_v / 255.0
+        else:
+            obs_faint[base_i + 59] = (spe_v - 36.0) / 255.0
+    x_f = torch.from_numpy(obs_faint).unsqueeze(0)
+    m_f = x_f[:, : 12 * RICH_MON_WIDTH].view(1, 12, RICH_MON_WIDTH)
+    g_f = x_f[:, 12 * RICH_MON_WIDTH :]
+    ids_f = m_f[:, :, :8].long()
+    sf = model._compute_speed_features(m_f, g_f, ids_f[:, :, 1], ids_f[:, :, 2], ids_f[:, :, 3])
+    # Among 3 living actives (own1=200, own0=100, foe1=50), ranks must be 1.0, 0.5, 0.0; dead foe0 must be 0.0!
+    assert abs(float(sf[0, 1, 2]) - 1.0) < 1e-5
+    assert abs(float(sf[0, 0, 2]) - 0.5) < 1e-5
+    assert abs(float(sf[0, 7, 2]) - 0.0) < 1e-5
+    assert abs(float(sf[0, 6, 2]) - 0.0) < 1e-5
+
+    # Advance into battle and test move-order equivariance + save/load roundtrip.
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    obs_turn = b.encode_rich(0)
+    obs_swapped_mv = obs_turn.copy()
+    # Swap move slots 0 and 1 on own row 0 (IDs 4/5, PP 66/67, disabled 70/71).
+    obs_swapped_mv[4], obs_swapped_mv[5] = obs_swapped_mv[5], obs_swapped_mv[4]
+    obs_swapped_mv[66], obs_swapped_mv[67] = obs_swapped_mv[67], obs_swapped_mv[66]
+    obs_swapped_mv[70], obs_swapped_mv[71] = obs_swapped_mv[71], obs_swapped_mv[70]
+    with torch.no_grad():
+        enc1 = model.encode_board(torch.from_numpy(obs_turn).unsqueeze(0))
+        enc2 = model.encode_board(torch.from_numpy(obs_swapped_mv).unsqueeze(0))
+        v1, _ = model.value_from_context(enc1.context)
+        v2, _ = model.value_from_context(enc2.context)
+        l1 = model.slot0_logits(enc1)[0]
+        l2 = model.slot0_logits(enc2)[0]
+    assert abs(float(v1.item()) - float(v2.item())) < 1e-5
+    assert torch.allclose(l1[0:10], l2[10:20], atol=1e-5)
+    assert torch.allclose(l1[10:20], l2[0:10], atol=1e-5)
+
+    # Checkpoint round-trip for v3 AND legacy v2.
+    p_v3 = save_rust_policy(tmp_path / "v3.pt", model)
+    loaded_v3 = load_rust_policy(p_v3, device="cpu")
+    assert loaded_v3.policy_version == 3
+    with torch.no_grad():
+        v3_check, _ = loaded_v3.value_from_context(
+            loaded_v3.encode_board(torch.from_numpy(obs_turn).unsqueeze(0)).context
+        )
+    assert abs(float(v1.item()) - float(v3_check.item())) < 1e-6
+
+    model_v2 = RustFactoredPolicy(width=64, layers=2, policy_version=2).eval()
+    p_v2 = save_rust_policy(tmp_path / "v2.pt", model_v2)
+    loaded_v2 = load_rust_policy(p_v2, device="cpu")
+    assert loaded_v2.policy_version == 2
+    assert loaded_v2.ffn_mult == 2
+
+
+def test_train_rust_vec_optimizer_decay_groups_and_ema_pfsp() -> None:
+    """Track B: embeddings/LayerNorm/biases get 0 weight decay; PFSP EMA stays fresh."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "selfplay"))
+    import train_rust_vec as trv
+
+    from vgc.rl.rust_policy import RustFactoredPolicy
+
+    model = RustFactoredPolicy(width=64, layers=2, policy_version=3)
+    opt = trv.build_optimizer(model, lr=1e-4, weight_decay=1e-3)
+    assert len(opt.param_groups) == 2
+    assert opt.param_groups[0]["weight_decay"] == 1e-3
+    assert opt.param_groups[1]["weight_decay"] == 0.0
+    no_decay_ids = {id(p) for p in opt.param_groups[1]["params"]}
+    assert id(model.move_emb.weight) in no_decay_ids
+    assert id(model.species_emb.weight) in no_decay_ids
+    assert id(model.value_head[0].weight) in no_decay_ids  # LayerNorm
+
+    snap = trv.Snapshot(0, Path("dummy.pt"))
+    for _ in range(300):
+        snap.record_game(0.0)
+    assert snap.games <= 200.1
+    # After learner starts beating it 100%, EMA priority must drop well below 0.25 within 200 games.
+    for _ in range(200):
+        snap.record_game(1.0)
+    assert snap.priority < 0.25
+
+
+def test_bug_hunt_p0_p1_locked_moves_consumed_items_mega_ability_and_unrevealed_gholdengo() -> None:
+    """Regression suite for P0/P1 bug-hunt findings:
+    - `_extract_rust_request_meta` + `match_pikapro_choice_to_order` on Locked/Recharge/Struggle
+    - Outrage blocked by Protect clears `BattleMemory.locked_move`
+    - Consumed items are not resurrected; Mega ability beats pre-Mega ability
+    - Unrevealed single-ability bench mons (Gholdengo) do NOT leak `is_revealed=1.0`
+    """
+    from types import SimpleNamespace
+
+    from vgc.battle_memory import BattleMemory
+    from vgc.rl.rust_search import (
+        _extract_rust_request_meta,
+        _our_public_knowledge,
+        match_pikapro_choice_to_order,
+    )
+
+    # 1. Locked rampage / two-turn / Recharge / Struggle request metadata extraction + matching.
+    fake_req = SimpleNamespace(
+        pokemon=[SimpleNamespace(species="Dragonite"), SimpleNamespace(species="Archaludon")],
+        kind=SimpleNamespace(
+            active=[
+                SimpleNamespace(moves=SimpleNamespace(value="Outrage")),
+                SimpleNamespace(moves="Recharge"),
+            ]
+        ),
+    )
+    slot_moves, team_sp = _extract_rust_request_meta(fake_req)
+    assert slot_moves == [["outrage"], ["recharge"]]
+    assert team_sp == ["dragonite", "archaludon"]
+
+    fake_legal = [
+        SimpleNamespace(
+            first_order=SimpleNamespace(
+                order=SimpleNamespace(id="outrage"), move_target=1, mega=False
+            ),
+            second_order=SimpleNamespace(
+                order=SimpleNamespace(id="recharge"), move_target=0, mega=False
+            ),
+        )
+    ]
+    matched = match_pikapro_choice_to_order(
+        "move 1, move 1",
+        SimpleNamespace(last_request={}),
+        fake_legal,
+        slot_moves=slot_moves,
+        team_species=team_sp,
+    )
+    assert matched is fake_legal[0]
+
+    # 2. Outrage blocked by Protect must NOT leave `locked_move` active on the next turn.
+    mem = BattleMemory("lock-test", our_role="p1")
+    mem.observe_protocol(
+        [
+            ["", "turn", "2"],
+            ["", "switch", "p1a: Dragonite", "Dragonite, L50, M", "100/100"],
+            ["", "move", "p1a: Dragonite", "Outrage", "p2a: Incineroar"],
+            ["", "-activate", "p2a: Incineroar", "move: Protect"],
+        ]
+    )
+    assert mem.locked_move("p1", "Dragonite", 3) is None
+
+    # 3. Consumed item is NOT resurrected & Mega Salamence gets Aerilate (not pre-Mega Intimidate).
+    packed = (
+        "Salamence||Salamencite|Intimidate|DoubleEdge,DracoMeteor,Tailwind,Protect|Jolly|,32,,,,32||||50|]"
+        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
+        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
+        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Tyranitar||SitrusBerry|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|"
+    )
+    mem2 = BattleMemory("mega-item-test", our_role="p1")
+    mem2.observe_protocol(
+        [
+            ["", "switch", "p1a: Salamence", "Salamence, L50, M", "100/100"],
+            ["", "-ability", "p1a: Salamence", "Intimidate", "boost"],
+            ["", "-mega", "p1a: Salamence", "Salamence", "Salamencite"],
+            ["", "switch", "p1b: Sneasler", "Sneasler, L50, M", "100/100"],
+            ["", "-enditem", "p1b: Sneasler", "Focus Sash"],
+        ]
+    )
+    fake_battle = SimpleNamespace(
+        team={
+            "p1: Salamence": SimpleNamespace(
+                species="salamencemega", item="salamencite", active=True, fainted=False, current_hp_fraction=1.0, status=None, moves={}
+            ),
+            "p1: Sneasler": SimpleNamespace(
+                species="sneasler", item=None, active=True, fainted=False, current_hp_fraction=0.01, status=None, moves={}
+            ),
+        }
+    )
+    our_it, our_ab, _, _ = _our_public_knowledge(fake_battle, packed, memory=mem2)
+    assert our_ab[0] == "aerilate", f"expected aerilate after Mega, got {our_ab[0]}"
+    assert our_it[1] is None, f"consumed Focus Sash must stay None, got {our_it[1]}"
+
+    # 4. Unrevealed brought Gholdengo (single-ability Good as Gold) must NOT leak `is_revealed=1.0`.
+    b = pikapro.Battle("championsvgc", [packed, packed], seed=[1, 2, 3, 4], log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    os_ = b.encode_state_rich(
+        0,
+        foe_known_items=[None] * 6,
+        foe_known_abilities=[None, None, "goodasgold", None, None, None],
+        foe_known_moves=[[]] * 6,
+        foe_revealed=[True, True, False, False, False, False],
+    )
+    foe_gholdengo = (6 + 2) * RICH_MON_WIDTH
+    assert float(os_[foe_gholdengo + 2]) > 0.0  # Good as Gold known
+    assert float(os_[foe_gholdengo + 12]) == 0.0, "unrevealed Gholdengo must NOT leak is_revealed"
+    assert float(os_[foe_gholdengo + 14]) == 0.0, "unrevealed Gholdengo must NOT leak is_brought"
+
+
+def test_patch_public_pivot_force_switch_never_switches_into_self() -> None:
+    """Round 2 P0 regression: an alive pivoting mon (Parting Shot / U-turn / Flip Turn)
+    with `force_switch=[False, True]` must remain in `active_slots` so pikapro only offers
+    genuine bench switches (3/4), never switching the active mon back into itself (`switch 2`).
+    """
+    from vgc.rl.rust_search import _solve_2x2_zero_sum
+
+    packed = (
+        "Gardevoir||Gardevoirite|Trace|Moonblast,Psychic,DazzlingGleam,Protect|Timid|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Basculegion||ChoiceScarf|Adaptability|WaveCrash,LastRespects,AquaJet,FlipTurn|Adamant|,32,,,,32||||50|]"
+        "Indeedee-F||SafetyGoggles|PsychicSurge|FollowMe,HelpingHand,Psychic,TrickRoom|Bold|32,,32,,2,||||50|]"
+        "Tyranitar||Leftovers|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [packed, packed], seed=[1, 2, 3, 4], log=False)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    b.patch_public(
+        {
+            "turn": 3,
+            "sides": [
+                {
+                    "active_species": ["gardevoir", "incineroar"],
+                    "force_switch": [False, True],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "gardevoir", "hp_pct": 80, "active_turns": 2},
+                        {"species": "incineroar", "hp_pct": 90, "active_turns": 2},
+                    ],
+                },
+                {
+                    "active_species": ["gardevoir", "incineroar"],
+                    "force_switch": [False, False],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [],
+                },
+            ],
+        }
+    )
+    legal = [str(c) for c in b.legal_choices(0)]
+    assert legal, "must have legal bench switches"
+    assert all("switch 2" not in c and "switch 1" not in c for c in legal), f"illegal self-switch offered: {legal}"
+
+    # 3x3 zero-sum Rock-Paper-Scissors value must be ~0.0 (not truncated to 2x2!).
+    rps = [[0.0, -1.0, 1.0], [1.0, 0.0, -1.0], [-1.0, 1.0, 0.0]]
+    assert abs(_solve_2x2_zero_sum(rps)) < 0.05
+
+
+def test_patch_public_recomputes_foe_ability_trapping() -> None:
+    """`patch_public` must run `TrapPokemon` so Shadow Tag traps non-Ghosts but not Ghosts."""
+    pikapro = pytest.importorskip("pikapro")
+
+    t_gengar = (
+        "Gengar||Gengarite|CursedBody|Disable,PerishSong,Protect,ShadowBall|Timid|2,,,32,,32||||50|]"
+        "Archaludon||Leftovers|Stamina|FlashCannon,Protect,ElectroShot,DragonPulse|Modest|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Rillaboom||MiracleSeed|GrassySurge|FakeOut,GrassyGlide,WoodHammer,Uturn|Adamant|32,32,2,,,||||50|]"
+        "Tyranitar||ChoiceScarf|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
+        "Pelipper||DampRock|Drizzle|WeatherBall,Hurricane,WideGuard,Protect|Modest|2,,,32,,32||||50|"
+    )
+    t_target = (
+        "Aegislash||FocusSash|StanceChange|Poltergeist,CloseCombat,WideGuard,ShadowSneak|Adamant|32,32,,,,2||||50|]"
+        "Rillaboom||LifeOrb|GrassySurge|WoodHammer,GrassyGlide,HighHorsepower,FakeOut|Adamant|32,32,2,,,||||50|]"
+        "Garchomp||GarchompiteZ|RoughSkin|DracoMeteor,PowerGem,EarthPower,Protect|Timid|2,,,32,,32||||50|]"
+        "Volcarona||GrassySeed|FlameBody|HeatWave,GigaDrain,QuiverDance,Protect|Timid|2,,,32,,32||||50|]"
+        "Incineroar||SitrusBerry|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|]"
+        "Tyranitar||Leftovers|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|"
+    )
+    b = pikapro.Battle("championsvgc", [t_gengar, t_target], seed=[1, 2, 3, 4], log=False)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    b.patch_public(
+        {
+            "turn": 2,
+            "sides": [
+                {
+                    "active_species": ["gengarmega", "archaludon"],
+                    "force_switch": [False, False],
+                    "mega_used": True,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "gengar", "is_mega": True, "ability": "shadowtag", "hp_pct": 100, "active_turns": 1},
+                        {"species": "archaludon", "hp_pct": 100, "active_turns": 1},
+                    ],
+                },
+                {
+                    "active_species": ["aegislash", "rillaboom"],
+                    "force_switch": [False, False],
+                    "mega_used": False,
+                    "total_fainted": 0,
+                    "fainted_last_turn": False,
+                    "side_conditions": [],
+                    "mons": [
+                        {"species": "aegislash", "hp_pct": 100, "active_turns": 1},
+                        {"species": "rillaboom", "hp_pct": 100, "active_turns": 1},
+                    ],
+                },
+            ],
+        }
+    )
+    slot_masks = b.slot_mask(1)
+    space = pikapro.ActionSpace("championsvgc")
+    sw0 = [i for i in range(6) if slot_masks[0, space.switch_base + i]]
+    sw1 = [i for i in range(6) if slot_masks[1, space.switch_base + i]]
+    # Ghost-type Aegislash (slot 0) can still switch out; non-Ghost Rillaboom (slot 1) is trapped.
+    assert len(sw0) == 2, f"Ghost-type Aegislash should not be trapped by Shadow Tag: {sw0}"
+    assert sw1 == [], f"Non-Ghost Rillaboom must be trapped by Mega Gengar Shadow Tag: {sw1}"

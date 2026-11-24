@@ -327,24 +327,21 @@ def _make_session_player(
                     self._rust_sessions[battle_tag] = sess
                 return sess
 
-            async def _handle_battle_message(self, split_messages: list[list[str]]) -> None:
-                if split_messages and split_messages[0] and split_messages[0][0].startswith(">"):
-                    battle_tag = split_messages[0][0][1:]
+            def _observe_raw_protocol_line(self, battle_tag: str, message: list[str]) -> None:
+                # Feed `ChannelSession` the exact RAW Showdown line (unmodified by
+                # `normalize_for_poke_env`) in exact line-by-line lockstep before poke-env
+                # triggers `decide()`/`decide_teampreview()`.
+                if len(message) > 1:
                     sess = self._session_for(battle_tag)
-                    lines = [
-                        "|" + "|".join(parts[1:])
-                        for parts in split_messages[1:]
-                        if len(parts) > 1
-                    ]
-                    if lines:
-                        sess.feed_many(lines)
-                await super()._handle_battle_message(split_messages)
+                    sess.feed_many(["|" + "|".join(message[1:])])
 
             def _battle_finished_callback(self, battle: AbstractBattle) -> None:
                 self._rust_sessions.pop(battle.battle_tag, None)
                 super()._battle_finished_callback(battle)
 
             def decide_teampreview(self, battle: AbstractBattle) -> str:
+                # Ensure `BattleMemory.our_role` is initialized before Turn-1 lead switch-ins.
+                self._memory_for(battle)
                 sess = self._session_for(battle.battle_tag)
                 if sess.needs_action:
                     s = self.space.slot_size

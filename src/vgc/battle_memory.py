@@ -159,6 +159,14 @@ class BattleMemory:
     defensive_damage_observations: list[DefensiveDamageObservation] = field(default_factory=list)
     opponent_items: dict[str, str] = field(default_factory=dict)
     opponent_abilities: dict[str, str] = field(default_factory=dict)
+    # Strictly public reveals of OUR OWN team (used so search's simulated opponent sees
+    # only what a real opponent has actually observed on the public battle log).
+    our_revealed_items: dict[str, str] = field(default_factory=dict)
+    our_revealed_abilities: dict[str, str] = field(default_factory=dict)
+    our_revealed_moves: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
+    our_appeared: set[str] = field(default_factory=set)
     # Species currently transformed (Ditto): an ability shown meanwhile is the TARGET's.
     _transformed_species: set[str] = field(default_factory=set)
     # (side, species or name) -> the move Disable shut off. poke-env keeps the Disable
@@ -188,6 +196,9 @@ class BattleMemory:
     _mega_formes: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
     # (role, nickname) -> (turn, move id) of the last Outrage-family move it used this stint.
     _locking_use: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict, repr=False)
+    # (role, nickname) -> turn number when the current active stint began (tracks `active_turns`).
+    _stint_start_turn: dict[tuple[str, str], int] = field(default_factory=dict, repr=False)
+    _last_move_actor_key: tuple[str, str] | None = field(default=None, repr=False)
     _ident_species: dict[str, str] = field(default_factory=dict, repr=False)
     _turn_actions: list[tuple[str, str, int]] = field(default_factory=list, repr=False)
     _last_move: tuple[str, str, str] | None = field(default=None, repr=False)
@@ -216,6 +227,8 @@ class BattleMemory:
             if len(message) < 2:
                 continue
             kind = str(message[1])
+            if kind not in {"-ability", "ability", "-item", "item", "-enditem", "turn", "upkeep"}:
+                self._observe_public_source_tags(message)
             if kind in {"turn", "upkeep"}:
                 self._finalize_damage_buffer()
                 self._finalize_defensive_buffer()
@@ -231,12 +244,14 @@ class BattleMemory:
                 self._finalize_damage_buffer()
                 self._finalize_defensive_buffer()
                 actor_role = _side(message[2])
-                if actor_role:
-                    self._acted.add((actor_role, to_id(_display_name(message[2]))))
+                actor_name_key = (actor_role, to_id(_display_name(message[2]))) if actor_role else None
+                self._last_move_actor_key = actor_name_key
+                if actor_name_key:
+                    self._acted.add(actor_name_key)
                 if to_id(message[3]):
                     self.last_move_used = to_id(message[3])
-                    if actor_role and to_id(message[3]) in LOCKING_MOVES:
-                        self._locking_use[(actor_role, to_id(_display_name(message[2])))] = (
+                    if actor_name_key and to_id(message[3]) in LOCKING_MOVES:
+                        self._locking_use[actor_name_key] = (
                             self.current_turn,
                             to_id(message[3]),
                         )
@@ -244,41 +259,75 @@ class BattleMemory:
                 move_id = to_id(message[3]) or "unknown"
                 self._last_move = (actor_role or "", actor, move_id)
                 self._observe_action_order(actor_role, actor, move_id)
-                if self.opponent_role is not None and actor_role == self.opponent_role:
-                    self.opponent_moves[actor][move_id] += 1
-                    if move_id in {"protect", "detect", "kingsshield", "spikyshield"}:
-                        self.opponent_protects[actor] += 1
-                    if len(message) > 4 and _side(message[4]) == self.our_role:
-                        target = self._species_for_ident(message[4])
-                        self.opponent_targets[target] += 1
+                if actor not in self._transformed_species:
+                    if self.opponent_role is not None and actor_role == self.opponent_role:
+                        self.opponent_moves[actor][move_id] += 1
+                        if move_id in {"protect", "detect", "kingsshield", "spikyshield"}:
+                            self.opponent_protects[actor] += 1
+                        if len(message) > 4 and _side(message[4]) == self.our_role:
+                            target = self._species_for_ident(message[4])
+                            self.opponent_targets[target] += 1
+                    elif self.our_role is not None and actor_role == self.our_role:
+                        self.our_revealed_moves[actor][move_id] += 1
+                continue
+            if kind in {"-miss", "-immune", "-fail"} or (
+                kind == "-activate"
+                and len(message) > 3
+                and to_id(str(message[3]).split(":", 1)[-1])
+                in {
+                    "protect",
+                    "detect",
+                    "spikyshield",
+                    "kingsshield",
+                    "banefulbunker",
+                    "obstruct",
+                    "silktrap",
+                    "burningbulwark",
+                }
+            ):
+                # An Outrage-family move that missed, was blocked by Protect, or hit an
+                # immunity does NOT lock the user in on the next turn.
+                if (
+                    self._last_move is not None
+                    and self._last_move[2] in LOCKING_MOVES
+                    and self._last_move_actor_key is not None
+                ):
+                    self._locking_use.pop(self._last_move_actor_key, None)
                 continue
             if kind == "-transform" and len(message) > 3:
                 self._transformed_species.add(self._species_for_ident(message[2]))
                 continue
             if kind in {"-ability", "ability"} and len(message) > 3:
-                if (
-                    _side(message[2]) == self.opponent_role
-                    and self._species_for_ident(message[2]) not in self._transformed_species
-                ):
+                ab_role = _side(message[2])
+                ab_species = self._species_for_ident(message[2])
+                if ab_species not in self._transformed_species:
                     revealed = _revealed_base_ability(message)
                     if revealed:
-                        self.opponent_abilities[self._species_for_ident(message[2])] = revealed
+                        if ab_role == self.opponent_role:
+                            self.opponent_abilities[ab_species] = revealed
+                        elif ab_role == self.our_role:
+                            self.our_revealed_abilities[ab_species] = revealed
                 continue
             if kind in {"-item", "item"} and len(message) > 3:
-                if _side(message[2]) == self.opponent_role:
-                    self.opponent_items[self._species_for_ident(message[2])] = (
-                        to_id(message[3]) or "unknown"
-                    )
+                it_role = _side(message[2])
+                it_id = to_id(message[3]) or "unknown"
+                if it_role == self.opponent_role:
+                    self.opponent_items[self._species_for_ident(message[2])] = it_id
+                elif it_role == self.our_role:
+                    self.our_revealed_items[self._species_for_ident(message[2])] = it_id
                 continue
             if kind == "cant" and len(message) > 2:
                 cant_role = _side(message[2])
                 if cant_role:
                     self._acted.add((cant_role, to_id(_display_name(message[2]))))
             if kind == "-mega" and len(message) > 4:
-                if _side(message[2]) == self.opponent_role:
-                    stone = to_id(message[4])
-                    if stone:
+                mega_it_role = _side(message[2])
+                stone = to_id(message[4])
+                if stone:
+                    if mega_it_role == self.opponent_role:
                         self.opponent_items[self._species_for_ident(message[2])] = stone
+                    elif mega_it_role == self.our_role:
+                        self.our_revealed_items[self._species_for_ident(message[2])] = stone
                 continue
             if kind == "detailschange" and len(message) > 3:
                 mega_role = _side(message[2])
@@ -312,6 +361,10 @@ class BattleMemory:
                     self.opponent_items.setdefault(
                         self._species_for_ident(message[2]), to_id(message[3]) or "unknown"
                     )
+                elif _side(message[2]) == self.our_role:
+                    self.our_revealed_items.setdefault(
+                        self._species_for_ident(message[2]), to_id(message[3]) or "unknown"
+                    )
                 continue
             if kind == "-start" and len(message) > 4 and to_id(message[3]) == "disable":
                 role = _side(message[2])
@@ -340,18 +393,74 @@ class BattleMemory:
                     self._recharging.discard((stint_role, stint_species))
                     self._acted.discard((stint_role, to_id(_display_name(message[2]))))
                     self._locking_use.pop((stint_role, to_id(_display_name(message[2]))), None)
+                    if kind in {"switch", "drag"}:
+                        self._stint_start_turn[(stint_role, to_id(_display_name(message[2])))] = (
+                            self.current_turn
+                        )
                 if _side(message[2]) == self.opponent_role:
                     self._transformed_species.discard(self._species_for_ident(message[2]))
                     species_text = message[3] if len(message) > 3 else _display_name(message[2])
                     species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
                     self._ident_species[str(message[2])] = species
                     self.opponent_switches[species] += 1
+                elif _side(message[2]) == self.our_role:
+                    self._transformed_species.discard(self._species_for_ident(message[2]))
+                    species_text = message[3] if len(message) > 3 else _display_name(message[2])
+                    species = to_id(str(species_text).split(",", 1)[0]) or "unknown"
+                    self._ident_species[str(message[2])] = species
+                    self.our_appeared.add(species)
+
+    def _observe_public_source_tags(self, message: list[object]) -> None:
+        """Record public `[from] ability:` / `[from] item:` reveals for both sides."""
+        if len(message) < 4:
+            return
+        from_ability: str | None = None
+        from_item: str | None = None
+        of_ident: str | None = None
+        for part in message[3:]:
+            text = str(part or "")
+            if text.startswith("[from] ability:"):
+                from_ability = to_id(text.split(":", 1)[1])
+            elif text.startswith("[from] item:"):
+                from_item = to_id(text.split(":", 1)[1])
+            elif text.startswith("[of] "):
+                of_ident = text[5:].strip()
+        if not from_ability and not from_item:
+            return
+        owner_ident = of_ident if of_ident is not None else str(message[2] or "")
+        role = _side(owner_ident)
+        if role not in {self.our_role, self.opponent_role}:
+            return
+        species = self._species_for_ident(owner_ident)
+        if not species or species == "unknown":
+            return
+        if from_ability and species not in self._transformed_species:
+            if role == self.our_role:
+                self.our_revealed_abilities.setdefault(species, from_ability)
+            elif role == self.opponent_role:
+                self.opponent_abilities.setdefault(species, from_ability)
+        if from_item:
+            if role == self.our_role:
+                self.our_revealed_items.setdefault(species, from_item)
+            elif role == self.opponent_role:
+                self.opponent_items.setdefault(species, from_item)
 
     def locked_move(self, role: str | None, name: str | None, turn: int) -> str | None:
         """The Outrage-family move ``name`` used last turn (so it is locked into it now)."""
 
         entry = self._locking_use.get((role or "", to_id(name))) if role else None
         return entry[1] if entry and entry[0] == turn - 1 else None
+
+    def active_turns(self, role: str | None, name: str | None, current_turn: int) -> int:
+        """Number of turns the current active stint of ``name`` has lasted (minimum 1)."""
+
+        start = self._stint_start_turn.get((role or "", to_id(name))) if role else None
+        if start is None:
+            return 1
+        # Turn 0 switch-in (lead) -> on Turn 1, `active_turns == 1` (not 2).
+        if start <= 0:
+            return max(1, int(current_turn))
+        return max(1, int(current_turn) - int(start) + 1)
 
     def mega_forme(self, role: str | None, name: str | None) -> str | None:
         """The Mega forme ``name`` evolved into, from the public `detailschange` line."""
