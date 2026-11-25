@@ -16,6 +16,7 @@ Supports:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import random
@@ -252,8 +253,21 @@ def _select_batch_actions(
     a1_out = np.full(n, -1, dtype=np.int64)
     lp_out = np.zeros(n, dtype=np.float32)
 
-    x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
-    enc = model.encode_board(x)
+    # On MPS, pad rollout batch size to a multiple of 64 so MPSGraph only caches a
+    # handful of compiled Transformer shapes instead of hundreds of distinct sizes.
+    if dev.type == "mps" and n > 0:
+        pad_n = ((n + 63) // 64) * 64
+        if pad_n != n:
+            obs_pad = np.zeros((pad_n, obs_np.shape[1]), dtype=np.float32)
+            obs_pad[:n] = obs_np
+            x = torch.from_numpy(obs_pad).to(dev)
+            enc = model.encode_board(x).index(torch.arange(n, device=dev))
+        else:
+            x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
+            enc = model.encode_board(x)
+    else:
+        x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
+        enc = model.encode_board(x)
     val_t, _ = model.value_from_context(enc.context)
     val_out = val_t.cpu().numpy().astype(np.float32)
 
@@ -406,24 +420,71 @@ def ppo_update(
                 minibatches.append((is_pv_group, chunk))
         rng.shuffle(minibatches)
 
+        pv_micro_size = 64
         for is_pv_group, rows in minibatches:
+            optimizer.zero_grad(set_to_none=True)
+            if is_pv_group:
+                # Micro-batch Team Preview (64 rows at a time) with exact gradient
+                # accumulation so `(B, 90, 5*W)` stays ~28 MiB on MPS while taking the
+                # exact same full `batch_size` optimizer step.
+                total_rows = len(rows)
+                mb_loss = 0.0
+                mb_pol = 0.0
+                mb_val = 0.0
+                mb_ent = 0.0
+                mb_kl = 0.0
+                for sub_start in range(0, total_rows, pv_micro_size):
+                    sub_rows = rows[sub_start : sub_start + pv_micro_size]
+                    w_frac = len(sub_rows) / total_rows
+                    idx_t = torch.tensor(sub_rows, dtype=torch.long, device=dev)
+                    enc = model.encode_board(obs_t[idx_t])
+                    _, value_logit = model.value_from_context(enc.context)
+                    pv_logits = model.preview_logits(enc)
+                    pv_mask = mask_t[idx_t, 2 * s :]
+                    new_lp, ent = masked_log_prob_and_entropy(pv_logits, pv_mask, a0_t[idx_t])
+                    log_ratio = new_lp - old_lp_t[idx_t]
+                    ratio = log_ratio.exp()
+                    mb_adv = adv_t[idx_t]
+                    policy_loss = -torch.minimum(
+                        ratio * mb_adv, ratio.clamp(0.8, 1.2) * mb_adv
+                    ).mean()
+                    win_prob_target = (ret_t[idx_t] + 1.0) * 0.5
+                    value_loss = F.binary_cross_entropy_with_logits(value_logit, win_prob_target)
+                    entropy = ent.mean()
+                    loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
+                    if not torch.isfinite(loss):
+                        raise RuntimeError("training loss was not finite")
+                    (loss * w_frac).backward()
+                    mb_loss += float(loss.detach().item()) * w_frac
+                    mb_pol += float(policy_loss.detach().item()) * w_frac
+                    mb_val += float(value_loss.detach().item()) * w_frac
+                    mb_ent += float(entropy.detach().item()) * w_frac
+                    with torch.no_grad():
+                        mb_kl += float(((ratio - 1.0) - log_ratio).mean().item()) * w_frac
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
+                optimizer.step()
+                updates += 1
+                epoch_updates += 1
+                loss_sum += mb_loss
+                policy_sum += mb_pol
+                value_sum += mb_val
+                entropy_sum += mb_ent
+                kl_sum += mb_kl
+                epoch_kl_sum += mb_kl
+                continue
+
             idx_t = torch.tensor(rows, dtype=torch.long, device=dev)
             enc = model.encode_board(obs_t[idx_t])
             _, value_logit = model.value_from_context(enc.context)
 
-            if is_pv_group:
-                pv_logits = model.preview_logits(enc)
-                pv_mask = mask_t[idx_t, 2 * s :]
-                new_lp, ent = masked_log_prob_and_entropy(pv_logits, pv_mask, a0_t[idx_t])
-            else:
-                l0 = model.slot0_logits(enc)
-                m0 = mask_t[idx_t, :s]
-                lp0, ent0 = masked_log_prob_and_entropy(l0, m0, a0_t[idx_t])
-                l1 = model.slot1_logits(enc, a0_t[idx_t])
-                m1 = m1_t[idx_t]
-                lp1, ent1 = masked_log_prob_and_entropy(l1, m1, a1_t[idx_t])
-                new_lp = lp0 + lp1
-                ent = ent0 + ent1
+            l0 = model.slot0_logits(enc)
+            m0 = mask_t[idx_t, :s]
+            lp0, ent0 = masked_log_prob_and_entropy(l0, m0, a0_t[idx_t])
+            l1 = model.slot1_logits(enc, a0_t[idx_t])
+            m1 = m1_t[idx_t]
+            lp1, ent1 = masked_log_prob_and_entropy(l1, m1, a1_t[idx_t])
+            new_lp = lp0 + lp1
+            ent = ent0 + ent1
 
             log_ratio = new_lp - old_lp_t[idx_t]
             ratio = log_ratio.exp()
@@ -438,7 +499,6 @@ def ppo_update(
             if not torch.isfinite(loss):
                 raise RuntimeError("training loss was not finite")
 
-            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
             optimizer.step()
@@ -457,6 +517,11 @@ def ppo_update(
         if target_kl > 0 and epoch_updates > 0 and (epoch_kl_sum / epoch_updates) > 1.5 * target_kl:
             break
     model.eval()
+    del obs_t, mask_t, m1_t, a0_t, a1_t, old_lp_t, ret_t, adv_t
+    if dev == "mps" and hasattr(torch, "mps"):
+        torch.mps.synchronize()
+        gc.collect()
+        torch.mps.empty_cache()
     return {
         "loss": loss_sum / max(updates, 1),
         "policy_loss": policy_sum / max(updates, 1),
@@ -831,7 +896,7 @@ def train(args: argparse.Namespace) -> None:
     trajs_p0: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     trajs_p1: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     snap_cache: dict[str, RustFactoredPolicy] = {}
-    snap_cache_cap = max(12, int(args.snapshots_per_wave) * 2)
+    snap_cache_cap = max(2, int(args.snapshots_per_wave))
 
     def _get_snapshot_model(snap: Snapshot) -> RustFactoredPolicy:
         key = str(snap.path)
@@ -844,12 +909,18 @@ def train(args: argparse.Namespace) -> None:
         return m
 
     started = time.monotonic()
+    session_start_completed = completed
     last_eval = completed
     last_vgc_eval = completed
 
     try:
         with args.out.joinpath("metrics.jsonl").open(metrics_mode) as metrics_f:
             while completed < args.games:
+                if (
+                    args.max_session_games > 0
+                    and (completed - session_start_completed) >= args.max_session_games
+                ):
+                    break
                 step_started = time.monotonic()
                 target_batch_games = min(args.games - completed, args.games_per_update)
 
@@ -1045,7 +1116,15 @@ def train(args: argparse.Namespace) -> None:
                 )
                 completed += batch_games_done
 
-                if completed >= snapshot_index + args.snapshot_games or completed >= args.games:
+                session_hit_limit = (
+                    args.max_session_games > 0
+                    and (completed - session_start_completed) >= args.max_session_games
+                )
+                if (
+                    completed >= snapshot_index + args.snapshot_games
+                    or completed >= args.games
+                    or session_hit_limit
+                ):
                     snap_path = save_rust_policy(args.out / f"policy_{completed:07d}.pt", model)
                     league.append(Snapshot(completed, snap_path))
                     league = league[-args.league_size :]
@@ -1175,6 +1254,12 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=256)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--games", type=int, default=1_000_000)
+    parser.add_argument(
+        "--max-session-games",
+        type=int,
+        default=0,
+        help="optional per-process game cap (0 = unlimited) to recycle MPS memory cleanly between --resume chunks",
+    )
     parser.add_argument("--games-per-update", type=int, default=1024)
     parser.add_argument("--snapshot-games", type=int, default=16384)
     parser.add_argument("--league-size", type=int, default=24)
