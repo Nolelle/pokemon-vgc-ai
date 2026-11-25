@@ -16,6 +16,7 @@ Supports:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import random
@@ -39,9 +40,11 @@ from vgc.rl.rust_policy import (
     RICH_FIELD_TURN_IDX,
     RICH_OBS_SIZE,
     RustFactoredPolicy,
+    fit_v3_preview_head_from_teacher,
     load_rust_policy,
     masked_log_prob_and_entropy,
     save_rust_policy,
+    upgrade_v2_to_v3,
 )
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -58,6 +61,28 @@ def resolve_device(requested: str) -> str:
             return "cuda"
         return "cpu"
     return requested
+
+
+def resolve_learning_rate(
+    requested_lr: float | None,
+    *,
+    width: int,
+    ffn_mult: int,
+    is_warm_start: bool,
+) -> float:
+    """Resolve peak learning rate with inverse width/FFN scaling when `--learning-rate` is omitted.
+
+    Matches the proven `192×6 (ffn_mult=2)` baselines (`1e-4` scratch, `3e-5` warm-start)
+    while automatically scaling down wider Transformers (e.g. `256×6, ffn_mult=3` ->
+    `5.0e-5` scratch, `1.5e-5`–`2.25e-5` warm-start) to keep per-step KL inside the PPO trust region.
+    """
+    if requested_lr is not None:
+        return float(requested_lr)
+    width_scale = 192.0 / max(int(width), 1)
+    ffn_scale = 2.0 / max(int(ffn_mult), 1)
+    if is_warm_start:
+        return round(3e-5 * width_scale * math.sqrt(ffn_scale), 8)
+    return round(1e-4 * width_scale * ffn_scale, 8)
 
 
 def scheduled_lr(
@@ -252,8 +277,21 @@ def _select_batch_actions(
     a1_out = np.full(n, -1, dtype=np.int64)
     lp_out = np.zeros(n, dtype=np.float32)
 
-    x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
-    enc = model.encode_board(x)
+    # On MPS, pad rollout batch size to a multiple of 64 so MPSGraph only caches a
+    # handful of compiled Transformer shapes instead of hundreds of distinct sizes.
+    if dev.type == "mps" and n > 0:
+        pad_n = ((n + 63) // 64) * 64
+        if pad_n != n:
+            obs_pad = np.zeros((pad_n, obs_np.shape[1]), dtype=np.float32)
+            obs_pad[:n] = obs_np
+            x = torch.from_numpy(obs_pad).to(dev)
+            enc = model.encode_board(x).index(torch.arange(n, device=dev))
+        else:
+            x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
+            enc = model.encode_board(x)
+    else:
+        x = torch.from_numpy(np.ascontiguousarray(obs_np, dtype=np.float32)).to(dev)
+        enc = model.encode_board(x)
     val_t, _ = model.value_from_context(enc.context)
     val_out = val_t.cpu().numpy().astype(np.float32)
 
@@ -383,8 +421,10 @@ def ppo_update(
     kl_sum = 0.0
     updates = 0
     epochs_run = 0
+    kl_exceeded = False
 
     model.train()
+    pv_micro_size = 64 if dev.type == "mps" else batch_size
     for _ in range(epochs):
         epochs_run += 1
         epoch_kl_sum = 0.0
@@ -407,15 +447,61 @@ def ppo_update(
         rng.shuffle(minibatches)
 
         for is_pv_group, rows in minibatches:
-            idx_t = torch.tensor(rows, dtype=torch.long, device=dev)
-            enc = model.encode_board(obs_t[idx_t])
-            _, value_logit = model.value_from_context(enc.context)
-
+            optimizer.zero_grad(set_to_none=True)
             if is_pv_group:
-                pv_logits = model.preview_logits(enc)
-                pv_mask = mask_t[idx_t, 2 * s :]
-                new_lp, ent = masked_log_prob_and_entropy(pv_logits, pv_mask, a0_t[idx_t])
+                # Micro-batch Team Preview on MPS (64 rows at a time) with exact gradient
+                # accumulation so `(B, 90, 5*W)` stays ~28 MiB while taking the exact
+                # same full `batch_size` optimizer step.
+                total_rows = len(rows)
+                mb_loss = 0.0
+                mb_pol = 0.0
+                mb_val = 0.0
+                mb_ent = 0.0
+                mb_kl = 0.0
+                for sub_start in range(0, total_rows, pv_micro_size):
+                    sub_rows = rows[sub_start : sub_start + pv_micro_size]
+                    w_frac = len(sub_rows) / total_rows
+                    idx_t = torch.tensor(sub_rows, dtype=torch.long, device=dev)
+                    enc = model.encode_board(obs_t[idx_t])
+                    _, value_logit = model.value_from_context(enc.context)
+                    pv_logits = model.preview_logits(enc)
+                    pv_mask = mask_t[idx_t, 2 * s :]
+                    new_lp, ent = masked_log_prob_and_entropy(pv_logits, pv_mask, a0_t[idx_t])
+                    log_ratio = new_lp - old_lp_t[idx_t]
+                    ratio = log_ratio.exp()
+                    mb_adv = adv_t[idx_t]
+                    policy_loss = -torch.minimum(
+                        ratio * mb_adv, ratio.clamp(0.8, 1.2) * mb_adv
+                    ).mean()
+                    win_prob_target = (ret_t[idx_t] + 1.0) * 0.5
+                    value_loss = F.binary_cross_entropy_with_logits(value_logit, win_prob_target)
+                    entropy = ent.mean()
+                    loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
+                    if not torch.isfinite(loss):
+                        raise RuntimeError("training loss was not finite")
+                    (loss * w_frac).backward()
+                    mb_loss += float(loss.detach().item()) * w_frac
+                    mb_pol += float(policy_loss.detach().item()) * w_frac
+                    mb_val += float(value_loss.detach().item()) * w_frac
+                    mb_ent += float(entropy.detach().item()) * w_frac
+                    with torch.no_grad():
+                        mb_kl += float(((ratio - 1.0) - log_ratio).mean().item()) * w_frac
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
+                optimizer.step()
+                updates += 1
+                epoch_updates += 1
+                loss_sum += mb_loss
+                policy_sum += mb_pol
+                value_sum += mb_val
+                entropy_sum += mb_ent
+                kl_val = mb_kl
+                kl_sum += kl_val
+                epoch_kl_sum += kl_val
             else:
+                idx_t = torch.tensor(rows, dtype=torch.long, device=dev)
+                enc = model.encode_board(obs_t[idx_t])
+                _, value_logit = model.value_from_context(enc.context)
+
                 l0 = model.slot0_logits(enc)
                 m0 = mask_t[idx_t, :s]
                 lp0, ent0 = masked_log_prob_and_entropy(l0, m0, a0_t[idx_t])
@@ -425,38 +511,51 @@ def ppo_update(
                 new_lp = lp0 + lp1
                 ent = ent0 + ent1
 
-            log_ratio = new_lp - old_lp_t[idx_t]
-            ratio = log_ratio.exp()
-            mb_adv = adv_t[idx_t]
-            policy_loss = -torch.minimum(
-                ratio * mb_adv, ratio.clamp(0.8, 1.2) * mb_adv
-            ).mean()
-            win_prob_target = (ret_t[idx_t] + 1.0) * 0.5
-            value_loss = F.binary_cross_entropy_with_logits(value_logit, win_prob_target)
-            entropy = ent.mean()
-            loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
-            if not torch.isfinite(loss):
-                raise RuntimeError("training loss was not finite")
+                log_ratio = new_lp - old_lp_t[idx_t]
+                ratio = log_ratio.exp()
+                mb_adv = adv_t[idx_t]
+                policy_loss = -torch.minimum(
+                    ratio * mb_adv, ratio.clamp(0.8, 1.2) * mb_adv
+                ).mean()
+                win_prob_target = (ret_t[idx_t] + 1.0) * 0.5
+                value_loss = F.binary_cross_entropy_with_logits(value_logit, win_prob_target)
+                entropy = ent.mean()
+                loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
+                if not torch.isfinite(loss):
+                    raise RuntimeError("training loss was not finite")
 
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
-            optimizer.step()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
+                optimizer.step()
 
-            updates += 1
-            epoch_updates += 1
-            loss_sum += float(loss.detach().item())
-            policy_sum += float(policy_loss.detach().item())
-            value_sum += float(value_loss.detach().item())
-            entropy_sum += float(entropy.detach().item())
-            with torch.no_grad():
-                approx_kl = ((ratio - 1.0) - log_ratio).mean()
-                kl_val = float(approx_kl.item())
-                kl_sum += kl_val
-                epoch_kl_sum += kl_val
-        if target_kl > 0 and epoch_updates > 0 and (epoch_kl_sum / epoch_updates) > 1.5 * target_kl:
+                updates += 1
+                epoch_updates += 1
+                loss_sum += float(loss.detach().item())
+                policy_sum += float(policy_loss.detach().item())
+                value_sum += float(value_loss.detach().item())
+                entropy_sum += float(entropy.detach().item())
+                with torch.no_grad():
+                    approx_kl = ((ratio - 1.0) - log_ratio).mean()
+                    kl_val = float(approx_kl.item())
+                    kl_sum += kl_val
+                    epoch_kl_sum += kl_val
+
+            # Minibatch-level PPO trust-region guardrail: abort immediately once cumulative
+            # drift from `old_lp` breaches `1.5 * target_kl` (2.0x on noisier preview batches)
+            # instead of running all remaining steps in the epoch.
+            if target_kl > 0:
+                step_limit = 2.0 * target_kl if is_pv_group else 1.5 * target_kl
+                if kl_val > step_limit or (epoch_kl_sum / epoch_updates) > 1.5 * target_kl:
+                    kl_exceeded = True
+                    break
+        if kl_exceeded:
             break
     model.eval()
+    del obs_t, mask_t, m1_t, a0_t, a1_t, old_lp_t, ret_t, adv_t
+    if dev.type == "mps" and hasattr(torch, "mps"):
+        torch.mps.synchronize()
+        gc.collect()
+        torch.mps.empty_cache()
     return {
         "loss": loss_sum / max(updates, 1),
         "policy_loss": policy_sum / max(updates, 1),
@@ -464,6 +563,7 @@ def ppo_update(
         "entropy": entropy_sum / max(updates, 1),
         "approx_kl": kl_sum / max(updates, 1),
         "epochs_run": float(epochs_run),
+        "kl_early_stopped": 1.0 if kl_exceeded else 0.0,
     }
 
 
@@ -624,6 +724,8 @@ def save_trainer_state(
     league: list[Snapshot],
     rng: random.Random,
     wandb_run_id: str | None,
+    resolved_lr: float | None = None,
+    resolved_min_lr: float | None = None,
 ) -> Path:
     path = out / TRAINER_STATE_FILE
     tmp = path.with_suffix(".tmp")
@@ -635,6 +737,8 @@ def save_trainer_state(
         "dex_sizes": model.dex_sizes,
         "completed": completed,
         "snapshot_index": snapshot_index,
+        "resolved_lr": resolved_lr,
+        "resolved_min_lr": resolved_min_lr,
         "model": {k: v.detach().cpu() for k, v in model.state_dict().items()},
         "optimizer": optimizer.state_dict(),
         "rng_state": rng.getstate(),
@@ -682,6 +786,7 @@ def train(args: argparse.Namespace) -> None:
     resolved_ffn = int(args.ffn_mult) if int(args.ffn_mult) > 0 else None
     resume_state: dict[str, Any] | None = None
     init_model: RustFactoredPolicy | None = None
+    upgraded_preview_stats: dict[str, float] | None = None
     if args.resume:
         state_path = args.out / TRAINER_STATE_FILE
         if not state_path.is_file():
@@ -698,20 +803,62 @@ def train(args: argparse.Namespace) -> None:
                 f"--init-from width/layers ({init_model.width}x{init_model.layers}) "
                 f"does not match ({args.width}x{args.layers})"
             )
-        resolved_ver = init_model.policy_version
-        resolved_ffn = init_model.ffn_mult
+        if args.upgrade_to_v3 and init_model.policy_version == 2:
+            resolved_ver = 3
+            resolved_ffn = init_model.ffn_mult
+        else:
+            resolved_ver = init_model.policy_version
+            resolved_ffn = init_model.ffn_mult
 
-    model = (
-        RustFactoredPolicy(
-            args.width,
-            args.layers,
-            policy_version=resolved_ver,
-            ffn_mult=resolved_ffn,
+    if init_model is not None and args.upgrade_to_v3 and init_model.policy_version == 2:
+        model = upgrade_v2_to_v3(init_model).to(device).eval()
+        if args.upgrade_preview_boards > 0:
+            upgraded_preview_stats = fit_v3_preview_head_from_teacher(
+                model,
+                init_model,
+                train_teams,
+                boards=int(args.upgrade_preview_boards),
+                seed=int(args.seed),
+                threads=int(args.threads),
+            )
+            print(json.dumps({"event": "upgrade_v2_to_v3_preview_fit", **upgraded_preview_stats}), flush=True)
+        del init_model
+        init_model = None
+    else:
+        model = (
+            RustFactoredPolicy(
+                args.width,
+                args.layers,
+                policy_version=resolved_ver,
+                ffn_mult=resolved_ffn,
+            )
+            .to(device)
+            .eval()
         )
-        .to(device)
-        .eval()
+
+    resumed_lr = (
+        float(resume_state["resolved_lr"])
+        if resume_state is not None and resume_state.get("resolved_lr") is not None
+        else None
     )
-    optimizer = build_optimizer(model, lr=args.learning_rate, weight_decay=args.weight_decay)
+    resumed_min_lr = (
+        float(resume_state["resolved_min_lr"])
+        if resume_state is not None and resume_state.get("resolved_min_lr") is not None
+        else None
+    )
+    effective_lr = resolve_learning_rate(
+        args.learning_rate if args.learning_rate is not None else resumed_lr,
+        width=model.width,
+        ffn_mult=model.ffn_mult,
+        is_warm_start=args.init_from is not None,
+    )
+    if args.min_learning_rate is not None:
+        effective_min_lr = float(args.min_learning_rate)
+    elif resumed_min_lr is not None:
+        effective_min_lr = resumed_min_lr
+    else:
+        effective_min_lr = min(effective_lr, round(effective_lr * 0.15, 8))
+    optimizer = build_optimizer(model, lr=effective_lr, weight_decay=args.weight_decay)
 
     wandb_run_id: str | None = None
     if resume_state is not None:
@@ -720,10 +867,12 @@ def train(args: argparse.Namespace) -> None:
             optimizer.load_state_dict(resume_state["optimizer"])
         except ValueError:
             # Backwards-compat: older trainer_state had 1 AdamW param group instead of 2.
-            optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+            optimizer = torch.optim.AdamW(
+                model.parameters(), lr=effective_lr, weight_decay=args.weight_decay
+            )
             optimizer.load_state_dict(resume_state["optimizer"])
         for g in optimizer.param_groups:
-            g["lr"] = args.learning_rate
+            g["lr"] = effective_lr
         rng.setstate(resume_state["rng_state"])
         torch.set_rng_state(resume_state["torch_rng_state"])
         completed = int(resume_state["completed"])
@@ -764,6 +913,10 @@ def train(args: argparse.Namespace) -> None:
             config={
                 **{k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
                 "resolved_device": device,
+                "resolved_learning_rate": effective_lr,
+                "resolved_min_learning_rate": effective_min_lr,
+                "resolved_policy_version": model.policy_version,
+                "resolved_ffn_mult": model.ffn_mult,
                 "format": FORMAT_ID,
                 "pikapro_version": version("pikapro"),
                 "team_count": len(train_pool),
@@ -782,12 +935,19 @@ def train(args: argparse.Namespace) -> None:
             league=league,
             rng=rng,
             wandb_run_id=wandb_run_id,
+            resolved_lr=effective_lr,
+            resolved_min_lr=effective_min_lr,
         )
         args.out.joinpath("settings.json").write_text(
             json.dumps(
                 {
                     **vars(args),
                     "resolved_device": device,
+                    "resolved_learning_rate": effective_lr,
+                    "resolved_min_learning_rate": effective_min_lr,
+                    "resolved_policy_version": model.policy_version,
+                    "resolved_ffn_mult": model.ffn_mult,
+                    "upgrade_preview_stats": upgraded_preview_stats,
                     "format": FORMAT_ID,
                     "pikapro_version": version("pikapro"),
                     "team_count": len(train_pool),
@@ -810,12 +970,14 @@ def train(args: argparse.Namespace) -> None:
     snap_slice = slice(n_self, n_self + n_snap)
     anchor_slice = slice(n_self + n_snap, num_envs)
 
+    # Offset VecEnv seed by `completed` games so `--resume` never re-deals opening matchups.
+    env_seed = int(args.seed) + int(completed)
     env = rl.VecEnv(
         "championsvgc",
         n=num_envs,
         teams=train_pool,
         threads=args.threads,
-        seed=args.seed,
+        seed=env_seed,
         opponent="external",
         ots=0.0,
         preview="learned",
@@ -831,7 +993,7 @@ def train(args: argparse.Namespace) -> None:
     trajs_p0: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     trajs_p1: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     snap_cache: dict[str, RustFactoredPolicy] = {}
-    snap_cache_cap = max(12, int(args.snapshots_per_wave) * 2)
+    snap_cache_cap = max(4, int(args.snapshots_per_wave) * 2)
 
     def _get_snapshot_model(snap: Snapshot) -> RustFactoredPolicy:
         key = str(snap.path)
@@ -844,12 +1006,18 @@ def train(args: argparse.Namespace) -> None:
         return m
 
     started = time.monotonic()
+    session_start_completed = completed
     last_eval = completed
     last_vgc_eval = completed
 
     try:
         with args.out.joinpath("metrics.jsonl").open(metrics_mode) as metrics_f:
             while completed < args.games:
+                if (
+                    args.max_session_games > 0
+                    and (completed - session_start_completed) >= args.max_session_games
+                ):
+                    break
                 step_started = time.monotonic()
                 target_batch_games = min(args.games - completed, args.games_per_update)
 
@@ -1005,7 +1173,9 @@ def train(args: argparse.Namespace) -> None:
                             vs_snap_points += pts
                             snap_owner = env_to_snap.get(int(ei))
                             if snap_owner is not None:
-                                snap_owner.record_game(pts)
+                                snap_owner.record_game(
+                                    pts, max_effective_games=float(args.pfsp_ema_games)
+                                )
                         else:
                             vs_anchor_games += 1
                             vs_anchor_points += (r0 + 1.0) * 0.5
@@ -1025,8 +1195,8 @@ def train(args: argparse.Namespace) -> None:
                 current_lr = scheduled_lr(
                     completed,
                     args.games,
-                    max_lr=args.learning_rate,
-                    min_lr=args.min_learning_rate,
+                    max_lr=effective_lr,
+                    min_lr=effective_min_lr,
                     schedule=args.lr_schedule,
                 )
                 for group in optimizer.param_groups:
@@ -1045,7 +1215,15 @@ def train(args: argparse.Namespace) -> None:
                 )
                 completed += batch_games_done
 
-                if completed >= snapshot_index + args.snapshot_games or completed >= args.games:
+                session_hit_limit = (
+                    args.max_session_games > 0
+                    and (completed - session_start_completed) >= args.max_session_games
+                )
+                if (
+                    completed >= snapshot_index + args.snapshot_games
+                    or completed >= args.games
+                    or session_hit_limit
+                ):
                     snap_path = save_rust_policy(args.out / f"policy_{completed:07d}.pt", model)
                     league.append(Snapshot(completed, snap_path))
                     league = league[-args.league_size :]
@@ -1059,6 +1237,8 @@ def train(args: argparse.Namespace) -> None:
                         league=league,
                         rng=rng,
                         wandb_run_id=wandb_run_id,
+                        resolved_lr=effective_lr,
+                        resolved_min_lr=effective_min_lr,
                     )
 
                 eval_metrics: dict[str, float] = {}
@@ -1116,6 +1296,7 @@ def train(args: argparse.Namespace) -> None:
                     "entropy": ppo["entropy"],
                     "approx_kl": ppo["approx_kl"],
                     "ppo_epochs_run": int(ppo["epochs_run"]),
+                    "ppo_kl_stopped": bool(ppo.get("kl_early_stopped", 0.0) > 0.5),
                     "learning_rate": current_lr,
                     "value_accuracy": round(value_acc, 4) if value_acc is not None else None,
                     "games_per_sec": round(batch_games_done / step_elapsed, 2),
@@ -1165,6 +1346,17 @@ def main() -> None:
         default=None,
         help="warm-start weights from an existing RustFactoredPolicy checkpoint into a new --out run",
     )
+    parser.add_argument(
+        "--upgrade-to-v3",
+        action="store_true",
+        help="function-preserving warm-start upgrade from a v2 --init-from checkpoint to policy_version=3",
+    )
+    parser.add_argument(
+        "--upgrade-preview-boards",
+        type=int,
+        default=8192,
+        help="Team Preview boards used to fit v3 preview_head to a v2 teacher on --upgrade-to-v3 (0 disables)",
+    )
     parser.add_argument("--team-manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument(
         "--use-manifest-weights",
@@ -1175,9 +1367,21 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=256)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--games", type=int, default=1_000_000)
+    parser.add_argument(
+        "--max-session-games",
+        type=int,
+        default=0,
+        help="optional per-process game cap (0 = unlimited) to exit cleanly between --resume chunks",
+    )
     parser.add_argument("--games-per-update", type=int, default=1024)
     parser.add_argument("--snapshot-games", type=int, default=16384)
     parser.add_argument("--league-size", type=int, default=24)
+    parser.add_argument(
+        "--pfsp-ema-games",
+        type=float,
+        default=1000.0,
+        help="EMA effective game window for PFSP snapshot win-rate tracking",
+    )
     parser.add_argument(
         "--snapshots-per-wave",
         type=int,
@@ -1202,10 +1406,20 @@ def main() -> None:
         help="Transformer FFN width multiplier (0 = auto: 3 for v3, 2 for v2)",
     )
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="peak LR (default: auto-scaled inversely with width/FFN from proven 192x6 baseline)",
+    )
     parser.add_argument("--lr-schedule", choices=("constant", "cosine"), default="cosine")
-    parser.add_argument("--min-learning-rate", type=float, default=1e-5)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument(
+        "--min-learning-rate",
+        type=float,
+        default=None,
+        help="cosine floor LR (default: 15% of resolved peak LR)",
+    )
+    parser.add_argument("--weight-decay", type=float, default=1e-2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--gamma", type=float, default=1.0)
     parser.add_argument("--gae-lambda", type=float, default=0.95)

@@ -1007,3 +1007,170 @@ def test_patch_public_recomputes_foe_ability_trapping() -> None:
     # Ghost-type Aegislash (slot 0) can still switch out; non-Ghost Rillaboom (slot 1) is trapped.
     assert len(sw0) == 2, f"Ghost-type Aegislash should not be trapped by Shadow Tag: {sw0}"
     assert sw1 == [], f"Non-Ghost Rillaboom must be trapped by Mega Gengar Shadow Tag: {sw1}"
+
+
+def test_upgrade_v2_to_v3_is_bit_exact_and_flows_gradients() -> None:
+    """Zero-initialized v2->v3 upgrade must preserve in-battle logits and values
+    bit-for-bit, fit preview_head without mutating trunk/turn weights, and pass
+    non-zero gradients into both `move_meta_proj` and `speed_proj` on Step 1.
+    """
+    from vgc.rl.rust_policy import fit_v3_preview_head_from_teacher, upgrade_v2_to_v3
+
+    t1 = TEAM_PATH.read_text().strip()
+    t2 = (TEAM_PATH.parent / "mc_ladder_02.packed.txt").read_text().strip()
+    b = pikapro.Battle("championsvgc", [t1, t2], seed=[1, 2, 3, 4], log=True)
+    b.submit(0, "team 1234")
+    b.submit(1, "team 1234")
+    obs = torch.from_numpy(b.encode_rich(0)).unsqueeze(0)
+
+    torch.manual_seed(101)
+    v2 = RustFactoredPolicy(width=48, layers=2, policy_version=2, ffn_mult=2).eval()
+    v3 = upgrade_v2_to_v3(v2)
+    assert v3.policy_version == 3
+    assert v3.ffn_mult == 2
+
+    with torch.no_grad():
+        e2 = v2.encode_board(obs)
+        e3 = v3.encode_board(obs)
+        v2_val, _ = v2.value_from_context(e2.context)
+        v3_val, _ = v3.value_from_context(e3.context)
+        l0_2 = v2.slot0_logits(e2)
+        l0_3 = v3.slot0_logits(e3)
+        l1_2 = v2.slot1_logits(e2, torch.tensor([0]))
+        l1_3 = v3.slot1_logits(e3, torch.tensor([0]))
+        assert float((v2_val - v3_val).abs().max()) == 0.0
+        assert float((l0_2 - l0_3).abs().max()) == 0.0
+        assert float((l1_2 - l1_3).abs().max()) == 0.0
+
+    # Fitting preview_head must keep trunk & turn logits bit-exact identical.
+    stats = fit_v3_preview_head_from_teacher(
+        v3, v2, [t1, t2], boards=128, steps=15, batch_size=64, lr=3e-3, seed=7, threads=2
+    )
+    assert stats["preview_kl"] >= 0.0
+    with torch.no_grad():
+        e3_after = v3.encode_board(obs)
+        assert float((v2.slot0_logits(e2) - v3.slot0_logits(e3_after)).abs().max()) == 0.0
+
+    # Gradients must immediately flow into both zero-initialized v3 projections.
+    v3.train()
+    enc = v3.encode_board(obs)
+    val, _ = v3.value_from_context(enc.context)
+    loss = val.sum() + v3.slot0_logits(enc).sum()
+    loss.backward()
+    assert v3.move_meta_proj is not None and v3.move_meta_proj.weight.grad is not None
+    assert v3.speed_proj is not None and v3.speed_proj.weight.grad is not None
+    assert float(v3.move_meta_proj.weight.grad.abs().sum()) > 0.0
+    assert float(v3.speed_proj.weight.grad.abs().sum()) > 0.0
+
+
+def test_train_rust_vec_minibatch_kl_guardrail_and_width_scaled_lr() -> None:
+    """Trainer must break mid-epoch when minibatch KL breaches `1.5 * target_kl`,
+    and auto-scale peak LR inversely with width/FFN when `--learning-rate` is omitted.
+    """
+    import random
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "selfplay"))
+    import train_rust_vec as trv
+
+    assert trv.resolve_learning_rate(None, width=192, ffn_mult=2, is_warm_start=False) == pytest.approx(1e-4)
+    assert trv.resolve_learning_rate(None, width=256, ffn_mult=3, is_warm_start=False) == pytest.approx(5e-5)
+    assert trv.resolve_learning_rate(None, width=192, ffn_mult=2, is_warm_start=True) == pytest.approx(3e-5)
+    assert trv.resolve_learning_rate(None, width=256, ffn_mult=3, is_warm_start=True) < 2.5e-5
+    assert trv.resolve_learning_rate(4.2e-5, width=256, ffn_mult=3, is_warm_start=False) == pytest.approx(4.2e-5)
+
+    t1 = TEAM_PATH.read_text().strip()
+    t2 = (TEAM_PATH.parent / "mc_ladder_02.packed.txt").read_text().strip()
+    pool = rl.TeamPool([t1, t2], "championsvgc")
+    env = rl.VecEnv(
+        "championsvgc",
+        n=16,
+        teams=pool,
+        threads=2,
+        seed=11,
+        opponent="simple_heuristics",
+        ots=0.0,
+        preview="learned",
+        masks="factored",
+        observation="rich",
+        autoreset="next_step",
+    )
+    model = RustFactoredPolicy(width=32, layers=1, policy_version=3).eval()
+    opt = trv.build_optimizer(model, lr=5e-3, weight_decay=1e-2)
+    step = env.reset()
+    trajs: list[list[trv.StepRecord]] = [[] for _ in range(16)]
+    records: list[tuple[trv.StepRecord, float, float]] = []
+    done_g = 0
+    while done_g < 24:
+        idx = np.flatnonzero(step.needs_action[:, 0])
+        act = np.full((16, 2), -1, dtype=np.int64)
+        if len(idx) > 0:
+            a0, a1, lp, val, is_pv = trv._select_batch_actions(
+                model, env.space, step.obs[idx, 0], step.masks[idx, 0], step.min_switches[idx, 0]
+            )
+            act[idx, 0] = a0
+            act[idx, 1] = a1
+            for k, ei in enumerate(idx):
+                trajs[ei].append(
+                    trv.StepRecord(
+                        step.obs[ei, 0].copy(),
+                        step.masks[ei, 0].copy(),
+                        int(step.min_switches[ei, 0]),
+                        bool(is_pv[k]),
+                        int(a0[k]),
+                        int(a1[k]),
+                        float(lp[k]),
+                        float(val[k]),
+                    )
+                )
+        step = env.step(act)
+        for ei in np.flatnonzero(step.done):
+            trv._finish_trajectory(trajs[ei], float(step.reward[ei, 0]), gamma=1.0, gae_lambda=0.95, out_records=records)
+            trajs[ei].clear()
+            done_g += 1
+
+    batch = trv._collate_samples(records)
+    # Tight target_kl + large LR must trip early stopping before completing epoch 2.
+    out = trv.ppo_update(
+        model, opt, env.space, batch, random.Random(3), epochs=3, batch_size=32, target_kl=1e-4
+    )
+    assert out["kl_early_stopped"] == 1.0
+    assert out["epochs_run"] == 1.0
+
+
+def test_distill_rust_policy_wave_smoke() -> None:
+    """One wave of policy+value distillation from a v2 teacher to a wider v3 student
+    must run cleanly with finite KL, BCE, and value MAE.
+    """
+    import random
+
+    from selfplay.distill_rust_policy import _collect_teacher_wave, distill_wave
+    from selfplay.train_rust_vec import build_optimizer
+
+    t1 = TEAM_PATH.read_text().strip()
+    t2 = (TEAM_PATH.parent / "mc_ladder_02.packed.txt").read_text().strip()
+    pool = rl.TeamPool([t1, t2], "championsvgc")
+    env = rl.VecEnv(
+        "championsvgc",
+        n=16,
+        teams=pool,
+        threads=2,
+        seed=29,
+        opponent="external",
+        ots=0.0,
+        preview="learned",
+        masks="factored",
+        observation="rich",
+        autoreset="next_step",
+    )
+    step = env.reset()
+    teacher = RustFactoredPolicy(width=32, layers=1, policy_version=2, ffn_mult=2).eval()
+    student = RustFactoredPolicy(width=48, layers=1, policy_version=3, ffn_mult=3).eval()
+    opt = build_optimizer(student, lr=1e-3, weight_decay=1e-2)
+
+    wave, _, games = _collect_teacher_wave(teacher, env, step, target_games=16, n_self=16)
+    assert games >= 16 and len(wave["obs"]) > 0
+    m1 = distill_wave(student, teacher, opt, env.space, wave, random.Random(5), epochs=1, batch_size=64, value_weight=1.0)
+    m2 = distill_wave(student, teacher, opt, env.space, wave, random.Random(6), epochs=1, batch_size=64, value_weight=1.0)
+    assert np.isfinite(m1["loss"]) and np.isfinite(m2["loss"])
+    assert m2["loss"] < m1["loss"]

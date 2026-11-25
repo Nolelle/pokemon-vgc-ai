@@ -797,6 +797,187 @@ def load_rust_policy(path: str | Path, device: str = "cpu") -> RustFactoredPolic
     return model.eval()
 
 
+def upgrade_v2_to_v3(src: RustFactoredPolicy) -> RustFactoredPolicy:
+    """Function-preserving warm-start upgrade from a `policy_version=2` model to `v3`.
+
+    Copies the entire Transformer trunk, embeddings, value head, and Slot 0/1 heads
+    bit-for-bit, and zero-initializes the new additive `move_meta_proj` and `speed_proj`
+    projections so Day-0 in-battle logits and win probabilities are bit-exact identical
+    to `src` while gradients flow into both new branches starting on Step 1.
+    """
+    if src.policy_version != 2:
+        raise ValueError(f"upgrade_v2_to_v3 expects policy_version=2, got {src.policy_version}")
+    dst = RustFactoredPolicy(
+        width=src.width,
+        layers=src.layers,
+        format_id=src.format_id,
+        dex_sizes=src.dex_sizes,
+        policy_version=3,
+        ffn_mult=src.ffn_mult,
+    ).to(src.device)
+    src_state = src.state_dict()
+    dst_state = dst.state_dict()
+    for key, tensor in src_state.items():
+        if key.startswith("preview_head."):
+            continue
+        if key in dst_state and dst_state[key].shape == tensor.shape:
+            dst_state[key] = tensor.detach().clone().to(dst.device)
+    dst.load_state_dict(dst_state)
+    with torch.no_grad():
+        assert dst.move_meta_proj is not None and dst.speed_proj is not None
+        dst.move_meta_proj.weight.zero_()
+        dst.move_meta_proj.bias.zero_()
+        dst.speed_proj.weight.zero_()
+        dst.speed_proj.bias.zero_()
+    return dst.eval()
+
+
+def fit_v3_preview_head_from_teacher(
+    student: RustFactoredPolicy,
+    teacher: RustFactoredPolicy,
+    teams: list[str],
+    *,
+    boards: int = 8192,
+    steps: int = 120,
+    batch_size: int = 256,
+    lr: float = 3e-3,
+    seed: int = 37401,
+    threads: int = 8,
+) -> dict[str, float]:
+    """Fit ONLY `student.preview_head` to match `teacher`'s Team Preview policy.
+
+    Freezes every parameter outside `preview_head` so in-battle logits and values stay
+    bit-exact identical to `teacher`, and minimizes `KL(p_teacher || p_student)` over
+    real Rust Team Preview boards (automatically learning the optimal 90-group
+    symmetrized projection of a 360-way v2 teacher).
+    """
+    dev = student.device
+    s = student.slot_size
+    pool = rl.TeamPool(teams, student.format_id)
+    n_envs = min(256, max(16, boards // 4))
+    env = rl.VecEnv(
+        student.format_id,
+        n=n_envs,
+        teams=pool,
+        threads=threads,
+        seed=seed,
+        opponent="external",
+        ots=0.0,
+        preview="learned",
+        masks="factored",
+        observation="rich",
+        autoreset="next_step",
+        side_randomization=True,
+    )
+    obs_chunks: list[np.ndarray] = []
+    mask_chunks: list[np.ndarray] = []
+    collected = 0
+    while collected < boards:
+        step = env.reset()
+        for slot in (0, 1):
+            pv_m = step.masks[:, slot, 2 * s :]
+            has_pv = pv_m.any(axis=-1)
+            if has_pv.any():
+                idx = np.flatnonzero(has_pv)
+                obs_chunks.append(step.obs[idx, slot].copy())
+                mask_chunks.append(pv_m[idx].copy())
+                collected += len(idx)
+                if collected >= boards:
+                    break
+
+    obs_np = np.concatenate(obs_chunks, axis=0)[:boards]
+    mask_np = np.concatenate(mask_chunks, axis=0)[:boards]
+
+    # Precompute frozen `enc` (context + own_tokens) and teacher target probabilities once!
+    teacher.eval()
+    student.eval()
+    ctx_list: list[torch.Tensor] = []
+    own_list: list[torch.Tensor] = []
+    tgt_list: list[torch.Tensor] = []
+    with torch.no_grad():
+        for start in range(0, len(obs_np), 256):
+            xb = torch.from_numpy(obs_np[start : start + 256]).to(dev)
+            mb = torch.from_numpy(mask_np[start : start + 256]).to(dev)
+            enc_s = student.encode_board(xb)
+            enc_t = teacher.encode_board(xb.to(teacher.device))
+            t_logits = teacher.preview_logits(enc_t).to(dev).masked_fill(~mb, -1e9)
+            t_probs = F.softmax(t_logits, dim=-1)
+            ctx_list.append(enc_s.context.detach())
+            own_list.append(enc_s.own_tokens.detach())
+            tgt_list.append(t_probs.detach())
+    ctx_all = torch.cat(ctx_list, dim=0)
+    own_all = torch.cat(own_list, dim=0)
+    tgt_all = torch.cat(tgt_list, dim=0)
+    mask_all = torch.from_numpy(mask_np).to(dev)
+
+    saved_req = {name: p.requires_grad for name, p in student.named_parameters()}
+    for name, p in student.named_parameters():
+        p.requires_grad_(name.startswith("preview_head."))
+
+    opt = torch.optim.Adam(student.preview_head.parameters(), lr=float(lr))
+    student.preview_head.train()
+    rng_t = torch.Generator(device="cpu").manual_seed(seed)
+    n_total = len(obs_np)
+    pv_micro = 64 if dev.type == "mps" else batch_size
+    last_kl = 0.0
+    try:
+        for _ in range(steps):
+            perm = torch.randint(0, n_total, (min(batch_size, n_total),), generator=rng_t)
+            opt.zero_grad(set_to_none=True)
+            step_kl = 0.0
+            total_rows = len(perm)
+            for sub_s in range(0, total_rows, pv_micro):
+                sub = perm[sub_s : sub_s + pv_micro].to(dev)
+                w = len(sub) / total_rows
+                sub_enc = BoardEncoding(
+                    context=ctx_all[sub],
+                    own_tokens=own_all[sub],
+                    active0=ctx_all[sub],
+                    active1=ctx_all[sub],
+                    foe0=ctx_all[sub],
+                    foe1=ctx_all[sub],
+                    active0_mvs=torch.empty(0, device=dev, dtype=torch.long),
+                    active1_mvs=torch.empty(0, device=dev, dtype=torch.long),
+                    active0_mfeats=torch.empty(0, device=dev),
+                    active1_mfeats=torch.empty(0, device=dev),
+                )
+                s_logits = student.preview_logits(sub_enc).masked_fill(~mask_all[sub], -1e9)
+                s_lp = F.log_softmax(s_logits, dim=-1)
+                t_p = tgt_all[sub]
+                t_lp = torch.log(t_p.clamp(min=1e-12))
+                kl = (t_p * (t_lp - s_lp)).masked_fill(~mask_all[sub], 0.0).sum(dim=-1).mean()
+                (kl * w).backward()
+                step_kl += float(kl.detach().item()) * w
+            torch.nn.utils.clip_grad_norm_(student.preview_head.parameters(), 1.0)
+            opt.step()
+            last_kl = step_kl
+    finally:
+        for name, p in student.named_parameters():
+            p.requires_grad_(saved_req[name])
+        student.eval()
+
+    # Measure final canonical 90-group top-1 agreement against teacher.
+    with torch.no_grad():
+        eval_n = min(1024, n_total)
+        sub_enc = BoardEncoding(
+            context=ctx_all[:eval_n],
+            own_tokens=own_all[:eval_n],
+            active0=ctx_all[:eval_n],
+            active1=ctx_all[:eval_n],
+            foe0=ctx_all[:eval_n],
+            foe1=ctx_all[:eval_n],
+            active0_mvs=torch.empty(0, device=dev, dtype=torch.long),
+            active1_mvs=torch.empty(0, device=dev, dtype=torch.long),
+            active0_mfeats=torch.empty(0, device=dev),
+            active1_mfeats=torch.empty(0, device=dev),
+        )
+        s_logits = student.preview_logits(sub_enc).masked_fill(~mask_all[:eval_n], -1e9)
+        s_top = student.preview_group_ids[s_logits.argmax(dim=-1)]
+        t_top = student.preview_group_ids[tgt_all[:eval_n].argmax(dim=-1)]
+        agree = float((s_top == t_top).float().mean().item())
+    return {"preview_kl": round(last_kl, 5), "preview_top1_group_agree": round(agree, 4), "boards": float(n_total)}
+
+
 def masked_log_prob_and_entropy(
     logits: torch.Tensor, mask: torch.Tensor, actions: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
