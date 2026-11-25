@@ -446,6 +446,7 @@ def ppo_update(
                 minibatches.append((is_pv_group, chunk))
         rng.shuffle(minibatches)
 
+        pv_micro_size = 64
         for is_pv_group, rows in minibatches:
             optimizer.zero_grad(set_to_none=True)
             if is_pv_group:
@@ -993,7 +994,7 @@ def train(args: argparse.Namespace) -> None:
     trajs_p0: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     trajs_p1: list[list[StepRecord]] = [[] for _ in range(num_envs)]
     snap_cache: dict[str, RustFactoredPolicy] = {}
-    snap_cache_cap = max(4, int(args.snapshots_per_wave) * 2)
+    snap_cache_cap = max(2, int(args.snapshots_per_wave))
 
     def _get_snapshot_model(snap: Snapshot) -> RustFactoredPolicy:
         key = str(snap.path)
@@ -1371,7 +1372,7 @@ def main() -> None:
         "--max-session-games",
         type=int,
         default=0,
-        help="optional per-process game cap (0 = unlimited) to exit cleanly between --resume chunks",
+        help="optional per-process game cap (0 = unlimited) to recycle MPS memory cleanly between --resume chunks",
     )
     parser.add_argument("--games-per-update", type=int, default=1024)
     parser.add_argument("--snapshot-games", type=int, default=16384)

@@ -375,19 +375,22 @@ def distill(args: argparse.Namespace) -> Path:
     holdout_pool = rl.TeamPool(holdout_teams, "championsvgc") if holdout_teams else None
 
     teacher = load_rust_policy(args.teacher, device=device).eval()
-    ffn_mult = int(args.ffn_mult) if int(args.ffn_mult) > 0 else None
-    student = (
-        RustFactoredPolicy(
-            width=int(args.width),
-            layers=int(args.layers),
-            format_id=teacher.format_id,
-            dex_sizes=teacher.dex_sizes,
-            policy_version=int(args.policy_version),
-            ffn_mult=ffn_mult,
+    if args.init_student is not None:
+        student = load_rust_policy(args.init_student, device=device).eval()
+    else:
+        ffn_mult = int(args.ffn_mult) if int(args.ffn_mult) > 0 else None
+        student = (
+            RustFactoredPolicy(
+                width=int(args.width),
+                layers=int(args.layers),
+                format_id=teacher.format_id,
+                dex_sizes=teacher.dex_sizes,
+                policy_version=int(args.policy_version),
+                ffn_mult=ffn_mult,
+            )
+            .to(device)
+            .eval()
         )
-        .to(device)
-        .eval()
-    )
     optimizer = build_optimizer(student, lr=args.learning_rate, weight_decay=args.weight_decay)
 
     num_envs = int(args.num_envs)
@@ -500,6 +503,12 @@ def distill(args: argparse.Namespace) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--teacher", type=Path, required=True)
+    parser.add_argument(
+        "--init-student",
+        type=Path,
+        default=None,
+        help="optional existing student checkpoint to continue distilling from",
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--team-manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--use-manifest-weights", action="store_true")
