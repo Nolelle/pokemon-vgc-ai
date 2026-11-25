@@ -48,6 +48,7 @@ def _pokemon_state(entry) -> PokemonState:
     )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "path", CORPUS_TEAMS, ids=lambda path: path.name.removesuffix(".packed.txt")
 )

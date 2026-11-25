@@ -27,10 +27,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pikapro
-import pikapro.rl as rl
 import torch
 import torch.nn.functional as F
+
+try:
+    import pikapro
+    import pikapro.rl as rl
+except ImportError:  # pragma: no cover - optional replica extra
+    pikapro = None  # type: ignore[assignment]
+    rl = None  # type: ignore[assignment]
 
 from vgc.action_gate import enforce_action_gate_for_cli
 from vgc.battle_state_gate import enforce_battle_state_gate_for_cli

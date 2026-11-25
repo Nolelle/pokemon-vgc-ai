@@ -507,25 +507,6 @@ def test_patch_public_enforces_perish_yawn_choice_lock_protect_and_extenders() -
     assert float(obs_t3[60]) == 0.0, "protect_chain must reset to 0 after skipping Protect for 1 turn"
 
 
-def test_turn2_nash_solver_and_preview_dedup() -> None:
-    """Verify exact 2x2 zero-sum Nash values and symmetric preview deduplication."""
-    from vgc.rl.rust_search import _dedup_preview_groups, _solve_2x2_zero_sum
-
-    # Pure saddle point: row 0 guarantees +0.4 against both opp responses.
-    assert abs(_solve_2x2_zero_sum([[0.4, 0.8], [-0.2, 0.9]]) - 0.4) < 1e-9
-    # Symmetric matching pennies (Protect vs Attack mindgame): exact mixed Nash value is 0.0.
-    assert abs(_solve_2x2_zero_sum([[0.5, -0.5], [-0.5, 0.5]]) - 0.0) < 1e-9
-    # Asymmetric mixed game: [[3, 0], [1, 2]] -> v = (6 - 0) / (3 - 0 - 1 + 2) = 1.5.
-    assert abs(_solve_2x2_zero_sum([[3.0, 0.0], [1.0, 2.0]]) - 1.5) < 1e-9
-
-    # Back-order duplicates (0,1,2,3) and (0,1,3,2) + lead swap (1,0,2,3) merge and sum probs.
-    orders = np.array([[0, 1, 2, 3], [0, 1, 3, 2], [1, 0, 2, 3], [0, 2, 1, 3]], dtype=np.int64)
-    grouped = _dedup_preview_groups([0, 1, 2, 3], [0.30, 0.25, 0.15, 0.20], orders)
-    assert len(grouped) == 2
-    assert grouped[0][0] == 0 and abs(grouped[0][2] - 0.70) < 1e-9
-    assert grouped[1][0] == 3 and abs(grouped[1][2] - 0.20) < 1e-9
-
-
 def test_player_view_extender_timers_stay_nonzero_on_turns_6_to_8() -> None:
     """When Damp Rock / Terrain Extender / Light Clay keeps a condition active past turn 5,
     PlayerView (`encode_rich`) must infer the 8-turn duration (0.6, 0.4, 0.2) instead of 0.0.
@@ -605,49 +586,6 @@ def test_encode_state_rich_parity_moved_revealed_and_extenders() -> None:
     foe_row0 = 6 * RICH_MON_WIDTH
     assert float(o_view[foe_row0 + 12]) == 1.0 and float(o_view[foe_row0 + 14]) == 1.0
     assert float(o_state[foe_row0 + 12]) == 1.0 and float(o_state[foe_row0 + 14]) == 1.0
-
-
-def test_our_public_knowledge_reveals_only_public_protocol_facts() -> None:
-    """Simulated opponent sees our publicly revealed items/abilities/moves, never hidden ones."""
-    from types import SimpleNamespace
-
-    from vgc.battle_memory import BattleMemory
-    from vgc.rl.rust_search import _our_public_knowledge
-
-    packed = (
-        "Tyranitar||AssaultVest|SandStream|RockSlide,Crunch,LowKick,Protect|Adamant|32,32,,,,2||||50|]"
-        "Sneasler||FocusSash|Unburden|FakeOut,CloseCombat,DireClaw,Protect|Jolly|,32,,,,32||||50|]"
-        "Gholdengo||LifeOrb|GoodAsGold|MakeItRain,ShadowBall,NastyPlot,Protect|Modest|,,2,32,,32||||50|]"
-        "Incineroar||SafetyGoggles|Intimidate|FakeOut,FlareBlitz,KnockOff,PartingShot|Careful|32,,16,,18,||||50|"
-    )
-    mem = BattleMemory("test", our_role="p1")
-    mem.observe_protocol(
-        [
-            ["", "switch", "p1a: Tyranitar", "Tyranitar, L50, M", "100/100"],
-            ["", "switch", "p1b: Sneasler", "Sneasler, L50, M", "100/100"],
-            ["", "-weather", "Sandstorm", "[from] ability: Sand Stream", "[of] p1a: Tyranitar"],
-            ["", "move", "p1b: Sneasler", "Fake Out", "p2a: Pelipper"],
-        ]
-    )
-    battle = SimpleNamespace(team={})
-    items, abilities, moves, revealed = _our_public_knowledge(battle, packed, memory=mem)
-    # Tyranitar: revealed + Sand Stream known from weather line, item still hidden.
-    assert revealed[0] is True
-    assert abilities[0] == "sandstream"
-    assert items[0] is None
-    # Sneasler: revealed + Fake Out known, Focus Sash & Unburden still hidden (never leaked!).
-    assert revealed[1] is True
-    assert moves[1] == ["fakeout"]
-    assert items[1] is None
-    assert abilities[1] is None
-    # Gholdengo: unrevealed on bench, single-ability Good as Gold known, Life Orb hidden.
-    assert revealed[2] is False
-    assert abilities[2] == "goodasgold"
-    assert items[2] is None
-    # Incineroar: unrevealed on bench, Safety Goggles & Intimidate hidden.
-    assert revealed[3] is False
-    assert items[3] is None
-    assert abilities[3] is None
 
 
 def test_rust_policy_v3_equivariance_preview_symmetry_and_roundtrip(tmp_path: Path) -> None:

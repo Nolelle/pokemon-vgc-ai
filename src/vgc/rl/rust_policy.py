@@ -24,11 +24,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import pikapro
-import pikapro.rl as rl
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+try:
+    import pikapro
+    import pikapro.rl as rl
+except ImportError:  # pragma: no cover - optional replica extra
+    pikapro = None  # type: ignore[assignment]
+    rl = None  # type: ignore[assignment]
 
 from vgc.damage import to_id
 from vgc.data import load_moves
