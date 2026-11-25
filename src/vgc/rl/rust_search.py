@@ -12,7 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 import numpy as np
-import pikapro
+
+try:
+    import pikapro
+except ImportError:  # pragma: no cover - optional replica extra
+    pikapro = None  # type: ignore[assignment]
 
 from vgc.actions import locked_move_ids
 from vgc.damage import to_id

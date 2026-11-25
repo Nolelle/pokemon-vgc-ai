@@ -70,6 +70,7 @@ def game():
     return sink, snapshots[0]
 
 
+@pytest.mark.integration
 def test_option_ids_match_build_options(game):
     sink, _ = game
     for _battle, scored, packet, options, _turn in sink:
@@ -83,6 +84,7 @@ def test_option_ids_match_build_options(game):
         assert packet.turn_text.count("\nP") >= len(options) - 1  # one line per option
 
 
+@pytest.mark.integration
 def test_fixed_text_identical_across_turns(game):
     sink, _ = game
     fixed = {packet.fixed_text for _b, _s, packet, _o, _t in sink}
@@ -94,6 +96,7 @@ def test_fixed_text_identical_across_turns(game):
     assert "Psyspam Sand" in text and "MOVE REFERENCE" in text and "GUESSES" in text
 
 
+@pytest.mark.integration
 def test_opponent_info_is_seen_or_labelled_guess(game):
     sink, _ = game
     assert any("- THEIR " in x[2].turn_text for x in sink)
@@ -199,6 +202,7 @@ def test_threat_damage_uses_spread_target_count(monkeypatch):
     assert facts._hit_count("allAdjacentFoes", 1, True) == 1
 
 
+@pytest.mark.integration
 def test_blind_options_hide_engine_rank_and_keep_the_same_choices(game):
     sink, _ = game
     battle, scored, _packet, options, turn = sink[0]

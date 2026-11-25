@@ -1,6 +1,6 @@
 # Two jobs, run in parallel:
-#   unit   -- ruff + the default (non-integration) pytest suite. ~2-3 min.
-#   engine -- builds public Showdown at the PINNED commit, rebuilds the seeded team pool,
+#   unit   -- fast ruff lint (before installing torch) + the default (non-integration) pytest suite.
+#   engine -- builds public Showdown at the PINNED commit, caches/rebuilds the seeded team pool,
 #             runs the three readiness gates' static checks and every integration test.
 #
 # What this deliberately does NOT check: whether the pin is still current with public
@@ -33,10 +33,12 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-      - name: Install Python dependencies
+      - name: Install dev tools and lint (fast fail before torch)
+        run: |
+          uv sync --frozen --extra dev
+          .venv/bin/ruff check .
+      - name: Install training dependencies (CPU torch)
         run: .github/scripts/install_python_deps.sh
-      - name: Lint
-        run: .venv/bin/ruff check .
       - name: Unit tests
         run: .venv/bin/python -m pytest -q -rfs
 
@@ -53,12 +55,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: tools/parser_deps/package-lock.json
       - name: Install Python dependencies
         run: .github/scripts/install_python_deps.sh
       - name: Read pinned Showdown commit
         id: pin
         run: >-
-          echo "commit=$(python3 -c 'import json; print(json.load(open("data/champions/mechanics_catalog.json"))["generated_from"]["showdown_commit"])')"
+          echo "commit=$(.venv/bin/python -c 'import json; print(json.load(open("data/champions/mechanics_catalog.json"))["generated_from"]["showdown_commit"])')"
           >> "$GITHUB_OUTPUT"
       - name: Cache built Showdown
         uses: actions/cache@v6
@@ -69,10 +73,27 @@ jobs:
         run: npm ci --prefix tools/parser_deps
       - name: Check out and build pinned Showdown
         run: .github/scripts/checkout_pinned_showdown.sh "$VGC_SHOWDOWN_REPO" --build
+      - name: Cache 160-team archetype pool
+        id: pool-cache
+        uses: actions/cache@v6
+        with:
+          path: data/selfplay/archetype_pool_150
+          key: archetype-pool-150-${{ steps.pin.outputs.commit }}-${{ hashFiles('tools/build_archetype_pool.py', 'src/vgc/archetypes.py', 'src/vgc/selfplay_pool.py', 'data/champions/**', 'data/meta/**', 'data/usage/**') }}
       - name: Rebuild the 160-team pool (seeded, byte-identical to local)
+        if: steps.pool-cache.outputs.cache-hit != 'true'
         run: >-
           .venv/bin/python tools/build_archetype_pool.py --variants-per-archetype 25
           --seed 20260901 --out data/selfplay/archetype_pool_150
+      - name: Verify built engine and team pool exist
+        run: |
+          test -f "$VGC_SHOWDOWN_REPO/dist/sim/index.js" || {
+            echo "::error::built Showdown simulator missing at $VGC_SHOWDOWN_REPO/dist/sim/index.js"
+            exit 1
+          }
+          test -f "data/selfplay/archetype_pool_150/manifest.json" || {
+            echo "::error::archetype pool manifest missing at data/selfplay/archetype_pool_150/manifest.json"
+            exit 1
+          }
       - name: Readiness gates (static)
         run: |
           .venv/bin/python offline/check_mechanics_readiness.py --static-only
@@ -81,11 +102,11 @@ jobs:
       - name: Unit tests that need the team pool
         run: .venv/bin/python -m pytest -q -rfs tests/test_counterfactual_q.py
       - name: Integration tests against the pinned engine
-        # A skip here means a test could not find the engine or the pool -- i.e. lost
-        # coverage that would otherwise look green. Fail instead.
+        # Fail if any integration test skips specifically because the engine or team pool
+        # could not be found (without false-failing on unrelated conditional skips).
         run: |
           .venv/bin/python -m pytest -q -rfs -m integration | tee pytest.txt
-          if grep -qE '[0-9]+ skipped' pytest.txt; then
-            echo "::error::integration tests were skipped; the engine or team pool was not found"
+          if grep -qiE 'SKIPPED .*(showdown.*(unavailable|missing)|no built showdown|requires the built local showdown engine|archetype_pool_150)' pytest.txt; then
+            echo "::error::integration tests were skipped due to missing engine or team pool"
             exit 1
           fi
