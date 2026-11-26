@@ -1004,4 +1004,13 @@
 - **Live public Reg M-C ladder comparison of `v3c` + `teams/sand_r1831.packed.txt` (30 games, session `20261125T220346Z`):**
   - **Overall:** **15–15 (50.0%)**, **0 fallbacks / 0 errors**, Elo **1472 -> peak 1472 -> min 1333 -> ~1442** vs **1381 avg opp** (range 1140–1637).
   - **Split:** **13–3 (81.2%)** vs non-clone opponents (including **3–0** vs 1552–1637 `SilverGale24`), but **2–12 (14.3%)** vs the `SunRainCoach` Rain/Screens clone core (compared to `mc_ladder_01`'s **7–6 / 53.8%** and **1593 peak** vs 1499 avg opp). Verdict: `mc_ladder_01` remains #1 live ladder roster.
-- Next: launching `v3c -> v3d` (`11M -> 15M`, `192×6`, `--upgrade-to-v3`) in desktop mode (`--num-envs 128 --threads 4`), switching to AFK (`--resume --num-envs 256 --threads 8`) tonight; if `v3d` improves over `v3c`, re-distill `v4b_polished_best.pt` from `v3d` before `v4b` PPO.
+- **Completed `v3d` (`11M -> 15M` cumulative games, `192×6`, zero-loss `--upgrade-to-v3` from `v3c` on weighted 696-team pool, W&B `e3463qh4`):**
+  - Finished all 4,000,022 games (`runs/rust_v3d_m192_l6_v3upgrade/policy_4000022.pt`, desktop 0->2.31M then AFK 2.31M->4.0M at ~91–94 g/s, **0 MPS memory leaks**, **448 minibatch KL early-stops** keeping late `approx_kl=0.0014`, both new `v3` layers actively learned: `move_meta_proj` RMS `0.0075`, `speed_proj` RMS `0.0202`).
+  - **Paired head-to-head vs `v3c` (11M) and `v3b` (7M) (deterministic, seat-swapped):**
+    - vs `v3c` on all 88 unseen holdout teams (1,024 games): **`v3d` won 52.73% ± 2.95% (+19.0 Elo)** (`s0=54.5%, s1=51.0%`).
+    - vs `v3c` on unseen Weather/Screens holdout (512 games): **`v3d` won 51.76% ± 4.07% (+12.2 Elo)**.
+    - vs `v3c` on High-Elo Meta `w>=3` teams (1,024 games): **`v3d` won 54.20% ± 2.79% (+29.2 Elo)** (`s0=54.1%, s1=54.3%`).
+    - vs `v3b` on all 88 unseen holdout teams (1,024 games): **`v3d` won 58.89% ± 2.89% (+62.4 Elo)**.
+- **Completed `v3d -> v4b` (`256×6`, `policy_version=3`) AFK distillation (`runs/rust_v4b_m256_l6_distill/v4b_from_v3d_best.pt`, 24 waves, 49,422 games, 13.9 min):**
+  - Reached **full 15M-game parity before PPO Game #1**: **50.78% ± 2.85% (+5.4 Elo)** vs `v3c` (1,024 unseen holdout games — **+167 Elo** over old 13-hour 4M-game cold-start `v4`!), **48.93% ± 2.86% (-7.5 Elo)** vs `v3d` (1,024 unseen holdout games), **86%** (peak **89%**) vs `simple_heuristics`, `preview_kl` cut in half (`1.47 -> 0.70`), `value_mae=0.1049`.
+- Next: run 30-game live public Reg M-C ladder validation of `v3d` (`policy_4000022.pt`) + Track A 10-world search on `teams/mc_ladder_01.packed.txt`, then launch `v4b` (`256×6`) PPO self-play from `v4b_from_v3d_best.pt`.
