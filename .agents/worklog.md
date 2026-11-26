@@ -998,4 +998,10 @@
   - `src/vgc/rl/rust_policy.py`: added `upgrade_v2_to_v3` (zero-initialized `move_meta_proj` & `speed_proj` -> bit-exact `0.0` Day-0 in-battle parity with `v3c`) and `fit_v3_preview_head_from_teacher` (~3.3s frozen preview-head fit, 84.9%+ top-1 agreement).
   - `selfplay/distill_rust_policy.py`: new streaming policy+value distillation script (`v3c` -> `256×6` `v4b` student with holdout head-to-head tracking vs teacher).
   - **Verification:** `tests/test_rust_pipeline.py` 18/18 passed (including 3 new regression tests), Ruff clean, real `v3c` upgrade & distillation CLI smoke verified.
-- Next: open PR for these fixes/tooling; run `selfplay/distill_rust_policy.py` in desktop mode (`--num-envs 128 --threads 4`) to initialize `v4b` from `v3c`, and launch overnight AFK `v3c -> v3d` training (`11M -> 15M` games) tonight.
+- **`v3c -> v4b` (`256×6`, `policy_version=3`) desktop-mode distillation (`selfplay/distill_rust_policy.py`, PR #56):**
+  - Pass 1 (12 waves, 24,643 games, 7.6 min): `v4b_init_best.pt` reached **39.8% (-72 Elo)** vs `v3c` (+90 Elo over 13-hour 4M-game `v4`!), 77.8% turn top-1 agreement.
+  - Pass 2 polish (`--init-student`, 24 waves, 49,317 games, 14.9 min, `lr 1.5e-4 -> 1.5e-5`): `runs/rust_v4b_m256_l6_distill/v4b_polished_best.pt` reached **45.7% (-30 Elo)** vs `v3c` (+131 Elo over old `v4`), **83.8%** turn top-1 agreement, **64.6%** preview 90-group agreement, `value_mae=0.115` (`value_bce=0.4675` vs `v3c`'s `0.4646`).
+- **Live public Reg M-C ladder comparison of `v3c` + `teams/sand_r1831.packed.txt` (30 games, session `20261125T220346Z`):**
+  - **Overall:** **15–15 (50.0%)**, **0 fallbacks / 0 errors**, Elo **1472 -> peak 1472 -> min 1333 -> ~1442** vs **1381 avg opp** (range 1140–1637).
+  - **Split:** **13–3 (81.2%)** vs non-clone opponents (including **3–0** vs 1552–1637 `SilverGale24`), but **2–12 (14.3%)** vs the `SunRainCoach` Rain/Screens clone core (compared to `mc_ladder_01`'s **7–6 / 53.8%** and **1593 peak** vs 1499 avg opp). Verdict: `mc_ladder_01` remains #1 live ladder roster.
+- Next: launching `v3c -> v3d` (`11M -> 15M`, `192×6`, `--upgrade-to-v3`) in desktop mode (`--num-envs 128 --threads 4`), switching to AFK (`--resume --num-envs 256 --threads 8`) tonight; if `v3d` improves over `v3c`, re-distill `v4b_polished_best.pt` from `v3d` before `v4b` PPO.
